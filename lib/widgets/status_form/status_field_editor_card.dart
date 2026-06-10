@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/status_field.dart';
-import 'package:webapp/utils/display_text.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';

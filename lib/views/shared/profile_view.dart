@@ -5,10 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_make.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
-import 'package:webapp/repositories/local/local_vehicle_catalog_repository.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 
 class ProfileView extends StatefulWidget {
   const ProfileView({
@@ -51,14 +52,22 @@ class ProfileView extends StatefulWidget {
 }
 
 class _ProfileViewState extends State<ProfileView> {
+  static final Map<String, VehicleMake?> _assignedMakeCacheByDriverId = {};
   VehicleMake? _assignedMake;
+  bool _isLoadingAssignedMake = true;
 
   VehicleCatalogRepository get _vehicleCatalogRepository =>
-      widget.vehicleCatalogRepository ?? LocalVehicleCatalogRepository.instance;
+      widget.vehicleCatalogRepository ?? VehicleRequest.instance;
 
   @override
   void initState() {
     super.initState();
+    final driverId = widget.user.id?.trim() ?? '';
+    if (driverId.isNotEmpty &&
+        _assignedMakeCacheByDriverId.containsKey(driverId)) {
+      _assignedMake = _assignedMakeCacheByDriverId[driverId];
+      _isLoadingAssignedMake = false;
+    }
     _loadAssignedMake();
   }
 
@@ -77,19 +86,33 @@ class _ProfileViewState extends State<ProfileView> {
       if (mounted) {
         setState(() {
           _assignedMake = null;
+          _isLoadingAssignedMake = false;
         });
       }
       return;
     }
 
-    final makes = await _vehicleCatalogRepository.getMakes();
-    final match = makes.where((item) => item.driver?.id == driverId);
-    if (!mounted) {
-      return;
-    }
     setState(() {
-      _assignedMake = match.isEmpty ? null : match.first;
+      _isLoadingAssignedMake = true;
     });
+
+    try {
+      final makes = await _vehicleCatalogRepository.getMakes();
+      final match = makes.where((item) => item.driver?.id == driverId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _assignedMake = match.isEmpty ? null : match.first;
+        _assignedMakeCacheByDriverId[driverId] = _assignedMake;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingAssignedMake = false;
+        });
+      }
+    }
   }
 
   @override
@@ -105,101 +128,99 @@ class _ProfileViewState extends State<ProfileView> {
     final content = Padding(
       padding: widget.padding,
       child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _ProfileIdentityHeader(
-              user: user,
-              roleLabel: roleLabel,
-              joinedLabel: joinedLabel,
-              updatedLabel: updatedLabel,
-              onEditPressed: widget.onEditPressed,
-              onLogout: widget.onLogout,
-              logoutLabel: widget.logoutLabel,
-              onChangePhotoPressed: widget.onChangePhotoPressed,
-              isCurrentUserView: widget.isCurrentUserView,
-              onQuickActionPressed: widget.onQuickActionPressed,
-              quickActionLabel: widget.quickActionLabel,
-              quickActionTextColor: widget.quickActionTextColor,
-              quickActionBorderColor: widget.quickActionBorderColor,
-            ),
-            const SizedBox(height: 18),
-            const AdminSectionTitle(title: 'Personal'),
-            const SizedBox(height: 10),
-            _InfoGroupContent(
-              rows: [
-                _InfoRow(label: 'Name', value: _valueOrNotSet(user.name)),
-                _InfoRow(label: 'Email', value: _valueOrDash(user.email)),
-                _InfoRow(
-                  label: 'Mobile number',
-                  value: _valueOrNotSet(user.phone),
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            const AdminSectionTitle(title: 'Account'),
-            const SizedBox(height: 10),
-            _InfoGroupContent(
-              rows: [
-                _InfoRow(label: 'ID', value: _valueOrDash(user.id)),
-                _InfoRow(
-                  label: 'Role',
-                  value: roleLabel.isEmpty ? '-' : roleLabel,
-                ),
-                _InfoRow(
-                  label: 'Active',
-                  value: (user.isActive ?? false) ? 'Active' : 'Inactive',
-                ),
-                if (showOnlineField)
-                  _InfoRow(
-                    label: 'Online',
-                    value: (user.isOnline ?? false) ? 'Online' : 'Offline',
-                  ),
-                if (showDriverFields)
-                  _InfoRow(
-                    label: 'Vehicle make code',
-                    value: _valueOrNotSet(_assignedMake?.code),
-                  ),
-                if (showDriverFields)
-                  _InfoRow(
-                    label: 'Vehicle type',
-                    value: _valueOrNotSet(driver.vehicleType?.name),
-                  ),
-                if (showDriverFields)
-                  _InfoRow(
-                    label: 'LatLng',
-                    value: _latLngValue(driver.lat, driver.lng),
-                  ),
-              ],
-            ),
-            if (showDriverFields) ...[
-              const SizedBox(height: 18),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  const Expanded(
-                    child: AdminSectionTitle(title: 'License'),
-                  ),
-                  if (widget.isCurrentUserView || widget.onEditPressed != null)
-                    _LicenseActionButton(
-                      hasImage: hasLicensePreview,
-                      onPressed:
-                          widget.onChangeLicensePressed ??
-                          widget.onEditPressed ??
-                          widget.onChangePhotoPressed,
-                    ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              _LicensePreview(
-                imageValue: driver.license,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showDriverFields)
+            AppRefreshStrip(isVisible: _isLoadingAssignedMake),
+          _ProfileIdentityHeader(
+            user: user,
+            roleLabel: roleLabel,
+            joinedLabel: joinedLabel,
+            updatedLabel: updatedLabel,
+            onEditPressed: widget.onEditPressed,
+            onLogout: widget.onLogout,
+            logoutLabel: widget.logoutLabel,
+            onChangePhotoPressed: widget.onChangePhotoPressed,
+            isCurrentUserView: widget.isCurrentUserView,
+            onQuickActionPressed: widget.onQuickActionPressed,
+            quickActionLabel: widget.quickActionLabel,
+            quickActionTextColor: widget.quickActionTextColor,
+            quickActionBorderColor: widget.quickActionBorderColor,
+          ),
+          const SizedBox(height: 18),
+          const AdminSectionTitle(title: 'Personal'),
+          const SizedBox(height: 10),
+          _InfoGroupContent(
+            rows: [
+              _InfoRow(label: 'Name', value: _valueOrNotSet(user.name)),
+              _InfoRow(label: 'Email', value: _valueOrDash(user.email)),
+              _InfoRow(
+                label: 'Mobile number',
+                value: _valueOrNotSet(user.phone),
               ),
             ],
+          ),
+          const SizedBox(height: 18),
+          const AdminSectionTitle(title: 'Account'),
+          const SizedBox(height: 10),
+          _InfoGroupContent(
+            rows: [
+              _InfoRow(label: 'ID', value: _valueOrDash(user.id)),
+              _InfoRow(
+                label: 'Role',
+                value: roleLabel.isEmpty ? '-' : roleLabel,
+              ),
+              _InfoRow(
+                label: 'Active',
+                value: (user.isActive ?? false) ? 'Active' : 'Inactive',
+              ),
+              if (showOnlineField)
+                _InfoRow(
+                  label: 'Online',
+                  value: (user.isOnline ?? false) ? 'Online' : 'Offline',
+                ),
+              if (showDriverFields)
+                _InfoRow(
+                  label: 'Vehicle make code',
+                  value: _valueOrNotSet(_assignedMake?.code),
+                ),
+              if (showDriverFields)
+                _InfoRow(
+                  label: 'Vehicle type',
+                  value: _valueOrNotSet(driver.vehicleType?.name),
+                ),
+              if (showDriverFields)
+                _InfoRow(
+                  label: 'LatLng',
+                  value: _latLngValue(driver.lat, driver.lng),
+                ),
+            ],
+          ),
+          if (showDriverFields) ...[
             const SizedBox(height: 18),
-            const AdminSectionTitle(title: 'Security'),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const Expanded(child: AdminSectionTitle(title: 'License')),
+                if (widget.isCurrentUserView || widget.onEditPressed != null)
+                  _LicenseActionButton(
+                    hasImage: hasLicensePreview,
+                    onPressed:
+                        widget.onChangeLicensePressed ??
+                        widget.onEditPressed ??
+                        widget.onChangePhotoPressed,
+                  ),
+              ],
+            ),
             const SizedBox(height: 10),
-            const _SecuritySection(),
+            _LicensePreview(imageValue: driver.license),
           ],
-        ),
+          const SizedBox(height: 18),
+          const AdminSectionTitle(title: 'Security'),
+          const SizedBox(height: 10),
+          const _SecuritySection(),
+        ],
+      ),
     );
 
     return widget.scrollable ? SingleChildScrollView(child: content) : content;
@@ -342,7 +363,9 @@ class _ProfileIdentityHeader extends StatelessWidget {
         final nameFontSize = constraints.maxWidth < 420 ? 14.0 : 16.0;
         final avatarRadius = isCompact ? 32.0 : 38.0;
         final showChangePhoto =
-            isCurrentUserView && user.role != 'admin' && onChangePhotoPressed != null;
+            isCurrentUserView &&
+            user.role != 'admin' &&
+            onChangePhotoPressed != null;
         final actionLabel = isCurrentUserView ? logoutLabel : quickActionLabel;
         final actionOnTap = isCurrentUserView ? onLogout : onQuickActionPressed;
 
@@ -412,7 +435,8 @@ class _ProfileIdentityHeader extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (actionOnTap != null && actionLabel?.trim().isNotEmpty == true) ...[
+                if (actionOnTap != null &&
+                    actionLabel?.trim().isNotEmpty == true) ...[
                   const SizedBox(width: 12),
                   _ProfileActionPill(
                     label: actionLabel!,
@@ -579,12 +603,12 @@ class _HeaderPill extends StatelessWidget {
               applyHeightToFirstAscent: false,
               applyHeightToLastDescent: false,
             ),
-          style: TextStyle(
-            color: AppColors.primaryColor.withValues(alpha: 0.72),
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            height: 1,
-          ),
+            style: TextStyle(
+              color: AppColors.primaryColor.withValues(alpha: 0.72),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              height: 1,
+            ),
           ),
         ],
       ),
@@ -689,7 +713,8 @@ class _LicensePreview extends StatelessWidget {
     final hasNetworkImage =
         normalizedValue != null && normalizedValue.startsWith('http');
     final hasImageValue = normalizedValue != null && normalizedValue.isNotEmpty;
-    final hasImageError = hasImageValue && imageBytes == null && !hasNetworkImage;
+    final hasImageError =
+        hasImageValue && imageBytes == null && !hasNetworkImage;
 
     if (imageBytes != null) {
       return _LicenseImageFrame(
@@ -761,10 +786,7 @@ class _LicensePreview extends StatelessWidget {
 }
 
 class _LicenseActionButton extends StatelessWidget {
-  const _LicenseActionButton({
-    required this.hasImage,
-    required this.onPressed,
-  });
+  const _LicenseActionButton({required this.hasImage, required this.onPressed});
 
   final bool hasImage;
   final VoidCallback? onPressed;
@@ -814,9 +836,7 @@ class _LicenseImageFallback extends StatelessWidget {
     final textColor = isError
         ? const Color(0xFFB63B3B)
         : AppColors.primaryColor.withValues(alpha: 0.72);
-    final backgroundColor = isError
-        ? const Color(0xFFFFF4F4)
-        : Colors.white;
+    final backgroundColor = isError ? const Color(0xFFFFF4F4) : Colors.white;
 
     return ColoredBox(
       color: backgroundColor,
@@ -831,10 +851,7 @@ class _LicenseImageFallback extends StatelessWidget {
               Text(
                 label,
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: textColor,
-                  fontWeight: FontWeight.w700,
-                ),
+                style: TextStyle(color: textColor, fontWeight: FontWeight.w700),
               ),
             ],
           ),
@@ -860,10 +877,7 @@ class _LicenseImageFrame extends StatelessWidget {
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: AppColors.primaryBorder),
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: child,
-      ),
+      child: ClipRRect(borderRadius: BorderRadius.circular(18), child: child),
     );
   }
 }

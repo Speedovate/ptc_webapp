@@ -1,18 +1,26 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
-import 'package:webapp/repositories/local/local_auth_repository.dart';
-import 'package:webapp/repositories/local/local_booking_repository.dart';
+import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
 class AdminDashboardViewModel extends BaseViewModel {
   AdminDashboardViewModel({AuthRepository? authRepository})
-    : _authRepository = authRepository ?? LocalAuthRepository.instance,
-      _bookingRepository = LocalBookingRepository.instance;
+    : _authRepository = authRepository ?? AuthRequest.instance,
+      _bookingRepository = BookingRequest.instance {
+    _completedBookings.addAll(_cachedCompletedBookings);
+    _usersById.addAll(_cachedUsersById);
+    errorMessage = _cachedErrorMessage;
+  }
 
   final AuthRepository _authRepository;
-  final LocalBookingRepository _bookingRepository;
+  final BookingRepository _bookingRepository;
+  static List<Booking> _cachedCompletedBookings = const [];
+  static Map<String, UserModel> _cachedUsersById = const {};
+  static String? _cachedErrorMessage;
 
   final List<Booking> _completedBookings = [];
   final Map<String, UserModel> _usersById = {};
@@ -59,8 +67,12 @@ class AdminDashboardViewModel extends BaseViewModel {
         }
         return (right.id ?? '').compareTo(left.id ?? '');
       });
+      _cachedCompletedBookings = List<Booking>.from(_completedBookings);
+      _cachedUsersById = Map<String, UserModel>.from(_usersById);
+      _cachedErrorMessage = null;
     } catch (_) {
       errorMessage = 'Failed to load completed bookings.';
+      _cachedErrorMessage = errorMessage;
     } finally {
       setBusy(false);
       notifyListeners();
@@ -68,7 +80,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   }
 
   String client(Booking booking) {
-    final client = _usersById[booking.clientId];
+    final client = _usersById[booking.client?.id];
     final name = client?.name?.trim();
     return "${name?.isNotEmpty == true ? name! : 'Unknown client'} (${start(booking)} - ${end(booking)})"
         .toUpperCase();

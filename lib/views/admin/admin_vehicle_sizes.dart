@@ -9,6 +9,7 @@ import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 
 class AdminVehicleSizesView extends StatefulWidget {
   const AdminVehicleSizesView({super.key});
@@ -146,6 +147,7 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  AppRefreshStrip(isVisible: vm.isBusy),
                   AdminListToolbar(
                     controlHeight: 52,
                     surfaceRadius: 16,
@@ -173,9 +175,7 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
                     },
                   ),
                   const SizedBox(height: 14),
-                  if (vm.isBusy)
-                    const Center(child: CircularProgressIndicator())
-                  else if (vm.errorMessage != null)
+                  if (vm.errorMessage != null)
                     AdminListStateText(message: vm.errorMessage!)
                   else if (vm.sizes.isEmpty)
                     const _VehicleSizeEmptyState(
@@ -343,6 +343,7 @@ class _VehicleSizeHeaderRow extends StatelessWidget {
     return AdminListHeaderBar(
       minHeight: 52,
       borderRadius: 16,
+      horizontalPadding: 16,
       child: Row(
         children: [
           AdminListFixedSlot(

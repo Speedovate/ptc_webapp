@@ -4,11 +4,11 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
-import 'package:webapp/repositories/local/local_vehicle_catalog_repository.dart';
-import 'package:webapp/utils/display_text.dart';
-import 'package:webapp/utils/name_case_text_input_formatter.dart';
+import 'package:webapp/requests/vehicle.request.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/auth/auth.vm.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
+import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 
 class AuthView extends StatefulWidget {
@@ -37,6 +37,7 @@ class _AuthViewState extends State<AuthView> {
   String? _registerRole;
   String? _registerVehicleTypeId;
   bool _isLoginMode = true;
+  bool _isLoadingVehicleTypes = true;
   List<VehicleCatalogItem> _vehicleTypes = const [];
 
   static const _roleOptions = ['client', 'driver', 'admin', 'helper'];
@@ -48,13 +49,21 @@ class _AuthViewState extends State<AuthView> {
   }
 
   Future<void> _loadVehicleTypes() async {
-    final vehicleTypes = await LocalVehicleCatalogRepository.instance.getTypes();
-    if (!mounted) {
-      return;
+    try {
+      final vehicleTypes = await VehicleRequest.instance.getTypes();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _vehicleTypes = vehicleTypes;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingVehicleTypes = false;
+        });
+      }
     }
-    setState(() {
-      _vehicleTypes = vehicleTypes;
-    });
   }
 
   @override
@@ -102,6 +111,15 @@ class _AuthViewState extends State<AuthView> {
       viewModelBuilder: AuthViewModel.new,
       builder: (context, vm, child) {
         final isBusy = vm.isBusy;
+        if (isBusy) {
+          return const Scaffold(
+            backgroundColor: AppColors.primaryColor,
+            body: SafeArea(
+              child: AppPageLoading(message: 'Loading, please wait ...'),
+            ),
+          );
+        }
+
         return Scaffold(
           backgroundColor: AppColors.primaryColor,
           body: SafeArea(
@@ -203,6 +221,16 @@ class _AuthViewState extends State<AuthView> {
                                         obscureText: true,
                                       ),
                                     ],
+                                  ),
+                                )
+                              : _isLoadingVehicleTypes
+                              ? const SizedBox(
+                                  key: ValueKey('register_loading'),
+                                  height: 220,
+                                  child: AppPageLoading(
+                                    message: 'Loading vehicle types...',
+                                    compact: true,
+                                    padding: EdgeInsets.zero,
                                   ),
                                 )
                               : Form(

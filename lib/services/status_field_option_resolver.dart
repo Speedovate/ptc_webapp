@@ -1,13 +1,13 @@
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
+import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/status.request.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
-import 'package:webapp/repositories/local/local_auth_repository.dart';
-import 'package:webapp/repositories/local/local_booking_repository.dart';
-import 'package:webapp/repositories/local/local_status_form_repository.dart';
-import 'package:webapp/repositories/local/local_vehicle_catalog_repository.dart';
 
 class StatusFieldOptionResolver {
   StatusFieldOptionResolver({
@@ -15,12 +15,12 @@ class StatusFieldOptionResolver {
     VehicleCatalogRepository? vehicleCatalogRepository,
     StatusFormRepository? statusFormRepository,
     BookingRepository? bookingRepository,
-  }) : _authRepository = authRepository ?? LocalAuthRepository.instance,
+  }) : _authRepository = authRepository ?? AuthRequest.instance,
        _vehicleCatalogRepository =
-           vehicleCatalogRepository ?? LocalVehicleCatalogRepository.instance,
+           vehicleCatalogRepository ?? VehicleRequest.instance,
        _statusFormRepository =
-           statusFormRepository ?? LocalStatusFormRepository.instance,
-       _bookingRepository = bookingRepository ?? LocalBookingRepository.instance;
+           statusFormRepository ?? StatusRequest.instance,
+       _bookingRepository = bookingRepository ?? BookingRequest.instance;
 
   final AuthRepository _authRepository;
   final VehicleCatalogRepository _vehicleCatalogRepository;
@@ -28,14 +28,24 @@ class StatusFieldOptionResolver {
   final BookingRepository _bookingRepository;
 
   Future<List<StatusField>> hydrateFields(List<StatusField> fields) async {
-    final users = await _authRepository.getUsers();
-    final makes = await _vehicleCatalogRepository.getMakes();
-    final types = await _vehicleCatalogRepository.getTypes();
-    final sizes = await _vehicleCatalogRepository.getSizes();
-    final statuses = await _statusFormRepository.getStatuses();
-    final forms = await _statusFormRepository.getStatusForms();
-    final fieldLibrary = await _statusFormRepository.getAllFields();
-    final bookings = await _bookingRepository.getBookings();
+    final results = await Future.wait([
+      _authRepository.getUsers(),
+      _vehicleCatalogRepository.getMakes(),
+      _vehicleCatalogRepository.getTypes(),
+      _vehicleCatalogRepository.getSizes(),
+      _statusFormRepository.getStatuses(),
+      _statusFormRepository.getStatusForms(),
+      _statusFormRepository.getAllFields(),
+      _bookingRepository.getBookings(),
+    ]);
+    final users = results[0] as List<dynamic>;
+    final makes = results[1] as List<dynamic>;
+    final types = results[2] as List<dynamic>;
+    final sizes = results[3] as List<dynamic>;
+    final statuses = results[4] as List<dynamic>;
+    final forms = results[5] as List<StatusForm>;
+    final fieldLibrary = results[6] as List<StatusField>;
+    final bookings = results[7] as List<dynamic>;
 
     final userOptions = _uniqueSortedOptions(
       users

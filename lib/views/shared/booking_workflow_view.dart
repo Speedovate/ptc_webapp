@@ -16,6 +16,7 @@ import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/booking_form_primitives.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 import 'package:webapp/widgets/status_form/status_field_editor_card.dart';
@@ -258,18 +259,25 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
         final currentStatusLabel = vm.currentStatusLabel();
         final statusDescription = vm.currentStatusDescription();
         final guidanceMessage = vm.roleGuidanceMessage();
-        final content = vm.isBusyLoading
-            ? const Center(child: CircularProgressIndicator())
-            : vm.loadError != null
+        final content = vm.loadError != null
             ? Center(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
-                  child: Text(
-                    vm.loadError!,
-                    style: TextStyle(
-                      color: AppColors.primaryColor.withValues(alpha: 0.72),
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 240,
+                        child: AppRefreshStrip(isVisible: vm.isBusyLoading),
+                      ),
+                      Text(
+                        vm.loadError!,
+                        style: TextStyle(
+                          color: AppColors.primaryColor.withValues(alpha: 0.72),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               )
@@ -297,6 +305,15 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                   guidanceMessage,
                 ),
               );
+        final contentWithRefreshIndicator = Column(
+          children: [
+            AppRefreshStrip(
+              isVisible: vm.isBusyLoading,
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            ),
+            Expanded(child: content),
+          ],
+        );
 
         if (widget.embedded) {
           return content;
@@ -317,7 +334,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             elevation: 0,
             surfaceTintColor: Colors.white,
           ),
-          body: content,
+          body: contentWithRefreshIndicator,
         );
       },
     );
@@ -363,12 +380,10 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
           const SizedBox(height: 14),
           _WorkflowGuidanceCard(
             message: guidanceMessage!.trim(),
-            backgroundColor: terminalPalette == null
-                ? null
-                : terminalPalette.backgroundColor.withValues(alpha: 0.12),
-            borderColor: terminalPalette == null
-                ? null
-                : terminalPalette.borderColor.withValues(alpha: 0.28),
+            backgroundColor: terminalPalette?.backgroundColor.withValues(
+              alpha: 0.12,
+            ),
+            borderColor: terminalPalette?.borderColor.withValues(alpha: 0.28),
             textColor:
                 terminalPalette?.borderColor ??
                 AppColors.primaryColor.withValues(alpha: 0.72),
@@ -532,12 +547,12 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             currentBooking.statusOutputs,
             'end',
           ),
-          clientName: vm.userName(currentBooking.clientId, 'Unknown client'),
-          clientPhone: vm.userPhone(currentBooking.clientId),
-          driverName: vm.userName(currentBooking.driverId, '-'),
-          driverPhone: vm.userPhone(currentBooking.driverId),
-          helperName: vm.userName(currentBooking.helperId, '-'),
-          helperPhone: vm.userPhone(currentBooking.helperId),
+          clientName: vm.userName(currentBooking.client?.id, 'Unknown client'),
+          clientPhone: vm.userPhone(currentBooking.client?.id),
+          driverName: vm.userName(currentBooking.driver?.id, '-'),
+          driverPhone: vm.userPhone(currentBooking.driver?.id),
+          helperName: vm.userName(currentBooking.helper?.id, '-'),
+          helperPhone: vm.userPhone(currentBooking.helper?.id),
         ),
         if (widget.user.role != 'admin') ...[
           Builder(
@@ -1020,9 +1035,11 @@ class _WorkflowInteractiveFormSectionState
                           if (!mounted) {
                             return;
                           }
-                          final messengerContext = this.context;
+                          if (!context.mounted) {
+                            return;
+                          }
                           AppSnackbar.showSuccess(
-                            messengerContext,
+                            context,
                             widget.isDanger
                                 ? 'Booking has been cancelled.'
                                 : 'Booking has been updated.',

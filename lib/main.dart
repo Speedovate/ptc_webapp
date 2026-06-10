@@ -1,8 +1,16 @@
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/firebase_options.dart';
 import 'package:webapp/views/shared/app_shell.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(true);
   runApp(const MyApp());
 }
 

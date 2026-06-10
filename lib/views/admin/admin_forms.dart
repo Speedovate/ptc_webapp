@@ -1,17 +1,18 @@
 import 'package:stacked/stacked.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/models/status_form.dart';
-import 'package:webapp/utils/display_text.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/views/admin/admin_users.dart';
-import 'package:webapp/models/status_definition.dart';
+import 'package:webapp/models/status.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/view_models/admin/admin_status_form.vm.dart';
 import 'package:webapp/widgets/status_form/status_form_preview.dart';
 
@@ -24,7 +25,7 @@ class AdminFormsView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ViewModelBuilder<AdminStatusFormViewModel>.nonReactive(
+    return ViewModelBuilder<AdminStatusFormViewModel>.reactive(
       viewModelBuilder: AdminStatusFormViewModel.new,
       onViewModelReady: (vm) => vm.loadForms(),
       builder: (context, vm, _) {
@@ -32,7 +33,10 @@ class AdminFormsView extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [_StatusFormsListSection(vm: vm)],
+            children: [
+              AppRefreshStrip(isVisible: vm.isLoading),
+              _StatusFormsListSection(vm: vm),
+            ],
           ),
         );
       },
@@ -118,10 +122,14 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
     if (before.resolvedIsMainForm != after.resolvedIsMainForm) {
       changed['main form'] = after.resolvedIsMainForm ? 'Main' : 'Not Main';
     }
-    if (before.fieldIds.join('|') != after.fieldIds.join('|')) {
-      changed['fields'] = after.fieldIds.isEmpty
+    final beforeFieldIds = before.fields
+        .map((field) => field.id ?? '')
+        .join('|');
+    final afterFieldIds = after.fields.map((field) => field.id ?? '').join('|');
+    if (beforeFieldIds != afterFieldIds) {
+      changed['fields'] = after.fields.isEmpty
           ? '-'
-          : after.fieldIds.join(', ');
+          : after.fields.map((field) => field.id ?? '-').join(', ');
     }
     if (_fieldOverrideSignature(before) != _fieldOverrideSignature(after)) {
       changed['field rules'] = after.fieldOverrides.isEmpty
@@ -886,7 +894,7 @@ class _StatusFormsTable extends StatelessWidget {
         final currentWidth = _maxTextWidth(
           context,
           textScaler,
-          'Current Status',
+          'Status',
           _headerStyle,
           sampleCurrent,
           _valueStyle,
@@ -894,7 +902,7 @@ class _StatusFormsTable extends StatelessWidget {
         final statusWidth = _maxTextWidth(
           context,
           textScaler,
-          'Status Label',
+          'Label',
           _headerStyle,
           sampleStatus,
           _titleStyle,
@@ -902,7 +910,7 @@ class _StatusFormsTable extends StatelessWidget {
         final buttonWidth = _maxTextWidth(
           context,
           textScaler,
-          'Text On Button',
+          'Button',
           _headerStyle,
           sampleButton,
           _valueStyle,
@@ -910,7 +918,7 @@ class _StatusFormsTable extends StatelessWidget {
         final nextWidth = _maxTextWidth(
           context,
           textScaler,
-          'Next Status',
+          'Next',
           _headerStyle,
           sampleNext,
           _valueStyle,
@@ -1011,28 +1019,28 @@ class _StatusFormsTable extends StatelessWidget {
                   _FixedSlot(
                     width: resolvedCurrentWidth,
                     child: const _HeaderCell(
-                      label: 'Current Status',
+                      label: 'Status',
                       trailingPadding: 20,
                     ),
                   ),
                   _FixedSlot(
                     width: resolvedStatusWidth,
                     child: const _HeaderCell(
-                      label: 'Status Label',
+                      label: 'Label',
                       trailingPadding: 20,
                     ),
                   ),
                   _FixedSlot(
                     width: resolvedButtonWidth,
                     child: const _HeaderCell(
-                      label: 'Text On Button',
+                      label: 'Button',
                       trailingPadding: 20,
                     ),
                   ),
                   _FixedSlot(
                     width: resolvedNextWidth,
                     child: const _HeaderCell(
-                      label: 'Next Status',
+                      label: 'Next',
                       trailingPadding: 20,
                     ),
                   ),
@@ -1349,15 +1357,15 @@ class _StatusFormResponsiveCard extends StatelessWidget {
         final resolvedFields = [
           ('ID', form.id ?? '-'),
           ('Roles', _resolvedFormRolesText(form)),
-          ('Current Status', form.currentStatusKey ?? '-'),
+          ('Status', form.currentStatusKey ?? '-'),
           (
-            'Status Label',
+            'Label',
             _resolvedFormStatusLabel(vm, form).isEmpty
                 ? '-'
                 : _resolvedFormStatusLabel(vm, form),
           ),
-          ('Text On Button', form.buttonText ?? '-'),
-          ('Next Status', form.nextStatusKey ?? '-'),
+          ('Button', form.buttonText ?? '-'),
+          ('Next', form.nextStatusKey ?? '-'),
         ];
         final contentWidths = resolvedFields
             .map(
@@ -1435,7 +1443,7 @@ class _StatusFormResponsiveCard extends StatelessWidget {
                   (index) => _ResponsiveField(
                     title: resolvedFields[index].$1,
                     value: resolvedFields[index].$2,
-                    isTitle: resolvedFields[index].$1 == 'Status Label',
+                    isTitle: resolvedFields[index].$1 == 'Label',
                     width: useSingleColumn
                         ? constraints.maxWidth
                         : contentWidths[index],
@@ -1737,7 +1745,7 @@ class _DependencyCard extends StatelessWidget {
   final List<String> dependencyRoles;
   final String? selectedRole;
   final String? selectedStatusKey;
-  final List<StatusDefinition> dependencyStatuses;
+  final List<Status> dependencyStatuses;
   final String? blockedMessage;
   final bool showBlockedMessage;
   final ValueChanged<String> onRoleSelected;
@@ -2360,7 +2368,7 @@ Widget _fullWidthTextField({
 }
 
 Widget _fullWidthStatusField({
-  required List<StatusDefinition> statuses,
+  required List<Status> statuses,
   required String? value,
   required String label,
   required ValueChanged<String?> onChanged,
@@ -2447,7 +2455,7 @@ String _resolvedFormStatusDescription(
   return '';
 }
 
-List<StatusDefinition> _availableStatusesForForm(AdminStatusFormViewModel vm) {
+List<Status> _availableStatusesForForm(AdminStatusFormViewModel vm) {
   return vm.statuses.where((status) => status.isActive != false).toList();
 }
 

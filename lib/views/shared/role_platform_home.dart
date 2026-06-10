@@ -10,6 +10,7 @@ import 'package:webapp/view_models/shared/role_assigned_home.vm.dart';
 import 'package:webapp/view_models/shared/role_platform_home.vm.dart';
 import 'package:webapp/views/shared/profile_view.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 import 'package:webapp/widgets/shared/platform_shell.dart';
@@ -207,10 +208,6 @@ class _RoleAssignedHomeSection extends StatelessWidget {
       viewModelBuilder: RoleAssignedHomeViewModel.new,
       onViewModelReady: (vm) => vm.load(user),
       builder: (context, vm, _) {
-        if (vm.isBusy && vm.currentUser == null) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
         if (vm.errorMessage != null && vm.currentUser == null) {
           return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
@@ -229,6 +226,7 @@ class _RoleAssignedHomeSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              AppRefreshStrip(isVisible: vm.isBusy),
               AdminListItemCard(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 20,

@@ -4,9 +4,8 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
-import 'package:webapp/repositories/local/local_vehicle_catalog_repository.dart';
-import 'package:webapp/utils/display_text.dart';
-import 'package:webapp/utils/name_case_text_input_formatter.dart';
+import 'package:webapp/requests/vehicle.request.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_users.vm.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/views/shared/profile_view.dart';
@@ -15,7 +14,9 @@ import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 
 class AdminUsersView extends StatefulWidget {
   const AdminUsersView({
@@ -225,6 +226,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  AppRefreshStrip(isVisible: vm.isBusy),
                   _UsersToolbar(vm: vm),
                   const SizedBox(height: AdminUsersView.usersSectionGap),
                   if (isNarrow)
@@ -1102,7 +1104,7 @@ class _UsersTable extends StatelessWidget {
         final createdAtWidth = _maxTextWidth(
           context,
           textScaler,
-          'Created At',
+          'Created',
           _headerStyle,
           longestCreatedAtValue,
           _valueStyle,
@@ -1192,7 +1194,7 @@ class _UsersTable extends StatelessWidget {
                   _UsersFixedSlot(
                     width: resolvedCreatedAtWidth,
                     child: const _UsersHeader(
-                      label: 'Created At',
+                      label: 'Created',
                       trailingPadding: 20,
                     ),
                   ),
@@ -1566,10 +1568,7 @@ class _UsersResponsiveCard extends StatelessWidget {
           ('Phone', user.phone ?? '-'),
           ('Email', user.email ?? '-'),
           ('Role', AdminUsersView.formatRole(user.role)),
-          (
-            'Created At',
-            AdminUsersView.formatCreatedAtSingleLine(user.createdAt),
-          ),
+          ('Created', AdminUsersView.formatCreatedAtSingleLine(user.createdAt)),
         ];
         final contentWidths = resolvedFields
             .map(
@@ -1946,6 +1945,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   late bool _isActive;
   late bool _isOnline;
   String? _vehicleTypeId;
+  bool _isLoadingVehicleTypes = true;
   List<VehicleCatalogItem> _vehicleTypes = const [];
   bool _isPasswordObscured = true;
 
@@ -1981,14 +1981,21 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   }
 
   Future<void> _loadVehicleTypes() async {
-    final vehicleTypes = await LocalVehicleCatalogRepository.instance
-        .getTypes();
-    if (!mounted) {
-      return;
+    try {
+      final vehicleTypes = await VehicleRequest.instance.getTypes();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _vehicleTypes = vehicleTypes;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingVehicleTypes = false;
+        });
+      }
     }
-    setState(() {
-      _vehicleTypes = vehicleTypes;
-    });
   }
 
   @override
@@ -2066,93 +2073,105 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         ),
       ],
       child: AdminModalFormBody(
-        children: [
-          AdminModalFieldsSection(
-            children: [
-              AdminModalDropdownField<String>(
-                label: 'Role',
-                initialValue: _roleValue,
-                iconEnabledColor: AppColors.primaryColor,
-                bottomPadding: 8,
-                items: _roleOptions
-                    .map(
-                      (role) => DropdownMenuItem<String>(
-                        value: role,
-                        child: Text(
-                          humanizeDropdownValue(role),
-                          style: adminDropdownDisplayTextStyle,
-                        ),
+        children: _isDriverRole && _isLoadingVehicleTypes
+            ? const [
+                SizedBox(
+                  height: 220,
+                  child: AppPageLoading(
+                    message: 'Loading vehicle types...',
+                    compact: true,
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+              ]
+            : [
+                AdminModalFieldsSection(
+                  children: [
+                    AdminModalDropdownField<String>(
+                      label: 'Role',
+                      initialValue: _roleValue,
+                      iconEnabledColor: AppColors.primaryColor,
+                      bottomPadding: 8,
+                      items: _roleOptions
+                          .map(
+                            (role) => DropdownMenuItem<String>(
+                              value: role,
+                              child: Text(
+                                humanizeDropdownValue(role),
+                                style: adminDropdownDisplayTextStyle,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) => setState(() {
+                        _roleValue = value;
+                        if (_roleValue != 'driver') {
+                          _vehicleTypeId = null;
+                        }
+                        _handleDraftChanged();
+                      }),
+                    ),
+                    if (_isDriverRole)
+                      AdminModalDropdownField<String>(
+                        label: 'Vehicle Type',
+                        initialValue: _vehicleTypeId,
+                        iconEnabledColor: AppColors.primaryColor,
+                        bottomPadding: 8,
+                        items: _vehicleTypes
+                            .map(
+                              (item) => DropdownMenuItem<String>(
+                                value: item.id,
+                                child: Text(
+                                  [
+                                    item.name?.trim() ?? '',
+                                    if ((item.slug ?? '').trim().isNotEmpty)
+                                      '(${item.slug!.trim()})',
+                                  ].join(' ').trim(),
+                                  style: adminDropdownDisplayTextStyle,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) => setState(() {
+                          _vehicleTypeId = value;
+                          _handleDraftChanged();
+                        }),
                       ),
-                    )
-                    .toList(),
-                onChanged: (value) => setState(() {
-                  _roleValue = value;
-                  if (_roleValue != 'driver') {
-                    _vehicleTypeId = null;
-                  }
-                  _handleDraftChanged();
-                }),
-              ),
-              if (_isDriverRole)
-                AdminModalDropdownField<String>(
-                  label: 'Vehicle Type',
-                  initialValue: _vehicleTypeId,
-                  iconEnabledColor: AppColors.primaryColor,
-                  bottomPadding: 8,
-                  items: _vehicleTypes
-                      .map(
-                        (item) => DropdownMenuItem<String>(
-                          value: item.id,
-                          child: Text(
-                            [
-                              item.name?.trim() ?? '',
-                              if ((item.slug ?? '').trim().isNotEmpty)
-                                '(${item.slug!.trim()})',
-                            ].join(' ').trim(),
-                            style: adminDropdownDisplayTextStyle,
-                          ),
-                        ),
-                      )
-                      .toList(),
+                    _buildField(_emailController, 'Email', bottomPadding: 2),
+                    _buildField(_nameController, 'Name'),
+                    _buildField(_photoController, 'Photo'),
+                    _buildField(_phoneController, 'Phone'),
+                    if (_isDriverRole)
+                      _buildField(_licenseController, 'License'),
+                    if (_isDriverRole) _buildField(_latController, 'Latitude'),
+                    if (_isDriverRole) _buildField(_lngController, 'Longitude'),
+                    _buildField(
+                      _passwordController,
+                      'Password',
+                      obscureText: true,
+                      bottomPadding: 0,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                _buildToggleRow(
+                  title: 'Active',
+                  value: _isActive,
                   onChanged: (value) => setState(() {
-                    _vehicleTypeId = value;
+                    _isActive = value;
                     _handleDraftChanged();
                   }),
                 ),
-              _buildField(_emailController, 'Email', bottomPadding: 2),
-              _buildField(_nameController, 'Name'),
-              _buildField(_photoController, 'Photo'),
-              _buildField(_phoneController, 'Phone'),
-              if (_isDriverRole) _buildField(_licenseController, 'License'),
-              if (_isDriverRole) _buildField(_latController, 'Latitude'),
-              if (_isDriverRole) _buildField(_lngController, 'Longitude'),
-              _buildField(
-                _passwordController,
-                'Password',
-                obscureText: true,
-                bottomPadding: 0,
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          _buildToggleRow(
-            title: 'Active',
-            value: _isActive,
-            onChanged: (value) => setState(() {
-              _isActive = value;
-              _handleDraftChanged();
-            }),
-          ),
-          const SizedBox(height: 8),
-          _buildToggleRow(
-            title: 'Online',
-            value: _isOnline,
-            onChanged: (value) => setState(() {
-              _isOnline = value;
-              _handleDraftChanged();
-            }),
-          ),
-        ],
+                const SizedBox(height: 8),
+                _buildToggleRow(
+                  title: 'Online',
+                  value: _isOnline,
+                  onChanged: (value) => setState(() {
+                    _isOnline = value;
+                    _handleDraftChanged();
+                  }),
+                ),
+              ],
       ),
     );
   }

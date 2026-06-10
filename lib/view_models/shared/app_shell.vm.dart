@@ -1,12 +1,12 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
-import 'package:webapp/repositories/local/local_auth_repository.dart';
 
 class AppShellViewModel extends BaseViewModel {
   AppShellViewModel({
     AuthRepository? repository,
-  }) : _repository = repository ?? LocalAuthRepository.instance;
+  }) : _repository = repository ?? AuthRequest.instance;
 
   final AuthRepository _repository;
 

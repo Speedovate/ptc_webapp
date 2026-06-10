@@ -6,6 +6,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/view_models/client/client_booking_history.vm.dart';
 import 'package:webapp/views/shared/booking_workflow_view.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
 class ClientBookingHistoryView extends StatefulWidget {
@@ -107,10 +108,6 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
             .where((booking) => vm.matchesBooking(booking, _searchQuery))
             .toList();
 
-        if (vm.isLoading) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
         if (vm.errorMessage != null) {
           return _HistoryScaffold(
             toolbar: _HistoryToolbar(
@@ -118,12 +115,18 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
               onSearchChanged: _handleSearchChanged,
               onNewPressed: widget.onNewPressed,
             ),
-            child: Text(
-              vm.errorMessage!,
-              style: TextStyle(
-                color: AppColors.primaryColor.withValues(alpha: 0.72),
-                fontWeight: FontWeight.w600,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppRefreshStrip(isVisible: vm.isLoading),
+                Text(
+                  vm.errorMessage!,
+                  style: TextStyle(
+                    color: AppColors.primaryColor.withValues(alpha: 0.72),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           );
         }
@@ -135,12 +138,18 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
               onSearchChanged: _handleSearchChanged,
               onNewPressed: widget.onNewPressed,
             ),
-            child: Text(
-              'No bookings yet.',
-              style: TextStyle(
-                color: AppColors.primaryColor.withValues(alpha: 0.72),
-                fontWeight: FontWeight.w600,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppRefreshStrip(isVisible: vm.isLoading),
+                Text(
+                  vm.isLoading ? 'Preparing bookings...' : 'No bookings yet.',
+                  style: TextStyle(
+                    color: AppColors.primaryColor.withValues(alpha: 0.72),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           );
         }
@@ -152,15 +161,20 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
             onNewPressed: widget.onNewPressed,
           ),
           framed: false,
-          child: filteredBookings.isEmpty
-              ? Text(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AppRefreshStrip(isVisible: vm.isLoading),
+              if (filteredBookings.isEmpty)
+                Text(
                   'No bookings matched your current search.',
                   style: TextStyle(
                     color: AppColors.primaryColor.withValues(alpha: 0.72),
                     fontWeight: FontWeight.w600,
                   ),
                 )
-              : Column(
+              else
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: filteredBookings
                       .map(
@@ -180,6 +194,8 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
                       )
                       .toList(),
                 ),
+            ],
+          ),
         );
       },
     );

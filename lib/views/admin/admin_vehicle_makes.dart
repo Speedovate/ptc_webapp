@@ -11,6 +11,7 @@ import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 
 class AdminVehicleMakesView extends StatefulWidget {
   const AdminVehicleMakesView({super.key});
@@ -118,7 +119,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
             final typeWidth = AdminListMeasurements.maxTextWidth(
               context,
               textScaler,
-              'Assigned Type',
+              'Type',
               _headerStyle,
               sampleType,
               _titleStyle,
@@ -126,7 +127,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
             final driverWidth = AdminListMeasurements.maxTextWidth(
               context,
               textScaler,
-              'Assigned Driver',
+              'Driver',
               _headerStyle,
               sampleDriver,
               _valueStyle,
@@ -183,6 +184,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  AppRefreshStrip(isVisible: vm.isBusy),
                   AdminListToolbar(
                     controlHeight: 52,
                     surfaceRadius: 16,
@@ -210,9 +212,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                     },
                   ),
                   const SizedBox(height: 14),
-                  if (vm.isBusy)
-                    const Center(child: CircularProgressIndicator())
-                  else if (vm.errorMessage != null)
+                  if (vm.errorMessage != null)
                     AdminListStateText(message: vm.errorMessage!)
                   else if (vm.makes.isEmpty)
                     const _VehicleCatalogEmptyState(
@@ -393,6 +393,7 @@ class _VehicleMakeHeaderRow extends StatelessWidget {
     return AdminListHeaderBar(
       minHeight: 52,
       borderRadius: 16,
+      horizontalPadding: 16,
       child: Row(
         children: [
           AdminListFixedSlot(
@@ -405,11 +406,11 @@ class _VehicleMakeHeaderRow extends StatelessWidget {
           ),
           AdminListFixedSlot(
             width: typeWidth,
-            child: const AdminListHeaderCell(label: 'Assigned Type'),
+            child: const AdminListHeaderCell(label: 'Type'),
           ),
           AdminListFixedSlot(
             width: driverWidth,
-            child: const AdminListHeaderCell(label: 'Assigned Driver'),
+            child: const AdminListHeaderCell(label: 'Driver'),
           ),
           AdminListFixedSlot(
             width: activeWidth,
@@ -539,13 +540,13 @@ class _VehicleMakeResponsiveCard extends StatelessWidget {
               item.code?.trim().isNotEmpty == true ? item.code!.trim() : '-',
             ),
             (
-              'Assigned Type',
+              'Type',
               item.type?.name?.trim().isNotEmpty == true
                   ? item.type!.name!.trim()
                   : '-',
             ),
             (
-              'Assigned Driver',
+              'Driver',
               item.driver?.name?.trim().isNotEmpty == true
                   ? item.driver!.name!.trim()
                   : '-',
@@ -593,7 +594,7 @@ class _VehicleMakeResponsiveCard extends StatelessWidget {
                         child: _VehicleMakeMetaColumn(
                           label: field.$1,
                           value: field.$2,
-                          isTitle: field.$1 == 'Assigned Type',
+                          isTitle: field.$1 == 'Type',
                           centered: useSingleColumn,
                         ),
                       ),
@@ -971,7 +972,7 @@ Future<VehicleMake?> _showMakeDialog(
                   bottomPadding: 4,
                 ),
                 AdminModalDropdownField<String>(
-                  label: 'Assigned Type',
+                  label: 'Type',
                   initialValue: typeId,
                   bottomPadding: 10,
                   iconEnabledColor: AppColors.primaryColor,
@@ -989,7 +990,7 @@ Future<VehicleMake?> _showMakeDialog(
                   onChanged: (value) => setState(() => typeId = value),
                 ),
                 AdminModalDropdownField<String>(
-                  label: 'Assigned Driver',
+                  label: 'Driver',
                   initialValue: driverId,
                   bottomPadding: 0,
                   iconEnabledColor: AppColors.primaryColor,

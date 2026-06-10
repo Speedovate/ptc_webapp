@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:webapp/models/status_field.dart';
+
 const _statusDependencyUndefined = Object();
 const _statusFormUndefined = Object();
 const _statusFieldOverrideUndefined = Object();
@@ -125,7 +127,7 @@ class StatusForm {
     this.statusText,
     this.statusSubtext,
     this.buttonText,
-    this.fieldIds = const [],
+    this.fields = const [],
     this.fieldOverrides = const {},
     this.dependencies = const [],
     this.blockedMessage,
@@ -143,7 +145,7 @@ class StatusForm {
   final String? statusText;
   final String? statusSubtext;
   final String? buttonText;
-  final List<String> fieldIds;
+  final List<StatusField> fields;
   final Map<String, StatusFieldOverride> fieldOverrides;
   final List<StatusDependency> dependencies;
   final String? blockedMessage;
@@ -161,7 +163,7 @@ class StatusForm {
     Object? statusText = _statusFormUndefined,
     Object? statusSubtext = _statusFormUndefined,
     Object? buttonText = _statusFormUndefined,
-    List<String>? fieldIds,
+    List<StatusField>? fields,
     Map<String, StatusFieldOverride>? fieldOverrides,
     List<StatusDependency>? dependencies,
     Object? blockedMessage = _statusFormUndefined,
@@ -191,7 +193,7 @@ class StatusForm {
       buttonText: identical(buttonText, _statusFormUndefined)
           ? this.buttonText
           : buttonText as String?,
-      fieldIds: fieldIds ?? this.fieldIds,
+      fields: fields ?? this.fields,
       fieldOverrides: fieldOverrides ?? this.fieldOverrides,
       dependencies: dependencies ?? this.dependencies,
       blockedMessage: identical(blockedMessage, _statusFormUndefined)
@@ -220,7 +222,7 @@ class StatusForm {
       'status_text': statusText,
       'status_subtext': statusSubtext,
       'button_text': buttonText,
-      'field_ids': fieldIds,
+      'fields': fields.map((item) => item.toReferenceMap()).toList(),
       'field_overrides': fieldOverrides.map(
         (key, value) => MapEntry(key, value.toMap()),
       ),
@@ -234,6 +236,7 @@ class StatusForm {
 
   factory StatusForm.fromMap(Map<String, dynamic> map) {
     final dependencyMaps = map['dependencies'] as List<dynamic>? ?? const [];
+    final fieldMaps = map['fields'] as List<dynamic>? ?? const [];
     final fieldOverrideMaps = (map['field_overrides'] as Map?)?.map(
           (key, value) => MapEntry(
             key.toString(),
@@ -248,6 +251,10 @@ class StatusForm {
         .where((item) => item.isNotEmpty)
         .toList();
     final parsedRole = map['role']?.toString().trim();
+    final parsedFields = fieldMaps
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .map(StatusField.fromMap)
+        .toList();
     return StatusForm(
       id: map['id']?.toString(),
       role: parsedRole?.isNotEmpty == true ? parsedRole : null,
@@ -260,9 +267,7 @@ class StatusForm {
       statusText: map['status_text']?.toString(),
       statusSubtext: map['status_subtext']?.toString(),
       buttonText: map['button_text']?.toString(),
-      fieldIds: (map['field_ids'] as List<dynamic>? ?? const [])
-          .map((item) => item.toString())
-          .toList(),
+      fields: parsedFields,
       fieldOverrides: fieldOverrideMaps,
       dependencies: dependencyMaps
           .map((item) => Map<String, dynamic>.from(item as Map))
@@ -279,6 +284,41 @@ class StatusForm {
 
   factory StatusForm.fromJson(String source) {
     return StatusForm.fromMap(json.decode(source) as Map<String, dynamic>);
+  }
+
+  Map<String, dynamic> toReferenceMap() {
+    return {
+      'id': id,
+      'role': role,
+      'roles': roles,
+      'is_main_form': isMainForm,
+      'current_status_key': currentStatusKey,
+      'next_status_key': nextStatusKey,
+      'status_text': statusText,
+      'status_subtext': statusSubtext,
+      'button_text': buttonText,
+      'is_active': isActive,
+    };
+  }
+
+  StatusForm toReferenceForm() {
+    return StatusForm(
+      id: id,
+      role: role,
+      roles: roles,
+      isMainForm: isMainForm,
+      currentStatusKey: currentStatusKey,
+      nextStatusKey: nextStatusKey,
+      statusText: statusText,
+      statusSubtext: statusSubtext,
+      buttonText: buttonText,
+      fieldOverrides: fieldOverrides,
+      dependencies: dependencies,
+      blockedMessage: blockedMessage,
+      isActive: isActive,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
   }
 
   List<String> get resolvedRoles {
@@ -317,7 +357,7 @@ class StatusForm {
         other.statusText == statusText &&
         other.statusSubtext == statusSubtext &&
         other.buttonText == buttonText &&
-        _listEquals(other.fieldIds, fieldIds) &&
+        _fieldListEquals(other.fields, fields) &&
         _fieldOverrideMapEquals(other.fieldOverrides, fieldOverrides) &&
         _dependencyListEquals(other.dependencies, dependencies) &&
         other.blockedMessage == blockedMessage &&
@@ -337,7 +377,7 @@ class StatusForm {
     statusText,
     statusSubtext,
     buttonText,
-    Object.hashAll(fieldIds),
+    Object.hashAll(fields.map((field) => field.id)),
     Object.hashAll(
       fieldOverrides.entries.map((entry) => Object.hash(entry.key, entry.value)),
     ),
@@ -377,6 +417,21 @@ class StatusForm {
     List<StatusDependency> a,
     List<StatusDependency> b,
   ) {
+    if (identical(a, b)) {
+      return true;
+    }
+    if (a.length != b.length) {
+      return false;
+    }
+    for (var index = 0; index < a.length; index += 1) {
+      if (a[index] != b[index]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _fieldListEquals(List<StatusField> a, List<StatusField> b) {
     if (identical(a, b)) {
       return true;
     }

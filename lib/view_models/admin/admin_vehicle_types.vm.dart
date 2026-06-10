@@ -1,14 +1,18 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
-import 'package:webapp/repositories/local/local_vehicle_catalog_repository.dart';
 
 class AdminVehicleTypesViewModel extends BaseViewModel {
-  AdminVehicleTypesViewModel({
-    VehicleCatalogRepository? repository,
-  }) : _repository = repository ?? LocalVehicleCatalogRepository.instance;
+  AdminVehicleTypesViewModel({VehicleCatalogRepository? repository})
+    : _repository = repository ?? VehicleRequest.instance {
+    _types = List<VehicleCatalogItem>.from(_cachedTypes);
+    _errorMessage = _cachedErrorMessage;
+  }
 
   final VehicleCatalogRepository _repository;
+  static List<VehicleCatalogItem> _cachedTypes = const [];
+  static String? _cachedErrorMessage;
 
   List<VehicleCatalogItem> _types = const [];
   String? _errorMessage;
@@ -21,8 +25,12 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
     _errorMessage = null;
     try {
       _types = await _repository.getTypes();
+      _sortTypes();
+      _cachedTypes = List<VehicleCatalogItem>.from(_types);
+      _cachedErrorMessage = null;
     } catch (_) {
       _errorMessage = 'Failed to load vehicle types.';
+      _cachedErrorMessage = _errorMessage;
     } finally {
       setBusy(false);
     }
@@ -37,6 +45,7 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
       _types = [..._types, saved];
     }
     _sortTypes();
+    _cachedTypes = List<VehicleCatalogItem>.from(_types);
     notifyListeners();
     return saved;
   }
@@ -48,6 +57,7 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
     }
     await _repository.deleteType(typeId);
     _types = _types.where((item) => item.id != typeId).toList();
+    _cachedTypes = List<VehicleCatalogItem>.from(_types);
     notifyListeners();
   }
 
@@ -56,19 +66,13 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
     bool isActive,
   ) {
     return saveType(
-      type.copyWith(
-        isActive: isActive,
-        updatedAt: DateTime.now(),
-      ),
+      type.copyWith(isActive: isActive, updatedAt: DateTime.now()),
     );
   }
 
   void _sortTypes() {
     _types.sort((a, b) {
-      final createdComparison = _compareLatestFirst(
-        a.createdAt,
-        b.createdAt,
-      );
+      final createdComparison = _compareLatestFirst(a.createdAt, b.createdAt);
       if (createdComparison != 0) {
         return createdComparison;
       }

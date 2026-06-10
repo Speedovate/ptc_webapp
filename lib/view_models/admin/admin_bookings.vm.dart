@@ -1,30 +1,48 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
-import 'package:webapp/models/status_definition.dart';
+import 'package:webapp/models/status.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
+import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/status.request.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
-import 'package:webapp/repositories/local/local_auth_repository.dart';
-import 'package:webapp/repositories/local/local_booking_repository.dart';
-import 'package:webapp/repositories/local/local_status_form_repository.dart';
-import 'package:webapp/repositories/local/local_vehicle_catalog_repository.dart';
+import 'package:webapp/repositories/interfaces/booking_repository.dart';
+import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
 
 class AdminBookingsViewModel extends BaseViewModel {
   AdminBookingsViewModel({
     AuthRepository? authRepository,
-  }) : _authRepository = authRepository ?? LocalAuthRepository.instance,
-       _bookingRepository = LocalBookingRepository.instance,
-       _statusRepository = LocalStatusFormRepository.instance,
-       _vehicleCatalogRepository = LocalVehicleCatalogRepository.instance;
+    BookingRepository? bookingRepository,
+    StatusFormRepository? statusRepository,
+    VehicleCatalogRepository? vehicleCatalogRepository,
+  }) : _authRepository = authRepository ?? AuthRequest.instance,
+       _bookingRepository = bookingRepository ?? BookingRequest.instance,
+       _statusRepository = statusRepository ?? StatusRequest.instance,
+       _vehicleCatalogRepository =
+           vehicleCatalogRepository ?? VehicleRequest.instance {
+    _bookings.addAll(_cachedBookings);
+    _usersById.addAll(_cachedUsersById);
+    _statusesByKey.addAll(_cachedStatusesByKey);
+    _vehicleSizes = List<VehicleCatalogItem>.from(_cachedVehicleSizes);
+    errorMessage = _cachedErrorMessage;
+  }
 
   final AuthRepository _authRepository;
-  final LocalBookingRepository _bookingRepository;
-  final LocalStatusFormRepository _statusRepository;
-  final LocalVehicleCatalogRepository _vehicleCatalogRepository;
+  final BookingRepository _bookingRepository;
+  final StatusFormRepository _statusRepository;
+  final VehicleCatalogRepository _vehicleCatalogRepository;
+  static List<Booking> _cachedBookings = const [];
+  static Map<String, UserModel> _cachedUsersById = const {};
+  static Map<String, Status> _cachedStatusesByKey = const {};
+  static List<VehicleCatalogItem> _cachedVehicleSizes = const [];
+  static String? _cachedErrorMessage;
 
   final List<Booking> _bookings = [];
   final Map<String, UserModel> _usersById = {};
-  final Map<String, StatusDefinition> _statusesByKey = {};
+  final Map<String, Status> _statusesByKey = {};
   List<VehicleCatalogItem> _vehicleSizes = const [];
   String _searchQuery = '';
   String _statusFilter = 'All';
@@ -72,8 +90,14 @@ class AdminBookingsViewModel extends BaseViewModel {
       _bookings
         ..clear()
         ..addAll(await _bookingRepository.getBookings());
+      _cachedBookings = List<Booking>.from(_bookings);
+      _cachedUsersById = Map<String, UserModel>.from(_usersById);
+      _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
+      _cachedVehicleSizes = List<VehicleCatalogItem>.from(_vehicleSizes);
+      _cachedErrorMessage = null;
     } catch (_) {
       errorMessage = 'Failed to load bookings.';
+      _cachedErrorMessage = errorMessage;
     } finally {
       setBusy(false);
       notifyListeners();
@@ -118,8 +142,8 @@ class AdminBookingsViewModel extends BaseViewModel {
   List<Booking> filteredBookings() {
     final query = _searchQuery.trim().toLowerCase();
     return bookings.where((booking) {
-      final matchesStatus = _statusFilter == 'All' ||
-          clientStatusLabel(booking) == _statusFilter;
+      final matchesStatus =
+          _statusFilter == 'All' || clientStatusLabel(booking) == _statusFilter;
       if (!matchesStatus) {
         return false;
       }
@@ -138,10 +162,10 @@ class AdminBookingsViewModel extends BaseViewModel {
       if (query.isEmpty) {
         return true;
       }
-      final client = _usersById[booking.clientId];
+      final client = _usersById[booking.client?.id];
       final values = <String>[
         booking.id ?? '',
-        booking.clientId ?? '',
+        booking.client?.id ?? '',
         booking.clientStatus ?? '',
         booking.driverStatus ?? '',
         booking.helperStatus ?? '',
@@ -185,37 +209,37 @@ class AdminBookingsViewModel extends BaseViewModel {
   }
 
   String clientName(Booking booking) {
-    final client = _usersById[booking.clientId];
+    final client = _usersById[booking.client?.id];
     final name = client?.name?.trim();
     return name?.isNotEmpty == true ? name! : 'Unknown client';
   }
 
   String clientPhone(Booking booking) {
-    final client = _usersById[booking.clientId];
+    final client = _usersById[booking.client?.id];
     final phone = client?.phone?.trim();
     return phone?.isNotEmpty == true ? phone! : '-';
   }
 
   String driverName(Booking booking) {
-    final driver = _usersById[booking.driverId];
+    final driver = _usersById[booking.driver?.id];
     final name = driver?.name?.trim();
     return name?.isNotEmpty == true ? name! : '-';
   }
 
   String driverPhone(Booking booking) {
-    final driver = _usersById[booking.driverId];
+    final driver = _usersById[booking.driver?.id];
     final phone = driver?.phone?.trim();
     return phone?.isNotEmpty == true ? phone! : '-';
   }
 
   String helperName(Booking booking) {
-    final helper = _usersById[booking.helperId];
+    final helper = _usersById[booking.helper?.id];
     final name = helper?.name?.trim();
     return name?.isNotEmpty == true ? name! : '-';
   }
 
   String helperPhone(Booking booking) {
-    final helper = _usersById[booking.helperId];
+    final helper = _usersById[booking.helper?.id];
     final phone = helper?.phone?.trim();
     return phone?.isNotEmpty == true ? phone! : '-';
   }
@@ -224,13 +248,11 @@ class AdminBookingsViewModel extends BaseViewModel {
     return statusLabelForKey(booking.clientStatus);
   }
 
-  List<StatusDefinition> activeStatuses() {
+  List<Status> activeStatuses() {
     return _statusesByKey.values
         .where((status) => status.isActive ?? false)
         .toList()
-      ..sort(
-        (left, right) => (left.label ?? '').compareTo(right.label ?? ''),
-      );
+      ..sort((left, right) => (left.label ?? '').compareTo(right.label ?? ''));
   }
 
   List<UserModel> roleUsers(String role) {
@@ -247,9 +269,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   }
 
   List<VehicleCatalogItem> activeVehicleSizes() {
-    return _vehicleSizes
-        .where((size) => size.isActive ?? false)
-        .toList()
+    return _vehicleSizes.where((size) => size.isActive ?? false).toList()
       ..sort((left, right) => (left.name ?? '').compareTo(right.name ?? ''));
   }
 
@@ -288,7 +308,9 @@ class AdminBookingsViewModel extends BaseViewModel {
       ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
   }
 
-  static List<String> _flattenBookingOutputValues(Map<String, dynamic>? outputs) {
+  static List<String> _flattenBookingOutputValues(
+    Map<String, dynamic>? outputs,
+  ) {
     if (outputs == null || outputs.isEmpty) {
       return const [];
     }

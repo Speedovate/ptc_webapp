@@ -2,20 +2,29 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
+import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
-import 'package:webapp/repositories/local/local_auth_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
-import 'package:webapp/repositories/local/local_vehicle_catalog_repository.dart';
 
 class AdminVehicleMakesViewModel extends BaseViewModel {
   AdminVehicleMakesViewModel({
     VehicleCatalogRepository? repository,
     AuthRepository? authRepository,
-  }) : _repository = repository ?? LocalVehicleCatalogRepository.instance,
-       _authRepository = authRepository ?? LocalAuthRepository.instance;
+  }) : _repository = repository ?? VehicleRequest.instance,
+       _authRepository = authRepository ?? AuthRequest.instance {
+    _makes = List<VehicleMake>.from(_cachedMakes);
+    _drivers = List<UserModel>.from(_cachedDrivers);
+    _types = List<VehicleCatalogItem>.from(_cachedTypes);
+    _errorMessage = _cachedErrorMessage;
+  }
 
   final VehicleCatalogRepository _repository;
   final AuthRepository _authRepository;
+  static List<VehicleMake> _cachedMakes = const [];
+  static List<UserModel> _cachedDrivers = const [];
+  static List<VehicleCatalogItem> _cachedTypes = const [];
+  static String? _cachedErrorMessage;
 
   List<VehicleMake> _makes = const [];
   List<UserModel> _drivers = const [];
@@ -33,13 +42,19 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
     try {
       _makes = await _repository.getMakes();
       _types = await _repository.getTypes();
-      _drivers = (await _authRepository.getUsers())
-          .where((user) => user.role == 'driver')
-          .toList()
-        ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
+      _drivers =
+          (await _authRepository.getUsers())
+              .where((user) => user.role == 'driver')
+              .toList()
+            ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
       _sortMakes();
+      _cachedMakes = List<VehicleMake>.from(_makes);
+      _cachedDrivers = List<UserModel>.from(_drivers);
+      _cachedTypes = List<VehicleCatalogItem>.from(_types);
+      _cachedErrorMessage = null;
     } catch (_) {
       _errorMessage = 'Failed to load vehicle makes.';
+      _cachedErrorMessage = _errorMessage;
     } finally {
       setBusy(false);
     }
@@ -54,6 +69,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
       _makes = [..._makes, saved];
     }
     _sortMakes();
+    _cachedMakes = List<VehicleMake>.from(_makes);
     notifyListeners();
     return saved;
   }
@@ -65,27 +81,19 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
     }
     await _repository.deleteMake(makeId);
     _makes = _makes.where((item) => item.id != makeId).toList();
+    _cachedMakes = List<VehicleMake>.from(_makes);
     notifyListeners();
   }
 
-  Future<VehicleMake> setMakeActive(
-    VehicleMake make,
-    bool isActive,
-  ) {
+  Future<VehicleMake> setMakeActive(VehicleMake make, bool isActive) {
     return saveMake(
-      make.copyWith(
-        isActive: isActive,
-        updatedAt: DateTime.now(),
-      ),
+      make.copyWith(isActive: isActive, updatedAt: DateTime.now()),
     );
   }
 
   void _sortMakes() {
     _makes.sort((a, b) {
-      final createdComparison = _compareLatestFirst(
-        a.createdAt,
-        b.createdAt,
-      );
+      final createdComparison = _compareLatestFirst(a.createdAt, b.createdAt);
       if (createdComparison != 0) {
         return createdComparison;
       }

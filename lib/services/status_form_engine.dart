@@ -1,6 +1,7 @@
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
+import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 
 class StatusFormEngine {
@@ -142,11 +143,9 @@ class StatusFormEngine {
         ? 'cancelled'
         : (statusForm.currentStatusKey ?? 'status');
     final truckId = _stringAnswer(answers['truck_id']);
-    final driverId = _stringAnswer(answers['driver_id']);
-    final helperId = _stringAnswer(answers['helper_id']);
     final nextOutputs = Map<String, dynamic>.from(booking.statusOutputs ?? {})
       ..[outputKey] = {
-        'status_form_id': statusForm.id,
+        'status_form': statusForm.toReferenceMap(),
         'submitted_role': statusForm.primaryRole ?? statusForm.role,
         'submitted_roles': statusForm.resolvedRoles,
         'submitted_by': userId,
@@ -158,9 +157,7 @@ class StatusFormEngine {
       clientStatus: nextStatus ?? booking.clientStatus,
       driverStatus: nextStatus ?? booking.driverStatus,
       helperStatus: nextStatus ?? booking.helperStatus,
-      truckId: truckId ?? booking.truckId,
-      driverId: driverId ?? booking.driverId,
-      helperId: helperId ?? booking.helperId,
+      truck: truckId == null ? booking.truck : VehicleMake(id: truckId),
       statusOutputs: nextOutputs,
       updatedAt: DateTime.now(),
     );

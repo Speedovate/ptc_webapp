@@ -1,14 +1,18 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
-import 'package:webapp/repositories/local/local_vehicle_catalog_repository.dart';
 
 class AdminVehicleSizesViewModel extends BaseViewModel {
-  AdminVehicleSizesViewModel({
-    VehicleCatalogRepository? repository,
-  }) : _repository = repository ?? LocalVehicleCatalogRepository.instance;
+  AdminVehicleSizesViewModel({VehicleCatalogRepository? repository})
+    : _repository = repository ?? VehicleRequest.instance {
+    _sizes = List<VehicleCatalogItem>.from(_cachedSizes);
+    _errorMessage = _cachedErrorMessage;
+  }
 
   final VehicleCatalogRepository _repository;
+  static List<VehicleCatalogItem> _cachedSizes = const [];
+  static String? _cachedErrorMessage;
 
   List<VehicleCatalogItem> _sizes = const [];
   String? _errorMessage;
@@ -21,8 +25,12 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
     _errorMessage = null;
     try {
       _sizes = await _repository.getSizes();
+      _sortSizes();
+      _cachedSizes = List<VehicleCatalogItem>.from(_sizes);
+      _cachedErrorMessage = null;
     } catch (_) {
       _errorMessage = 'Failed to load vehicle sizes.';
+      _cachedErrorMessage = _errorMessage;
     } finally {
       setBusy(false);
     }
@@ -37,6 +45,7 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
       _sizes = [..._sizes, saved];
     }
     _sortSizes();
+    _cachedSizes = List<VehicleCatalogItem>.from(_sizes);
     notifyListeners();
     return saved;
   }
@@ -48,6 +57,7 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
     }
     await _repository.deleteSize(sizeId);
     _sizes = _sizes.where((item) => item.id != sizeId).toList();
+    _cachedSizes = List<VehicleCatalogItem>.from(_sizes);
     notifyListeners();
   }
 
@@ -56,19 +66,13 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
     bool isActive,
   ) {
     return saveSize(
-      size.copyWith(
-        isActive: isActive,
-        updatedAt: DateTime.now(),
-      ),
+      size.copyWith(isActive: isActive, updatedAt: DateTime.now()),
     );
   }
 
   void _sortSizes() {
     _sizes.sort((a, b) {
-      final createdComparison = _compareLatestFirst(
-        a.createdAt,
-        b.createdAt,
-      );
+      final createdComparison = _compareLatestFirst(a.createdAt, b.createdAt);
       if (createdComparison != 0) {
         return createdComparison;
       }

@@ -14,9 +14,9 @@ enum AdminSection {
 }
 
 enum AdminSettingsSection {
+  statuses('Statuses'),
   forms('Forms'),
-  fields('Fields'),
-  statuses('Statuses');
+  fields('Fields');
 
   const AdminSettingsSection(this.title);
 
@@ -36,7 +36,7 @@ enum AdminVehiclesSection {
 class AdminHomeViewModel extends BaseViewModel {
   bool showDrawer = true;
   AdminSection selectedSection = AdminSection.dashboard;
-  AdminSettingsSection selectedSettingsSection = AdminSettingsSection.forms;
+  AdminSettingsSection selectedSettingsSection = AdminSettingsSection.statuses;
   AdminVehiclesSection selectedVehiclesSection = AdminVehiclesSection.makes;
   bool isSettingsExpanded = false;
   bool isVehiclesExpanded = false;

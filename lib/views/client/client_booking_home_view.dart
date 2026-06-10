@@ -6,6 +6,7 @@ import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/view_models/client/client_booking_home.vm.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/booking_form_primitives.dart';
 import 'package:webapp/widgets/status_form/status_form_runtime_fields.dart';
@@ -50,7 +51,7 @@ class ClientBookingHomeView extends StatefulWidget {
     super.key,
     required this.user,
     this.onBookingSubmitted,
-    this.bookingClientId,
+    this.bookingClientUser,
     this.submittedByUserId,
     this.padding = const EdgeInsets.fromLTRB(24, 24, 24, 24),
     this.scrollable = true,
@@ -58,7 +59,7 @@ class ClientBookingHomeView extends StatefulWidget {
 
   final UserModel user;
   final ValueChanged<Booking>? onBookingSubmitted;
-  final String? bookingClientId;
+  final UserModel? bookingClientUser;
   final String? submittedByUserId;
   final EdgeInsets padding;
   final bool scrollable;
@@ -70,7 +71,7 @@ class ClientBookingHomeView extends StatefulWidget {
 class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
   ClientBookingHomeViewModel? _viewModel;
 
-  String get _effectiveClientId => widget.bookingClientId ?? (widget.user.id ?? '');
+  UserModel get _effectiveClientUser => widget.bookingClientUser ?? widget.user;
 
   String get _effectiveSubmittedByUserId =>
       widget.submittedByUserId ?? widget.user.id ?? '';
@@ -112,9 +113,10 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
   @override
   void didUpdateWidget(covariant ClientBookingHomeView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final oldClientId = oldWidget.bookingClientId ?? (oldWidget.user.id ?? '');
-    if (oldClientId != _effectiveClientId) {
-      _viewModel?.syncClient(_effectiveClientId);
+    final oldClientUser = oldWidget.bookingClientUser ?? oldWidget.user;
+    if (oldClientUser.id != _effectiveClientUser.id ||
+        oldClientUser.updatedAt != _effectiveClientUser.updatedAt) {
+      _viewModel?.syncClient(_effectiveClientUser);
     }
   }
 
@@ -124,30 +126,27 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
       viewModelBuilder: ClientBookingHomeViewModel.new,
       onViewModelReady: (vm) {
         _viewModel = vm;
-        vm.load(_effectiveClientId);
+        vm.load(_effectiveClientUser);
       },
       builder: (context, vm, _) {
         _viewModel = vm;
-        if (vm.isBusyLoading) {
-          return widget.scrollable
-              ? const Center(child: CircularProgressIndicator())
-              : const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-        }
-
         final loadError = vm.loadError;
         if (loadError != null) {
           return _ClientBookingStateCard(
             scrollable: widget.scrollable,
             padding: widget.padding,
-            child: Text(
-              loadError,
-              style: TextStyle(
-                color: AppColors.primaryColor.withValues(alpha: 0.72),
-                fontWeight: FontWeight.w600,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppRefreshStrip(isVisible: vm.isBusyLoading),
+                Text(
+                  loadError,
+                  style: TextStyle(
+                    color: AppColors.primaryColor.withValues(alpha: 0.72),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           );
         }
@@ -157,12 +156,20 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
           return _ClientBookingStateCard(
             scrollable: widget.scrollable,
             padding: widget.padding,
-            child: Text(
-              'No client booking form available yet.',
-              style: TextStyle(
-                color: AppColors.primaryColor.withValues(alpha: 0.72),
-                fontWeight: FontWeight.w600,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppRefreshStrip(isVisible: vm.isBusyLoading),
+                Text(
+                  vm.isBusyLoading
+                      ? 'Preparing booking form...'
+                      : 'No client booking form available yet.',
+                  style: TextStyle(
+                    color: AppColors.primaryColor.withValues(alpha: 0.72),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           );
         }
@@ -177,10 +184,10 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
                   bottom: entry.key == vm.mainForms.length - 1 ? 0 : 18,
                 ),
                 child: _ClientBookingFormSection(
-                  key: ValueKey('${activeForm.id}:$_effectiveClientId'),
+                  key: ValueKey('${activeForm.id}:${_effectiveClientUser.id}'),
                   vm: vm,
                   form: activeForm,
-                  clientId: _effectiveClientId,
+                  clientUser: _effectiveClientUser,
                   submittedByUserId: _effectiveSubmittedByUserId,
                   onBookingSubmitted: widget.onBookingSubmitted,
                   onUnfocusWithoutScroll: () => _unfocusWithoutScroll(context),
@@ -191,14 +198,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
         );
 
         return widget.scrollable
-            ? SingleChildScrollView(
-                padding: widget.padding,
-                child: content,
-              )
-            : Padding(
-                padding: widget.padding,
-                child: content,
-              );
+            ? SingleChildScrollView(padding: widget.padding, child: content)
+            : Padding(padding: widget.padding, child: content);
       },
     );
   }
@@ -209,7 +210,7 @@ class _ClientBookingFormSection extends StatefulWidget {
     super.key,
     required this.vm,
     required this.form,
-    required this.clientId,
+    required this.clientUser,
     required this.submittedByUserId,
     required this.onUnfocusWithoutScroll,
     this.onBookingSubmitted,
@@ -217,7 +218,7 @@ class _ClientBookingFormSection extends StatefulWidget {
 
   final ClientBookingHomeViewModel vm;
   final StatusForm form;
-  final String clientId;
+  final UserModel clientUser;
   final String submittedByUserId;
   final VoidCallback onUnfocusWithoutScroll;
   final ValueChanged<Booking>? onBookingSubmitted;
@@ -238,7 +239,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
     final vm = widget.vm;
     final form = widget.form;
     final fields = vm.fieldsForForm(form);
-    final blockedMessage = vm.blockedMessageForForm(form, widget.clientId);
+    final blockedMessage = vm.blockedMessageForForm(form, widget.clientUser);
     final terminalPalette = form.nextStatusKey == null
         ? _terminalClientHeaderPalette(form.currentStatusKey)
         : null;
@@ -315,8 +316,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
             final confirmed = await showAdminActionConfirmation(
               context,
               title: 'Confirm Action',
-              message:
-                  'Are you sure you want to ${actionLabel.toLowerCase()}?',
+              message: 'Are you sure you want to ${actionLabel.toLowerCase()}?',
               confirmLabel: actionLabel,
             );
             if (!confirmed || !mounted) {
@@ -329,7 +329,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
             final booking = await vm.submitForm(
               activeForm: form,
               formAnswers: Map<String, dynamic>.from(_answers),
-              clientId: widget.clientId,
+              clientUser: widget.clientUser,
               submittedByUserId: widget.submittedByUserId,
             );
             if (!mounted) {
@@ -341,14 +341,16 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
             if (booking == null) {
               final latestBlockedMessage = vm.blockedMessageForForm(
                 form,
-                widget.clientId,
+                widget.clientUser,
               );
               if (latestBlockedMessage != null) {
                 if (!mounted) {
                   return;
                 }
-                final messengerContext = this.context;
-                AppSnackbar.showError(messengerContext, latestBlockedMessage);
+                if (!context.mounted) {
+                  return;
+                }
+                AppSnackbar.showError(context, latestBlockedMessage);
               }
               return;
             }
@@ -360,8 +362,10 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
             if (!mounted) {
               return;
             }
-            final messengerContext = this.context;
-            AppSnackbar.showSuccess(messengerContext, 'Booking has been created.');
+            if (!context.mounted) {
+              return;
+            }
+            AppSnackbar.showSuccess(context, 'Booking has been created.');
             widget.onBookingSubmitted?.call(booking);
           },
           onClear: () {
@@ -418,9 +422,7 @@ class _ClientBookingActions extends StatelessWidget {
         foregroundColor: Colors.white,
         minimumSize: const Size(0, 52),
         padding: const EdgeInsets.symmetric(horizontal: 18),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       child: Text(submitLabel),
     );
@@ -439,21 +441,12 @@ class _ClientBookingActions extends StatelessWidget {
             children: [
               submitButton,
               const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: clearButton,
-              ),
+              Align(alignment: Alignment.centerRight, child: clearButton),
             ],
           );
         }
 
-        return Row(
-          children: [
-            submitButton,
-            const Spacer(),
-            clearButton,
-          ],
-        );
+        return Row(children: [submitButton, const Spacer(), clearButton]);
       },
     );
   }
@@ -484,13 +477,7 @@ class _ClientBookingStateCard extends StatelessWidget {
     );
 
     return scrollable
-        ? SingleChildScrollView(
-            padding: padding,
-            child: content,
-          )
-        : Padding(
-            padding: padding,
-            child: content,
-          );
+        ? SingleChildScrollView(padding: padding, child: content)
+        : Padding(padding: padding, child: content);
   }
 }

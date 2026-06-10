@@ -1,23 +1,38 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
-import 'package:webapp/models/status_definition.dart';
+import 'package:webapp/models/status.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
-import 'package:webapp/repositories/local/local_auth_repository.dart';
-import 'package:webapp/repositories/local/local_booking_repository.dart';
-import 'package:webapp/repositories/local/local_status_form_repository.dart';
+import 'package:webapp/repositories/interfaces/booking_repository.dart';
+import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 
 class ClientBookingHistoryViewModel extends BaseViewModel {
-  ClientBookingHistoryViewModel()
-      : _bookingRepository = LocalBookingRepository.instance,
-        _authRepository = LocalAuthRepository.instance,
-        _statusRepository = LocalStatusFormRepository.instance;
+  ClientBookingHistoryViewModel({
+    BookingRepository? bookingRepository,
+    AuthRepository? authRepository,
+    StatusFormRepository? statusRepository,
+  }) : _bookingRepository = bookingRepository ?? BookingRequest.instance,
+       _authRepository = authRepository ?? AuthRequest.instance,
+       _statusRepository = statusRepository ?? StatusRequest.instance {
+    bookings = List<Booking>.from(_cachedBookings);
+    isLoading = false;
+    errorMessage = _cachedErrorMessage;
+    _usersById.addAll(_cachedUsersById);
+    _statusesByKey.addAll(_cachedStatusesByKey);
+  }
 
-  final LocalBookingRepository _bookingRepository;
+  final BookingRepository _bookingRepository;
   final AuthRepository _authRepository;
-  final LocalStatusFormRepository _statusRepository;
+  final StatusFormRepository _statusRepository;
   final Map<String, UserModel> _usersById = {};
-  final Map<String, StatusDefinition> _statusesByKey = {};
+  final Map<String, Status> _statusesByKey = {};
+  static List<Booking> _cachedBookings = const [];
+  static String? _cachedErrorMessage;
+  static Map<String, UserModel> _cachedUsersById = const {};
+  static Map<String, Status> _cachedStatusesByKey = const {};
 
   List<Booking> bookings = [];
   bool isLoading = false;
@@ -53,36 +68,45 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
       final allBookings = await _bookingRepository.getBookings();
       final currentUserId = user.id ?? '';
       bookings = switch (user.role) {
-        'client' => allBookings
-            .where((booking) => booking.clientId == currentUserId)
-            .toList(),
-        'driver' => allBookings
-            .where((booking) => booking.driverId == currentUserId)
-            .toList(),
-        'helper' => allBookings
-            .where((booking) => booking.helperId == currentUserId)
-            .toList(),
+        'client' =>
+          allBookings
+              .where((booking) => booking.client?.id == currentUserId)
+              .toList(),
+        'driver' =>
+          allBookings
+              .where((booking) => booking.driver?.id == currentUserId)
+              .toList(),
+        'helper' =>
+          allBookings
+              .where((booking) => booking.helper?.id == currentUserId)
+              .toList(),
         _ => const [],
       };
+      _cachedBookings = List<Booking>.from(bookings);
+      _cachedErrorMessage = null;
+      _cachedUsersById = Map<String, UserModel>.from(_usersById);
+      _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
     } catch (_) {
       errorMessage = 'Failed to load booking history.';
+      _cachedErrorMessage = errorMessage;
     } finally {
       isLoading = false;
       notifyListeners();
     }
   }
 
-  String clientName(Booking booking) => _userName(booking.clientId, 'Unknown client');
+  String clientName(Booking booking) =>
+      _userName(booking.client?.id, 'Unknown client');
 
-  String clientPhone(Booking booking) => _userPhone(booking.clientId);
+  String clientPhone(Booking booking) => _userPhone(booking.client?.id);
 
-  String driverName(Booking booking) => _userName(booking.driverId, '-');
+  String driverName(Booking booking) => _userName(booking.driver?.id, '-');
 
-  String driverPhone(Booking booking) => _userPhone(booking.driverId);
+  String driverPhone(Booking booking) => _userPhone(booking.driver?.id);
 
-  String helperName(Booking booking) => _userName(booking.helperId, '-');
+  String helperName(Booking booking) => _userName(booking.helper?.id, '-');
 
-  String helperPhone(Booking booking) => _userPhone(booking.helperId);
+  String helperPhone(Booking booking) => _userPhone(booking.helper?.id);
 
   String statusLabelForRole(String? role, Booking booking) {
     return statusLabelForKey(booking.clientStatus);
@@ -143,7 +167,9 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
     return phone?.isNotEmpty == true ? phone! : '-';
   }
 
-  static List<String> _flattenBookingOutputValues(Map<String, dynamic>? outputs) {
+  static List<String> _flattenBookingOutputValues(
+    Map<String, dynamic>? outputs,
+  ) {
     if (outputs == null || outputs.isEmpty) {
       return const [];
     }

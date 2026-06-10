@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/status_field.dart';
-import 'package:webapp/utils/display_text.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_status_form.vm.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
@@ -10,6 +10,7 @@ import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/status_form/status_field_editor_card.dart';
 
@@ -169,7 +170,15 @@ class AdminFieldsView extends StatelessWidget {
       viewModelBuilder: AdminStatusFormViewModel.new,
       onViewModelReady: (vm) => vm.loadForms(),
       builder: (context, vm, child) {
-        return _FieldsContent(vm: vm);
+        return Column(
+          children: [
+            AppRefreshStrip(
+              isVisible: vm.isLoading,
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            ),
+            Expanded(child: _FieldsContent(vm: vm)),
+          ],
+        );
       },
     );
   }

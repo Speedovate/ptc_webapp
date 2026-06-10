@@ -1,24 +1,40 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
-import 'package:webapp/models/status_definition.dart';
+import 'package:webapp/models/status.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
-import 'package:webapp/repositories/local/local_auth_repository.dart';
-import 'package:webapp/repositories/local/local_booking_repository.dart';
-import 'package:webapp/repositories/local/local_status_form_repository.dart';
+import 'package:webapp/repositories/interfaces/booking_repository.dart';
+import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 
 class RoleAssignedHomeViewModel extends BaseViewModel {
-  RoleAssignedHomeViewModel({AuthRepository? authRepository})
-    : _authRepository = authRepository ?? LocalAuthRepository.instance,
-      _bookingRepository = LocalBookingRepository.instance,
-      _statusRepository = LocalStatusFormRepository.instance;
+  RoleAssignedHomeViewModel({
+    AuthRepository? authRepository,
+    BookingRepository? bookingRepository,
+    StatusFormRepository? statusRepository,
+  }) : _authRepository = authRepository ?? AuthRequest.instance,
+       _bookingRepository = bookingRepository ?? BookingRequest.instance,
+       _statusRepository = statusRepository ?? StatusRequest.instance {
+    assignedBookings = List<Booking>.from(_cachedAssignedBookings);
+    currentUser = _cachedCurrentUser;
+    errorMessage = _cachedErrorMessage;
+    _usersById.addAll(_cachedUsersById);
+    _statusesByKey.addAll(_cachedStatusesByKey);
+  }
 
   final AuthRepository _authRepository;
-  final LocalBookingRepository _bookingRepository;
-  final LocalStatusFormRepository _statusRepository;
+  final BookingRepository _bookingRepository;
+  final StatusFormRepository _statusRepository;
+  static List<Booking> _cachedAssignedBookings = const [];
+  static UserModel? _cachedCurrentUser;
+  static String? _cachedErrorMessage;
+  static Map<String, UserModel> _cachedUsersById = const {};
+  static Map<String, Status> _cachedStatusesByKey = const {};
 
   final Map<String, UserModel> _usersById = {};
-  final Map<String, StatusDefinition> _statusesByKey = {};
+  final Map<String, Status> _statusesByKey = {};
 
   List<Booking> assignedBookings = [];
   UserModel? currentUser;
@@ -58,8 +74,8 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
           return false;
         }
         return switch (normalizedRole) {
-          'driver' => booking.driverId == currentUserId,
-          'helper' => booking.helperId == currentUserId,
+          'driver' => booking.driver?.id == currentUserId,
+          'helper' => booking.helper?.id == currentUserId,
           _ => false,
         };
       }).toList();
@@ -77,8 +93,14 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
         }
         return (left.id ?? '').compareTo(right.id ?? '');
       });
+      _cachedAssignedBookings = List<Booking>.from(assignedBookings);
+      _cachedCurrentUser = currentUser;
+      _cachedErrorMessage = null;
+      _cachedUsersById = Map<String, UserModel>.from(_usersById);
+      _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
     } catch (_) {
       errorMessage = 'Failed to load assigned bookings.';
+      _cachedErrorMessage = errorMessage;
     } finally {
       setBusy(false);
       notifyListeners();
@@ -99,17 +121,17 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   }
 
   String clientName(Booking booking) =>
-      _userName(booking.clientId, 'Unknown client');
+      _userName(booking.client?.id, 'Unknown client');
 
-  String clientPhone(Booking booking) => _userPhone(booking.clientId);
+  String clientPhone(Booking booking) => _userPhone(booking.client?.id);
 
-  String driverName(Booking booking) => _userName(booking.driverId, '-');
+  String driverName(Booking booking) => _userName(booking.driver?.id, '-');
 
-  String driverPhone(Booking booking) => _userPhone(booking.driverId);
+  String driverPhone(Booking booking) => _userPhone(booking.driver?.id);
 
-  String helperName(Booking booking) => _userName(booking.helperId, '-');
+  String helperName(Booking booking) => _userName(booking.helper?.id, '-');
 
-  String helperPhone(Booking booking) => _userPhone(booking.helperId);
+  String helperPhone(Booking booking) => _userPhone(booking.helper?.id);
 
   String statusLabelForKey(String? statusKey) {
     final key = statusKey?.trim();

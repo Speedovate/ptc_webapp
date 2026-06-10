@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:webapp/models/status_form.dart';
+
 const _statusFieldUndefined = Object();
 const statusFieldOptionSourceStatic = 'static';
 const statusFieldOptionSourceUsers = 'users';
@@ -47,7 +49,7 @@ const statusFieldOptionSourceLabels = <String, String>{
 class StatusField {
   const StatusField({
     this.id,
-    this.statusFormId,
+    this.statusForm,
     this.key,
     this.type,
     this.title,
@@ -68,7 +70,7 @@ class StatusField {
   });
 
   final String? id;
-  final String? statusFormId;
+  final StatusForm? statusForm;
   final String? key;
   final String? type;
   final String? title;
@@ -89,7 +91,7 @@ class StatusField {
 
   StatusField copyWith({
     Object? id = _statusFieldUndefined,
-    Object? statusFormId = _statusFieldUndefined,
+    Object? statusForm = _statusFieldUndefined,
     Object? key = _statusFieldUndefined,
     Object? type = _statusFieldUndefined,
     Object? title = _statusFieldUndefined,
@@ -110,9 +112,9 @@ class StatusField {
   }) {
     return StatusField(
       id: identical(id, _statusFieldUndefined) ? this.id : id as String?,
-      statusFormId: identical(statusFormId, _statusFieldUndefined)
-          ? this.statusFormId
-          : statusFormId as String?,
+      statusForm: identical(statusForm, _statusFieldUndefined)
+          ? this.statusForm
+          : statusForm as StatusForm?,
       key: identical(key, _statusFieldUndefined) ? this.key : key as String?,
       type: identical(type, _statusFieldUndefined)
           ? this.type
@@ -162,7 +164,7 @@ class StatusField {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'status_form_id': statusFormId,
+      'status_form': statusForm?.toReferenceMap(),
       'key': key,
       'type': type,
       'title': title,
@@ -183,10 +185,22 @@ class StatusField {
     };
   }
 
+  Map<String, dynamic> toReferenceMap() {
+    return {
+      'id': id,
+      'key': key,
+      'type': type,
+      'title': title,
+      'placeholder': placeholder,
+      'required': required,
+      'is_active': isActive,
+    };
+  }
+
   factory StatusField.fromMap(Map<String, dynamic> map) {
     return StatusField(
       id: map['id']?.toString(),
-      statusFormId: map['status_form_id']?.toString(),
+      statusForm: _toStatusForm(map['status_form']),
       key: map['key']?.toString(),
       type: map['type']?.toString(),
       title: map['title']?.toString(),
@@ -215,6 +229,13 @@ class StatusField {
     return StatusField.fromMap(json.decode(source) as Map<String, dynamic>);
   }
 
+  static StatusForm? _toStatusForm(dynamic value) {
+    if (value is Map) {
+      return StatusForm.fromMap(Map<String, dynamic>.from(value));
+    }
+    return null;
+  }
+
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -222,7 +243,7 @@ class StatusField {
     }
     return other is StatusField &&
         other.id == id &&
-        other.statusFormId == statusFormId &&
+        other.statusForm?.id == statusForm?.id &&
         other.key == key &&
         other.type == type &&
         other.title == title &&
@@ -245,7 +266,7 @@ class StatusField {
   @override
   int get hashCode => Object.hash(
     id,
-    statusFormId,
+    statusForm?.id,
     key,
     type,
     title,

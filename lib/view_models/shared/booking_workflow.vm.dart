@@ -1,15 +1,65 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
-import 'package:webapp/models/status_definition.dart';
+import 'package:webapp/models/status.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
-import 'package:webapp/repositories/local/local_auth_repository.dart';
-import 'package:webapp/repositories/local/local_booking_repository.dart';
-import 'package:webapp/repositories/local/local_status_form_repository.dart';
+import 'package:webapp/repositories/interfaces/booking_repository.dart';
+import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
+
+class _BookingWorkflowCacheSnapshot {
+  const _BookingWorkflowCacheSnapshot({
+    required this.user,
+    required this.booking,
+    required this.mainForms,
+    required this.secondaryForms,
+    required this.fieldsByFormId,
+    required this.form,
+    required this.cancelForm,
+    required this.fields,
+    required this.cancelFields,
+    required this.fieldLibrary,
+    required this.additionalFields,
+    required this.answers,
+    required this.cancelAnswers,
+    required this.errors,
+    required this.cancelErrors,
+    required this.loadError,
+    required this.blockedMessage,
+    required this.resetTick,
+    required this.cancelResetTick,
+    required this.usersById,
+    required this.statusesByKey,
+  });
+
+  final UserModel? user;
+  final Booking? booking;
+  final List<StatusForm> mainForms;
+  final List<StatusForm> secondaryForms;
+  final Map<String, List<StatusField>> fieldsByFormId;
+  final StatusForm? form;
+  final StatusForm? cancelForm;
+  final List<StatusField> fields;
+  final List<StatusField> cancelFields;
+  final List<StatusField> fieldLibrary;
+  final List<StatusField> additionalFields;
+  final Map<String, dynamic> answers;
+  final Map<String, dynamic> cancelAnswers;
+  final Map<String, String> errors;
+  final Map<String, String> cancelErrors;
+  final String? loadError;
+  final String? blockedMessage;
+  final int resetTick;
+  final int cancelResetTick;
+  final Map<String, UserModel> usersById;
+  final Map<String, Status> statusesByKey;
+}
 
 class BookingWorkflowViewModel extends BaseViewModel {
   static const fieldTypeOptions = [
@@ -26,19 +76,25 @@ class BookingWorkflowViewModel extends BaseViewModel {
 
   BookingWorkflowViewModel({
     AuthRepository? authRepository,
-  }) : _authRepository = authRepository ?? LocalAuthRepository.instance,
-       _bookingRepository = LocalBookingRepository.instance,
-       _statusRepository = LocalStatusFormRepository.instance,
-       _engine = StatusFormEngine(LocalStatusFormRepository.instance);
+    BookingRepository? bookingRepository,
+    StatusFormRepository? statusRepository,
+  }) : _authRepository = authRepository ?? AuthRequest.instance,
+       _bookingRepository = bookingRepository ?? BookingRequest.instance,
+       _statusRepository = statusRepository ?? StatusRequest.instance,
+       _engine = StatusFormEngine(statusRepository ?? StatusRequest.instance) {
+    _restoreCachedState();
+  }
 
   final AuthRepository _authRepository;
-  final LocalBookingRepository _bookingRepository;
-  final LocalStatusFormRepository _statusRepository;
+  final BookingRepository _bookingRepository;
+  final StatusFormRepository _statusRepository;
   final StatusFormEngine _engine;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
+  static final Map<String, _BookingWorkflowCacheSnapshot> _cacheByBookingId =
+      {};
 
   final Map<String, UserModel> _usersById = {};
-  final Map<String, StatusDefinition> _statusesByKey = {};
+  final Map<String, Status> _statusesByKey = {};
   List<StatusForm> mainForms = [];
   List<StatusForm> secondaryForms = [];
   final Map<String, List<StatusField>> _fieldsByFormId = {};
@@ -63,6 +119,44 @@ class BookingWorkflowViewModel extends BaseViewModel {
   int resetTick = 0;
   int cancelResetTick = 0;
 
+  void _restoreCachedState() {
+    final snapshot = _cacheByBookingId[booking?.id ?? ''];
+    if (snapshot == null) {
+      return;
+    }
+    user = snapshot.user;
+    booking = snapshot.booking;
+    mainForms = List<StatusForm>.from(snapshot.mainForms);
+    secondaryForms = List<StatusForm>.from(snapshot.secondaryForms);
+    _fieldsByFormId
+      ..clear()
+      ..addAll(
+        snapshot.fieldsByFormId.map(
+          (key, value) => MapEntry(key, List<StatusField>.from(value)),
+        ),
+      );
+    form = snapshot.form;
+    cancelForm = snapshot.cancelForm;
+    fields = List<StatusField>.from(snapshot.fields);
+    cancelFields = List<StatusField>.from(snapshot.cancelFields);
+    fieldLibrary = List<StatusField>.from(snapshot.fieldLibrary);
+    additionalFields = List<StatusField>.from(snapshot.additionalFields);
+    answers = Map<String, dynamic>.from(snapshot.answers);
+    cancelAnswers = Map<String, dynamic>.from(snapshot.cancelAnswers);
+    errors = Map<String, String>.from(snapshot.errors);
+    cancelErrors = Map<String, String>.from(snapshot.cancelErrors);
+    loadError = snapshot.loadError;
+    blockedMessage = snapshot.blockedMessage;
+    resetTick = snapshot.resetTick;
+    cancelResetTick = snapshot.cancelResetTick;
+    _usersById
+      ..clear()
+      ..addAll(snapshot.usersById);
+    _statusesByKey
+      ..clear()
+      ..addAll(snapshot.statusesByKey);
+  }
+
   String get nextFieldId {
     var maxId = 0;
     for (final field in fieldLibrary) {
@@ -74,12 +168,15 @@ class BookingWorkflowViewModel extends BaseViewModel {
     return '${maxId + 1}';
   }
 
-  Future<void> load({
-    required UserModel user,
-    required Booking booking,
-  }) async {
+  Future<void> load({required UserModel user, required Booking booking}) async {
     if (isBusyLoading) {
       return;
+    }
+    final cachedSnapshot = _cacheByBookingId[booking.id ?? ''];
+    if (cachedSnapshot != null) {
+      this.user = cachedSnapshot.user ?? user;
+      this.booking = cachedSnapshot.booking ?? booking;
+      _restoreCachedState();
     }
     this.user = user;
     this.booking = booking;
@@ -127,11 +224,11 @@ class BookingWorkflowViewModel extends BaseViewModel {
         return;
       }
 
-      final matchingForms = await _statusRepository.getStatusFormsByRoleAndStatus(
-        user.role ?? '',
-        currentKey,
-      );
-      final loadedForm = matchingForms.where((item) => item.resolvedIsMainForm).firstOrNull;
+      final matchingForms = await _statusRepository
+          .getStatusFormsByRoleAndStatus(user.role ?? '', currentKey);
+      final loadedForm = matchingForms
+          .where((item) => item.resolvedIsMainForm)
+          .firstOrNull;
       final loadedCancelForm = matchingForms
           .where((item) => !item.resolvedIsMainForm)
           .firstOrNull;
@@ -151,7 +248,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
         return;
       }
 
-      mainForms = matchingForms.where((item) => item.resolvedIsMainForm).toList();
+      mainForms = matchingForms
+          .where((item) => item.resolvedIsMainForm)
+          .toList();
       secondaryForms = matchingForms
           .where((item) => !item.resolvedIsMainForm)
           .toList();
@@ -185,12 +284,45 @@ class BookingWorkflowViewModel extends BaseViewModel {
             );
       errors = {};
       cancelErrors = {};
+      _cacheCurrentState();
     } catch (_) {
       loadError = 'Failed to load booking workflow.';
     } finally {
       isBusyLoading = false;
       notifyListeners();
     }
+  }
+
+  void _cacheCurrentState() {
+    final bookingId = booking?.id ?? '';
+    if (bookingId.isEmpty) {
+      return;
+    }
+    _cacheByBookingId[bookingId] = _BookingWorkflowCacheSnapshot(
+      user: user,
+      booking: booking,
+      mainForms: List<StatusForm>.from(mainForms),
+      secondaryForms: List<StatusForm>.from(secondaryForms),
+      fieldsByFormId: _fieldsByFormId.map(
+        (key, value) => MapEntry(key, List<StatusField>.from(value)),
+      ),
+      form: form,
+      cancelForm: cancelForm,
+      fields: List<StatusField>.from(fields),
+      cancelFields: List<StatusField>.from(cancelFields),
+      fieldLibrary: List<StatusField>.from(fieldLibrary),
+      additionalFields: List<StatusField>.from(additionalFields),
+      answers: Map<String, dynamic>.from(answers),
+      cancelAnswers: Map<String, dynamic>.from(cancelAnswers),
+      errors: Map<String, String>.from(errors),
+      cancelErrors: Map<String, String>.from(cancelErrors),
+      loadError: loadError,
+      blockedMessage: blockedMessage,
+      resetTick: resetTick,
+      cancelResetTick: cancelResetTick,
+      usersById: Map<String, UserModel>.from(_usersById),
+      statusesByKey: Map<String, Status>.from(_statusesByKey),
+    );
   }
 
   String? get currentStatusKey {
@@ -294,7 +426,8 @@ class BookingWorkflowViewModel extends BaseViewModel {
     if (activeForm == null) {
       return false;
     }
-    final hasNextStatus = (activeForm.nextStatusKey?.trim().isNotEmpty ?? false);
+    final hasNextStatus =
+        (activeForm.nextStatusKey?.trim().isNotEmpty ?? false);
     return hasNextStatus || fields.isNotEmpty;
   }
 
@@ -320,7 +453,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }) {
     final validationErrors = _engine.validateFields(activeFields, formAnswers);
     if (additionalFields.isNotEmpty) {
-      validationErrors.addAll(_engine.validateFields(additionalFields, formAnswers));
+      validationErrors.addAll(
+        _engine.validateFields(additionalFields, formAnswers),
+      );
     }
     return validationErrors;
   }
@@ -334,8 +469,12 @@ class BookingWorkflowViewModel extends BaseViewModel {
         .where((field) => !assignedKeys.contains(field.key ?? ''))
         .toList()
       ..sort((a, b) {
-        final left = (a.title?.trim().isNotEmpty == true) ? a.title! : a.key ?? '';
-        final right = (b.title?.trim().isNotEmpty == true) ? b.title! : b.key ?? '';
+        final left = (a.title?.trim().isNotEmpty == true)
+            ? a.title!
+            : a.key ?? '';
+        final right = (b.title?.trim().isNotEmpty == true)
+            ? b.title!
+            : b.key ?? '';
         return left.compareTo(right);
       });
   }
@@ -438,11 +577,15 @@ class BookingWorkflowViewModel extends BaseViewModel {
     notifyListeners();
 
     try {
-      final nextBooking = _engine.applyOutputToBooking(
-        currentBooking,
-        activeForm,
-        answers,
-        currentUser.id ?? '',
+      final nextBooking = _bookingWithResolvedUsers(
+        _engine.applyOutputToBooking(
+          currentBooking,
+          activeForm,
+          answers,
+          currentUser.id ?? '',
+        ),
+        currentBooking: currentBooking,
+        formAnswers: answers,
       );
       final savedBooking = await _bookingRepository.saveBooking(nextBooking);
       answers = {};
@@ -471,11 +614,15 @@ class BookingWorkflowViewModel extends BaseViewModel {
     notifyListeners();
 
     try {
-      final nextBooking = _engine.applyOutputToBooking(
-        currentBooking,
-        activeForm,
-        formAnswers,
-        currentUser.id ?? '',
+      final nextBooking = _bookingWithResolvedUsers(
+        _engine.applyOutputToBooking(
+          currentBooking,
+          activeForm,
+          formAnswers,
+          currentUser.id ?? '',
+        ),
+        currentBooking: currentBooking,
+        formAnswers: formAnswers,
       );
       final savedBooking = await _bookingRepository.saveBooking(nextBooking);
       await load(user: currentUser, booking: savedBooking);
@@ -515,11 +662,15 @@ class BookingWorkflowViewModel extends BaseViewModel {
     notifyListeners();
 
     try {
-      final nextBooking = _engine.applyOutputToBooking(
-        currentBooking,
-        activeForm,
-        cancelAnswers,
-        currentUser.id ?? '',
+      final nextBooking = _bookingWithResolvedUsers(
+        _engine.applyOutputToBooking(
+          currentBooking,
+          activeForm,
+          cancelAnswers,
+          currentUser.id ?? '',
+        ),
+        currentBooking: currentBooking,
+        formAnswers: cancelAnswers,
       );
       final savedBooking = await _bookingRepository.saveBooking(nextBooking);
       cancelAnswers = {};
@@ -534,7 +685,10 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   bool validateCancelForSubmit() {
-    final validationErrors = _engine.validateFields(cancelFields, cancelAnswers);
+    final validationErrors = _engine.validateFields(
+      cancelFields,
+      cancelAnswers,
+    );
     cancelErrors = validationErrors;
     notifyListeners();
     return validationErrors.isEmpty;
@@ -614,14 +768,14 @@ class BookingWorkflowViewModel extends BaseViewModel {
 
   static Map<String, dynamic> _initialAnswersForBooking(Booking booking) {
     final answers = <String, dynamic>{};
-    if ((booking.truckId ?? '').trim().isNotEmpty) {
-      answers['truck_id'] = booking.truckId!.trim();
+    if ((booking.truck?.id ?? '').trim().isNotEmpty) {
+      answers['truck_id'] = booking.truck!.id!.trim();
     }
-    if ((booking.driverId ?? '').trim().isNotEmpty) {
-      answers['driver_id'] = booking.driverId!.trim();
+    if ((booking.driver?.id ?? '').trim().isNotEmpty) {
+      answers['driver_id'] = booking.driver!.id!.trim();
     }
-    if ((booking.helperId ?? '').trim().isNotEmpty) {
-      answers['helper_id'] = booking.helperId!.trim();
+    if ((booking.helper?.id ?? '').trim().isNotEmpty) {
+      answers['helper_id'] = booking.helper!.id!.trim();
     }
     for (final key in const [
       'waybill_number',
@@ -708,4 +862,31 @@ class BookingWorkflowViewModel extends BaseViewModel {
     return null;
   }
 
+  Booking _bookingWithResolvedUsers(
+    Booking booking, {
+    required Booking currentBooking,
+    required Map<String, dynamic> formAnswers,
+  }) {
+    final driverId = _normalizedAnswer(formAnswers['driver_id']);
+    final helperId = _normalizedAnswer(formAnswers['helper_id']);
+    return booking.copyWith(
+      client: currentBooking.client?.id == null
+          ? currentBooking.client
+          : _usersById[currentBooking.client!.id!] ?? currentBooking.client,
+      driver: driverId == null
+          ? currentBooking.driver
+          : _usersById[driverId] ?? currentBooking.driver,
+      helper: helperId == null
+          ? currentBooking.helper
+          : _usersById[helperId] ?? currentBooking.helper,
+    );
+  }
+
+  String? _normalizedAnswer(dynamic value) {
+    if (value is! String) {
+      return null;
+    }
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
 }

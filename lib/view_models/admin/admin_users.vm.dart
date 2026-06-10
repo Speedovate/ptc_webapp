@@ -1,14 +1,20 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
-import 'package:webapp/repositories/local/local_auth_repository.dart';
 
 class AdminUsersViewModel extends BaseViewModel {
-  AdminUsersViewModel({
-    AuthRepository? repository,
-  }) : _repository = repository ?? LocalAuthRepository.instance;
+  AdminUsersViewModel({AuthRepository? repository})
+    : _repository = repository ?? AuthRequest.instance {
+    _users.addAll(_cachedUsers);
+    _currentUser = _cachedCurrentUser;
+    _viewedUser = _cachedViewedUser;
+  }
 
   final AuthRepository _repository;
+  static List<UserModel> _cachedUsers = const [];
+  static UserModel? _cachedCurrentUser;
+  static UserModel? _cachedViewedUser;
   final List<UserModel> _users = [];
   UserModel? _currentUser;
   UserModel? _viewedUser;
@@ -40,6 +46,9 @@ class AdminUsersViewModel extends BaseViewModel {
         ..addAll(users);
       _sortUsers();
       _currentUser = currentUser ?? fallbackCurrentUser;
+      _cachedUsers = List<UserModel>.from(_users);
+      _cachedCurrentUser = _currentUser;
+      _cachedViewedUser = _viewedUser;
     } finally {
       setBusy(false);
       notifyListeners();
@@ -59,6 +68,9 @@ class AdminUsersViewModel extends BaseViewModel {
     if (_viewedUser?.id == saved.id) {
       _viewedUser = saved;
     }
+    _cachedUsers = List<UserModel>.from(_users);
+    _cachedCurrentUser = _currentUser;
+    _cachedViewedUser = _viewedUser;
     _searchQuery = '';
     notifyListeners();
   }
@@ -75,6 +87,8 @@ class AdminUsersViewModel extends BaseViewModel {
     _activeFilter = 'All';
     _onlineFilter = 'All';
     _draftNewUser = null;
+    _cachedUsers = List<UserModel>.from(_users);
+    _cachedCurrentUser = _currentUser;
     notifyListeners();
   }
 
@@ -94,6 +108,9 @@ class AdminUsersViewModel extends BaseViewModel {
     if (_viewedUser?.id == user.id) {
       _viewedUser = null;
     }
+    _cachedUsers = List<UserModel>.from(_users);
+    _cachedCurrentUser = _currentUser;
+    _cachedViewedUser = _viewedUser;
     notifyListeners();
   }
 
@@ -107,11 +124,13 @@ class AdminUsersViewModel extends BaseViewModel {
 
   void openUserView(UserModel user) {
     _viewedUser = user;
+    _cachedViewedUser = _viewedUser;
     notifyListeners();
   }
 
   void closeUserView() {
     _viewedUser = null;
+    _cachedViewedUser = null;
     notifyListeners();
   }
 
@@ -137,12 +156,13 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   List<String> roleOptions() {
-    final roles = _users
-        .map((user) => _formatRole(user.role))
-        .where((role) => role != '-')
-        .toSet()
-        .toList()
-      ..sort();
+    final roles =
+        _users
+            .map((user) => _formatRole(user.role))
+            .where((role) => role != '-')
+            .toSet()
+            .toList()
+          ..sort();
     return ['All', ...roles];
   }
 
@@ -152,13 +172,9 @@ class AdminUsersViewModel extends BaseViewModel {
 
     final matchesQuery =
         query.isEmpty ||
-        [
-          user.id,
-          user.name,
-          user.phone,
-          user.email,
-          _formatRole(user.role),
-        ].whereType<String>().any((value) => value.toLowerCase().contains(query));
+        [user.id, user.name, user.phone, user.email, _formatRole(user.role)]
+            .whereType<String>()
+            .any((value) => value.toLowerCase().contains(query));
 
     final matchesRole =
         _roleFilter == 'All' || _formatRole(user.role) == _roleFilter;
@@ -173,11 +189,13 @@ class AdminUsersViewModel extends BaseViewModel {
 
     final matchesStartDate =
         _startDate == null ||
-        (createdAt != null && !_dateOnly(createdAt).isBefore(_dateOnly(_startDate!)));
+        (createdAt != null &&
+            !_dateOnly(createdAt).isBefore(_dateOnly(_startDate!)));
 
     final matchesEndDate =
         _endDate == null ||
-        (createdAt != null && !_dateOnly(createdAt).isAfter(_dateOnly(_endDate!)));
+        (createdAt != null &&
+            !_dateOnly(createdAt).isAfter(_dateOnly(_endDate!)));
 
     return matchesQuery &&
         matchesRole &&
@@ -209,7 +227,9 @@ class AdminUsersViewModel extends BaseViewModel {
 
   void updateStartDate(DateTime? value) {
     _startDate = value;
-    if (_startDate != null && _endDate != null && _endDate!.isBefore(_startDate!)) {
+    if (_startDate != null &&
+        _endDate != null &&
+        _endDate!.isBefore(_startDate!)) {
       _endDate = _startDate;
     }
     notifyListeners();
@@ -217,7 +237,9 @@ class AdminUsersViewModel extends BaseViewModel {
 
   void updateEndDate(DateTime? value) {
     _endDate = value;
-    if (_startDate != null && _endDate != null && _startDate!.isAfter(_endDate!)) {
+    if (_startDate != null &&
+        _endDate != null &&
+        _startDate!.isAfter(_endDate!)) {
       _startDate = _endDate;
     }
     notifyListeners();
@@ -252,10 +274,7 @@ class AdminUsersViewModel extends BaseViewModel {
 
   void _sortUsers() {
     _users.sort((a, b) {
-      final createdComparison = _compareLatestFirst(
-        a.createdAt,
-        b.createdAt,
-      );
+      final createdComparison = _compareLatestFirst(a.createdAt, b.createdAt);
       if (createdComparison != 0) {
         return createdComparison;
       }

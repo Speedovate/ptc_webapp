@@ -59,7 +59,9 @@ class _AdminHomeState extends State<AdminHome> {
           logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
           sidebar: _buildSidebar(vm, isCompact: isCompact),
           body: KeyedSubtree(
-            key: ValueKey('${vm.selectedSection}:${vm.selectedSettingsSection}'),
+            key: ValueKey(
+              '${vm.selectedSection}:${vm.selectedSettingsSection}',
+            ),
             child: AdminShellLayoutScope(
               filtersRightGap: showRail ? 44 : 24,
               child: _buildSelectedSection(vm.selectedSection),
@@ -70,10 +72,7 @@ class _AdminHomeState extends State<AdminHome> {
     );
   }
 
-  Widget _buildSidebar(
-    AdminHomeViewModel vm, {
-    required bool isCompact,
-  }) {
+  Widget _buildSidebar(AdminHomeViewModel vm, {required bool isCompact}) {
     return PlatformSidebarContainer(
       onBrandTap: () {
         vm.selectSection(AdminSection.dashboard);
@@ -124,7 +123,8 @@ class _AdminHomeState extends State<AdminHome> {
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.vehicles &&
-                        vm.selectedVehiclesSection == AdminVehiclesSection.makes,
+                        vm.selectedVehiclesSection ==
+                            AdminVehiclesSection.makes,
                     onTap: () {
                       vm.selectVehiclesSection(AdminVehiclesSection.makes);
                       if (isCompact) {
@@ -138,7 +138,8 @@ class _AdminHomeState extends State<AdminHome> {
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.vehicles &&
-                        vm.selectedVehiclesSection == AdminVehiclesSection.types,
+                        vm.selectedVehiclesSection ==
+                            AdminVehiclesSection.types,
                     onTap: () {
                       vm.selectVehiclesSection(AdminVehiclesSection.types);
                       if (isCompact) {
@@ -152,7 +153,8 @@ class _AdminHomeState extends State<AdminHome> {
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.vehicles &&
-                        vm.selectedVehiclesSection == AdminVehiclesSection.sizes,
+                        vm.selectedVehiclesSection ==
+                            AdminVehiclesSection.sizes,
                     onTap: () {
                       vm.selectVehiclesSection(AdminVehiclesSection.sizes);
                       if (isCompact) {
@@ -178,12 +180,28 @@ class _AdminHomeState extends State<AdminHome> {
           children: vm.isSettingsExpanded
               ? [
                   SidebarMenuItem(
+                    label: AdminSettingsSection.statuses.title,
+                    icon: Icons.flag_outlined,
+                    isChild: true,
+                    isSelected:
+                        vm.selectedSection == AdminSection.settings &&
+                        vm.selectedSettingsSection ==
+                            AdminSettingsSection.statuses,
+                    onTap: () {
+                      vm.selectSettingsSection(AdminSettingsSection.statuses);
+                      if (isCompact) {
+                        Navigator.of(context).pop();
+                      }
+                    },
+                  ),
+                  SidebarMenuItem(
                     label: AdminSettingsSection.forms.title,
                     icon: Icons.description_outlined,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.settings &&
-                        vm.selectedSettingsSection == AdminSettingsSection.forms,
+                        vm.selectedSettingsSection ==
+                            AdminSettingsSection.forms,
                     onTap: () {
                       vm.selectSettingsSection(AdminSettingsSection.forms);
                       if (isCompact) {
@@ -197,24 +215,10 @@ class _AdminHomeState extends State<AdminHome> {
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.settings &&
-                        vm.selectedSettingsSection == AdminSettingsSection.fields,
+                        vm.selectedSettingsSection ==
+                            AdminSettingsSection.fields,
                     onTap: () {
                       vm.selectSettingsSection(AdminSettingsSection.fields);
-                      if (isCompact) {
-                        Navigator.of(context).pop();
-                      }
-                    },
-                  ),
-                  SidebarMenuItem(
-                    label: AdminSettingsSection.statuses.title,
-                    icon: Icons.flag_outlined,
-                    isChild: true,
-                    isSelected:
-                        vm.selectedSection == AdminSection.settings &&
-                        vm.selectedSettingsSection ==
-                            AdminSettingsSection.statuses,
-                    onTap: () {
-                      vm.selectSettingsSection(AdminSettingsSection.statuses);
                       if (isCompact) {
                         Navigator.of(context).pop();
                       }
@@ -254,32 +258,32 @@ class _AdminHomeState extends State<AdminHome> {
       AdminSection.dashboard => const AdminDashboardView(),
       AdminSection.bookings => AdminBookingsView(user: widget.user),
       AdminSection.vehicles => switch (_viewModel.selectedVehiclesSection) {
-          AdminVehiclesSection.makes => const AdminVehicleMakesView(),
-          AdminVehiclesSection.sizes => const AdminVehicleSizesView(),
-          AdminVehiclesSection.types => const AdminVehicleTypesView(),
-        },
+        AdminVehiclesSection.makes => const AdminVehicleMakesView(),
+        AdminVehiclesSection.sizes => const AdminVehicleSizesView(),
+        AdminVehiclesSection.types => const AdminVehicleTypesView(),
+      },
       AdminSection.settings => switch (_viewModel.selectedSettingsSection) {
-          AdminSettingsSection.forms => const AdminFormsView(),
-          AdminSettingsSection.fields => const AdminFieldsView(),
-          AdminSettingsSection.statuses => const AdminStatusesView(),
-        },
+        AdminSettingsSection.forms => const AdminFormsView(),
+        AdminSettingsSection.fields => const AdminFieldsView(),
+        AdminSettingsSection.statuses => const AdminStatusesView(),
+      },
       AdminSection.users => AdminUsersView(
-          user: widget.user,
-          onCurrentUserUpdated: widget.onUserUpdated,
-          onLogout: widget.onLogout,
-          isQuickLoggedIn: widget.isQuickLoggedIn,
-          initialEditUserId: _viewModel.pendingEditUserId,
-          onInitialEditHandled: _viewModel.clearPendingEditUser,
-        ),
+        user: widget.user,
+        onCurrentUserUpdated: widget.onUserUpdated,
+        onLogout: widget.onLogout,
+        isQuickLoggedIn: widget.isQuickLoggedIn,
+        initialEditUserId: _viewModel.pendingEditUserId,
+        onInitialEditHandled: _viewModel.clearPendingEditUser,
+      ),
       AdminSection.profile => ProfileView(
-          user: widget.user,
-          isCurrentUserView: true,
-          onLogout: widget.onLogout,
-          logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-          onEditPressed: () {
-            _viewModel.openUsersForEdit(widget.user.id);
-          },
-        ),
+        user: widget.user,
+        isCurrentUserView: true,
+        onLogout: widget.onLogout,
+        logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
+        onEditPressed: () {
+          _viewModel.openUsersForEdit(widget.user.id);
+        },
+      ),
     };
   }
 

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
-import 'package:webapp/models/status_definition.dart';
+import 'package:webapp/models/status.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/view_models/admin/admin_bookings.vm.dart';
@@ -12,6 +12,7 @@ import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
 class AdminBookingsView extends StatefulWidget {
@@ -142,6 +143,7 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              AppRefreshStrip(isVisible: vm.isBusy),
               AdminListToolbar(
                 controlHeight: 52,
                 surfaceRadius: 16,
@@ -156,12 +158,7 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
                 onNewPressed: () => _openNewBookingDialog(vm),
               ),
               const SizedBox(height: 14),
-              if (vm.isBusy)
-                const Padding(
-                  padding: EdgeInsets.only(top: 24),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (vm.errorMessage != null)
+              if (vm.errorMessage != null)
                 _AdminBookingsStateCard(
                   child: AdminListStateText(message: vm.errorMessage!),
                 )
@@ -208,7 +205,7 @@ class _EditAdminBookingDialog extends StatefulWidget {
 
   final Booking booking;
   final String currentStatusLabel;
-  final List<StatusDefinition> statuses;
+  final List<Status> statuses;
   final List<UserModel> drivers;
   final List<UserModel> helpers;
   final List<VehicleCatalogItem> vehicleSizes;
@@ -245,8 +242,8 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     _startController = TextEditingController(text: initialStart ?? '');
     _endController = TextEditingController(text: initialEnd ?? '');
     _statusKey = widget.booking.clientStatus ?? '';
-    _driverId = widget.booking.driverId;
-    _helperId = widget.booking.helperId;
+    _driverId = widget.booking.driver?.id;
+    _helperId = widget.booking.helper?.id;
     final rawVanSize = _existingFieldValue('van_size');
     final normalizedVanSize = rawVanSize?.toString().trim();
     final matchesKnownSize =
@@ -598,11 +595,24 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
         helperStatus: _statusKey.isEmpty
             ? widget.booking.helperStatus
             : _statusKey,
-        driverId: _driverId,
-        helperId: _helperId,
+        driver: _resolveSelectedUser(_driverId, widget.drivers),
+        helper: _resolveSelectedUser(_helperId, widget.helpers),
         statusOutputs: currentOutputs,
       ),
     );
+  }
+
+  UserModel? _resolveSelectedUser(String? userId, List<UserModel> users) {
+    final normalizedId = userId?.trim();
+    if (normalizedId == null || normalizedId.isEmpty) {
+      return null;
+    }
+    for (final user in users) {
+      if (user.id == normalizedId) {
+        return user;
+      }
+    }
+    return null;
   }
 
   static void _setOrRemoveField(
@@ -729,7 +739,7 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
                 const SizedBox(height: 6),
                 ClientBookingHomeView(
                   user: selectedUser,
-                  bookingClientId: selectedUser.id,
+                  bookingClientUser: selectedUser,
                   submittedByUserId: widget.currentUser.id,
                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
                   scrollable: false,

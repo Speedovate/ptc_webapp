@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
-import 'package:webapp/models/status_definition.dart';
-import 'package:webapp/utils/display_text.dart';
+import 'package:webapp/models/status.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_status_form.vm.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
@@ -10,6 +10,7 @@ import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 
 class AdminStatusesView extends StatelessWidget {
@@ -18,7 +19,7 @@ class AdminStatusesView extends StatelessWidget {
   static Future<void> confirmToggleStatusActive(
     BuildContext context,
     AdminStatusFormViewModel vm,
-    StatusDefinition status,
+    Status status,
   ) async {
     final willBeActive = !(status.isActive ?? false);
     final label = status.label?.trim().isNotEmpty == true
@@ -35,7 +36,7 @@ class AdminStatusesView extends StatelessWidget {
     if (!confirmed || !context.mounted) {
       return;
     }
-    await vm.setStatusDefinitionActive(status, willBeActive);
+    await vm.setStatusActive(status, willBeActive);
     if (!context.mounted) {
       return;
     }
@@ -48,7 +49,7 @@ class AdminStatusesView extends StatelessWidget {
   static Future<void> confirmDeleteStatus(
     BuildContext context,
     AdminStatusFormViewModel vm,
-    StatusDefinition status,
+    Status status,
   ) async {
     final label = status.label?.trim().isNotEmpty == true
         ? status.label!.trim()
@@ -63,7 +64,7 @@ class AdminStatusesView extends StatelessWidget {
     if (!confirmed || !context.mounted) {
       return;
     }
-    await vm.deleteStatusDefinition(status);
+    await vm.deleteStatus(status);
     if (!context.mounted) {
       return;
     }
@@ -82,9 +83,9 @@ class AdminStatusesView extends StatelessWidget {
   }
 
   static String _statusSaveMessage(
-    StatusDefinition status, {
+    Status status, {
     required bool isEditing,
-    StatusDefinition? originalStatus,
+    Status? originalStatus,
   }) {
     final subject = (status.label ?? status.key ?? '').trim();
     if (isEditing && originalStatus != null) {
@@ -107,10 +108,7 @@ class AdminStatusesView extends StatelessWidget {
     return isEditing ? 'Status has been updated.' : 'Status has been created.';
   }
 
-  static Map<String, String> _changedStatusLabels(
-    StatusDefinition before,
-    StatusDefinition after,
-  ) {
+  static Map<String, String> _changedStatusLabels(Status before, Status after) {
     final changed = <String, String>{};
 
     if ((before.key ?? '').trim() != (after.key ?? '').trim()) {
@@ -165,7 +163,15 @@ class AdminStatusesView extends StatelessWidget {
       viewModelBuilder: AdminStatusFormViewModel.new,
       onViewModelReady: (vm) => vm.loadForms(),
       builder: (context, vm, child) {
-        return _StatusesContent(vm: vm);
+        return Column(
+          children: [
+            AppRefreshStrip(
+              isVisible: vm.isLoading,
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            ),
+            Expanded(child: _StatusesContent(vm: vm)),
+          ],
+        );
       },
     );
   }
@@ -173,11 +179,11 @@ class AdminStatusesView extends StatelessWidget {
   static Future<void> openStatusDialog(
     BuildContext context,
     AdminStatusFormViewModel vm, {
-    StatusDefinition? initialStatus,
+    Status? initialStatus,
     required String title,
     bool readOnly = false,
   }) async {
-    final savedStatus = await showDialog<StatusDefinition>(
+    final savedStatus = await showDialog<Status>(
       context: context,
       builder: (dialogContext) => _StatusEditorDialog(
         title: title,
@@ -190,7 +196,7 @@ class AdminStatusesView extends StatelessWidget {
 
     if (!readOnly && savedStatus != null && context.mounted) {
       try {
-        await vm.saveStatusDefinition(savedStatus);
+        await vm.saveStatus(savedStatus);
         if (initialStatus == null) {
           vm.clearDraftNewStatus();
         }
@@ -248,7 +254,7 @@ class _StatusesContentState extends State<_StatusesContent> {
     );
   }
 
-  List<StatusDefinition> get _filteredStatuses {
+  List<Status> get _filteredStatuses {
     return widget.vm.statuses.where((status) {
       final key = status.key ?? '';
       final label = status.label ?? '';
@@ -600,7 +606,7 @@ class _StatusesTable extends StatelessWidget {
     required this.vm,
   });
 
-  final List<StatusDefinition> statuses;
+  final List<Status> statuses;
   final String emptyMessage;
   final AdminStatusFormViewModel vm;
 
@@ -873,7 +879,7 @@ class _StatusTableRow extends StatelessWidget {
     required this.resolvedActionsWidth,
   });
 
-  final StatusDefinition status;
+  final Status status;
   final AdminStatusFormViewModel vm;
   final double resolvedIdWidth;
   final double resolvedKeyWidth;
@@ -1009,7 +1015,7 @@ class _StatusTableRow extends StatelessWidget {
 class _StatusResponsiveCard extends StatelessWidget {
   const _StatusResponsiveCard({required this.status, required this.vm});
 
-  final StatusDefinition status;
+  final Status status;
   final AdminStatusFormViewModel vm;
 
   @override
@@ -1186,9 +1192,9 @@ class _StatusEditorDialog extends StatefulWidget {
 
   final String title;
   final List<String> roleOptions;
-  final StatusDefinition? initialStatus;
+  final Status? initialStatus;
   final bool readOnly;
-  final ValueChanged<StatusDefinition>? onDraftChanged;
+  final ValueChanged<Status>? onDraftChanged;
 
   @override
   State<_StatusEditorDialog> createState() => _StatusEditorDialogState();
@@ -1279,8 +1285,7 @@ class _StatusEditorDialogState extends State<_StatusEditorDialog> {
                     return;
                   }
                   final base =
-                      widget.initialStatus ??
-                      const StatusDefinition(applicableRoles: []);
+                      widget.initialStatus ?? const Status(applicableRoles: []);
                   Navigator.of(context).pop(_buildStatus(base));
                 },
                 child: const Text('Save'),
@@ -1373,7 +1378,7 @@ class _StatusEditorDialogState extends State<_StatusEditorDialog> {
     );
   }
 
-  StatusDefinition _buildStatus(StatusDefinition base) {
+  Status _buildStatus(Status base) {
     return base.copyWith(
       key: _keyController.text.trim(),
       label: _labelController.text.trim(),
@@ -1390,8 +1395,7 @@ class _StatusEditorDialogState extends State<_StatusEditorDialog> {
   }
 
   void _handleDraftChanged() {
-    final base =
-        widget.initialStatus ?? const StatusDefinition(applicableRoles: []);
+    final base = widget.initialStatus ?? const Status(applicableRoles: []);
     widget.onDraftChanged?.call(_buildStatus(base));
   }
 }

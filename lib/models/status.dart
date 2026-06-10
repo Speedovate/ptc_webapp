@@ -1,9 +1,9 @@
 import 'dart:convert';
 
-const _statusDefinitionUndefined = Object();
+const _statusUndefined = Object();
 
-class StatusDefinition {
-  const StatusDefinition({
+class Status {
+  const Status({
     this.id,
     this.key,
     this.label,
@@ -27,41 +27,41 @@ class StatusDefinition {
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
-  StatusDefinition copyWith({
-    Object? id = _statusDefinitionUndefined,
-    Object? key = _statusDefinitionUndefined,
-    Object? label = _statusDefinitionUndefined,
-    Object? description = _statusDefinitionUndefined,
+  Status copyWith({
+    Object? id = _statusUndefined,
+    Object? key = _statusUndefined,
+    Object? label = _statusUndefined,
+    Object? description = _statusUndefined,
     List<String>? applicableRoles,
     Map<String, String>? roleMessages,
-    Object? sortOrder = _statusDefinitionUndefined,
-    Object? isActive = _statusDefinitionUndefined,
-    Object? createdAt = _statusDefinitionUndefined,
-    Object? updatedAt = _statusDefinitionUndefined,
+    Object? sortOrder = _statusUndefined,
+    Object? isActive = _statusUndefined,
+    Object? createdAt = _statusUndefined,
+    Object? updatedAt = _statusUndefined,
   }) {
-    return StatusDefinition(
-      id: identical(id, _statusDefinitionUndefined) ? this.id : id as String?,
-      key: identical(key, _statusDefinitionUndefined)
+    return Status(
+      id: identical(id, _statusUndefined) ? this.id : id as String?,
+      key: identical(key, _statusUndefined)
           ? this.key
           : key as String?,
-      label: identical(label, _statusDefinitionUndefined)
+      label: identical(label, _statusUndefined)
           ? this.label
           : label as String?,
-      description: identical(description, _statusDefinitionUndefined)
+      description: identical(description, _statusUndefined)
           ? this.description
           : description as String?,
       applicableRoles: applicableRoles ?? this.applicableRoles,
       roleMessages: roleMessages ?? this.roleMessages,
-      sortOrder: identical(sortOrder, _statusDefinitionUndefined)
+      sortOrder: identical(sortOrder, _statusUndefined)
           ? this.sortOrder
           : sortOrder as int?,
-      isActive: identical(isActive, _statusDefinitionUndefined)
+      isActive: identical(isActive, _statusUndefined)
           ? this.isActive
           : isActive as bool?,
-      createdAt: identical(createdAt, _statusDefinitionUndefined)
+      createdAt: identical(createdAt, _statusUndefined)
           ? this.createdAt
           : createdAt as DateTime?,
-      updatedAt: identical(updatedAt, _statusDefinitionUndefined)
+      updatedAt: identical(updatedAt, _statusUndefined)
           ? this.updatedAt
           : updatedAt as DateTime?,
     );
@@ -82,8 +82,8 @@ class StatusDefinition {
     };
   }
 
-  factory StatusDefinition.fromMap(Map<String, dynamic> map) {
-    return StatusDefinition(
+  factory Status.fromMap(Map<String, dynamic> map) {
+    return Status(
       id: map['id']?.toString(),
       key: map['key']?.toString(),
       label: map['label']?.toString(),
@@ -108,8 +108,8 @@ class StatusDefinition {
 
   String toJson() => json.encode(toMap());
 
-  factory StatusDefinition.fromJson(String source) {
-    return StatusDefinition.fromMap(
+  factory Status.fromJson(String source) {
+    return Status.fromMap(
       json.decode(source) as Map<String, dynamic>,
     );
   }
@@ -119,7 +119,7 @@ class StatusDefinition {
     if (identical(this, other)) {
       return true;
     }
-    return other is StatusDefinition &&
+    return other is Status &&
         other.id == id &&
         other.key == key &&
         other.label == label &&

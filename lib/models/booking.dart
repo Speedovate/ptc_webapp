@@ -1,70 +1,95 @@
 import 'dart:convert';
 
+import 'package:webapp/models/user.dart';
+import 'package:webapp/models/vehicle_make.dart';
+
+const _bookingUndefined = Object();
+
 class Booking {
   const Booking({
     this.id,
-    this.clientId,
+    this.client,
     this.clientStatus,
     this.driverStatus,
     this.helperStatus,
-    this.truckId,
-    this.driverId,
-    this.helperId,
+    this.truck,
+    this.driver,
+    this.helper,
     this.statusOutputs,
     this.createdAt,
     this.updatedAt,
   });
 
   final String? id;
-  final String? clientId;
+  final UserModel? client;
   final String? clientStatus;
   final String? driverStatus;
   final String? helperStatus;
-  final String? truckId;
-  final String? driverId;
-  final String? helperId;
+  final VehicleMake? truck;
+  final UserModel? driver;
+  final UserModel? helper;
   final Map<String, dynamic>? statusOutputs;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
   Booking copyWith({
-    String? id,
-    String? clientId,
-    String? clientStatus,
-    String? driverStatus,
-    String? helperStatus,
-    String? truckId,
-    String? driverId,
-    String? helperId,
-    Map<String, dynamic>? statusOutputs,
-    DateTime? createdAt,
-    DateTime? updatedAt,
+    Object? id = _bookingUndefined,
+    Object? client = _bookingUndefined,
+    Object? clientStatus = _bookingUndefined,
+    Object? driverStatus = _bookingUndefined,
+    Object? helperStatus = _bookingUndefined,
+    Object? truck = _bookingUndefined,
+    Object? driver = _bookingUndefined,
+    Object? helper = _bookingUndefined,
+    Object? statusOutputs = _bookingUndefined,
+    Object? createdAt = _bookingUndefined,
+    Object? updatedAt = _bookingUndefined,
   }) {
     return Booking(
-      id: id ?? this.id,
-      clientId: clientId ?? this.clientId,
-      clientStatus: clientStatus ?? this.clientStatus,
-      driverStatus: driverStatus ?? this.driverStatus,
-      helperStatus: helperStatus ?? this.helperStatus,
-      truckId: truckId ?? this.truckId,
-      driverId: driverId ?? this.driverId,
-      helperId: helperId ?? this.helperId,
-      statusOutputs: statusOutputs ?? this.statusOutputs,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
+      id: identical(id, _bookingUndefined) ? this.id : id as String?,
+      client: identical(client, _bookingUndefined)
+          ? this.client
+          : client as UserModel?,
+      clientStatus: identical(clientStatus, _bookingUndefined)
+          ? this.clientStatus
+          : clientStatus as String?,
+      driverStatus: identical(driverStatus, _bookingUndefined)
+          ? this.driverStatus
+          : driverStatus as String?,
+      helperStatus: identical(helperStatus, _bookingUndefined)
+          ? this.helperStatus
+          : helperStatus as String?,
+      truck: identical(truck, _bookingUndefined)
+          ? this.truck
+          : truck as VehicleMake?,
+      driver: identical(driver, _bookingUndefined)
+          ? this.driver
+          : driver as UserModel?,
+      helper: identical(helper, _bookingUndefined)
+          ? this.helper
+          : helper as UserModel?,
+      statusOutputs: identical(statusOutputs, _bookingUndefined)
+          ? this.statusOutputs
+          : statusOutputs as Map<String, dynamic>?,
+      createdAt: identical(createdAt, _bookingUndefined)
+          ? this.createdAt
+          : createdAt as DateTime?,
+      updatedAt: identical(updatedAt, _bookingUndefined)
+          ? this.updatedAt
+          : updatedAt as DateTime?,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'client_id': clientId,
+      'client': client?.toMap(),
       'client_status': clientStatus,
       'driver_status': driverStatus,
       'helper_status': helperStatus,
-      'truck_id': truckId,
-      'driver_id': driverId,
-      'helper_id': helperId,
+      'truck': truck?.toMap(),
+      'driver': driver?.toMap(),
+      'helper': helper?.toMap(),
       'status_outputs': statusOutputs,
       'created_at': createdAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
@@ -74,13 +99,13 @@ class Booking {
   factory Booking.fromMap(Map<String, dynamic> map) {
     return Booking(
       id: map['id']?.toString(),
-      clientId: map['client_id']?.toString(),
+      client: _toUserModel(map['client']),
       clientStatus: map['client_status']?.toString(),
       driverStatus: map['driver_status']?.toString(),
       helperStatus: map['helper_status']?.toString(),
-      truckId: map['truck_id']?.toString(),
-      driverId: map['driver_id']?.toString(),
-      helperId: map['helper_id']?.toString(),
+      truck: _toVehicleMake(map['truck']),
+      driver: _toUserModel(map['driver']),
+      helper: _toUserModel(map['helper']),
       statusOutputs: map['status_outputs'] is Map
           ? Map<String, dynamic>.from(map['status_outputs'] as Map)
           : null,
@@ -93,6 +118,20 @@ class Booking {
 
   factory Booking.fromJson(String source) {
     return Booking.fromMap(json.decode(source) as Map<String, dynamic>);
+  }
+
+  static UserModel? _toUserModel(dynamic value) {
+    if (value is Map) {
+      return UserModel.fromMap(Map<String, dynamic>.from(value));
+    }
+    return null;
+  }
+
+  static VehicleMake? _toVehicleMake(dynamic value) {
+    if (value is Map) {
+      return VehicleMake.fromMap(Map<String, dynamic>.from(value));
+    }
+    return null;
   }
 
   static DateTime? _toDateTime(dynamic value) {

@@ -1,29 +1,55 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
-import 'package:webapp/models/status_definition.dart';
+import 'package:webapp/models/status.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
-import 'package:webapp/repositories/local/local_booking_repository.dart';
-import 'package:webapp/repositories/local/local_status_form_repository.dart';
+import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/status.request.dart';
+import 'package:webapp/repositories/interfaces/booking_repository.dart';
+import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
 
 class ClientBookingHomeViewModel extends BaseViewModel {
-  ClientBookingHomeViewModel()
-      : _statusRepository = LocalStatusFormRepository.instance,
-        _bookingRepository = LocalBookingRepository.instance,
-        _engine = StatusFormEngine(LocalStatusFormRepository.instance);
+  ClientBookingHomeViewModel({
+    StatusFormRepository? statusRepository,
+    BookingRepository? bookingRepository,
+  }) : _statusRepository = statusRepository ?? StatusRequest.instance,
+       _bookingRepository = bookingRepository ?? BookingRequest.instance,
+       _engine = StatusFormEngine(statusRepository ?? StatusRequest.instance) {
+    mainForms = List<StatusForm>.from(_cachedMainForms);
+    form = _cachedForm;
+    fields = List<StatusField>.from(_cachedFields);
+    statuses = List<Status>.from(_cachedStatuses);
+    _fieldsByFormId.addAll(
+      _cachedFieldsByFormId.map(
+        (key, value) => MapEntry(key, List<StatusField>.from(value)),
+      ),
+    );
+    loadError = _cachedLoadError;
+    blockedMessage = _cachedBlockedMessage;
+    _activeClientUser = _cachedActiveClientUser;
+  }
 
-  final LocalStatusFormRepository _statusRepository;
-  final LocalBookingRepository _bookingRepository;
+  final StatusFormRepository _statusRepository;
+  final BookingRepository _bookingRepository;
   final StatusFormEngine _engine;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
+  static List<StatusForm> _cachedMainForms = const [];
+  static Map<String, List<StatusField>> _cachedFieldsByFormId = const {};
+  static StatusForm? _cachedForm;
+  static List<StatusField> _cachedFields = const [];
+  static List<Status> _cachedStatuses = const [];
+  static String? _cachedLoadError;
+  static String? _cachedBlockedMessage;
+  static UserModel? _cachedActiveClientUser;
 
   List<StatusForm> mainForms = [];
   final Map<String, List<StatusField>> _fieldsByFormId = {};
   StatusForm? form;
   List<StatusField> fields = [];
-  List<StatusDefinition> statuses = [];
+  List<Status> statuses = [];
   Map<String, dynamic> answers = {};
   Map<String, String> errors = {};
   String? loadError;
@@ -31,9 +57,9 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   bool isBusyLoading = false;
   bool isSubmitting = false;
   int resetTick = 0;
-  String? _activeClientId;
+  UserModel? _activeClientUser;
 
-  Future<void> load(String clientId) async {
+  Future<void> load(UserModel clientUser) async {
     if (isBusyLoading) {
       return;
     }
@@ -47,23 +73,14 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       await _bookingRepository.initialize();
 
       statuses = await _statusRepository.getStatuses();
-      final seededBookForms = await _statusRepository.getStatusFormsByRoleAndStatus(
+      final bookForms = await _statusRepository.getStatusFormsByRoleAndStatus(
         'client',
         'book',
       );
-      final loadedMainForms = seededBookForms
+      final loadedMainForms = bookForms
           .where((item) => item.isActive != false && item.resolvedIsMainForm)
           .toList();
-      if (loadedMainForms.isNotEmpty) {
-        mainForms = loadedMainForms;
-      } else {
-        final forms = await _statusRepository.getStatusForms();
-        final fallbackForm = forms.cast<StatusForm?>().firstWhere(
-          (item) => item?.role == 'client' && item?.isActive != false,
-          orElse: () => null,
-        );
-        mainForms = fallbackForm == null ? const [] : [fallbackForm];
-      }
+      mainForms = loadedMainForms;
 
       form = mainForms.firstOrNull;
       if (form == null) {
@@ -87,25 +104,37 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         );
       }
       fields = fieldsForForm(form!);
-      _activeClientId = clientId;
-      blockedMessage = _resolveBlockedMessage(clientId);
+      _activeClientUser = clientUser;
+      blockedMessage = _resolveBlockedMessage(clientUser);
+      _cachedMainForms = List<StatusForm>.from(mainForms);
+      _cachedFieldsByFormId = _fieldsByFormId.map(
+        (key, value) => MapEntry(key, List<StatusField>.from(value)),
+      );
+      _cachedForm = form;
+      _cachedFields = List<StatusField>.from(fields);
+      _cachedStatuses = List<Status>.from(statuses);
+      _cachedLoadError = null;
+      _cachedBlockedMessage = blockedMessage;
+      _cachedActiveClientUser = _activeClientUser;
     } catch (_) {
       loadError = 'Failed to load the booking form.';
+      _cachedLoadError = loadError;
     } finally {
       isBusyLoading = false;
       notifyListeners();
     }
   }
 
-  void syncClient(String clientId) {
-    if (_activeClientId == clientId) {
+  void syncClient(UserModel clientUser) {
+    if (_activeClientUser?.id == clientUser.id &&
+        _activeClientUser?.updatedAt == clientUser.updatedAt) {
       return;
     }
-    _activeClientId = clientId;
+    _activeClientUser = clientUser;
     answers = {};
     errors = {};
     resetTick += 1;
-    blockedMessage = _resolveBlockedMessage(clientId);
+    blockedMessage = _resolveBlockedMessage(clientUser);
     notifyListeners();
   }
 
@@ -142,10 +171,10 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   Future<Booking?> submitForm({
     required StatusForm activeForm,
     required Map<String, dynamic> formAnswers,
-    required String clientId,
+    required UserModel clientUser,
     required String submittedByUserId,
   }) async {
-    if (blockedMessageForForm(activeForm, clientId) != null) {
+    if (blockedMessageForForm(activeForm, clientUser) != null) {
       notifyListeners();
       return null;
     }
@@ -156,7 +185,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     try {
       final now = DateTime.now();
       final baseBooking = Booking(
-        clientId: clientId,
+        client: clientUser,
         clientStatus: activeForm.currentStatusKey,
         createdAt: now,
         updatedAt: now,
@@ -175,7 +204,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   }
 
   Future<Booking?> submit({
-    required String clientId,
+    required UserModel clientUser,
     required String submittedByUserId,
   }) async {
     final activeForm = form;
@@ -194,7 +223,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     try {
       final now = DateTime.now();
       final baseBooking = Booking(
-        clientId: clientId,
+        client: clientUser,
         clientStatus: activeForm.currentStatusKey,
         createdAt: now,
         updatedAt: now,
@@ -245,10 +274,10 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     if (key == null || key.isEmpty) {
       return 'Client Booking';
     }
-    final status = statuses.cast<StatusDefinition?>().firstWhere(
-          (item) => item?.key == key,
-          orElse: () => null,
-        );
+    final status = statuses.cast<Status?>().firstWhere(
+      (item) => item?.key == key,
+      orElse: () => null,
+    );
     final label = status?.label?.trim();
     return label?.isNotEmpty == true ? label! : 'Client Booking';
   }
@@ -270,10 +299,10 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     if (key == null || key.isEmpty) {
       return null;
     }
-    final status = statuses.cast<StatusDefinition?>().firstWhere(
-          (item) => item?.key == key,
-          orElse: () => null,
-        );
+    final status = statuses.cast<Status?>().firstWhere(
+      (item) => item?.key == key,
+      orElse: () => null,
+    );
     final description = status?.description?.trim();
     return description?.isNotEmpty == true ? description : null;
   }
@@ -304,20 +333,19 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     return false;
   }
 
-  String? _resolveBlockedMessage(String clientId) {
+  String? _resolveBlockedMessage(UserModel clientUser) {
     final activeForm = form;
     if (activeForm == null) {
       return null;
     }
-    return blockedMessageForForm(activeForm, clientId);
+    return blockedMessageForForm(activeForm, clientUser);
   }
 
-  String? blockedMessageForForm(StatusForm activeForm, String clientId) {
+  String? blockedMessageForForm(StatusForm activeForm, UserModel clientUser) {
     final dependencyCheckBooking = Booking(
-      clientId: clientId,
+      client: clientUser,
       clientStatus: activeForm.currentStatusKey,
     );
     return _engine.getBlockedMessage(dependencyCheckBooking, activeForm);
   }
-
 }

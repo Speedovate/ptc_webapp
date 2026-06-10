@@ -1,28 +1,46 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/status_field.dart';
-import 'package:webapp/models/status_definition.dart';
+import 'package:webapp/models/status.dart';
 import 'package:webapp/models/status_form.dart';
+import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
-import 'package:webapp/repositories/local/local_status_form_repository.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
 
 class AdminStatusFormViewModel extends BaseViewModel {
-  AdminStatusFormViewModel({
-    StatusFormRepository? repository,
-  }) : _repository = repository ?? LocalStatusFormRepository.instance,
-       _engine = StatusFormEngine(
-         repository ?? LocalStatusFormRepository.instance,
-       );
+  AdminStatusFormViewModel({StatusFormRepository? repository})
+    : _repository = repository ?? StatusRequest.instance,
+      _engine = StatusFormEngine(repository ?? StatusRequest.instance) {
+    forms = List<StatusForm>.from(_cachedForms);
+    selectedForm = _cachedSelectedForm;
+    fields = List<StatusField>.from(_cachedFields);
+    fieldLibrary = List<StatusField>.from(_cachedFieldLibrary);
+    statuses = List<Status>.from(_cachedStatuses);
+    errorMessage = _cachedErrorMessage;
+    successMessage = _cachedSuccessMessage;
+    isPreviewVisible = _cachedIsPreviewVisible;
+    _fieldsByFormId.addAll(
+      _cachedFieldsByFormId.map(
+        (key, value) => MapEntry(key, List<StatusField>.from(value)),
+      ),
+    );
+  }
 
   final StatusFormRepository _repository;
   final StatusFormEngine _engine;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
+  static List<StatusForm> _cachedForms = const [];
+  static StatusForm? _cachedSelectedForm;
+  static List<StatusField> _cachedFields = const [];
+  static List<StatusField> _cachedFieldLibrary = const [];
+  static List<Status> _cachedStatuses = const [];
+  static Map<String, List<StatusField>> _cachedFieldsByFormId = const {};
+  static String? _cachedErrorMessage;
+  static String? _cachedSuccessMessage;
+  static bool _cachedIsPreviewVisible = true;
 
   static const roleOptions = ['client', 'driver', 'admin', 'helper'];
-  static const dependencyStatusTypes = [
-    'client_status',
-  ];
+  static const dependencyStatusTypes = ['client_status'];
   static const formStatusOrder = [
     'book',
     'pending',
@@ -62,9 +80,9 @@ class AdminStatusFormViewModel extends BaseViewModel {
   StatusForm? selectedForm;
   List<StatusField> fields = [];
   List<StatusField> fieldLibrary = [];
-  List<StatusDefinition> statuses = [];
+  List<Status> statuses = [];
   StatusField? draftNewField;
-  StatusDefinition? draftNewStatus;
+  Status? draftNewStatus;
   final Map<String, List<StatusField>> _fieldsByFormId = {};
   bool isLoading = false;
   String? errorMessage;
@@ -108,15 +126,13 @@ class AdminStatusFormViewModel extends BaseViewModel {
         fields = [];
         isPreviewVisible = true;
       } else if (selectedForm == null) {
-        await selectForm(
-          forms.first,
-          notify: false,
-          notifyWhenLoaded: false,
-        );
+        await selectForm(forms.first, notify: false, notifyWhenLoaded: false);
       }
       errorMessage = null;
+      _cacheSnapshot();
     } catch (error) {
       errorMessage = 'Failed to load status forms.';
+      _cachedErrorMessage = errorMessage;
     } finally {
       isLoading = false;
       notifyListeners();
@@ -149,21 +165,37 @@ class AdminStatusFormViewModel extends BaseViewModel {
     }
 
     final loadedFields = await _optionResolver.hydrateFields(
-      (await _repository.getFields(selectedId))
-          .map((field) => field.copyWith())
-          .toList(),
+      (await _repository.getFields(
+        selectedId,
+      )).map((field) => field.copyWith()).toList(),
     );
 
     if ((selectedForm?.id ?? '') != selectedId) {
       return;
     }
 
-    _fieldsByFormId[selectedId] =
-        loadedFields.map((field) => field.copyWith()).toList();
+    _fieldsByFormId[selectedId] = loadedFields
+        .map((field) => field.copyWith())
+        .toList();
     fields = loadedFields;
     if (notifyWhenLoaded) {
+      _cacheSnapshot();
       notifyListeners();
     }
+  }
+
+  void _cacheSnapshot() {
+    _cachedForms = List<StatusForm>.from(forms);
+    _cachedSelectedForm = selectedForm;
+    _cachedFields = List<StatusField>.from(fields);
+    _cachedFieldLibrary = List<StatusField>.from(fieldLibrary);
+    _cachedStatuses = List<Status>.from(statuses);
+    _cachedFieldsByFormId = _fieldsByFormId.map(
+      (key, value) => MapEntry(key, List<StatusField>.from(value)),
+    );
+    _cachedErrorMessage = errorMessage;
+    _cachedSuccessMessage = successMessage;
+    _cachedIsPreviewVisible = isPreviewVisible;
   }
 
   void createNewForm({bool notify = true}) {
@@ -211,7 +243,7 @@ class AdminStatusFormViewModel extends BaseViewModel {
       id: newId,
       currentStatusKey: '${form.currentStatusKey ?? 'status'}_copy',
       roles: [...form.resolvedRoles],
-      fieldIds: [...form.fieldIds],
+      fields: form.fields.map((field) => field.copyWith()).toList(),
       dependencies: form.dependencies
           .map((dependency) => dependency.copyWith())
           .toList(),
@@ -261,11 +293,11 @@ class AdminStatusFormViewModel extends BaseViewModel {
 
     selectedForm = switch (field) {
       'role' => form.copyWith(
-          role: stringValue,
-          roles: stringValue == null || stringValue.trim().isEmpty
-              ? const []
-              : [stringValue.trim()],
-        ),
+        role: stringValue,
+        roles: stringValue == null || stringValue.trim().isEmpty
+            ? const []
+            : [stringValue.trim()],
+      ),
       'isMainForm' => form.copyWith(isMainForm: value as bool?),
       'currentStatusKey' => form.copyWith(currentStatusKey: stringValue),
       'nextStatusKey' => form.copyWith(nextStatusKey: stringValue),
@@ -305,19 +337,12 @@ class AdminStatusFormViewModel extends BaseViewModel {
       return;
     }
 
-    final nextDependencies = [
-      ...form.dependencies,
-      const StatusDependency(),
-    ];
+    final nextDependencies = [...form.dependencies, const StatusDependency()];
     selectedForm = form.copyWith(dependencies: nextDependencies);
     notifyListeners();
   }
 
-  void updateDependency(
-    int index, {
-    String? statusType,
-    String? statusKey,
-  }) {
+  void updateDependency(int index, {String? statusType, String? statusKey}) {
     final form = selectedForm;
     if (form == null || index < 0 || index >= form.dependencies.length) {
       return;
@@ -345,18 +370,25 @@ class AdminStatusFormViewModel extends BaseViewModel {
 
   void assignField(String fieldId) {
     final form = selectedForm;
-    if (form == null || form.fieldIds.contains(fieldId)) {
+    if (form == null || form.fields.any((field) => field.id == fieldId)) {
       return;
     }
 
-    selectedForm = form.copyWith(fieldIds: [...form.fieldIds, fieldId]);
     final assignedField = fieldById(fieldId);
-    if (assignedField != null) {
-      fields = [
-        ...fields,
-        assignedField.copyWith(sortOrder: fields.length + 1),
-      ];
+    if (assignedField == null) {
+      return;
     }
+
+    final nextAssignedField = assignedField.copyWith(
+      sortOrder: fields.length + 1,
+    );
+    selectedForm = form.copyWith(
+      fields: [
+        ...form.fields.map((field) => field.copyWith()),
+        nextAssignedField,
+      ],
+    );
+    fields = [...fields, nextAssignedField];
     notifyListeners();
   }
 
@@ -369,7 +401,10 @@ class AdminStatusFormViewModel extends BaseViewModel {
     final removedId = fields[index].id;
     fields = [...fields]..removeAt(index);
     selectedForm = form.copyWith(
-      fieldIds: form.fieldIds.where((id) => id != removedId).toList(),
+      fields: form.fields
+          .where((field) => field.id != removedId)
+          .map((field) => field.copyWith())
+          .toList(),
       fieldOverrides: Map<String, StatusFieldOverride>.from(form.fieldOverrides)
         ..remove(removedId),
     );
@@ -394,11 +429,13 @@ class AdminStatusFormViewModel extends BaseViewModel {
     final movedField = nextFields.removeAt(oldIndex);
     nextFields.insert(targetIndex, movedField);
 
-    fields = nextFields.asMap().entries
+    fields = nextFields
+        .asMap()
+        .entries
         .map((entry) => entry.value.copyWith(sortOrder: entry.key + 1))
         .toList();
     selectedForm = form.copyWith(
-      fieldIds: fields.map((field) => field.id).whereType<String>().toList(),
+      fields: fields.map((field) => field.copyWith()).toList(),
     );
     notifyListeners();
   }
@@ -482,10 +519,7 @@ class AdminStatusFormViewModel extends BaseViewModel {
   Future<void> saveLibraryField(StatusField field) async {
     final now = DateTime.now();
     await _repository.saveField(
-      field.copyWith(
-        updatedAt: now,
-        createdAt: field.createdAt ?? now,
-      ),
+      field.copyWith(updatedAt: now, createdAt: field.createdAt ?? now),
     );
     draftNewField = null;
     await loadForms();
@@ -516,19 +550,16 @@ class AdminStatusFormViewModel extends BaseViewModel {
     await loadForms();
   }
 
-  Future<void> saveStatusDefinition(StatusDefinition status) async {
+  Future<void> saveStatus(Status status) async {
     final now = DateTime.now();
     await _repository.saveStatus(
-      status.copyWith(
-        updatedAt: now,
-        createdAt: status.createdAt ?? now,
-      ),
+      status.copyWith(updatedAt: now, createdAt: status.createdAt ?? now),
     );
     draftNewStatus = null;
     await loadForms();
   }
 
-  Future<void> deleteStatusDefinition(StatusDefinition status) async {
+  Future<void> deleteStatus(Status status) async {
     final statusId = status.id ?? '';
     if (statusId.isEmpty) {
       return;
@@ -537,10 +568,7 @@ class AdminStatusFormViewModel extends BaseViewModel {
     await loadForms();
   }
 
-  Future<void> setStatusDefinitionActive(
-    StatusDefinition status,
-    bool isActive,
-  ) async {
+  Future<void> setStatusActive(Status status, bool isActive) async {
     final statusId = status.id ?? '';
     if (statusId.isEmpty) {
       return;
@@ -556,14 +584,15 @@ class AdminStatusFormViewModel extends BaseViewModel {
     await loadForms();
   }
 
-  StatusDefinition createDraftStatus() {
+  Status createDraftStatus() {
     final now = DateTime.now();
-    final nextId = statuses
+    final nextId =
+        statuses
             .map((status) => int.tryParse(status.id ?? ''))
             .whereType<int>()
             .fold<int>(0, (max, value) => value > max ? value : max) +
         1;
-    return StatusDefinition(
+    return Status(
       id: '$nextId',
       applicableRoles: const [],
       isActive: true,
@@ -580,7 +609,7 @@ class AdminStatusFormViewModel extends BaseViewModel {
     draftNewField = null;
   }
 
-  void updateDraftNewStatus(StatusDefinition status) {
+  void updateDraftNewStatus(Status status) {
     draftNewStatus = status;
   }
 
@@ -588,14 +617,14 @@ class AdminStatusFormViewModel extends BaseViewModel {
     draftNewStatus = null;
   }
 
-  List<StatusDefinition> statusesForRole(String? role) {
+  List<Status> statusesForRole(String? role) {
     if (role == null || role.isEmpty) {
       return statuses;
     }
     return statusesForRoles([role]);
   }
 
-  List<StatusDefinition> statusesForRoles(List<String> roles) {
+  List<Status> statusesForRoles(List<String> roles) {
     final normalizedRoles = roles
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)
@@ -613,7 +642,7 @@ class AdminStatusFormViewModel extends BaseViewModel {
     }).toList();
   }
 
-  List<StatusDefinition> statusesForStatusType(String? statusType) {
+  List<Status> statusesForStatusType(String? statusType) {
     final role = switch (statusType) {
       'client_status' => 'client',
       'driver_status' => 'driver',
@@ -624,7 +653,12 @@ class AdminStatusFormViewModel extends BaseViewModel {
   }
 
   List<StatusField> get availableFieldsForSelection {
-    final assignedIds = selectedForm?.fieldIds.toSet() ?? <String>{};
+    final assignedIds =
+        selectedForm?.fields
+            .map((field) => field.id)
+            .whereType<String>()
+            .toSet() ??
+        <String>{};
     return fieldLibrary
         .where((field) => !assignedIds.contains(field.id))
         .toList();
@@ -658,7 +692,9 @@ class AdminStatusFormViewModel extends BaseViewModel {
     final baseField = fieldById(fieldId);
     final baseRequired = baseField?.required;
     final currentOverride = form.fieldOverrides[fieldId];
-    final nextOverrides = Map<String, StatusFieldOverride>.from(form.fieldOverrides);
+    final nextOverrides = Map<String, StatusFieldOverride>.from(
+      form.fieldOverrides,
+    );
 
     final nextOverride = StatusFieldOverride(
       required: required == (baseRequired ?? false) ? null : required,
@@ -742,7 +778,8 @@ class AdminStatusFormViewModel extends BaseViewModel {
       return false;
     }
 
-    if (hasNextStatus && !knownStatusKeys.contains(form.nextStatusKey?.trim())) {
+    if (hasNextStatus &&
+        !knownStatusKeys.contains(form.nextStatusKey?.trim())) {
       errorMessage = 'Next Status Key must exist in Statuses.';
       notifyListeners();
       return false;
@@ -750,7 +787,9 @@ class AdminStatusFormViewModel extends BaseViewModel {
 
     final seenKeys = <String>{};
     for (final field in fields) {
-      if (_isBlank(field.key) || _isBlank(field.type) || _isBlank(field.title)) {
+      if (_isBlank(field.key) ||
+          _isBlank(field.type) ||
+          _isBlank(field.title)) {
         errorMessage = 'Each field must have key, type, and title.';
         notifyListeners();
         return false;
@@ -763,7 +802,6 @@ class AdminStatusFormViewModel extends BaseViewModel {
         return false;
       }
       seenKeys.add(normalizedKey);
-
     }
 
     for (final dependency in form.dependencies) {
@@ -819,8 +857,9 @@ class AdminStatusFormViewModel extends BaseViewModel {
 
       await _repository.saveStatusForm(normalizedForm);
       await _repository.saveFields(normalizedForm.id ?? '', normalizedFields);
-      _fieldsByFormId[normalizedForm.id ?? ''] =
-          normalizedFields.map((field) => field.copyWith()).toList();
+      _fieldsByFormId[normalizedForm.id ?? ''] = normalizedFields
+          .map((field) => field.copyWith())
+          .toList();
       selectedForm = normalizedForm;
       fields = normalizedFields;
       forms = await _repository.getStatusForms();
@@ -846,11 +885,7 @@ class AdminStatusFormViewModel extends BaseViewModel {
       if (forms.isEmpty) {
         createNewForm(notify: false);
       } else {
-        await selectForm(
-          forms.first,
-          notify: false,
-          notifyWhenLoaded: false,
-        );
+        await selectForm(forms.first, notify: false, notifyWhenLoaded: false);
       }
       successMessage = 'Status form deleted.';
       errorMessage = null;
@@ -873,11 +908,7 @@ class AdminStatusFormViewModel extends BaseViewModel {
         final matches = forms.where((item) => item.id == form.id);
         final fresh = matches.isEmpty ? null : matches.first;
         if (fresh != null) {
-          await selectForm(
-            fresh,
-            notify: false,
-            notifyWhenLoaded: false,
-          );
+          await selectForm(fresh, notify: false, notifyWhenLoaded: false);
         }
       }
       successMessage = 'Status form deactivated.';
@@ -909,21 +940,17 @@ class AdminStatusFormViewModel extends BaseViewModel {
   }
 
   void _sortFieldsLatestFirst() {
-    fieldLibrary.sort((a, b) => _createdAtLatestFirstCompare(
-      a.createdAt,
-      b.createdAt,
-      a.id,
-      b.id,
-    ));
+    fieldLibrary.sort(
+      (a, b) =>
+          _createdAtLatestFirstCompare(a.createdAt, b.createdAt, a.id, b.id),
+    );
   }
 
   void _sortStatusesLatestFirst() {
-    statuses.sort((a, b) => _createdAtLatestFirstCompare(
-      a.createdAt,
-      b.createdAt,
-      a.id,
-      b.id,
-    ));
+    statuses.sort(
+      (a, b) =>
+          _createdAtLatestFirstCompare(a.createdAt, b.createdAt, a.id, b.id),
+    );
   }
 
   int _createdAtLatestFirstCompare(

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
-import 'package:webapp/repositories/local/local_status_form_repository.dart';
+import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/widgets/status_form/status_form_runtime_fields.dart';
 
@@ -26,7 +26,7 @@ class StatusFormPreview extends StatefulWidget {
 
 class _StatusFormPreviewState extends State<StatusFormPreview> {
   final StatusFormEngine _engine = StatusFormEngine(
-    LocalStatusFormRepository.instance,
+    StatusRequest.instance,
   );
   Map<String, dynamic> _answers = {};
   Map<String, String> _errors = {};

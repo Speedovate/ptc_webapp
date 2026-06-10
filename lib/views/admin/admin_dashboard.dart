@@ -4,6 +4,7 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/view_models/admin/admin_dashboard.vm.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 
 class AdminDashboardView extends StatelessWidget {
   const AdminDashboardView({super.key});
@@ -14,35 +15,48 @@ class AdminDashboardView extends StatelessWidget {
       viewModelBuilder: AdminDashboardViewModel.new,
       onViewModelReady: (vm) => vm.load(),
       builder: (context, vm, child) {
-        if (vm.isBusy) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
         if (vm.errorMessage != null) {
           return Padding(
             padding: const EdgeInsets.all(24),
-            child: AdminListItemCard(
-              padding: const EdgeInsets.all(24),
-              child: AdminListStateText(message: vm.errorMessage!),
+            child: Column(
+              children: [
+                AppRefreshStrip(isVisible: vm.isBusy),
+                AdminListItemCard(
+                  padding: const EdgeInsets.all(24),
+                  child: AdminListStateText(message: vm.errorMessage!),
+                ),
+              ],
             ),
           );
         }
 
         if (vm.completedBookings.isEmpty) {
-          return const Padding(
+          return Padding(
             padding: EdgeInsets.all(24),
-            child: AdminListItemCard(
-              padding: EdgeInsets.all(24),
-              child: AdminListStateText(message: 'No completed bookings yet.'),
+            child: Column(
+              children: [
+                AppRefreshStrip(isVisible: vm.isBusy),
+                const AdminListItemCard(
+                  padding: EdgeInsets.all(24),
+                  child: AdminListStateText(
+                    message: 'No completed bookings yet.',
+                  ),
+                ),
+              ],
             ),
           );
         }
 
         return SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-          child: _AdminDashboardCompletedBookingsTable(
-            bookings: vm.completedBookings,
-            vm: vm,
+          child: Column(
+            children: [
+              AppRefreshStrip(isVisible: vm.isBusy),
+              _AdminDashboardCompletedBookingsTable(
+                bookings: vm.completedBookings,
+                vm: vm,
+              ),
+            ],
           ),
         );
       },
