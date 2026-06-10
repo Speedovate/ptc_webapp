@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
@@ -27,6 +29,7 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   final BookingRepository _bookingRepository;
   final AuthRepository _authRepository;
   final StatusFormRepository _statusRepository;
+  StreamSubscription<List<Booking>>? _bookingsSubscription;
   final Map<String, UserModel> _usersById = {};
   final Map<String, Status> _statusesByKey = {};
   static List<Booking> _cachedBookings = const [];
@@ -65,24 +68,14 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
               .map((item) => MapEntry(item.key!, item)),
         );
 
-      final allBookings = await _bookingRepository.getBookings();
-      final currentUserId = user.id ?? '';
-      bookings = switch (user.role) {
-        'client' =>
-          allBookings
-              .where((booking) => booking.client?.id == currentUserId)
-              .toList(),
-        'driver' =>
-          allBookings
-              .where((booking) => booking.driver?.id == currentUserId)
-              .toList(),
-        'helper' =>
-          allBookings
-              .where((booking) => booking.helper?.id == currentUserId)
-              .toList(),
-        _ => const [],
-      };
-      _cachedBookings = List<Booking>.from(bookings);
+      await _bookingsSubscription?.cancel();
+      _applyBookingsForUser(user, await _bookingRepository.getBookings());
+      _bookingsSubscription = _bookingRepository.watchBookings().listen((
+        liveBookings,
+      ) {
+        _applyBookingsForUser(user, liveBookings);
+        notifyListeners();
+      });
       _cachedErrorMessage = null;
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
@@ -93,6 +86,26 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  void _applyBookingsForUser(UserModel user, List<Booking> allBookings) {
+    final currentUserId = user.id ?? '';
+    bookings = switch (user.role) {
+      'client' =>
+        allBookings
+            .where((booking) => booking.client?.id == currentUserId)
+            .toList(),
+      'driver' =>
+        allBookings
+            .where((booking) => booking.driver?.id == currentUserId)
+            .toList(),
+      'helper' =>
+        allBookings
+            .where((booking) => booking.helper?.id == currentUserId)
+            .toList(),
+      _ => const [],
+    };
+    _cachedBookings = List<Booking>.from(bookings);
   }
 
   String clientName(Booking booking) =>
@@ -159,6 +172,12 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
     final user = _usersById[userId];
     final name = user?.name?.trim();
     return name?.isNotEmpty == true ? name! : fallback;
+  }
+
+  @override
+  void dispose() {
+    _bookingsSubscription?.cancel();
+    super.dispose();
   }
 
   String _userPhone(String? userId) {

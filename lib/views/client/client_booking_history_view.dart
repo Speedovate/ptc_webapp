@@ -63,7 +63,12 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
       viewModelBuilder: ClientBookingHistoryViewModel.new,
       onViewModelReady: (vm) => vm.load(widget.user),
       builder: (context, vm, _) {
-        final selectedBooking = _selectedBooking;
+        final selectedBooking = _selectedBooking == null
+            ? null
+            : vm.bookings
+                      .where((booking) => booking.id == _selectedBooking!.id)
+                      .firstOrNull ??
+                  _selectedBooking;
         if (selectedBooking != null) {
           return SingleChildScrollView(
             key: PageStorageKey(
@@ -78,25 +83,26 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
                   offset: const Offset(-12, 0),
                   child: _BookingDetailHeader(
                     booking: selectedBooking,
-                    onBack: () async {
+                    onBack: () {
                       setState(() {
                         _selectedBooking = null;
                       });
-                      await vm.load(widget.user);
                     },
                   ),
                 ),
                 const SizedBox(height: 16),
                 BookingWorkflowView(
+                  key: ValueKey(
+                    'history-booking-workflow-${selectedBooking.id ?? ''}-${selectedBooking.updatedAt?.toIso8601String() ?? ''}',
+                  ),
                   user: widget.user,
                   booking: selectedBooking,
                   embedded: true,
                   embeddedScrollController: _detailScrollController,
-                  onBookingUpdated: (updatedBooking) async {
+                  onBookingUpdated: (updatedBooking) {
                     setState(() {
                       _selectedBooking = updatedBooking;
                     });
-                    await vm.load(widget.user);
                   },
                 ),
               ],

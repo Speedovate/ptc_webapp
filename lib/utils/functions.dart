@@ -74,6 +74,71 @@ class NameCaseTextInputFormatter extends TextInputFormatter {
   }
 }
 
+String? normalizePhilippinePhone(String? value) {
+  final trimmed = value?.trim();
+  if (trimmed == null || trimmed.isEmpty) {
+    return null;
+  }
+
+  final compact = trimmed.replaceAll(RegExp(r'[\s\-\(\)]'), '');
+  if (RegExp(r'^\+639\d{9}$').hasMatch(compact)) {
+    return compact;
+  }
+  if (RegExp(r'^639\d{9}$').hasMatch(compact)) {
+    return '+$compact';
+  }
+  if (RegExp(r'^09\d{9}$').hasMatch(compact)) {
+    return '+63${compact.substring(1)}';
+  }
+  if (RegExp(r'^9\d{9}$').hasMatch(compact)) {
+    return '+63$compact';
+  }
+  return null;
+}
+
+bool isValidPhilippinePhone(String? value) {
+  return normalizePhilippinePhone(value) != null;
+}
+
+class PhilippinesPhoneInputFormatter extends TextInputFormatter {
+  const PhilippinesPhoneInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+    if (text.isEmpty) {
+      return newValue;
+    }
+
+    final buffer = StringBuffer();
+    for (var index = 0; index < text.length; index++) {
+      final char = text[index];
+      if (char == '+' && buffer.isEmpty) {
+        buffer.write(char);
+        continue;
+      }
+      if (RegExp(r'\d').hasMatch(char)) {
+        buffer.write(char);
+      }
+    }
+    final transformed = buffer.toString();
+
+    if (transformed == newValue.text) {
+      return newValue;
+    }
+
+    final offset = newValue.selection.baseOffset.clamp(0, transformed.length);
+    return TextEditingValue(
+      text: transformed,
+      selection: TextSelection.collapsed(offset: offset),
+      composing: TextRange.empty,
+    );
+  }
+}
+
 String _titleCasePart(String part) {
   return part
       .split('-')

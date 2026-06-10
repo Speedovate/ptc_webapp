@@ -3,6 +3,7 @@ import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/utils/functions.dart';
 
 class StatusFormEngine {
   const StatusFormEngine(this._repository);
@@ -34,7 +35,8 @@ class StatusFormEngine {
       final title = field.title?.trim();
 
       if (isRequired && _isEmptyAnswer(answer)) {
-        errors[key] = field.requiredError ??
+        errors[key] =
+            field.requiredError ??
             ((title?.isNotEmpty == true)
                 ? '$title is required.'
                 : 'This field is required.');
@@ -91,7 +93,8 @@ class StatusFormEngine {
           errors[key] =
               field.validationError ?? 'Not enough items were provided.';
         } else if (max != null && answer.length > max) {
-          errors[key] = field.validationError ?? 'Too many items were provided.';
+          errors[key] =
+              field.validationError ?? 'Too many items were provided.';
         }
       }
     }
@@ -135,6 +138,7 @@ class StatusFormEngine {
   Booking applyOutputToBooking(
     Booking booking,
     StatusForm statusForm,
+    List<StatusField> fields,
     Map<String, dynamic> answers,
     String userId,
   ) {
@@ -143,6 +147,7 @@ class StatusFormEngine {
         ? 'cancelled'
         : (statusForm.currentStatusKey ?? 'status');
     final truckId = _stringAnswer(answers['truck_id']);
+    final normalizedAnswers = _normalizeAnswersForStorage(answers, fields);
     final nextOutputs = Map<String, dynamic>.from(booking.statusOutputs ?? {})
       ..[outputKey] = {
         'status_form': statusForm.toReferenceMap(),
@@ -150,7 +155,7 @@ class StatusFormEngine {
         'submitted_roles': statusForm.resolvedRoles,
         'submitted_by': userId,
         'submitted_at': DateTime.now().toIso8601String(),
-        'fields': answers,
+        'fields': normalizedAnswers,
       };
 
     return booking.copyWith(
@@ -221,9 +226,8 @@ class StatusFormEngine {
     if (trimmed.isEmpty) {
       return null;
     }
-    final phoneRegex = RegExp(r'^\+639\d{9}$');
-    if (!phoneRegex.hasMatch(trimmed)) {
-      return 'Enter a valid PH number starting with +63.';
+    if (!isValidPhilippinePhone(trimmed)) {
+      return 'Enter a valid PH mobile number.';
     }
     return null;
   }
@@ -233,7 +237,9 @@ class StatusFormEngine {
     if (trimmed.isEmpty) {
       return null;
     }
-    return num.tryParse(trimmed) == null ? 'Please enter a valid number.' : null;
+    return num.tryParse(trimmed) == null
+        ? 'Please enter a valid number.'
+        : null;
   }
 
   static String? _stringAnswer(dynamic value) {
@@ -242,5 +248,28 @@ class StatusFormEngine {
     }
     final trimmed = value.trim();
     return trimmed.isEmpty ? null : trimmed;
+  }
+
+  static Map<String, dynamic> _normalizeAnswersForStorage(
+    Map<String, dynamic> answers,
+    List<StatusField> fields,
+  ) {
+    final fieldByKey = {
+      for (final field in fields)
+        if (field.key != null && field.key!.trim().isNotEmpty)
+          field.key!.trim(): field,
+    };
+    final normalized = <String, dynamic>{};
+
+    answers.forEach((key, value) {
+      final field = fieldByKey[key];
+      if (value is String && field?.type == 'phone') {
+        normalized[key] = normalizePhilippinePhone(value) ?? value.trim();
+        return;
+      }
+      normalized[key] = value;
+    });
+
+    return normalized;
   }
 }

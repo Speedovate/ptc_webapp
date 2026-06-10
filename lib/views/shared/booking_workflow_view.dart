@@ -1,6 +1,5 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:stacked/stacked.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -9,6 +8,7 @@ import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/shared/booking_workflow.vm.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
@@ -1567,6 +1567,7 @@ class _WorkflowFieldCard extends StatelessWidget {
           preferredScrollController: preferredScrollController,
           initialValue: initialValue?.toString(),
           keyboardType: TextInputType.phone,
+          inputFormatters: const [PhilippinesPhoneInputFormatter()],
           hintText: placeholder,
           errorText: errorText,
           onChanged: (value) => onChanged(value.trim()),
@@ -1906,6 +1907,7 @@ class _UnderlineTextField extends StatefulWidget {
     this.keyboardType,
     this.hintText,
     this.errorText,
+    this.inputFormatters,
   });
 
   final String? initialValue;
@@ -1913,6 +1915,7 @@ class _UnderlineTextField extends StatefulWidget {
   final TextInputType? keyboardType;
   final String? hintText;
   final String? errorText;
+  final List<TextInputFormatter>? inputFormatters;
   final ValueChanged<String> onChanged;
 
   @override
@@ -1965,6 +1968,7 @@ class _UnderlineTextFieldState extends State<_UnderlineTextField> {
     return TextField(
       controller: _controller,
       keyboardType: widget.keyboardType,
+      inputFormatters: widget.inputFormatters,
       scrollPadding: EdgeInsets.zero,
       onTapOutside: _unfocusWithoutScroll,
       onChanged: widget.onChanged,

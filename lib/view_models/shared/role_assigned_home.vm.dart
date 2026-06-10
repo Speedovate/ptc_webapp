@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
@@ -27,6 +29,7 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   final AuthRepository _authRepository;
   final BookingRepository _bookingRepository;
   final StatusFormRepository _statusRepository;
+  StreamSubscription<List<Booking>>? _bookingsSubscription;
   static List<Booking> _cachedAssignedBookings = const [];
   static UserModel? _cachedCurrentUser;
   static String? _cachedErrorMessage;
@@ -65,35 +68,14 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
         );
 
       currentUser = _usersById[user.id] ?? user;
-      final currentUserId = currentUser?.id ?? '';
-      final normalizedRole = (currentUser?.role ?? '').trim().toLowerCase();
-
-      assignedBookings = bookings.where((booking) {
-        final statusKey = (booking.clientStatus ?? '').trim().toLowerCase();
-        if (statusKey == 'cancelled' || statusKey == 'delivered') {
-          return false;
-        }
-        return switch (normalizedRole) {
-          'driver' => booking.driver?.id == currentUserId,
-          'helper' => booking.helper?.id == currentUserId,
-          _ => false,
-        };
-      }).toList();
-      assignedBookings.sort((left, right) {
-        final leftDate = left.createdAt;
-        final rightDate = right.createdAt;
-        final dateComparison = _compareOldestFirst(leftDate, rightDate);
-        if (dateComparison != 0) {
-          return dateComparison;
-        }
-        final leftId = int.tryParse(left.id ?? '');
-        final rightId = int.tryParse(right.id ?? '');
-        if (leftId != null && rightId != null) {
-          return leftId.compareTo(rightId);
-        }
-        return (left.id ?? '').compareTo(right.id ?? '');
+      await _bookingsSubscription?.cancel();
+      _applyAssignedBookings(bookings);
+      _bookingsSubscription = _bookingRepository.watchBookings().listen((
+        liveBookings,
+      ) {
+        _applyAssignedBookings(liveBookings);
+        notifyListeners();
       });
-      _cachedAssignedBookings = List<Booking>.from(assignedBookings);
       _cachedCurrentUser = currentUser;
       _cachedErrorMessage = null;
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
@@ -105,6 +87,37 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       setBusy(false);
       notifyListeners();
     }
+  }
+
+  void _applyAssignedBookings(List<Booking> bookings) {
+    final currentUserId = currentUser?.id ?? '';
+    final normalizedRole = (currentUser?.role ?? '').trim().toLowerCase();
+    assignedBookings = bookings.where((booking) {
+      final statusKey = (booking.clientStatus ?? '').trim().toLowerCase();
+      if (statusKey == 'cancelled' || statusKey == 'delivered') {
+        return false;
+      }
+      return switch (normalizedRole) {
+        'driver' => booking.driver?.id == currentUserId,
+        'helper' => booking.helper?.id == currentUserId,
+        _ => false,
+      };
+    }).toList();
+    assignedBookings.sort((left, right) {
+      final leftDate = left.createdAt;
+      final rightDate = right.createdAt;
+      final dateComparison = _compareOldestFirst(leftDate, rightDate);
+      if (dateComparison != 0) {
+        return dateComparison;
+      }
+      final leftId = int.tryParse(left.id ?? '');
+      final rightId = int.tryParse(right.id ?? '');
+      if (leftId != null && rightId != null) {
+        return leftId.compareTo(rightId);
+      }
+      return (left.id ?? '').compareTo(right.id ?? '');
+    });
+    _cachedAssignedBookings = List<Booking>.from(assignedBookings);
   }
 
   Future<UserModel?> setOnline(bool isOnline) async {
@@ -176,5 +189,11 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       return -1;
     }
     return left.compareTo(right);
+  }
+
+  @override
+  void dispose() {
+    _bookingsSubscription?.cancel();
+    super.dispose();
   }
 }

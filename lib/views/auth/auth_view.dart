@@ -40,7 +40,7 @@ class _AuthViewState extends State<AuthView> {
   bool _isLoadingVehicleTypes = true;
   List<VehicleCatalogItem> _vehicleTypes = const [];
 
-  static const _roleOptions = ['client', 'driver', 'admin', 'helper'];
+  static const _roleOptions = ['client', 'driver', 'helper'];
 
   @override
   void initState() {
@@ -243,14 +243,12 @@ class _AuthViewState extends State<AuthView> {
                                         value: _registerRole,
                                         items: _roleOptions,
                                         onChanged: (value) {
-                                          setState(
-                                            () {
-                                              _registerRole = value;
-                                              if (value != 'driver') {
-                                                _registerVehicleTypeId = null;
-                                              }
-                                            },
-                                          );
+                                          setState(() {
+                                            _registerRole = value;
+                                            if (value != 'driver') {
+                                              _registerVehicleTypeId = null;
+                                            }
+                                          });
                                         },
                                       ),
                                       if (_registerRole == 'driver') ...[
@@ -260,7 +258,9 @@ class _AuthViewState extends State<AuthView> {
                                           value: _registerVehicleTypeId,
                                           items: _vehicleTypes
                                               .map((item) => item.id ?? '')
-                                              .where((value) => value.isNotEmpty)
+                                              .where(
+                                                (value) => value.isNotEmpty,
+                                              )
                                               .toList(),
                                           itemLabelBuilder: (value) {
                                             final match = _vehicleTypes.where(
@@ -270,8 +270,10 @@ class _AuthViewState extends State<AuthView> {
                                               return value;
                                             }
                                             final item = match.first;
-                                            final name = item.name?.trim() ?? '';
-                                            final slug = item.slug?.trim() ?? '';
+                                            final name =
+                                                item.name?.trim() ?? '';
+                                            final slug =
+                                                item.slug?.trim() ?? '';
                                             if (name.isEmpty) {
                                               return slug;
                                             }
@@ -282,7 +284,8 @@ class _AuthViewState extends State<AuthView> {
                                           },
                                           onChanged: (value) {
                                             setState(
-                                              () => _registerVehicleTypeId = value,
+                                              () => _registerVehicleTypeId =
+                                                  value,
                                             );
                                           },
                                         ),
@@ -309,30 +312,36 @@ class _AuthViewState extends State<AuthView> {
                                         controller: _registerPhoneController,
                                         label: 'Phone',
                                         keyboardType: TextInputType.phone,
+                                        inputFormatters: const [
+                                          PhilippinesPhoneInputFormatter(),
+                                        ],
                                       ),
                                       if (_registerRole == 'driver') ...[
                                         const SizedBox(height: 14),
                                         _AuthTextField(
-                                          controller: _registerLicenseController,
+                                          controller:
+                                              _registerLicenseController,
                                           label: 'License',
                                         ),
                                         const SizedBox(height: 14),
                                         _AuthTextField(
                                           controller: _registerLatController,
                                           label: 'Latitude',
-                                          keyboardType: const TextInputType.numberWithOptions(
-                                            decimal: true,
-                                            signed: true,
-                                          ),
+                                          keyboardType:
+                                              const TextInputType.numberWithOptions(
+                                                decimal: true,
+                                                signed: true,
+                                              ),
                                         ),
                                         const SizedBox(height: 14),
                                         _AuthTextField(
                                           controller: _registerLngController,
                                           label: 'Longitude',
-                                          keyboardType: const TextInputType.numberWithOptions(
-                                            decimal: true,
-                                            signed: true,
-                                          ),
+                                          keyboardType:
+                                              const TextInputType.numberWithOptions(
+                                                decimal: true,
+                                                signed: true,
+                                              ),
                                         ),
                                       ],
                                       const SizedBox(height: 14),
@@ -352,9 +361,7 @@ class _AuthViewState extends State<AuthView> {
                               child: SizedBox(
                                 height: 52,
                                 child: OutlinedButton(
-                                  onPressed: isBusy
-                                      ? null
-                                      : _switchAuthMode,
+                                  onPressed: isBusy ? null : _switchAuthMode,
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: AppColors.primaryColor,
                                     side: const BorderSide(
@@ -452,13 +459,16 @@ class _AuthViewState extends State<AuthView> {
     final resolvedVehicleType = selectedVehicleType.isEmpty
         ? null
         : selectedVehicleType.first;
+    final normalizedPhone =
+        normalizePhilippinePhone(_registerPhoneController.text) ??
+        _registerPhoneController.text.trim();
     final user = await vm.register(
       _registerRole == 'driver'
           ? DriverModel(
               role: _registerRole,
               email: _registerEmailController.text.trim(),
               name: _registerNameController.text.trim(),
-              phone: _registerPhoneController.text.trim(),
+              phone: normalizedPhone,
               password: _registerPasswordController.text,
               license: _registerLicenseController.text.trim(),
               lat: _tryParseDouble(_registerLatController.text),
@@ -471,7 +481,7 @@ class _AuthViewState extends State<AuthView> {
               role: _registerRole,
               email: _registerEmailController.text.trim(),
               name: _registerNameController.text.trim(),
-              phone: _registerPhoneController.text.trim(),
+              phone: normalizedPhone,
               password: _registerPasswordController.text,
               isActive: !isPendingRole,
               isOnline: false,
@@ -552,9 +562,8 @@ class _AuthViewState extends State<AuthView> {
     if (text.isEmpty) {
       return 'Phone is required.';
     }
-    final phoneRegex = RegExp(r'^\+63\d{10}$');
-    if (!phoneRegex.hasMatch(text)) {
-      return 'Phone must start with +63 and use a valid PH number.';
+    if (!isValidPhilippinePhone(text)) {
+      return 'Please enter a valid PH mobile number.';
     }
     return null;
   }

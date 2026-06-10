@@ -54,7 +54,6 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
           setState(() {
             _selectedBooking = booking;
           });
-          await vm.load();
         },
       ),
     );
@@ -87,7 +86,6 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
         _selectedBooking = updatedBooking;
       });
     }
-    await vm.load();
   }
 
   @override
@@ -96,7 +94,12 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
       viewModelBuilder: AdminBookingsViewModel.new,
       onViewModelReady: (vm) => vm.load(),
       builder: (context, vm, child) {
-        final selectedBooking = _selectedBooking;
+        final selectedBooking = _selectedBooking == null
+            ? null
+            : vm.bookings
+                      .where((booking) => booking.id == _selectedBooking!.id)
+                      .firstOrNull ??
+                  _selectedBooking;
         final filteredBookings = vm.filteredBookings();
 
         if (selectedBooking != null) {
@@ -122,15 +125,17 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
                 ),
                 const SizedBox(height: 16),
                 BookingWorkflowView(
+                  key: ValueKey(
+                    'admin-booking-workflow-${selectedBooking.id ?? ''}-${selectedBooking.updatedAt?.toIso8601String() ?? ''}',
+                  ),
                   user: widget.user,
                   booking: selectedBooking,
                   embedded: true,
                   embeddedScrollController: _detailScrollController,
-                  onBookingUpdated: (updatedBooking) async {
+                  onBookingUpdated: (updatedBooking) {
                     setState(() {
                       _selectedBooking = updatedBooking;
                     });
-                    await vm.load();
                   },
                 ),
               ],

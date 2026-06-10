@@ -2048,7 +2048,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                 email: _nullIfEmpty(_emailController.text),
                 name: _nullIfEmpty(_nameController.text),
                 photo: _nullIfEmpty(_photoController.text),
-                phone: _nullIfEmpty(_phoneController.text),
+                phone: normalizePhilippinePhone(_phoneController.text),
                 isActive: _isActive,
                 isOnline: _isOnline,
                 password: _nullIfEmpty(_passwordController.text),
@@ -2195,7 +2195,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
       email: _nullIfEmpty(_emailController.text),
       name: _nullIfEmpty(_nameController.text),
       photo: _nullIfEmpty(_photoController.text),
-      phone: _nullIfEmpty(_phoneController.text),
+      phone: normalizePhilippinePhone(_phoneController.text),
       isActive: _isActive,
       isOnline: _isOnline,
       password: _nullIfEmpty(_passwordController.text),
@@ -2237,6 +2237,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
           : TextCapitalization.none,
       inputFormatters: label == 'Name'
           ? const <TextInputFormatter>[NameCaseTextInputFormatter()]
+          : label == 'Phone'
+          ? const <TextInputFormatter>[PhilippinesPhoneInputFormatter()]
           : null,
       bottomPadding: bottomPadding,
       suffixIcon: obscureText
@@ -2333,9 +2335,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     if (trimmed.isEmpty) {
       return 'Phone is required.';
     }
-    final phoneRegex = RegExp(r'^\+639\d{9}$');
-    if (!phoneRegex.hasMatch(trimmed)) {
-      return 'Enter a valid PH number starting with +63.';
+    if (!isValidPhilippinePhone(trimmed)) {
+      return 'Enter a valid PH mobile number.';
     }
     return null;
   }

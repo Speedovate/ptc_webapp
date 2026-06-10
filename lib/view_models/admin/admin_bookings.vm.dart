@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
@@ -34,6 +36,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   final BookingRepository _bookingRepository;
   final StatusFormRepository _statusRepository;
   final VehicleCatalogRepository _vehicleCatalogRepository;
+  StreamSubscription<List<Booking>>? _bookingsSubscription;
   static List<Booking> _cachedBookings = const [];
   static Map<String, UserModel> _cachedUsersById = const {};
   static Map<String, Status> _cachedStatusesByKey = const {};
@@ -87,10 +90,14 @@ class AdminBookingsViewModel extends BaseViewModel {
               .map((status) => MapEntry(status.key!, status)),
         );
 
-      _bookings
-        ..clear()
-        ..addAll(await _bookingRepository.getBookings());
-      _cachedBookings = List<Booking>.from(_bookings);
+      await _bookingsSubscription?.cancel();
+      _applyBookings(await _bookingRepository.getBookings());
+      _bookingsSubscription = _bookingRepository.watchBookings().listen((
+        bookings,
+      ) {
+        _applyBookings(bookings);
+        notifyListeners();
+      });
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
       _cachedVehicleSizes = List<VehicleCatalogItem>.from(_vehicleSizes);
@@ -102,6 +109,13 @@ class AdminBookingsViewModel extends BaseViewModel {
       setBusy(false);
       notifyListeners();
     }
+  }
+
+  void _applyBookings(List<Booking> bookings) {
+    _bookings
+      ..clear()
+      ..addAll(bookings);
+    _cachedBookings = List<Booking>.from(_bookings);
   }
 
   void setSearchQuery(String value) {
@@ -276,6 +290,12 @@ class AdminBookingsViewModel extends BaseViewModel {
   Future<Booking> saveEditedBooking(Booking booking) async {
     final updatedBooking = booking.copyWith(updatedAt: DateTime.now());
     return _bookingRepository.saveBooking(updatedBooking);
+  }
+
+  @override
+  void dispose() {
+    _bookingsSubscription?.cancel();
+    super.dispose();
   }
 
   String statusLabelForKey(String? statusKey) {

@@ -139,6 +139,64 @@ class FirestoreCollectionCache {
     await _tryWriteRemoteVersion(resourceKey, nextVersion);
   }
 
+  Future<void> upsertDocument({
+    required String resourceKey,
+    required Map<String, dynamic> document,
+  }) async {
+    final documentId = document['id']?.toString().trim() ?? '';
+    if (documentId.isEmpty) {
+      await touch(resourceKey);
+      return;
+    }
+
+    final currentDocuments =
+        await _store.readDocumentMaps(resourceKey) ?? <Map<String, dynamic>>[];
+    final nextDocuments = currentDocuments
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+    final existingIndex = nextDocuments.indexWhere(
+      (item) => (item['id']?.toString().trim() ?? '') == documentId,
+    );
+    final normalizedDocument = Map<String, dynamic>.from(document);
+    if (existingIndex >= 0) {
+      nextDocuments[existingIndex] = normalizedDocument;
+    } else {
+      nextDocuments.add(normalizedDocument);
+    }
+
+    await _writeLocalAndRemoteVersion(
+      resourceKey: resourceKey,
+      documents: nextDocuments,
+    );
+  }
+
+  Future<void> removeDocument({
+    required String resourceKey,
+    required String documentId,
+  }) async {
+    final normalizedId = documentId.trim();
+    if (normalizedId.isEmpty) {
+      await touch(resourceKey);
+      return;
+    }
+
+    final currentDocuments = await _store.readDocumentMaps(resourceKey);
+    if (currentDocuments == null) {
+      await touch(resourceKey);
+      return;
+    }
+
+    final nextDocuments = currentDocuments
+        .where((item) => (item['id']?.toString().trim() ?? '') != normalizedId)
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+
+    await _writeLocalAndRemoteVersion(
+      resourceKey: resourceKey,
+      documents: nextDocuments,
+    );
+  }
+
   Future<void> touchMany(Iterable<String> resourceKeys) async {
     final keys = resourceKeys.toSet().toList();
     for (final resourceKey in keys) {
@@ -190,6 +248,18 @@ class FirestoreCollectionCache {
     } catch (_) {
       // Background refresh should never block or break cached UI rendering.
     }
+  }
+
+  Future<void> _writeLocalAndRemoteVersion({
+    required String resourceKey,
+    required List<Map<String, dynamic>> documents,
+  }) async {
+    final nextVersion = DateTime.now().toUtc().toIso8601String();
+    await Future.wait([
+      _store.writeDocumentMaps(resourceKey, documents),
+      _store.writeVersion(resourceKey, nextVersion),
+    ]);
+    await _tryWriteRemoteVersion(resourceKey, nextVersion);
   }
 
   Future<void> _tryWriteRemoteVersion(

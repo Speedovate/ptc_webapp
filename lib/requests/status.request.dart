@@ -16,8 +16,9 @@ class StatusRequest implements StatusFormRepository {
   static const _statusesResourceKey = 'statuses';
 
   final FirebaseFirestore _firestore;
-  late final FirestoreCollectionCache _cache =
-      FirestoreCollectionCache(firestore: _firestore);
+  late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
+    firestore: _firestore,
+  );
 
   CollectionReference<Map<String, dynamic>> get _formsCollection =>
       _firestore.collection('status_forms');
@@ -42,9 +43,7 @@ class StatusRequest implements StatusFormRepository {
         return snapshot.docs.map(documentData).toList();
       },
     );
-    final fields = documents
-        .map(StatusField.fromMap)
-        .toList();
+    final fields = documents.map(StatusField.fromMap).toList();
     fields.sort(
       (a, b) =>
           (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
@@ -61,9 +60,7 @@ class StatusRequest implements StatusFormRepository {
         return snapshot.docs.map(documentData).toList();
       },
     );
-    return documents
-        .map(Status.fromMap)
-        .toList();
+    return documents.map(Status.fromMap).toList();
   }
 
   @override
@@ -111,13 +108,16 @@ class StatusRequest implements StatusFormRepository {
       return isKnownActiveStatus(normalizedStatusKey);
     }
 
-    final matchingForms = forms.where(
-      (form) =>
-          form.resolvedRoles.contains(normalizedRole) &&
-          (form.currentStatusKey?.trim() ?? '') == normalizedCurrentStatusKey &&
-          isKnownActiveStatus(form.currentStatusKey) &&
-          isKnownActiveStatusOrTerminal(form.nextStatusKey),
-    ).toList();
+    final matchingForms = forms
+        .where(
+          (form) =>
+              form.resolvedRoles.contains(normalizedRole) &&
+              (form.currentStatusKey?.trim() ?? '') ==
+                  normalizedCurrentStatusKey &&
+              isKnownActiveStatus(form.currentStatusKey) &&
+              isKnownActiveStatusOrTerminal(form.nextStatusKey),
+        )
+        .toList();
     matchingForms.sort(_compareFormsForStatus);
     return matchingForms;
   }
@@ -144,8 +144,12 @@ class StatusRequest implements StatusFormRepository {
       createdAt: form.createdAt ?? now,
       updatedAt: now,
     );
-    await _formsCollection.doc(nextId).set(_formToFirestoreMap(saved));
-    await _cache.touch(_statusFormsResourceKey);
+    final document = _formToFirestoreMap(saved);
+    await _formsCollection.doc(nextId).set(document);
+    await _cache.upsertDocument(
+      resourceKey: _statusFormsResourceKey,
+      document: document,
+    );
   }
 
   @override
@@ -154,13 +158,18 @@ class StatusRequest implements StatusFormRepository {
     if (!doc.exists) {
       return;
     }
-    final form = _formFromFirestoreMap(documentData(doc), fieldsById: {
-      for (final field in fields) field.id ?? '': field,
-    });
-    await _formsCollection.doc(statusFormId).set(
-      _formToFirestoreMap(form.copyWith(fields: fields, updatedAt: DateTime.now())),
+    final form = _formFromFirestoreMap(
+      documentData(doc),
+      fieldsById: {for (final field in fields) field.id ?? '': field},
     );
-    await _cache.touch(_statusFormsResourceKey);
+    final updatedFormDocument = _formToFirestoreMap(
+      form.copyWith(fields: fields, updatedAt: DateTime.now()),
+    );
+    await _formsCollection.doc(statusFormId).set(updatedFormDocument);
+    await _cache.upsertDocument(
+      resourceKey: _statusFormsResourceKey,
+      document: updatedFormDocument,
+    );
   }
 
   @override
@@ -172,8 +181,12 @@ class StatusRequest implements StatusFormRepository {
       createdAt: field.createdAt ?? now,
       updatedAt: now,
     );
-    await _fieldsCollection.doc(nextId).set(saved.toMap());
-    await _cache.touch(_statusFieldsResourceKey);
+    final document = saved.toMap();
+    await _fieldsCollection.doc(nextId).set(document);
+    await _cache.upsertDocument(
+      resourceKey: _statusFieldsResourceKey,
+      document: document,
+    );
   }
 
   @override
@@ -185,8 +198,12 @@ class StatusRequest implements StatusFormRepository {
       createdAt: status.createdAt ?? now,
       updatedAt: now,
     );
-    await _statusesCollection.doc(nextId).set(saved.toMap());
-    await _cache.touch(_statusesResourceKey);
+    final document = saved.toMap();
+    await _statusesCollection.doc(nextId).set(document);
+    await _cache.upsertDocument(
+      resourceKey: _statusesResourceKey,
+      document: document,
+    );
   }
 
   @override
@@ -201,21 +218,23 @@ class StatusRequest implements StatusFormRepository {
       if (!form.fields.any((field) => field.id == normalized)) {
         continue;
       }
-      await _formsCollection.doc(form.id).set(
-        _formToFirestoreMap(
-          form.copyWith(
-            fields: form.fields.where((field) => field.id != normalized).toList(),
-            fieldOverrides: Map<String, StatusFieldOverride>.from(form.fieldOverrides)
-              ..remove(normalized),
-            updatedAt: DateTime.now(),
-          ),
-        ),
-      );
+      await _formsCollection
+          .doc(form.id)
+          .set(
+            _formToFirestoreMap(
+              form.copyWith(
+                fields: form.fields
+                    .where((field) => field.id != normalized)
+                    .toList(),
+                fieldOverrides: Map<String, StatusFieldOverride>.from(
+                  form.fieldOverrides,
+                )..remove(normalized),
+                updatedAt: DateTime.now(),
+              ),
+            ),
+          );
     }
-    await _cache.touchMany([
-      _statusFieldsResourceKey,
-      _statusFormsResourceKey,
-    ]);
+    await _cache.touchMany([_statusFieldsResourceKey, _statusFormsResourceKey]);
   }
 
   @override
@@ -225,7 +244,10 @@ class StatusRequest implements StatusFormRepository {
       return;
     }
     await _statusesCollection.doc(normalized).delete();
-    await _cache.touch(_statusesResourceKey);
+    await _cache.removeDocument(
+      resourceKey: _statusesResourceKey,
+      documentId: normalized,
+    );
   }
 
   @override
@@ -235,7 +257,10 @@ class StatusRequest implements StatusFormRepository {
       return;
     }
     await _formsCollection.doc(normalized).delete();
-    await _cache.touch(_statusFormsResourceKey);
+    await _cache.removeDocument(
+      resourceKey: _statusFormsResourceKey,
+      documentId: normalized,
+    );
   }
 
   @override
@@ -247,15 +272,17 @@ class StatusRequest implements StatusFormRepository {
     final forms = await _getHydratedForms();
     for (final form in forms) {
       if (form.id == normalized) {
-        await _formsCollection.doc(normalized).set(
-          _formToFirestoreMap(
-            form.copyWith(isActive: false, updatedAt: DateTime.now()),
-          ),
+        final updatedFormDocument = _formToFirestoreMap(
+          form.copyWith(isActive: false, updatedAt: DateTime.now()),
+        );
+        await _formsCollection.doc(normalized).set(updatedFormDocument);
+        await _cache.upsertDocument(
+          resourceKey: _statusFormsResourceKey,
+          document: updatedFormDocument,
         );
         break;
       }
     }
-    await _cache.touch(_statusFormsResourceKey);
   }
 
   Future<List<StatusForm>> _getHydratedForms() async {
@@ -292,10 +319,13 @@ class StatusRequest implements StatusFormRepository {
         .map((item) => item.toString().trim())
         .where((item) => item.isNotEmpty)
         .toList();
-    final fieldOverrides = (map['field_overrides'] as Map?)?.map(
+    final fieldOverrides =
+        (map['field_overrides'] as Map?)?.map(
           (key, value) => MapEntry(
             key.toString(),
-            StatusFieldOverride.fromMap(Map<String, dynamic>.from(value as Map)),
+            StatusFieldOverride.fromMap(
+              Map<String, dynamic>.from(value as Map),
+            ),
           ),
         ) ??
         const <String, StatusFieldOverride>{};
@@ -358,7 +388,10 @@ class StatusRequest implements StatusFormRepository {
       'status_text': form.statusText,
       'status_subtext': form.statusSubtext,
       'button_text': form.buttonText,
-      'field_ids': form.fields.map((field) => field.id).whereType<String>().toList(),
+      'field_ids': form.fields
+          .map((field) => field.id)
+          .whereType<String>()
+          .toList(),
       'field_overrides': form.fieldOverrides.map(
         (key, value) => MapEntry(key, value.toMap()),
       ),

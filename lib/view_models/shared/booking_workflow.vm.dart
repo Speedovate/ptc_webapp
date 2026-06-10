@@ -581,6 +581,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
         _engine.applyOutputToBooking(
           currentBooking,
           activeForm,
+          [...fields, ...additionalFields],
           answers,
           currentUser.id ?? '',
         ),
@@ -618,6 +619,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
         _engine.applyOutputToBooking(
           currentBooking,
           activeForm,
+          [...fieldsForForm(activeForm), ...additionalFields],
           formAnswers,
           currentUser.id ?? '',
         ),
@@ -666,6 +668,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
         _engine.applyOutputToBooking(
           currentBooking,
           activeForm,
+          cancelFields,
           cancelAnswers,
           currentUser.id ?? '',
         ),

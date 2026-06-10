@@ -3,7 +3,6 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/auth.request.dart';
-import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/utils/functions.dart';
@@ -15,17 +14,13 @@ class BookingRequest implements BookingRepository {
     VehicleRequest? vehicleRequest,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _authRequest = authRequest ?? AuthRequest.instance,
-       _vehicleRequest =
-           vehicleRequest ?? VehicleRequest.instance;
+       _vehicleRequest = vehicleRequest ?? VehicleRequest.instance;
 
   static final BookingRequest instance = BookingRequest();
-  static const _bookingsResourceKey = 'bookings';
 
   final FirebaseFirestore _firestore;
   final AuthRequest _authRequest;
   final VehicleRequest _vehicleRequest;
-  late final FirestoreCollectionCache _cache =
-      FirestoreCollectionCache(firestore: _firestore);
 
   CollectionReference<Map<String, dynamic>> get _bookingsCollection =>
       _firestore.collection('bookings');
@@ -35,17 +30,44 @@ class BookingRequest implements BookingRepository {
 
   @override
   Future<List<Booking>> getBookings() async {
+    final snapshot = await _bookingsCollection.get();
+    return _inflateBookings(snapshot.docs.map(documentData).toList());
+  }
+
+  @override
+  Stream<List<Booking>> watchBookings() {
+    return _bookingsCollection.snapshots().asyncMap((snapshot) {
+      return _inflateBookings(snapshot.docs.map(documentData).toList());
+    });
+  }
+
+  @override
+  Future<List<Booking>> getBookingsForClient(String clientId) async {
+    final bookings = await getBookings();
+    return bookings.where((booking) => booking.client?.id == clientId).toList();
+  }
+
+  @override
+  Future<Booking> saveBooking(Booking booking) async {
+    final existingBookings = await getBookings();
+    final nextId = normalizeId(booking.id) ?? _nextBookingId(existingBookings);
+    final now = DateTime.now();
+    final saved = booking.copyWith(
+      id: nextId,
+      createdAt: booking.createdAt ?? now,
+      updatedAt: now,
+    );
+    await _bookingsCollection.doc(nextId).set(_toFirestoreMap(saved));
+    return saved;
+  }
+
+  Future<List<Booking>> _inflateBookings(
+    List<Map<String, dynamic>> documents,
+  ) async {
     final users = await _authRequest.getUsers();
     final makes = await _vehicleRequest.getMakes();
     final userById = {for (final item in users) item.id ?? '': item};
     final makeById = {for (final item in makes) item.id ?? '': item};
-    final documents = await _cache.getDocuments(
-      resourceKey: _bookingsResourceKey,
-      fetchDocuments: () async {
-        final snapshot = await _bookingsCollection.get();
-        return snapshot.docs.map(documentData).toList();
-      },
-    );
     final bookings = documents
         .map(
           (doc) => _bookingFromFirestoreMap(
@@ -68,27 +90,6 @@ class BookingRequest implements BookingRepository {
       return (b.id ?? '').compareTo(a.id ?? '');
     });
     return bookings;
-  }
-
-  @override
-  Future<List<Booking>> getBookingsForClient(String clientId) async {
-    final bookings = await getBookings();
-    return bookings.where((booking) => booking.client?.id == clientId).toList();
-  }
-
-  @override
-  Future<Booking> saveBooking(Booking booking) async {
-    final existingBookings = await getBookings();
-    final nextId = normalizeId(booking.id) ?? _nextBookingId(existingBookings);
-    final now = DateTime.now();
-    final saved = booking.copyWith(
-      id: nextId,
-      createdAt: booking.createdAt ?? now,
-      updatedAt: now,
-    );
-    await _bookingsCollection.doc(nextId).set(_toFirestoreMap(saved));
-    await _cache.touch(_bookingsResourceKey);
-    return saved;
   }
 
   Map<String, dynamic> _toFirestoreMap(Booking booking) {

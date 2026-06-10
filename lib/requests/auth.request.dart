@@ -134,13 +134,17 @@ class AuthRequest implements AuthRepository {
       id: '$nextId',
       email: normalizedEmail,
       name: normalizedName,
+      phone: normalizePhilippinePhone(user.phone) ?? user.phone?.trim(),
       isActive: user.isActive ?? true,
       isOnline: false,
       createdAt: user.createdAt ?? now,
       updatedAt: now,
     );
     await _usersCollection.doc(savedUser.id).set(_toFirestoreMap(savedUser));
-    await _cache.touch(_usersResourceKey);
+    await _cache.upsertDocument(
+      resourceKey: _usersResourceKey,
+      document: _toFirestoreMap(savedUser),
+    );
     await _storage.writeString(_currentUserIdKey, savedUser.id ?? '');
     return savedUser;
   }
@@ -165,6 +169,7 @@ class AuthRequest implements AuthRepository {
       id: nextId,
       email: normalizedEmail,
       name: normalizedName,
+      phone: normalizePhilippinePhone(user.phone) ?? user.phone?.trim(),
       isOnline: (user.isActive ?? false) && _supportsOnline(user.role)
           ? (user.isOnline ?? false)
           : false,
@@ -172,7 +177,10 @@ class AuthRequest implements AuthRepository {
       updatedAt: now,
     );
     await _usersCollection.doc(nextId).set(_toFirestoreMap(saved));
-    await _cache.touch(_usersResourceKey);
+    await _cache.upsertDocument(
+      resourceKey: _usersResourceKey,
+      document: _toFirestoreMap(saved),
+    );
     final currentUserId = await _storage.readString(_currentUserIdKey);
     if (currentUserId == nextId) {
       await _storage.writeString(_currentUserIdKey, nextId);
@@ -187,7 +195,10 @@ class AuthRequest implements AuthRepository {
       return;
     }
     await _usersCollection.doc(normalized).delete();
-    await _cache.touch(_usersResourceKey);
+    await _cache.removeDocument(
+      resourceKey: _usersResourceKey,
+      documentId: normalized,
+    );
     if (await _storage.readString(_currentUserIdKey) == normalized) {
       await _storage.remove(_currentUserIdKey);
     }

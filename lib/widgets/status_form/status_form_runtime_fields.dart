@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/status_field.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/booking_form_primitives.dart';
 
@@ -208,6 +209,9 @@ class _TextFieldInputState extends State<_TextFieldInput> {
     return TextField(
       controller: _controller,
       keyboardType: widget.keyboardType,
+      inputFormatters: widget.field.type == 'phone'
+          ? const [PhilippinesPhoneInputFormatter()]
+          : null,
       scrollPadding: EdgeInsets.zero,
       onTapOutside: _unfocusWithoutScroll,
       style: const TextStyle(

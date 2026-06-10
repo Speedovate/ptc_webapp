@@ -193,6 +193,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       final nextBooking = _engine.applyOutputToBooking(
         baseBooking,
         activeForm,
+        fieldsForForm(activeForm),
         formAnswers,
         submittedByUserId,
       );
@@ -231,6 +232,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       final nextBooking = _engine.applyOutputToBooking(
         baseBooking,
         activeForm,
+        fields,
         answers,
         submittedByUserId,
       );

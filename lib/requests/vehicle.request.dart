@@ -117,7 +117,10 @@ class VehicleRequest implements VehicleCatalogRepository {
       updatedAt: now,
     );
     await _makesCollection.doc(nextId).set(_toFirestoreMap(saved));
-    await _cache.touch(_vehicleMakesResourceKey);
+    await _cache.upsertDocument(
+      resourceKey: _vehicleMakesResourceKey,
+      document: _toFirestoreMap(saved),
+    );
     return saved;
   }
 
@@ -128,7 +131,10 @@ class VehicleRequest implements VehicleCatalogRepository {
       return;
     }
     await _makesCollection.doc(normalized).delete();
-    await _cache.touch(_vehicleMakesResourceKey);
+    await _cache.removeDocument(
+      resourceKey: _vehicleMakesResourceKey,
+      documentId: normalized,
+    );
   }
 
   @override
@@ -147,7 +153,10 @@ class VehicleRequest implements VehicleCatalogRepository {
       return;
     }
     await _sizesCollection.doc(normalized).delete();
-    await _cache.touch(_vehicleSizesResourceKey);
+    await _cache.removeDocument(
+      resourceKey: _vehicleSizesResourceKey,
+      documentId: normalized,
+    );
   }
 
   @override
@@ -166,7 +175,10 @@ class VehicleRequest implements VehicleCatalogRepository {
       return;
     }
     await _typesCollection.doc(normalized).delete();
-    await _cache.touch(_vehicleTypesResourceKey);
+    await _cache.removeDocument(
+      resourceKey: _vehicleTypesResourceKey,
+      documentId: normalized,
+    );
   }
 
   Future<VehicleCatalogItem> _saveCatalogItem({
@@ -182,7 +194,10 @@ class VehicleRequest implements VehicleCatalogRepository {
       updatedAt: now,
     );
     await collection.doc(nextId).set(saved.toMap());
-    await _cache.touch(resourceKey);
+    await _cache.upsertDocument(
+      resourceKey: resourceKey,
+      document: saved.toMap(),
+    );
     return saved;
   }
 
