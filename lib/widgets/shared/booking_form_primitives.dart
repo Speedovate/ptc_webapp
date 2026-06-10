@@ -1,8 +1,62 @@
-import 'dart:convert';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/utils/functions.dart';
+
+class BookingFormTitleCardShell extends StatelessWidget {
+  const BookingFormTitleCardShell({
+    super.key,
+    required this.child,
+    this.stripColor = AppColors.primaryColor,
+    this.borderColor = AppColors.primaryBorder,
+    this.bodyColor = Colors.white,
+    this.radius = 18,
+    this.stripRadius = 16,
+    this.stripHeight = 20,
+    this.bodyPadding = const EdgeInsets.fromLTRB(20, 12, 20, 16),
+  });
+
+  final Widget child;
+  final Color stripColor;
+  final Color borderColor;
+  final Color bodyColor;
+  final double radius;
+  final double stripRadius;
+  final double stripHeight;
+  final EdgeInsetsGeometry bodyPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          height: stripHeight,
+          decoration: BoxDecoration(
+            color: stripColor,
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(stripRadius),
+            ),
+          ),
+        ),
+        Container(
+          width: double.infinity,
+          padding: bodyPadding,
+          decoration: BoxDecoration(
+            color: bodyColor,
+            border: Border.all(color: borderColor),
+            borderRadius: BorderRadius.vertical(
+              bottom: Radius.circular(radius),
+            ),
+          ),
+          child: child,
+        ),
+      ],
+    );
+  }
+}
 
 class BookingFormHeaderCard extends StatelessWidget {
   const BookingFormHeaderCard({
@@ -19,6 +73,7 @@ class BookingFormHeaderCard extends StatelessWidget {
     this.messageIcon,
     this.messageIconColor,
     this.messageTextColor,
+    this.showRequiredLegend = false,
   });
 
   final String title;
@@ -33,26 +88,20 @@ class BookingFormHeaderCard extends StatelessWidget {
   final IconData? messageIcon;
   final Color? messageIconColor;
   final Color? messageTextColor;
+  final bool showRequiredLegend;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: backgroundColor ?? AppColors.primaryColor,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: borderColor ?? backgroundColor ?? AppColors.primaryColor,
-        ),
-      ),
+    return BookingFormTitleCardShell(
+      stripColor: backgroundColor ?? AppColors.primaryColor,
+      borderColor: borderColor ?? AppColors.primaryBorder,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
             style: TextStyle(
-              color: titleColor ?? Colors.white,
+              color: titleColor ?? AppColors.textPrimary,
               fontSize: 22,
               fontWeight: FontWeight.w800,
               height: 1.2,
@@ -62,17 +111,33 @@ class BookingFormHeaderCard extends StatelessWidget {
             Text(
               subtitle!.trim(),
               style: TextStyle(
-                color: subtitleColor ?? AppColors.primaryBorder,
+                color: subtitleColor ?? AppColors.textPrimary,
                 fontWeight: FontWeight.w500,
                 height: 1.35,
               ),
             ),
+          if (showRequiredLegend) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              height: 1,
+              color: AppColors.primaryBorder,
+            ),
+            const SizedBox(height: 14),
+            Text(
+              '* indicates required input',
+              style: TextStyle(
+                color: AppColors.primaryColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+                height: 1.3,
+              ),
+            ),
+          ],
           if (subtitle?.trim().isNotEmpty != true &&
               message?.trim().isNotEmpty == true)
             const SizedBox(height: 14),
-          if (subtitle?.trim().isNotEmpty == true &&
-              message?.trim().isNotEmpty == true)
-            const SizedBox(height: 14),
+          if (message?.trim().isNotEmpty == true) const SizedBox(height: 14),
           if (message?.trim().isNotEmpty == true) ...[
             Container(
               width: double.infinity,
@@ -99,7 +164,8 @@ class BookingFormHeaderCard extends StatelessWidget {
                     child: Text(
                       message!.trim(),
                       style: TextStyle(
-                        color: messageTextColor ??
+                        color:
+                            messageTextColor ??
                             AppColors.primaryColor.withValues(alpha: 0.72),
                         fontWeight: FontWeight.w600,
                         height: 1.35,
@@ -200,8 +266,7 @@ class BookingFormFieldCard extends StatelessWidget {
               height: 1.35,
             ),
           ),
-        if (hasSupportingText)
-          const SizedBox(height: 14),
+        if (hasSupportingText) const SizedBox(height: 14),
         if (!hasSupportingText && inputTopSpacing > 0)
           SizedBox(height: inputTopSpacing),
         input,
@@ -230,8 +295,6 @@ class BookingPhotoFieldInput extends StatefulWidget {
     super.key,
     required this.initialValue,
     required this.onChanged,
-    required this.valueBuilder,
-    required this.previewBytesBuilder,
     this.placeholder = 'Upload a photo',
     this.supportText = 'JPG, PNG, or supported image file',
     this.errorText,
@@ -240,9 +303,6 @@ class BookingPhotoFieldInput extends StatefulWidget {
 
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
-  final Map<String, dynamic> Function(PlatformFile file, String encodedBytes)
-  valueBuilder;
-  final Uint8List? Function(dynamic value) previewBytesBuilder;
   final String placeholder;
   final String supportText;
   final String? errorText;
@@ -259,6 +319,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
 
   Map<String, dynamic>? _photo;
   Uint8List? _previewBytes;
+  String? _previewUrl;
   bool _isProcessing = false;
   bool _isSelectingPhoto = false;
 
@@ -282,7 +343,8 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
         : widget.initialValue is Map
         ? Map<String, dynamic>.from(widget.initialValue as Map)
         : null;
-    _previewBytes = widget.previewBytesBuilder(widget.initialValue);
+    _previewBytes = decodePhotoBytes(widget.initialValue);
+    _previewUrl = photoDownloadUrl(widget.initialValue);
   }
 
   Future<void> _pickPhoto() async {
@@ -301,26 +363,23 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
     setState(() {
       _isProcessing = true;
       _isSelectingPhoto = true;
-      _photo = {
-        'name': file.name,
-        'size': file.size,
-      };
+      _photo = {'name': file.name, 'size': file.size};
       _previewBytes = bytes;
     });
-    final startedAt = DateTime.now();
-    final encoded = await compute(_encodePhotoBytesBase64, bytes);
-    final elapsed = DateTime.now().difference(startedAt);
-    if (elapsed < _minimumProcessingIndicatorDuration) {
-      await Future<void>.delayed(
-        _minimumProcessingIndicatorDuration - elapsed,
-      );
-    }
+    await Future<void>.delayed(_minimumProcessingIndicatorDuration);
     if (!mounted) {
       return;
     }
-    final nextPhoto = widget.valueBuilder(file, encoded);
+    final nextPhoto = <String, dynamic>{
+      'name': file.name,
+      'bytes': bytes,
+      'size': file.size,
+      'mime_type': _resolvedMimeType(file),
+    };
     setState(() {
       _photo = nextPhoto;
+      _previewBytes = bytes;
+      _previewUrl = null;
       _isProcessing = false;
       _isSelectingPhoto = false;
     });
@@ -334,6 +393,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
     setState(() {
       _photo = null;
       _previewBytes = null;
+      _previewUrl = null;
     });
     widget.onChanged(null);
   }
@@ -341,9 +401,10 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
   @override
   Widget build(BuildContext context) {
     final previewBytes = _previewBytes;
+    final previewUrl = _previewUrl?.trim();
     final fileName = _photo?['name']?.toString().trim();
     final hasFileName = fileName?.isNotEmpty == true;
-    final hasImage = previewBytes != null;
+    final hasImage = previewBytes != null || (previewUrl?.isNotEmpty == true);
     final processingLabel = _isSelectingPhoto
         ? 'Preparing photo...'
         : 'Processing photo...';
@@ -377,11 +438,26 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                       child: Stack(
                         alignment: Alignment.center,
                         children: [
-                          Image.memory(
-                            previewBytes,
-                            width: double.infinity,
-                            fit: BoxFit.fitWidth,
-                          ),
+                          if (previewBytes != null)
+                            Image.memory(
+                              previewBytes,
+                              width: double.infinity,
+                              fit: BoxFit.fitWidth,
+                            )
+                          else if (previewUrl?.isNotEmpty == true)
+                            Image.network(
+                              previewUrl!,
+                              width: double.infinity,
+                              fit: BoxFit.fitWidth,
+                              errorBuilder: (context, error, stackTrace) {
+                                return const _BookingPhotoPreviewFallback(
+                                  height: 180,
+                                  message: 'Failed to load photo preview.',
+                                );
+                              },
+                            )
+                          else
+                            const _BookingPhotoPreviewFallback(height: 180),
                           if (_isProcessing)
                             Positioned.fill(
                               child: ColoredBox(
@@ -548,50 +624,38 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
   }
 }
 
-Uint8List? decodeBase64PhotoBytes(dynamic value, {String key = 'bytes_base64'}) {
-  final mapValue = value is Map<String, dynamic>
-      ? value
-      : value is Map
-      ? Map<String, dynamic>.from(value)
-      : null;
-  final encoded = mapValue?[key]?.toString();
-  if (encoded == null || encoded.isEmpty) {
+String? _resolvedMimeType(PlatformFile file) {
+  final extension = file.extension?.trim().toLowerCase();
+  if (extension == null || extension.isEmpty) {
     return null;
   }
-  try {
-    return base64Decode(encoded);
-  } catch (_) {
-    return null;
-  }
+  return 'image/$extension';
 }
 
-Uint8List? decodePhotoBytes(dynamic value, {String key = 'bytes'}) {
-  if (value is Uint8List) {
-    return value;
-  }
-  if (value is List<int>) {
-    return Uint8List.fromList(value);
-  }
-  final mapValue = value is Map<String, dynamic>
-      ? value
-      : value is Map
-      ? Map<String, dynamic>.from(value)
-      : null;
-  final sourceValue = mapValue?[key] ?? value;
-  if (sourceValue is Uint8List) {
-    return sourceValue;
-  }
-  if (sourceValue is List<int>) {
-    return Uint8List.fromList(sourceValue);
-  }
-  if (sourceValue is String && sourceValue.trim().isNotEmpty) {
-    try {
-      return base64Decode(sourceValue);
-    } catch (_) {
-      return null;
-    }
-  }
-  return null;
-}
+class _BookingPhotoPreviewFallback extends StatelessWidget {
+  const _BookingPhotoPreviewFallback({
+    required this.height,
+    this.message = 'No photo preview available.',
+  });
 
-String _encodePhotoBytesBase64(Uint8List bytes) => base64Encode(bytes);
+  final double height;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      height: height,
+      color: AppColors.primarySurface,
+      alignment: Alignment.center,
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: AppColors.primaryColor.withValues(alpha: 0.72),
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}

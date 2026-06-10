@@ -3,7 +3,7 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/status.dart';
 import 'package:webapp/utils/functions.dart';
-import 'package:webapp/view_models/admin/admin_status_form.vm.dart';
+import 'package:webapp/view_models/admin/admin_flow.vm.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
@@ -18,7 +18,7 @@ class AdminStatusesView extends StatelessWidget {
 
   static Future<void> confirmToggleStatusActive(
     BuildContext context,
-    AdminStatusFormViewModel vm,
+    AdminFlowViewModel vm,
     Status status,
   ) async {
     final willBeActive = !(status.isActive ?? false);
@@ -48,7 +48,7 @@ class AdminStatusesView extends StatelessWidget {
 
   static Future<void> confirmDeleteStatus(
     BuildContext context,
-    AdminStatusFormViewModel vm,
+    AdminFlowViewModel vm,
     Status status,
   ) async {
     final label = status.label?.trim().isNotEmpty == true
@@ -125,7 +125,7 @@ class AdminStatusesView extends StatelessWidget {
         after.applicableRoles,
       );
     }
-    for (final role in AdminStatusFormViewModel.roleOptions) {
+    for (final role in AdminFlowViewModel.roleOptions) {
       final beforeMessage = (before.roleMessages[role] ?? '').trim();
       final afterMessage = (after.roleMessages[role] ?? '').trim();
       if (beforeMessage != afterMessage) {
@@ -159,8 +159,8 @@ class AdminStatusesView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ViewModelBuilder<AdminStatusFormViewModel>.reactive(
-      viewModelBuilder: AdminStatusFormViewModel.new,
+    return ViewModelBuilder<AdminFlowViewModel>.reactive(
+      viewModelBuilder: AdminFlowViewModel.new,
       onViewModelReady: (vm) => vm.loadForms(),
       builder: (context, vm, child) {
         return Column(
@@ -178,7 +178,7 @@ class AdminStatusesView extends StatelessWidget {
 
   static Future<void> openStatusDialog(
     BuildContext context,
-    AdminStatusFormViewModel vm, {
+    AdminFlowViewModel vm, {
     Status? initialStatus,
     required String title,
     bool readOnly = false,
@@ -188,7 +188,7 @@ class AdminStatusesView extends StatelessWidget {
       builder: (dialogContext) => _StatusEditorDialog(
         title: title,
         initialStatus: initialStatus ?? vm.draftNewStatus,
-        roleOptions: AdminStatusFormViewModel.roleOptions,
+        roleOptions: AdminFlowViewModel.roleOptions,
         readOnly: readOnly,
         onDraftChanged: initialStatus == null ? vm.updateDraftNewStatus : null,
       ),
@@ -224,7 +224,7 @@ class AdminStatusesView extends StatelessWidget {
 class _StatusesContent extends StatefulWidget {
   const _StatusesContent({required this.vm});
 
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
 
   @override
   State<_StatusesContent> createState() => _StatusesContentState();
@@ -608,7 +608,7 @@ class _StatusesTable extends StatelessWidget {
 
   final List<Status> statuses;
   final String emptyMessage;
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
 
   static const _headerStyle = TextStyle(
     color: AppColors.textSecondary,
@@ -880,7 +880,7 @@ class _StatusTableRow extends StatelessWidget {
   });
 
   final Status status;
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
   final double resolvedIdWidth;
   final double resolvedKeyWidth;
   final double resolvedLabelWidth;
@@ -1016,7 +1016,7 @@ class _StatusResponsiveCard extends StatelessWidget {
   const _StatusResponsiveCard({required this.status, required this.vm});
 
   final Status status;
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
 
   @override
   Widget build(BuildContext context) {

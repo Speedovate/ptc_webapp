@@ -1,9 +1,9 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 
 class BookingRecordCard extends StatelessWidget {
@@ -747,18 +747,25 @@ class _BookingValueContent extends StatelessWidget {
 
     if (value is Map) {
       final mapValue = Map<String, dynamic>.from(value as Map);
-      final bytes = _decodePhotoBytes(mapValue);
+      final bytes = decodePhotoBytes(mapValue);
+      final downloadUrl = photoDownloadUrl(mapValue);
       final name = mapValue['name']?.toString().trim();
 
-      if (name?.isNotEmpty == true || bytes != null) {
+      if (name?.isNotEmpty == true || bytes != null || downloadUrl != null) {
         return _BookingPhotoValue(
           fileName: name?.isNotEmpty == true ? name! : 'Attached image',
           previewBytes: bytes,
+          previewUrl: downloadUrl,
         );
       }
 
       final visibleEntries = mapValue.entries
-          .where((entry) => entry.key != 'bytes_base64')
+          .where(
+            (entry) =>
+                entry.key != 'bytes' &&
+                entry.key != 'download_url' &&
+                entry.key != 'storage_path',
+          )
           .map((entry) => '${_titleCase(entry.key)}: ${entry.value}')
           .join(' | ');
 
@@ -781,28 +788,18 @@ class _BookingValueContent extends StatelessWidget {
 
     return Text('$value', style: _bookingItemValueTextStyle);
   }
-
-  static Uint8List? _decodePhotoBytes(Map<String, dynamic> value) {
-    final encoded = value['bytes_base64']?.toString();
-    if (encoded == null || encoded.isEmpty) {
-      return null;
-    }
-    try {
-      return base64Decode(encoded);
-    } catch (_) {
-      return null;
-    }
-  }
 }
 
 class _BookingPhotoValue extends StatelessWidget {
   const _BookingPhotoValue({
     required this.fileName,
     required this.previewBytes,
+    required this.previewUrl,
   });
 
   final String fileName;
   final Uint8List? previewBytes;
+  final String? previewUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -810,7 +807,7 @@ class _BookingPhotoValue extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Flexible(child: Text(fileName, style: _bookingItemValueTextStyle)),
-        if (previewBytes != null) ...[
+        if (previewBytes != null || previewUrl?.trim().isNotEmpty == true) ...[
           const SizedBox(width: 4),
           InkWell(
             borderRadius: BorderRadius.circular(999),
@@ -842,10 +839,15 @@ class _BookingPhotoValue extends StatelessWidget {
                           constraints: const BoxConstraints(maxHeight: 420),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(16),
-                            child: Image.memory(
-                              previewBytes!,
-                              fit: BoxFit.fitHeight,
-                            ),
+                            child: previewBytes != null
+                                ? Image.memory(
+                                    previewBytes!,
+                                    fit: BoxFit.fitHeight,
+                                  )
+                                : Image.network(
+                                    previewUrl!,
+                                    fit: BoxFit.fitHeight,
+                                  ),
                           ),
                         ),
                       ],

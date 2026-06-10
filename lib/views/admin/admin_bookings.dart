@@ -5,6 +5,7 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_bookings.vm.dart';
 import 'package:webapp/views/client/client_booking_home_view.dart';
 import 'package:webapp/views/shared/booking_workflow_view.dart';
@@ -112,16 +113,13 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Transform.translate(
-                  offset: const Offset(-12, 0),
-                  child: _AdminBookingDetailHeader(
-                    booking: selectedBooking,
-                    onBack: () {
-                      setState(() {
-                        _selectedBooking = null;
-                      });
-                    },
-                  ),
+                _AdminBookingDetailHeader(
+                  booking: selectedBooking,
+                  onBack: () {
+                    setState(() {
+                      _selectedBooking = null;
+                    });
+                  },
                 ),
                 const SizedBox(height: 16),
                 BookingWorkflowView(
@@ -424,16 +422,17 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
   }
 
   String _fallbackUserLabel(String userId, String fallbackRole) {
-    final matchingUser = [...widget.drivers, ...widget.helpers].firstWhere(
-      (user) => user.id == userId,
-      orElse: () => UserModel(id: userId, name: fallbackRole, role: ''),
-    );
-    if ((matchingUser.name ?? '').trim().isNotEmpty &&
-        matchingUser.id == userId &&
-        (matchingUser.phone ?? '').trim().isNotEmpty == false) {
-      return _userLabel(matchingUser);
+    for (final user in [
+      ...widget.drivers,
+      ...widget.helpers,
+      if (widget.booking.driver != null) widget.booking.driver!,
+      if (widget.booking.helper != null) widget.booking.helper!,
+    ]) {
+      if (user.id == userId) {
+        return _userLabel(user);
+      }
     }
-    return '$fallbackRole | $userId';
+    return fallbackRole;
   }
 
   @override
@@ -478,6 +477,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     initialValue: _vanSize,
                     bottomPadding: 10,
                     isExpanded: true,
+                    disabledTapMessage: 'No active vehicle sizes available.',
                     items: _buildVanSizeItems(),
                     onChanged: (value) {
                       setState(() {
@@ -505,6 +505,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     label: 'Status',
                     initialValue: _statusKey.isEmpty ? null : _statusKey,
                     isExpanded: true,
+                    disabledTapMessage: 'No active statuses available.',
                     items: _buildStatusItems(),
                     onChanged: (value) {
                       setState(() {
@@ -516,6 +517,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     label: 'Driver',
                     initialValue: _driverId,
                     isExpanded: true,
+                    disabledTapMessage: 'No online drivers available.',
                     items: _buildRoleUserItems(
                       selectedUserId: _driverId,
                       activeUsers: widget.drivers,
@@ -532,6 +534,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     initialValue: _helperId,
                     isExpanded: true,
                     bottomPadding: 0,
+                    disabledTapMessage: 'No online helpers available.',
                     items: _buildRoleUserItems(
                       selectedUserId: _helperId,
                       activeUsers: widget.helpers,
@@ -617,6 +620,12 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
         return user;
       }
     }
+    if (widget.booking.driver?.id == normalizedId) {
+      return widget.booking.driver;
+    }
+    if (widget.booking.helper?.id == normalizedId) {
+      return widget.booking.helper;
+    }
     return null;
   }
 
@@ -641,7 +650,11 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     if (name.isNotEmpty) {
       return name;
     }
-    return phone.isNotEmpty ? phone : (user.id ?? '-');
+    if (phone.isNotEmpty) {
+      return phone;
+    }
+    final role = (user.role ?? '').trim();
+    return role.isNotEmpty ? humanizeDropdownValue(role) : 'User';
   }
 }
 
@@ -1386,6 +1399,9 @@ class _AdminBookingDetailHeader extends StatelessWidget {
           onPressed: onBack,
           icon: const Icon(Icons.arrow_back_rounded),
           color: AppColors.primaryColor,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          visualDensity: VisualDensity.compact,
           splashRadius: 22,
         ),
         const SizedBox(width: 8),

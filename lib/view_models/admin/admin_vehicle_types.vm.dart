@@ -14,6 +14,11 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
   static List<VehicleCatalogItem> _cachedTypes = const [];
   static String? _cachedErrorMessage;
 
+  static void clearCachedState() {
+    _cachedTypes = const [];
+    _cachedErrorMessage = null;
+  }
+
   List<VehicleCatalogItem> _types = const [];
   String? _errorMessage;
 

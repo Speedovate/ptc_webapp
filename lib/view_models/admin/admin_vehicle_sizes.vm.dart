@@ -14,6 +14,11 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
   static List<VehicleCatalogItem> _cachedSizes = const [];
   static String? _cachedErrorMessage;
 
+  static void clearCachedState() {
+    _cachedSizes = const [];
+    _cachedErrorMessage = null;
+  }
+
   List<VehicleCatalogItem> _sizes = const [];
   String? _errorMessage;
 

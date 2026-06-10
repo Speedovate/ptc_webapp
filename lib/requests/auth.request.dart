@@ -1,10 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:typed_data';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/local/auth_storage_backend.dart';
+import 'package:webapp/services/app_session_reset.dart';
+import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class AuthRequest implements AuthRepository {
@@ -22,6 +25,7 @@ class AuthRequest implements AuthRepository {
   final FirebaseFirestore _firestore;
   final VehicleRequest _vehicleRequest;
   final AuthStorageBackend _storage = createAuthStorageBackend();
+  final PhotoStorageService _photoStorageService = PhotoStorageService.instance;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
@@ -189,6 +193,74 @@ class AuthRequest implements AuthRepository {
   }
 
   @override
+  Future<UserModel> saveUserPhoto({
+    required String userId,
+    required Uint8List bytes,
+    required String fileName,
+    String? mimeType,
+    int? size,
+  }) async {
+    final normalizedUserId = normalizeId(userId);
+    if (normalizedUserId == null) {
+      throw const AuthFailure('User ID is required.');
+    }
+    final currentUser = await _getUserById(normalizedUserId);
+    if (currentUser == null) {
+      throw const AuthFailure('User not found.');
+    }
+    final upload = await _photoStorageService.uploadUserPhoto(
+      bytes: bytes,
+      userId: normalizedUserId,
+      fieldKey: 'profile_photo',
+      fileName: fileName,
+      mimeType: mimeType,
+      size: size,
+    );
+    return saveUser(
+      currentUser.copyWith(
+        photo: upload['download_url']?.toString(),
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  @override
+  Future<UserModel> saveDriverLicensePhoto({
+    required String userId,
+    required Uint8List bytes,
+    required String fileName,
+    String? mimeType,
+    int? size,
+  }) async {
+    final normalizedUserId = normalizeId(userId);
+    if (normalizedUserId == null) {
+      throw const AuthFailure('User ID is required.');
+    }
+    final currentUser = await _getUserById(normalizedUserId);
+    if (currentUser == null) {
+      throw const AuthFailure('User not found.');
+    }
+    final driver = currentUser.asDriver;
+    if (driver == null) {
+      throw const AuthFailure('Only driver accounts can upload license photos.');
+    }
+    final upload = await _photoStorageService.uploadUserPhoto(
+      bytes: bytes,
+      userId: normalizedUserId,
+      fieldKey: 'license_photo',
+      fileName: fileName,
+      mimeType: mimeType,
+      size: size,
+    );
+    return saveUser(
+      driver.copyWith(
+        license: upload['download_url']?.toString(),
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  @override
   Future<void> deleteUser(String userId) async {
     final normalized = normalizeId(userId);
     if (normalized == null) {
@@ -257,6 +329,8 @@ class AuthRequest implements AuthRepository {
     }
     await _storage.remove(_currentUserIdKey);
     await _storage.remove(_quickLoginSourceUserIdKey);
+    await _cache.clearResource(_usersResourceKey);
+    AppSessionReset.clearUserScopedState();
   }
 
   Future<UserModel?> _getUserById(String id) async {

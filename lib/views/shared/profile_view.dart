@@ -1,6 +1,3 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
@@ -309,18 +306,7 @@ class _ProfileViewState extends State<ProfileView> {
     if (normalizedValue == null || normalizedValue.isEmpty) {
       return false;
     }
-    if (normalizedValue.startsWith('http')) {
-      return true;
-    }
-    final data = normalizedValue.contains(',')
-        ? normalizedValue.split(',').last
-        : normalizedValue;
-    try {
-      base64Decode(data);
-      return true;
-    } catch (_) {
-      return false;
-    }
+    return normalizedValue.startsWith('http');
   }
 }
 
@@ -362,10 +348,7 @@ class _ProfileIdentityHeader extends StatelessWidget {
         final isCompact = constraints.maxWidth < 560;
         final nameFontSize = constraints.maxWidth < 420 ? 14.0 : 16.0;
         final avatarRadius = isCompact ? 32.0 : 38.0;
-        final showChangePhoto =
-            isCurrentUserView &&
-            user.role != 'admin' &&
-            onChangePhotoPressed != null;
+        final showChangePhoto = isCurrentUserView && onChangePhotoPressed != null;
         final actionLabel = isCurrentUserView ? logoutLabel : quickActionLabel;
         final actionOnTap = isCurrentUserView ? onLogout : onQuickActionPressed;
 
@@ -709,33 +692,10 @@ class _LicensePreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final normalizedValue = imageValue?.trim();
-    final imageBytes = _decodeBase64Image(normalizedValue);
     final hasNetworkImage =
         normalizedValue != null && normalizedValue.startsWith('http');
     final hasImageValue = normalizedValue != null && normalizedValue.isNotEmpty;
-    final hasImageError =
-        hasImageValue && imageBytes == null && !hasNetworkImage;
-
-    if (imageBytes != null) {
-      return _LicenseImageFrame(
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Image.memory(
-            imageBytes,
-            width: double.infinity,
-            height: 220,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) {
-              return const _LicenseImageFallback(
-                icon: Icons.broken_image_rounded,
-                label: 'Failed to load license image.',
-                isError: true,
-              );
-            },
-          ),
-        ),
-      );
-    }
+    final hasImageError = hasImageValue && !hasNetworkImage;
 
     if (hasNetworkImage) {
       return _LicenseImageFrame(
@@ -769,19 +729,6 @@ class _LicensePreview extends StatelessWidget {
         isError: hasImageError,
       ),
     );
-  }
-
-  Uint8List? _decodeBase64Image(String? value) {
-    if (value == null || value.isEmpty) {
-      return null;
-    }
-
-    final data = value.contains(',') ? value.split(',').last : value;
-    try {
-      return base64Decode(data);
-    } catch (_) {
-      return null;
-    }
   }
 }
 

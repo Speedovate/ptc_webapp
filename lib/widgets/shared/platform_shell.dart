@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/services/app_version_service.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/collapsible_sidebar.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
@@ -264,8 +265,8 @@ class PlatformSidebarBrandTile extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Text(
+                      children: [
+                        const Text(
                           'Paltranco',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -275,15 +276,22 @@ class PlatformSidebarBrandTile extends StatelessWidget {
                             height: 1.2,
                           ),
                         ),
-                        Text(
-                          'Digital Platform',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: AppColors.primaryColor,
-                            fontSize: 12,
-                            height: 1.2,
-                          ),
+                        FutureBuilder<String>(
+                          future: AppVersionService.sidebarVersionLabel,
+                          builder: (context, snapshot) {
+                            final versionLabel =
+                                snapshot.data ?? 'Version 1.0.0 (1)';
+                            return Text(
+                              versionLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.primaryColor,
+                                fontSize: 12,
+                                height: 1.2,
+                              ),
+                            );
+                          },
                         ),
                       ],
                     ),

@@ -22,6 +22,12 @@ class AdminDashboardViewModel extends BaseViewModel {
   static Map<String, UserModel> _cachedUsersById = const {};
   static String? _cachedErrorMessage;
 
+  static void clearCachedState() {
+    _cachedCompletedBookings = const [];
+    _cachedUsersById = const {};
+    _cachedErrorMessage = null;
+  }
+
   final List<Booking> _completedBookings = [];
   final Map<String, UserModel> _usersById = {};
 

@@ -327,7 +327,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
               BookingSupportButton(
                 onPressed: () => launchBookingSupport(context),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 4),
             ],
             backgroundColor: Colors.white,
             foregroundColor: AppColors.textPrimary,
@@ -561,15 +561,13 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                 currentBooking.statusOutputs,
                 'waybill_photo',
               );
-              final waybillPhotoBytes = decodeBase64PhotoBytes(
-                waybillPhotoValue,
-              );
-              if (waybillPhotoBytes == null) {
+              final waybillPhotoUrl = photoDownloadUrl(waybillPhotoValue);
+              if (waybillPhotoUrl == null) {
                 return const SizedBox.shrink();
               }
               return Padding(
                 padding: const EdgeInsets.only(top: 16),
-                child: _WorkflowWaybillPhotoCard(imageBytes: waybillPhotoBytes),
+                child: _WorkflowWaybillPhotoCard(imageUrl: waybillPhotoUrl),
               );
             },
           ),
@@ -841,18 +839,33 @@ class BookingSupportButton extends StatelessWidget {
 }
 
 class _WorkflowWaybillPhotoCard extends StatelessWidget {
-  const _WorkflowWaybillPhotoCard({required this.imageBytes});
+  const _WorkflowWaybillPhotoCard({required this.imageUrl});
 
-  final Uint8List imageBytes;
+  final String imageUrl;
 
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(18),
-      child: Image.memory(
-        imageBytes,
+      child: Image.network(
+        imageUrl,
         width: double.infinity,
         fit: BoxFit.fitWidth,
+        errorBuilder: (context, error, stackTrace) {
+          return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            color: AppColors.primarySurface,
+            child: const Text(
+              'Failed to load photo.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -916,6 +929,7 @@ class _WorkflowInteractiveFormSectionState
           _WorkflowAlertHeaderCard(
             title: resolvedTitle,
             subtitle: resolvedSubtitle,
+            showRequiredLegend: fields.any((field) => field.required == true),
           )
         else
           BookingFormHeaderCard(
@@ -925,6 +939,7 @@ class _WorkflowInteractiveFormSectionState
             borderColor: terminalPalette?.borderColor,
             titleColor: terminalPalette?.titleColor,
             subtitleColor: terminalPalette?.subtitleColor,
+            showRequiredLegend: fields.any((field) => field.required == true),
             message: blockedMessage,
             messageBackgroundColor: const Color(0xFFFFF6F6),
             messageBorderColor: const Color(0xFFFFD2D2),
@@ -1274,28 +1289,28 @@ class _WorkflowTaskCard extends StatelessWidget {
 }
 
 class _WorkflowAlertHeaderCard extends StatelessWidget {
-  const _WorkflowAlertHeaderCard({required this.title, this.subtitle});
+  const _WorkflowAlertHeaderCard({
+    required this.title,
+    this.subtitle,
+    this.showRequiredLegend = false,
+  });
 
   final String title;
   final String? subtitle;
+  final bool showRequiredLegend;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFFC93B3B),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFC93B3B)),
-      ),
+    return BookingFormTitleCardShell(
+      stripColor: AppColors.primaryColor,
+      borderColor: AppColors.primaryBorder,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
             style: const TextStyle(
-              color: Colors.white,
+              color: AppColors.textPrimary,
               fontSize: 22,
               fontWeight: FontWeight.w800,
               height: 1.2,
@@ -1305,11 +1320,29 @@ class _WorkflowAlertHeaderCard extends StatelessWidget {
             Text(
               subtitle!.trim(),
               style: const TextStyle(
-                color: Color(0xFFFFDADA),
+                color: AppColors.textPrimary,
                 fontWeight: FontWeight.w500,
                 height: 1.35,
               ),
             ),
+          if (showRequiredLegend) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              height: 1,
+              color: AppColors.primaryBorder,
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              '* indicates required input',
+              style: TextStyle(
+                color: AppColors.primaryColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+                height: 1.3,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1729,6 +1762,9 @@ class _WorkflowFieldCard extends StatelessWidget {
       ).copyWith(errorText: errorText),
       style: adminDropdownDisplayTextStyle,
       items: items,
+      disabledTapMessage: role == 'driver'
+          ? 'No online drivers available.'
+          : 'No online helpers available.',
       onChanged: (value) => onChanged(value),
     );
   }
@@ -2055,12 +2091,6 @@ class _PhotoFieldState extends State<_PhotoField> {
   Widget build(BuildContext context) {
     return BookingPhotoFieldInput(
       initialValue: widget.initialValue,
-      previewBytesBuilder: (value) => decodePhotoBytes(value, key: 'bytes'),
-      valueBuilder: (file, encodedBytes) => {
-        'name': file.name,
-        'bytes': encodedBytes,
-        'mime_type': file.extension == null ? null : 'image/${file.extension}',
-      },
       errorText: widget.errorText,
       onChanged: widget.onChanged,
     );

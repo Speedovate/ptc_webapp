@@ -609,12 +609,6 @@ class _PhotoFieldInputState extends State<_PhotoFieldInput> {
           ? widget.field.placeholder!.trim()
           : 'Upload a photo'),
       showRemoveAction: true,
-      previewBytesBuilder: (value) => decodeBase64PhotoBytes(value),
-      valueBuilder: (file, encodedBytes) => <String, dynamic>{
-        'name': file.name,
-        'bytes_base64': encodedBytes,
-        'size': file.size,
-      },
       onChanged: widget.onChanged,
     );
   }

@@ -204,6 +204,10 @@ class FirestoreCollectionCache {
     }
   }
 
+  Future<void> clearResource(String resourceKey) {
+    return _store.clearResource(resourceKey);
+  }
+
   Future<String?> _readRemoteVersion(String resourceKey) async {
     final snapshot = await _versionsCollection.doc(resourceKey).get();
     if (!snapshot.exists) {

@@ -1,6 +1,3 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 
@@ -21,12 +18,11 @@ class AppProfileAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final normalizedPhoto = photo?.trim();
-    final imageBytes = _decodeBase64Image(normalizedPhoto);
     final borderColor = AppColors.primarySurfaceAlt;
     final hasPhotoValue = normalizedPhoto != null && normalizedPhoto.isNotEmpty;
     final hasNetworkImage =
         normalizedPhoto != null && normalizedPhoto.startsWith('http');
-    final hasImageError = hasPhotoValue && imageBytes == null && !hasNetworkImage;
+    final hasImageError = hasPhotoValue && !hasNetworkImage;
 
     final innerBorderWidth = radius * _borderRatio;
     final diameter = radius * 2;
@@ -44,7 +40,6 @@ class AppProfileAvatar extends StatelessWidget {
               child: SizedBox.expand(
                 child: _buildAvatarContent(
                   normalizedPhoto: normalizedPhoto,
-                  imageBytes: imageBytes,
                   hasNetworkImage: hasNetworkImage,
                   hasImageError: hasImageError,
                 ),
@@ -69,24 +64,9 @@ class AppProfileAvatar extends StatelessWidget {
 
   Widget _buildAvatarContent({
     required String? normalizedPhoto,
-    required Uint8List? imageBytes,
     required bool hasNetworkImage,
     required bool hasImageError,
   }) {
-    if (imageBytes != null) {
-      return Image.memory(
-        imageBytes,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return _FallbackAvatarContent(
-            radius: radius,
-            fallbackText: fallbackText,
-            isError: true,
-          );
-        },
-      );
-    }
-
     if (hasNetworkImage) {
       return Image.network(
         normalizedPhoto!,
@@ -106,19 +86,6 @@ class AppProfileAvatar extends StatelessWidget {
       fallbackText: fallbackText,
       isError: hasImageError,
     );
-  }
-
-  Uint8List? _decodeBase64Image(String? value) {
-    if (value == null || value.isEmpty) {
-      return null;
-    }
-
-    final data = value.contains(',') ? value.split(',').last : value;
-    try {
-      return base64Decode(data);
-    } catch (_) {
-      return null;
-    }
   }
 }
 

@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/view_models/admin/admin_home.vm.dart';
 import 'package:webapp/views/admin/admin_bookings.dart';
 import 'package:webapp/views/admin/admin_dashboard.dart';
 import 'package:webapp/views/admin/admin_fields.dart';
-import 'package:webapp/views/admin/admin_forms.dart';
+import 'package:webapp/views/admin/admin_flows.dart';
 import 'package:webapp/views/admin/admin_statuses.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/views/admin/admin_vehicle_makes.dart';
 import 'package:webapp/views/admin/admin_vehicle_sizes.dart';
 import 'package:webapp/views/admin/admin_vehicle_types.dart';
 import 'package:webapp/views/shared/profile_view.dart';
+import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_shell_layout_scope.dart';
 import 'package:webapp/widgets/shared/platform_shell.dart';
 import 'package:webapp/widgets/sidebar_menu_item.dart';
@@ -37,6 +41,87 @@ class AdminHome extends StatefulWidget {
 class _AdminHomeState extends State<AdminHome> {
   final AdminHomeViewModel _viewModel = AdminHomeViewModel();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final AuthRepository _authRepository = AuthRequest.instance;
+  late UserModel _shellUser;
+  bool _isUploadingProfilePhoto = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _shellUser = widget.user;
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminHome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.user.id != widget.user.id ||
+        oldWidget.user.updatedAt != widget.user.updatedAt) {
+      _shellUser = widget.user;
+    }
+  }
+
+  Future<void> _uploadProfilePhoto() async {
+    if (_isUploadingProfilePhoto) {
+      return;
+    }
+    final userId = _shellUser.id?.trim();
+    if (userId == null || userId.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, 'User ID is required.');
+      return;
+    }
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null) {
+      return;
+    }
+
+    setState(() {
+      _isUploadingProfilePhoto = true;
+    });
+    try {
+      final updatedUser = await _authRepository.saveUserPhoto(
+        userId: userId,
+        bytes: bytes,
+        fileName: file.name,
+        size: file.size,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _shellUser = updatedUser;
+      });
+      await widget.onUserUpdated();
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showSuccess(context, 'Profile photo updated.');
+    } on AuthFailure catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, error.message);
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, 'Failed to upload profile photo.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingProfilePhoto = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -49,7 +134,7 @@ class _AdminHomeState extends State<AdminHome> {
 
         return PlatformShell(
           scaffoldKey: _scaffoldKey,
-          user: widget.user,
+          user: _shellUser,
           title: _selectedSectionTitle(vm),
           isCompact: isCompact,
           showRail: showRail,
@@ -119,7 +204,7 @@ class _AdminHomeState extends State<AdminHome> {
               ? [
                   SidebarMenuItem(
                     label: AdminVehiclesSection.makes.title,
-                    icon: Icons.precision_manufacturing_outlined,
+                    icon: Icons.directions_car_filled,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.vehicles &&
@@ -134,7 +219,7 @@ class _AdminHomeState extends State<AdminHome> {
                   ),
                   SidebarMenuItem(
                     label: AdminVehiclesSection.types.title,
-                    icon: Icons.category_outlined,
+                    icon: Icons.category,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.vehicles &&
@@ -149,7 +234,7 @@ class _AdminHomeState extends State<AdminHome> {
                   ),
                   SidebarMenuItem(
                     label: AdminVehiclesSection.sizes.title,
-                    icon: Icons.straighten_outlined,
+                    icon: Icons.aspect_ratio,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.vehicles &&
@@ -181,7 +266,7 @@ class _AdminHomeState extends State<AdminHome> {
               ? [
                   SidebarMenuItem(
                     label: AdminSettingsSection.statuses.title,
-                    icon: Icons.flag_outlined,
+                    icon: Icons.flag,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.settings &&
@@ -195,15 +280,15 @@ class _AdminHomeState extends State<AdminHome> {
                     },
                   ),
                   SidebarMenuItem(
-                    label: AdminSettingsSection.forms.title,
-                    icon: Icons.description_outlined,
+                    label: AdminSettingsSection.flows.title,
+                    icon: Icons.account_tree,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.settings &&
                         vm.selectedSettingsSection ==
-                            AdminSettingsSection.forms,
+                            AdminSettingsSection.flows,
                     onTap: () {
-                      vm.selectSettingsSection(AdminSettingsSection.forms);
+                      vm.selectSettingsSection(AdminSettingsSection.flows);
                       if (isCompact) {
                         Navigator.of(context).pop();
                       }
@@ -211,7 +296,7 @@ class _AdminHomeState extends State<AdminHome> {
                   ),
                   SidebarMenuItem(
                     label: AdminSettingsSection.fields.title,
-                    icon: Icons.view_stream_outlined,
+                    icon: Icons.list_alt,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.settings &&
@@ -228,22 +313,22 @@ class _AdminHomeState extends State<AdminHome> {
               : const [],
         ),
         SidebarMenuItem(
-          label: AdminSection.profile.title,
-          icon: _menuIcon(AdminSection.profile),
-          isSelected: vm.selectedSection == AdminSection.profile,
+          label: AdminSection.users.title,
+          icon: _menuIcon(AdminSection.users),
+          isSelected: vm.selectedSection == AdminSection.users,
           onTap: () {
-            vm.selectSection(AdminSection.profile);
+            vm.selectSection(AdminSection.users);
             if (isCompact) {
               Navigator.of(context).pop();
             }
           },
         ),
         SidebarMenuItem(
-          label: AdminSection.users.title,
-          icon: _menuIcon(AdminSection.users),
-          isSelected: vm.selectedSection == AdminSection.users,
+          label: AdminSection.profile.title,
+          icon: _menuIcon(AdminSection.profile),
+          isSelected: vm.selectedSection == AdminSection.profile,
           onTap: () {
-            vm.selectSection(AdminSection.users);
+            vm.selectSection(AdminSection.profile);
             if (isCompact) {
               Navigator.of(context).pop();
             }
@@ -263,12 +348,12 @@ class _AdminHomeState extends State<AdminHome> {
         AdminVehiclesSection.types => const AdminVehicleTypesView(),
       },
       AdminSection.settings => switch (_viewModel.selectedSettingsSection) {
-        AdminSettingsSection.forms => const AdminFormsView(),
+        AdminSettingsSection.flows => const AdminFlowsView(),
         AdminSettingsSection.fields => const AdminFieldsView(),
         AdminSettingsSection.statuses => const AdminStatusesView(),
       },
       AdminSection.users => AdminUsersView(
-        user: widget.user,
+        user: _shellUser,
         onCurrentUserUpdated: widget.onUserUpdated,
         onLogout: widget.onLogout,
         isQuickLoggedIn: widget.isQuickLoggedIn,
@@ -276,12 +361,13 @@ class _AdminHomeState extends State<AdminHome> {
         onInitialEditHandled: _viewModel.clearPendingEditUser,
       ),
       AdminSection.profile => ProfileView(
-        user: widget.user,
+        user: _shellUser,
         isCurrentUserView: true,
         onLogout: widget.onLogout,
         logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
+        onChangePhotoPressed: _uploadProfilePhoto,
         onEditPressed: () {
-          _viewModel.openUsersForEdit(widget.user.id);
+          _viewModel.openUsersForEdit(_shellUser.id);
         },
       ),
     };
@@ -301,8 +387,8 @@ class _AdminHomeState extends State<AdminHome> {
     return switch (section) {
       AdminSection.dashboard => Icons.dashboard_rounded,
       AdminSection.bookings => Icons.calendar_month_rounded,
-      AdminSection.vehicles => Icons.local_shipping_outlined,
-      AdminSection.settings => Icons.settings_rounded,
+      AdminSection.vehicles => Icons.local_shipping,
+      AdminSection.settings => Icons.alt_route_rounded,
       AdminSection.users => Icons.people_alt_rounded,
       AdminSection.profile => Icons.account_circle_rounded,
     };

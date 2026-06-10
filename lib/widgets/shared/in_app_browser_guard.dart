@@ -363,7 +363,7 @@ class _InAppBrowserInfo {
   }
 
   String get message => isInAppBrowser
-      ? 'This page is currently inside $sourceLabel. Some layouts, height behavior, login flow, and file actions may not work correctly there. For the best experience, open Paltranco Digital Platform in Chrome instead.'
+      ? 'This page is currently inside $sourceLabel. Some layouts, height behavior, sign in flow, and file actions may not work correctly there. For the best experience, open Paltranco Digital Platform in Chrome instead.'
       : 'This page is currently open in $sourceLabel. Paltranco Digital Platform works best in Chrome, so we recommend switching there whenever possible.';
 
   String get instructions {

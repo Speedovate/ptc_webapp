@@ -5,6 +5,7 @@ import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
+import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class BookingRequest implements BookingRepository {
@@ -21,6 +22,7 @@ class BookingRequest implements BookingRepository {
   final FirebaseFirestore _firestore;
   final AuthRequest _authRequest;
   final VehicleRequest _vehicleRequest;
+  final PhotoStorageService _photoStorageService = PhotoStorageService.instance;
 
   CollectionReference<Map<String, dynamic>> get _bookingsCollection =>
       _firestore.collection('bookings');
@@ -51,14 +53,137 @@ class BookingRequest implements BookingRepository {
   Future<Booking> saveBooking(Booking booking) async {
     final existingBookings = await getBookings();
     final nextId = normalizeId(booking.id) ?? _nextBookingId(existingBookings);
+    final existingBooking = existingBookings.where((item) => item.id == nextId).firstOrNull;
     final now = DateTime.now();
+    final persistedStatusOutputs = await _persistPhotoFields(
+      booking.statusOutputs,
+      bookingId: nextId,
+      existingStatusOutputs: existingBooking?.statusOutputs,
+    );
     final saved = booking.copyWith(
       id: nextId,
       createdAt: booking.createdAt ?? now,
+      statusOutputs: persistedStatusOutputs,
       updatedAt: now,
     );
     await _bookingsCollection.doc(nextId).set(_toFirestoreMap(saved));
     return saved;
+  }
+
+  Future<Map<String, dynamic>?> _persistPhotoFields(
+    Map<String, dynamic>? statusOutputs, {
+    required String bookingId,
+    required Map<String, dynamic>? existingStatusOutputs,
+  }) async {
+    if (statusOutputs == null) {
+      if (existingStatusOutputs != null) {
+        await _deleteObsoletePhotos(
+          previousStatusOutputs: existingStatusOutputs,
+          nextStatusOutputs: null,
+        );
+      }
+      return null;
+    }
+
+    final nextStatusOutputs = <String, dynamic>{};
+    for (final sectionEntry in statusOutputs.entries) {
+      final sectionValue = sectionEntry.value;
+      if (sectionValue is! Map) {
+        nextStatusOutputs[sectionEntry.key] = sectionValue;
+        continue;
+      }
+      final nextSection = Map<String, dynamic>.from(sectionValue);
+      final fieldsValue = sectionValue['fields'];
+      if (fieldsValue is Map) {
+        final nextFields = <String, dynamic>{};
+        for (final fieldEntry in fieldsValue.entries) {
+          nextFields[fieldEntry.key.toString()] = await _persistPhotoValue(
+            fieldEntry.value,
+            bookingId: bookingId,
+            statusKey: sectionEntry.key,
+            fieldKey: fieldEntry.key.toString(),
+          );
+        }
+        nextSection['fields'] = nextFields;
+      }
+      nextStatusOutputs[sectionEntry.key] = nextSection;
+    }
+
+    await _deleteObsoletePhotos(
+      previousStatusOutputs: existingStatusOutputs,
+      nextStatusOutputs: nextStatusOutputs,
+    );
+    return nextStatusOutputs;
+  }
+
+  Future<dynamic> _persistPhotoValue(
+    dynamic value, {
+    required String bookingId,
+    required String statusKey,
+    required String fieldKey,
+  }) async {
+    final mapValue = value is Map<String, dynamic>
+        ? Map<String, dynamic>.from(value)
+        : value is Map
+        ? Map<String, dynamic>.from(value)
+        : null;
+    final bytes = decodePhotoBytes(mapValue);
+    if (mapValue == null || bytes == null) {
+      return value;
+    }
+    final fileName = mapValue['name']?.toString().trim();
+    final mimeType = mapValue['mime_type']?.toString().trim();
+    final size = _toInt(mapValue['size']) ?? bytes.length;
+    return _photoStorageService.uploadBookingPhoto(
+      bytes: bytes,
+      bookingId: bookingId,
+      statusKey: statusKey.trim(),
+      fieldKey: fieldKey.trim(),
+      fileName: fileName?.isNotEmpty == true ? fileName! : 'photo',
+      mimeType: mimeType?.isNotEmpty == true ? mimeType : null,
+      size: size,
+    );
+  }
+
+  Future<void> _deleteObsoletePhotos({
+    required Map<String, dynamic>? previousStatusOutputs,
+    required Map<String, dynamic>? nextStatusOutputs,
+  }) async {
+    final previousPaths = _collectPhotoStoragePaths(previousStatusOutputs);
+    final nextPaths = _collectPhotoStoragePaths(nextStatusOutputs);
+    for (final entry in previousPaths.entries) {
+      if (nextPaths[entry.key] == entry.value) {
+        continue;
+      }
+      await _photoStorageService.deleteByPath(entry.value);
+    }
+  }
+
+  Map<String, String> _collectPhotoStoragePaths(
+    Map<String, dynamic>? statusOutputs,
+  ) {
+    final paths = <String, String>{};
+    if (statusOutputs == null) {
+      return paths;
+    }
+    for (final sectionEntry in statusOutputs.entries) {
+      final section = sectionEntry.value;
+      if (section is! Map) {
+        continue;
+      }
+      final fields = section['fields'];
+      if (fields is! Map) {
+        continue;
+      }
+      for (final fieldEntry in fields.entries) {
+        final storagePath = photoStoragePath(fieldEntry.value);
+        if (storagePath == null) {
+          continue;
+        }
+        paths['${sectionEntry.key}/${fieldEntry.key}'] = storagePath;
+      }
+    }
+    return paths;
   }
 
   Future<List<Booking>> _inflateBookings(
@@ -156,5 +281,15 @@ class BookingRequest implements BookingRepository {
       return null;
     }
     return DateTime.tryParse(value.toString());
+  }
+
+  int? _toInt(dynamic value) {
+    if (value == null) {
+      return null;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    return int.tryParse(value.toString());
   }
 }

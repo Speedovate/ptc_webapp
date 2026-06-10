@@ -1,4 +1,5 @@
 import 'package:webapp/models/user.dart';
+import 'dart:typed_data';
 
 abstract class AuthRepository {
   Future<void> initialize();
@@ -10,6 +11,20 @@ abstract class AuthRepository {
   });
   Future<UserModel> register(UserModel user);
   Future<UserModel> saveUser(UserModel user);
+  Future<UserModel> saveUserPhoto({
+    required String userId,
+    required Uint8List bytes,
+    required String fileName,
+    String? mimeType,
+    int? size,
+  });
+  Future<UserModel> saveDriverLicensePhoto({
+    required String userId,
+    required Uint8List bytes,
+    required String fileName,
+    String? mimeType,
+    int? size,
+  });
   Future<void> deleteUser(String userId);
   Future<void> loginAsUser(String userId);
   Future<bool> hasQuickLoginSource();

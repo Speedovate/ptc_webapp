@@ -254,6 +254,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
           borderColor: terminalPalette?.borderColor,
           titleColor: terminalPalette?.titleColor,
           subtitleColor: terminalPalette?.subtitleColor,
+          showRequiredLegend: fields.any((field) => field.required == true),
           message: blockedMessage,
           messageBackgroundColor: const Color(0xFFFFF6F6),
           messageBorderColor: const Color(0xFFFFD2D2),

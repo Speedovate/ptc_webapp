@@ -905,6 +905,59 @@ Future<VehicleMake?> _showMakeDialog(
   String? driverId = initialItem?.driver?.id;
   var isActive = initialItem?.isActive ?? true;
 
+  List<DropdownMenuItem<String>> buildTypeItems() {
+    final items = <DropdownMenuItem<String>>[];
+    final seen = <String>{};
+
+    void addItem(String? value, String label) {
+      final normalized = value?.trim();
+      if (normalized == null || normalized.isEmpty || !seen.add(normalized)) {
+        return;
+      }
+      items.add(
+        DropdownMenuItem<String>(
+          value: normalized,
+          child: Text(label, style: adminDropdownDisplayTextStyle),
+        ),
+      );
+    }
+
+    addItem(initialItem?.type?.id, (initialItem?.type?.name ?? '').trim());
+    for (final item in types) {
+      addItem(item.id, (item.name ?? '').trim().isNotEmpty ? item.name!.trim() : '-');
+    }
+    return items;
+  }
+
+  List<DropdownMenuItem<String>> buildDriverItems() {
+    final items = <DropdownMenuItem<String>>[];
+    final seen = <String>{};
+
+    void addItem(UserModel? user) {
+      final normalized = user?.id?.trim();
+      if (normalized == null || normalized.isEmpty || !seen.add(normalized)) {
+        return;
+      }
+      final name = (user?.name ?? '').trim();
+      final phone = (user?.phone ?? '').trim();
+      final label = name.isNotEmpty
+          ? (phone.isNotEmpty ? '$name | $phone' : name)
+          : (phone.isNotEmpty ? phone : 'Driver');
+      items.add(
+        DropdownMenuItem<String>(
+          value: normalized,
+          child: Text(label, style: adminDropdownDisplayTextStyle),
+        ),
+      );
+    }
+
+    addItem(initialItem?.driver);
+    for (final item in drivers) {
+      addItem(item);
+    }
+    return items;
+  }
+
   return showDialog<VehicleMake>(
     context: context,
     builder: (context) => StatefulBuilder(
@@ -925,13 +978,21 @@ Future<VehicleMake?> _showMakeDialog(
                 ),
                 FilledButton(
                   onPressed: () {
-                    final selectedType = types.where(
-                      (item) => item.id == typeId,
-                    );
-                    final selectedDriver = drivers.where(
-                      (item) => item.id == driverId,
-                    );
-                    if (selectedType.isEmpty || selectedDriver.isEmpty) {
+                    final selectedType = types
+                        .where((item) => item.id == typeId)
+                        .cast<VehicleCatalogItem?>()
+                        .firstWhere(
+                          (_) => true,
+                          orElse: () => initialItem?.type,
+                        );
+                    final selectedDriver = drivers
+                        .where((item) => item.id == driverId)
+                        .cast<UserModel?>()
+                        .firstWhere(
+                          (_) => true,
+                          orElse: () => initialItem?.driver,
+                        );
+                    if (selectedType == null || selectedDriver == null) {
                       AppSnackbar.showError(
                         context,
                         'Code, assigned type, and driver are required.',
@@ -950,8 +1011,8 @@ Future<VehicleMake?> _showMakeDialog(
                       VehicleMake(
                         id: initialItem?.id,
                         code: code,
-                        type: selectedType.first,
-                        driver: selectedDriver.first,
+                        type: selectedType,
+                        driver: selectedDriver,
                         isActive: isActive,
                         createdAt: initialItem?.createdAt,
                         updatedAt: DateTime.now(),
@@ -976,17 +1037,8 @@ Future<VehicleMake?> _showMakeDialog(
                   initialValue: typeId,
                   bottomPadding: 10,
                   iconEnabledColor: AppColors.primaryColor,
-                  items: types
-                      .map(
-                        (item) => DropdownMenuItem<String>(
-                          value: item.id,
-                          child: Text(
-                            item.name ?? '-',
-                            style: adminDropdownDisplayTextStyle,
-                          ),
-                        ),
-                      )
-                      .toList(),
+                  disabledTapMessage: 'No active vehicle types available.',
+                  items: buildTypeItems(),
                   onChanged: (value) => setState(() => typeId = value),
                 ),
                 AdminModalDropdownField<String>(
@@ -994,17 +1046,8 @@ Future<VehicleMake?> _showMakeDialog(
                   initialValue: driverId,
                   bottomPadding: 0,
                   iconEnabledColor: AppColors.primaryColor,
-                  items: drivers
-                      .map(
-                        (item) => DropdownMenuItem<String>(
-                          value: item.id,
-                          child: Text(
-                            item.name ?? '-',
-                            style: adminDropdownDisplayTextStyle,
-                          ),
-                        ),
-                      )
-                      .toList(),
+                  disabledTapMessage: 'No online drivers available.',
+                  items: buildDriverItems(),
                   onChanged: (value) => setState(() => driverId = value),
                 ),
               ],

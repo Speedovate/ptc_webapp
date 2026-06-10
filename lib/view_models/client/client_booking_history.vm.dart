@@ -37,6 +37,13 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   static Map<String, UserModel> _cachedUsersById = const {};
   static Map<String, Status> _cachedStatusesByKey = const {};
 
+  static void clearCachedState() {
+    _cachedBookings = const [];
+    _cachedErrorMessage = null;
+    _cachedUsersById = const {};
+    _cachedStatusesByKey = const {};
+  }
+
   List<Booking> bookings = [];
   bool isLoading = false;
   String? errorMessage;

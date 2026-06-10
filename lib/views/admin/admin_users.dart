@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
+import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_users.vm.dart';
@@ -17,6 +19,32 @@ import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
+
+class _PendingImageUpload {
+  const _PendingImageUpload({
+    required this.bytes,
+    required this.fileName,
+    required this.size,
+    this.mimeType,
+  });
+
+  final Uint8List bytes;
+  final String fileName;
+  final int size;
+  final String? mimeType;
+}
+
+class _UserFormDialogResult {
+  const _UserFormDialogResult({
+    required this.user,
+    this.pendingPhotoUpload,
+    this.pendingLicenseUpload,
+  });
+
+  final UserModel user;
+  final _PendingImageUpload? pendingPhotoUpload;
+  final _PendingImageUpload? pendingLicenseUpload;
+}
 
 class AdminUsersView extends StatefulWidget {
   const AdminUsersView({
@@ -95,8 +123,137 @@ class AdminUsersView extends StatefulWidget {
 }
 
 class _AdminUsersViewState extends State<AdminUsersView> {
+  final AuthRepository _authRepository = AuthRequest.instance;
   String? _handledInitialEditUserId;
   bool _isLaunchingInitialEdit = false;
+  bool _isUploadingViewedProfilePhoto = false;
+  bool _isUploadingViewedLicensePhoto = false;
+
+  Future<void> _uploadViewedUserPhoto(
+    AdminUsersViewModel vm,
+    UserModel user,
+  ) async {
+    if (_isUploadingViewedProfilePhoto) {
+      return;
+    }
+    final userId = user.id?.trim();
+    if (userId == null || userId.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, 'User ID is required.');
+      return;
+    }
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null) {
+      return;
+    }
+
+    setState(() {
+      _isUploadingViewedProfilePhoto = true;
+    });
+    try {
+      final updatedUser = await _authRepository.saveUserPhoto(
+        userId: userId,
+        bytes: bytes,
+        fileName: file.name,
+        size: file.size,
+      );
+      vm.syncUser(updatedUser);
+      if (updatedUser.id == widget.user.id) {
+        await widget.onCurrentUserUpdated();
+      }
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showSuccess(context, 'Profile photo updated.');
+    } on AuthFailure catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, error.message);
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, 'Failed to upload profile photo.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingViewedProfilePhoto = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _uploadViewedUserLicense(
+    AdminUsersViewModel vm,
+    UserModel user,
+  ) async {
+    if (_isUploadingViewedLicensePhoto) {
+      return;
+    }
+    final userId = user.id?.trim();
+    if (userId == null || userId.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, 'User ID is required.');
+      return;
+    }
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null) {
+      return;
+    }
+
+    setState(() {
+      _isUploadingViewedLicensePhoto = true;
+    });
+    try {
+      final updatedUser = await _authRepository.saveDriverLicensePhoto(
+        userId: userId,
+        bytes: bytes,
+        fileName: file.name,
+        size: file.size,
+      );
+      vm.syncUser(updatedUser);
+      if (updatedUser.id == widget.user.id) {
+        await widget.onCurrentUserUpdated();
+      }
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showSuccess(context, 'License photo updated.');
+    } on AuthFailure catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, error.message);
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, 'Failed to upload license photo.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingViewedLicensePhoto = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -164,6 +321,13 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                   isCurrentUserView: isViewingCurrentUser,
                   onLogout: widget.onLogout,
                   logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
+                  onChangePhotoPressed: isViewingCurrentUser
+                      ? () => _uploadViewedUserPhoto(vm, viewedUser)
+                      : null,
+                  onChangeLicensePressed:
+                      isViewingCurrentUser && viewedUser.role == 'driver'
+                      ? () => _uploadViewedUserLicense(vm, viewedUser)
+                      : null,
                   onQuickActionPressed: isViewingCurrentUser
                       ? null
                       : () async {
@@ -180,7 +344,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                             AppSnackbar.showError(context, error.message);
                           }
                         },
-                  quickActionLabel: isViewingCurrentUser ? null : 'Login',
+                  quickActionLabel: isViewingCurrentUser ? null : 'Sign In',
                   onEditPressed: () {
                     vm.closeUserView();
                     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -390,7 +554,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     UserModel user,
     Future<void> Function() onCurrentUserUpdated,
   ) async {
-    final editedUser = await showDialog<UserModel>(
+    final editedUser = await showDialog<_UserFormDialogResult>(
       context: context,
       builder: (dialogContext) => _UserFormDialog(
         title: _userDialogTitle('Edit', user),
@@ -400,11 +564,12 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     );
 
     if (editedUser != null && context.mounted) {
-      await vm.updateUser(editedUser);
+      var savedUser = await vm.updateUser(editedUser.user);
+      savedUser = await _applyPendingUserImageUploads(vm, savedUser, editedUser);
       if (!context.mounted) {
         return;
       }
-      if (vm.currentUser?.id == editedUser.id) {
+      if (vm.currentUser?.id == savedUser.id) {
         await onCurrentUserUpdated();
         if (!context.mounted) {
           return;
@@ -412,7 +577,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
       }
       AppSnackbar.showSuccess(
         context,
-        _buildUserSaveMessage(editedUser, isEditing: true, originalUser: user),
+        _buildUserSaveMessage(savedUser, isEditing: true, originalUser: user),
       );
     }
   }
@@ -421,7 +586,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     BuildContext context,
     AdminUsersViewModel vm,
   ) async {
-    final newUser = await showDialog<UserModel>(
+    final newUser = await showDialog<_UserFormDialogResult>(
       context: context,
       builder: (dialogContext) => _UserFormDialog(
         title: _userDialogTitle('New', vm.draftNewUser),
@@ -433,16 +598,52 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     );
 
     if (newUser != null && context.mounted) {
-      await vm.addUser(newUser);
+      var savedUser = await vm.addUser(newUser.user);
+      savedUser = await _applyPendingUserImageUploads(vm, savedUser, newUser);
       vm.clearDraftNewUser();
       if (!context.mounted) {
         return;
       }
       AppSnackbar.showSuccess(
         context,
-        _buildUserSaveMessage(newUser, isEditing: false),
+        _buildUserSaveMessage(savedUser, isEditing: false),
       );
     }
+  }
+
+  static Future<UserModel> _applyPendingUserImageUploads(
+    AdminUsersViewModel vm,
+    UserModel user,
+    _UserFormDialogResult dialogResult,
+  ) async {
+    final repository = AuthRequest.instance;
+    var updatedUser = user;
+
+    final pendingPhotoUpload = dialogResult.pendingPhotoUpload;
+    if (pendingPhotoUpload != null && (updatedUser.id?.isNotEmpty == true)) {
+      updatedUser = await repository.saveUserPhoto(
+        userId: updatedUser.id!,
+        bytes: pendingPhotoUpload.bytes,
+        fileName: pendingPhotoUpload.fileName,
+        mimeType: pendingPhotoUpload.mimeType,
+        size: pendingPhotoUpload.size,
+      );
+      vm.syncUser(updatedUser);
+    }
+
+    final pendingLicenseUpload = dialogResult.pendingLicenseUpload;
+    if (pendingLicenseUpload != null && (updatedUser.id?.isNotEmpty == true)) {
+      updatedUser = await repository.saveDriverLicensePhoto(
+        userId: updatedUser.id!,
+        bytes: pendingLicenseUpload.bytes,
+        fileName: pendingLicenseUpload.fileName,
+        mimeType: pendingLicenseUpload.mimeType,
+        size: pendingLicenseUpload.size,
+      );
+      vm.syncUser(updatedUser);
+    }
+
+    return updatedUser;
   }
 
   static String _buildUserSaveMessage(
@@ -1948,8 +2149,42 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   bool _isLoadingVehicleTypes = true;
   List<VehicleCatalogItem> _vehicleTypes = const [];
   bool _isPasswordObscured = true;
+  String? _photoValue;
+  String? _licenseValue;
+  _PendingImageUpload? _pendingPhotoUpload;
+  _PendingImageUpload? _pendingLicenseUpload;
 
   bool get _isDriverRole => _roleValue == 'driver';
+
+  List<DropdownMenuItem<String>> _vehicleTypeDropdownItems() {
+    final items = <DropdownMenuItem<String>>[];
+    final seen = <String>{};
+
+    void addItem(VehicleCatalogItem? item) {
+      final value = item?.id?.trim();
+      if (value == null || value.isEmpty || !seen.add(value)) {
+        return;
+      }
+      final name = (item?.name ?? '').trim();
+      final slug = (item?.slug ?? '').trim();
+      final label = [
+        if (name.isNotEmpty) name else 'Vehicle Type',
+        if (slug.isNotEmpty) '($slug)',
+      ].join(' ').trim();
+      items.add(
+        DropdownMenuItem<String>(
+          value: value,
+          child: Text(label, style: adminDropdownDisplayTextStyle),
+        ),
+      );
+    }
+
+    addItem(widget.initialUser?.asDriver?.vehicleType);
+    for (final item in _vehicleTypes) {
+      addItem(item);
+    }
+    return items;
+  }
 
   @override
   void initState() {
@@ -1968,6 +2203,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     _vehicleTypeId = driver?.vehicleType?.id;
     _isActive = widget.isEditing ? (user.isActive ?? false) : true;
     _isOnline = user.isOnline ?? false;
+    _photoValue = user.photo;
+    _licenseValue = driver?.license;
     _emailController.addListener(_handleDraftChanged);
     _nameController.addListener(_handleDraftChanged);
     _photoController.addListener(_handleDraftChanged);
@@ -2041,31 +2278,38 @@ class _UserFormDialogState extends State<_UserFormDialog> {
             final selectedVehicleType = _vehicleTypes.where(
               (item) => item.id == _vehicleTypeId,
             );
+            final fallbackVehicleType = widget.initialUser?.asDriver?.vehicleType;
             Navigator.of(context).pop(
-              baseUser.copyWith(
-                id: widget.isEditing ? baseUser.id : widget.generatedId,
-                role: _roleValue,
-                email: _nullIfEmpty(_emailController.text),
-                name: _nullIfEmpty(_nameController.text),
-                photo: _nullIfEmpty(_photoController.text),
-                phone: normalizePhilippinePhone(_phoneController.text),
-                isActive: _isActive,
-                isOnline: _isOnline,
-                password: _nullIfEmpty(_passwordController.text),
-                createdAt: widget.isEditing ? baseUser.createdAt : now,
-                updatedAt: now,
-                lat: _isDriverRole
-                    ? _tryParseDouble(_latController.text)
-                    : null,
-                lng: _isDriverRole
-                    ? _tryParseDouble(_lngController.text)
-                    : null,
-                license: _isDriverRole
-                    ? _nullIfEmpty(_licenseController.text)
-                    : null,
-                vehicleType: _isDriverRole && selectedVehicleType.isNotEmpty
-                    ? selectedVehicleType.first
-                    : null,
+              _UserFormDialogResult(
+                user: baseUser.copyWith(
+                  id: widget.isEditing ? baseUser.id : widget.generatedId,
+                  role: _roleValue,
+                  email: _nullIfEmpty(_emailController.text),
+                  name: _nullIfEmpty(_nameController.text),
+                  photo: _photoValue,
+                  phone: normalizePhilippinePhone(_phoneController.text),
+                  isActive: _isActive,
+                  isOnline: _isOnline,
+                  password: _nullIfEmpty(_passwordController.text),
+                  createdAt: widget.isEditing ? baseUser.createdAt : now,
+                  updatedAt: now,
+                  lat: _isDriverRole
+                      ? _tryParseDouble(_latController.text)
+                      : null,
+                  lng: _isDriverRole
+                      ? _tryParseDouble(_lngController.text)
+                      : null,
+                  license: _isDriverRole ? _licenseValue : null,
+                  vehicleType: _isDriverRole
+                      ? (selectedVehicleType.isNotEmpty
+                            ? selectedVehicleType.first
+                            : (fallbackVehicleType?.id == _vehicleTypeId
+                                  ? fallbackVehicleType
+                                  : null))
+                      : null,
+                ),
+                pendingPhotoUpload: _pendingPhotoUpload,
+                pendingLicenseUpload: _pendingLicenseUpload,
               ),
             );
           },
@@ -2107,6 +2351,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                         _roleValue = value;
                         if (_roleValue != 'driver') {
                           _vehicleTypeId = null;
+                          _pendingLicenseUpload = null;
                         }
                         _handleDraftChanged();
                       }),
@@ -2117,32 +2362,27 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                         initialValue: _vehicleTypeId,
                         iconEnabledColor: AppColors.primaryColor,
                         bottomPadding: 8,
-                        items: _vehicleTypes
-                            .map(
-                              (item) => DropdownMenuItem<String>(
-                                value: item.id,
-                                child: Text(
-                                  [
-                                    item.name?.trim() ?? '',
-                                    if ((item.slug ?? '').trim().isNotEmpty)
-                                      '(${item.slug!.trim()})',
-                                  ].join(' ').trim(),
-                                  style: adminDropdownDisplayTextStyle,
-                                ),
-                              ),
-                            )
-                            .toList(),
+                        disabledTapMessage: 'No active vehicle types available.',
+                        items: _vehicleTypeDropdownItems(),
                         onChanged: (value) => setState(() {
                           _vehicleTypeId = value;
                           _handleDraftChanged();
                         }),
-                      ),
+                    ),
                     _buildField(_emailController, 'Email', bottomPadding: 2),
                     _buildField(_nameController, 'Name'),
-                    _buildField(_photoController, 'Photo'),
+                    _buildUploadField(
+                      label: 'Photo',
+                      controller: _photoController,
+                      onTap: _pickPhotoFieldImage,
+                    ),
                     _buildField(_phoneController, 'Phone'),
                     if (_isDriverRole)
-                      _buildField(_licenseController, 'License'),
+                      _buildUploadField(
+                        label: 'License',
+                        controller: _licenseController,
+                        onTap: _pickLicenseFieldImage,
+                      ),
                     if (_isDriverRole) _buildField(_latController, 'Latitude'),
                     if (_isDriverRole) _buildField(_lngController, 'Longitude'),
                     _buildField(
@@ -2189,23 +2429,74 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     final selectedVehicleType = _vehicleTypes.where(
       (item) => item.id == _vehicleTypeId,
     );
+    final fallbackVehicleType = widget.initialUser?.asDriver?.vehicleType;
     return baseUser.copyWith(
       id: widget.isEditing ? baseUser.id : widget.generatedId,
       role: _roleValue,
       email: _nullIfEmpty(_emailController.text),
       name: _nullIfEmpty(_nameController.text),
-      photo: _nullIfEmpty(_photoController.text),
+      photo: _photoValue,
       phone: normalizePhilippinePhone(_phoneController.text),
       isActive: _isActive,
       isOnline: _isOnline,
       password: _nullIfEmpty(_passwordController.text),
       lat: _isDriverRole ? _tryParseDouble(_latController.text) : null,
       lng: _isDriverRole ? _tryParseDouble(_lngController.text) : null,
-      license: _isDriverRole ? _nullIfEmpty(_licenseController.text) : null,
-      vehicleType: _isDriverRole && selectedVehicleType.isNotEmpty
-          ? selectedVehicleType.first
+      license: _isDriverRole ? _licenseValue : null,
+      vehicleType: _isDriverRole
+          ? (selectedVehicleType.isNotEmpty
+                ? selectedVehicleType.first
+                : (fallbackVehicleType?.id == _vehicleTypeId
+                      ? fallbackVehicleType
+                      : null))
           : null,
     );
+  }
+
+  Future<void> _pickPhotoFieldImage() async {
+    await _pickImageField(
+      controller: _photoController,
+      onSelected: (upload) {
+        _pendingPhotoUpload = upload;
+      },
+    );
+  }
+
+  Future<void> _pickLicenseFieldImage() async {
+    await _pickImageField(
+      controller: _licenseController,
+      onSelected: (upload) {
+        _pendingLicenseUpload = upload;
+      },
+    );
+  }
+
+  Future<void> _pickImageField({
+    required TextEditingController controller,
+    required ValueChanged<_PendingImageUpload> onSelected,
+  }) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null) {
+      return;
+    }
+    final upload = _PendingImageUpload(
+      bytes: bytes,
+      fileName: file.name,
+      size: file.size,
+      mimeType: file.extension == null
+          ? null
+          : _resolvedMimeType(file.extension!),
+    );
+    setState(() {
+      controller.text = file.name;
+      onSelected(upload);
+    });
+    _handleDraftChanged();
   }
 
   Widget _buildToggleRow({
@@ -2226,12 +2517,16 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     String? hintText,
     bool obscureText = false,
     double bottomPadding = 4,
+    bool readOnly = false,
+    VoidCallback? onTap,
   }) {
     return AdminModalTextField(
       controller: controller,
       label: label,
       hintText: hintText,
       obscureText: obscureText ? _isPasswordObscured : false,
+      readOnly: readOnly,
+      onTap: onTap,
       textCapitalization: label == 'Name'
           ? TextCapitalization.words
           : TextCapitalization.none,
@@ -2259,6 +2554,25 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     );
   }
 
+  Widget _buildUploadField({
+    required String label,
+    required TextEditingController controller,
+    required VoidCallback onTap,
+    double bottomPadding = 4,
+  }) {
+    return AdminModalActionField(
+      label: label,
+      valueText: controller.text,
+      hintText: '',
+      bottomPadding: bottomPadding,
+      onTap: onTap,
+      suffixIcon: const Icon(
+        Icons.upload_rounded,
+        color: AppColors.primaryColor,
+      ),
+    );
+  }
+
   static String? _nullIfEmpty(String value) {
     final trimmed = value.trim();
     return trimmed.isEmpty ? null : trimmed;
@@ -2280,9 +2594,13 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         _validateOnlineRole(_roleValue, _isOnline) ??
         _validateEmail(_emailController.text) ??
         _validateName(_nameController.text) ??
-        _validatePhoto(_photoController.text) ??
+        (_pendingPhotoUpload != null ? null : _validatePhoto(_photoValue)) ??
         _validatePhone(_phoneController.text) ??
-        (_isDriverRole ? _validateLicense(_licenseController.text) : null) ??
+        (_isDriverRole
+            ? (_pendingLicenseUpload != null
+                  ? null
+                  : _validateLicense(_licenseValue))
+            : null) ??
         (_isDriverRole ? _validateLatitude(_latController.text) : null) ??
         (_isDriverRole ? _validateLongitude(_lngController.text) : null) ??
         _validatePassword(_passwordController.text);
@@ -2353,14 +2671,6 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   }
 
   static String? _validatePhoto(String? value) {
-    final trimmed = value?.trim() ?? '';
-    if (trimmed.isEmpty) {
-      return null;
-    }
-    final isUrl = Uri.tryParse(trimmed)?.hasAbsolutePath ?? false;
-    if (!isUrl && !trimmed.startsWith('data:image/')) {
-      return 'Enter a valid image URL or data image string.';
-    }
     return null;
   }
 
@@ -2369,10 +2679,22 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     if (trimmed.isEmpty) {
       return 'License is required.';
     }
-    if (trimmed.length < 4) {
-      return 'License must be at least 4 characters.';
-    }
     return null;
+  }
+
+  static String? _resolvedMimeType(String extension) {
+    switch (extension.toLowerCase()) {
+      case 'png':
+        return 'image/png';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'bmp':
+        return 'image/bmp';
+      default:
+        return 'image/jpeg';
+    }
   }
 
   static String? _validateLatitude(String? value) {

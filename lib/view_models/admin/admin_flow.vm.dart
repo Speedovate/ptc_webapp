@@ -7,8 +7,8 @@ import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
 
-class AdminStatusFormViewModel extends BaseViewModel {
-  AdminStatusFormViewModel({StatusFormRepository? repository})
+class AdminFlowViewModel extends BaseViewModel {
+  AdminFlowViewModel({StatusFormRepository? repository})
     : _repository = repository ?? StatusRequest.instance,
       _engine = StatusFormEngine(repository ?? StatusRequest.instance) {
     forms = List<StatusForm>.from(_cachedForms);
@@ -38,6 +38,18 @@ class AdminStatusFormViewModel extends BaseViewModel {
   static String? _cachedErrorMessage;
   static String? _cachedSuccessMessage;
   static bool _cachedIsPreviewVisible = true;
+
+  static void clearCachedState() {
+    _cachedForms = const [];
+    _cachedSelectedForm = null;
+    _cachedFields = const [];
+    _cachedFieldLibrary = const [];
+    _cachedStatuses = const [];
+    _cachedFieldsByFormId = const {};
+    _cachedErrorMessage = null;
+    _cachedSuccessMessage = null;
+    _cachedIsPreviewVisible = true;
+  }
 
   static const roleOptions = ['client', 'driver', 'admin', 'helper'];
   static const dependencyStatusTypes = ['client_status'];

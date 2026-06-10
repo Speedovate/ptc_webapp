@@ -4,7 +4,7 @@ enum AdminSection {
   dashboard('Dashboard'),
   bookings('Bookings'),
   vehicles('Vehicles'),
-  settings('Settings'),
+  settings('Flows'),
   users('Users'),
   profile('Profile');
 
@@ -15,7 +15,7 @@ enum AdminSection {
 
 enum AdminSettingsSection {
   statuses('Statuses'),
-  forms('Forms'),
+  flows('Flows'),
   fields('Fields');
 
   const AdminSettingsSection(this.title);

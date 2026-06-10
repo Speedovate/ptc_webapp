@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/widgets/shared/app_snackbar.dart';
 
 const adminDropdownDisplayTextStyle = TextStyle(
   color: AppColors.textPrimary,
@@ -19,6 +20,7 @@ class AdminDropdownFormField<T> extends StatefulWidget {
     this.items,
     this.onChanged,
     this.isExpanded = false,
+    this.disabledTapMessage,
   });
 
   final T? initialValue;
@@ -29,6 +31,7 @@ class AdminDropdownFormField<T> extends StatefulWidget {
   final List<DropdownMenuItem<T>>? items;
   final ValueChanged<T?>? onChanged;
   final bool isExpanded;
+  final String? disabledTapMessage;
 
   @override
   State<AdminDropdownFormField<T>> createState() =>
@@ -59,6 +62,8 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
   Widget build(BuildContext context) {
     final decoration = widget.decoration ?? const InputDecoration();
     final neutralBorder = decoration.enabledBorder ?? decoration.border;
+    final hasItems = widget.items?.isNotEmpty == true;
+    final isDisabled = widget.onChanged == null || !hasItems;
     final hintText = decoration.hintText?.trim();
     final hintStyle =
         decoration.hintStyle ??
@@ -73,8 +78,8 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
             style: hintStyle,
           )
         : null;
-
-    return Focus(
+    final disabledTapMessage = _disabledTapMessage(decoration, hasItems);
+    final dropdown = Focus(
       canRequestFocus: false,
       skipTraversal: true,
       descendantsAreFocusable: false,
@@ -93,12 +98,49 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
         disabledHint: hintWidget,
         items: widget.items,
         isExpanded: widget.isExpanded,
-        onChanged: (value) {
-          widget.onChanged?.call(value);
-          _focusNode.unfocus();
-        },
+        onChanged: isDisabled
+            ? null
+            : (value) {
+                widget.onChanged?.call(value);
+                _focusNode.unfocus();
+              },
       ),
     );
+
+    if (!isDisabled || disabledTapMessage == null) {
+      return dropdown;
+    }
+
+    return Stack(
+      children: [
+        dropdown,
+        Positioned.fill(
+          child: MouseRegion(
+            cursor: SystemMouseCursors.basic,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () => AppSnackbar.showError(context, disabledTapMessage),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String? _disabledTapMessage(InputDecoration decoration, bool hasItems) {
+    final explicitMessage = widget.disabledTapMessage?.trim();
+    if (explicitMessage?.isNotEmpty == true) {
+      return explicitMessage;
+    }
+    if (hasItems) {
+      return null;
+    }
+    final label = decoration.labelText?.trim();
+    if (label?.isNotEmpty == true) {
+      return 'No available ${label!.toLowerCase()} options.';
+    }
+    return 'No options available.';
   }
 }
 

@@ -15,6 +15,12 @@ class AdminUsersViewModel extends BaseViewModel {
   static List<UserModel> _cachedUsers = const [];
   static UserModel? _cachedCurrentUser;
   static UserModel? _cachedViewedUser;
+
+  static void clearCachedState() {
+    _cachedUsers = const [];
+    _cachedCurrentUser = null;
+    _cachedViewedUser = null;
+  }
   final List<UserModel> _users = [];
   UserModel? _currentUser;
   UserModel? _viewedUser;
@@ -55,7 +61,7 @@ class AdminUsersViewModel extends BaseViewModel {
     }
   }
 
-  Future<void> updateUser(UserModel user) async {
+  Future<UserModel> updateUser(UserModel user) async {
     final saved = await _repository.saveUser(user);
     final existingIndex = _users.indexWhere((item) => item.id == saved.id);
     if (existingIndex >= 0) {
@@ -73,9 +79,10 @@ class AdminUsersViewModel extends BaseViewModel {
     _cachedViewedUser = _viewedUser;
     _searchQuery = '';
     notifyListeners();
+    return saved;
   }
 
-  Future<void> addUser(UserModel user) async {
+  Future<UserModel> addUser(UserModel user) async {
     final saved = await _repository.saveUser(
       user.copyWith(isOnline: user.isOnline ?? false),
     );
@@ -89,6 +96,27 @@ class AdminUsersViewModel extends BaseViewModel {
     _draftNewUser = null;
     _cachedUsers = List<UserModel>.from(_users);
     _cachedCurrentUser = _currentUser;
+    notifyListeners();
+    return saved;
+  }
+
+  void syncUser(UserModel user) {
+    final existingIndex = _users.indexWhere((item) => item.id == user.id);
+    if (existingIndex >= 0) {
+      _users[existingIndex] = user;
+    } else {
+      _users.add(user);
+    }
+    _sortUsers();
+    if (_currentUser?.id == user.id) {
+      _currentUser = user;
+    }
+    if (_viewedUser?.id == user.id) {
+      _viewedUser = user;
+    }
+    _cachedUsers = List<UserModel>.from(_users);
+    _cachedCurrentUser = _currentUser;
+    _cachedViewedUser = _viewedUser;
     notifyListeners();
   }
 

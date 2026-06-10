@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/views/client/client_booking_history_view.dart';
 import 'package:webapp/views/client/client_booking_home_view.dart';
@@ -35,8 +37,11 @@ class RolePlatformHome extends StatefulWidget {
 class _RolePlatformHomeState extends State<RolePlatformHome> {
   final RolePlatformHomeViewModel _viewModel = RolePlatformHomeViewModel();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final AuthRepository _authRepository = AuthRequest.instance;
   Booking? _selectedHistoryBooking;
   late UserModel _shellUser;
+  bool _isUploadingProfilePhoto = false;
+  bool _isUploadingLicensePhoto = false;
 
   @override
   void initState() {
@@ -50,6 +55,124 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
     if (oldWidget.user.id != widget.user.id ||
         oldWidget.user.updatedAt != widget.user.updatedAt) {
       _shellUser = widget.user;
+    }
+  }
+
+  Future<void> _uploadProfilePhoto() async {
+    if (_isUploadingProfilePhoto) {
+      return;
+    }
+    final userId = _shellUser.id?.trim();
+    if (userId == null || userId.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, 'User ID is required.');
+      return;
+    }
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null) {
+      return;
+    }
+
+    setState(() {
+      _isUploadingProfilePhoto = true;
+    });
+    try {
+      final updatedUser = await _authRepository.saveUserPhoto(
+        userId: userId,
+        bytes: bytes,
+        fileName: file.name,
+        size: file.size,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _shellUser = updatedUser;
+      });
+      AppSnackbar.showSuccess(context, 'Profile photo updated.');
+    } on AuthFailure catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, error.message);
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, 'Failed to upload profile photo.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingProfilePhoto = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _uploadLicensePhoto() async {
+    if (_isUploadingLicensePhoto) {
+      return;
+    }
+    final userId = _shellUser.id?.trim();
+    if (userId == null || userId.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, 'User ID is required.');
+      return;
+    }
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null) {
+      return;
+    }
+
+    setState(() {
+      _isUploadingLicensePhoto = true;
+    });
+    try {
+      final updatedUser = await _authRepository.saveDriverLicensePhoto(
+        userId: userId,
+        bytes: bytes,
+        fileName: file.name,
+        size: file.size,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _shellUser = updatedUser;
+      });
+      AppSnackbar.showSuccess(context, 'License photo updated.');
+    } on AuthFailure catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, error.message);
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, 'Failed to upload license photo.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingLicensePhoto = false;
+        });
+      }
     }
   }
 
@@ -185,7 +308,8 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
         isCurrentUserView: true,
         onLogout: widget.onLogout,
         logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-        onChangePhotoPressed: () {},
+        onChangePhotoPressed: _uploadProfilePhoto,
+        onChangeLicensePressed: _uploadLicensePhoto,
       ),
     };
   }

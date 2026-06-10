@@ -45,6 +45,17 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   static String? _cachedBlockedMessage;
   static UserModel? _cachedActiveClientUser;
 
+  static void clearCachedState() {
+    _cachedMainForms = const [];
+    _cachedFieldsByFormId = const {};
+    _cachedForm = null;
+    _cachedFields = const [];
+    _cachedStatuses = const [];
+    _cachedLoadError = null;
+    _cachedBlockedMessage = null;
+    _cachedActiveClientUser = null;
+  }
+
   List<StatusForm> mainForms = [];
   final Map<String, List<StatusField>> _fieldsByFormId = {};
   StatusForm? form;

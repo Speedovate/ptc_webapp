@@ -93,6 +93,10 @@ class BookingWorkflowViewModel extends BaseViewModel {
   static final Map<String, _BookingWorkflowCacheSnapshot> _cacheByBookingId =
       {};
 
+  static void clearCachedState() {
+    _cacheByBookingId.clear();
+  }
+
   final Map<String, UserModel> _usersById = {};
   final Map<String, Status> _statusesByKey = {};
   List<StatusForm> mainForms = [];

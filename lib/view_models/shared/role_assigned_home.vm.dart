@@ -36,6 +36,14 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   static Map<String, UserModel> _cachedUsersById = const {};
   static Map<String, Status> _cachedStatusesByKey = const {};
 
+  static void clearCachedState() {
+    _cachedAssignedBookings = const [];
+    _cachedCurrentUser = null;
+    _cachedErrorMessage = null;
+    _cachedUsersById = const {};
+    _cachedStatusesByKey = const {};
+  }
+
   final Map<String, UserModel> _usersById = {};
   final Map<String, Status> _statusesByKey = {};
 

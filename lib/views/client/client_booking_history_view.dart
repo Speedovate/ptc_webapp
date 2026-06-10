@@ -79,16 +79,13 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Transform.translate(
-                  offset: const Offset(-12, 0),
-                  child: _BookingDetailHeader(
-                    booking: selectedBooking,
-                    onBack: () {
-                      setState(() {
-                        _selectedBooking = null;
-                      });
-                    },
-                  ),
+                _BookingDetailHeader(
+                  booking: selectedBooking,
+                  onBack: () {
+                    setState(() {
+                      _selectedBooking = null;
+                    });
+                  },
                 ),
                 const SizedBox(height: 16),
                 BookingWorkflowView(
@@ -358,6 +355,9 @@ class _BookingDetailHeader extends StatelessWidget {
           onPressed: onBack,
           icon: const Icon(Icons.arrow_back_rounded),
           color: AppColors.primaryColor,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          visualDensity: VisualDensity.compact,
           splashRadius: 22,
         ),
         const SizedBox(width: 8),

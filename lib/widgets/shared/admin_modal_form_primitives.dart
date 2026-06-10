@@ -88,6 +88,8 @@ class AdminModalTextField extends StatelessWidget {
     this.minLines = 1,
     this.maxLines = 1,
     this.keyboardType,
+    this.readOnly = false,
+    this.onTap,
   });
 
   final TextEditingController controller;
@@ -101,6 +103,8 @@ class AdminModalTextField extends StatelessWidget {
   final int? minLines;
   final int? maxLines;
   final TextInputType? keyboardType;
+  final bool readOnly;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -109,16 +113,82 @@ class AdminModalTextField extends StatelessWidget {
       child: TextFormField(
         controller: controller,
         obscureText: obscureText,
+        readOnly: readOnly,
         textCapitalization: textCapitalization,
         inputFormatters: inputFormatters,
         minLines: minLines,
         maxLines: maxLines,
         keyboardType: keyboardType,
+        onTap: onTap,
         decoration: adminFormInputDecoration(
           label,
           hintText: hintText,
         ).copyWith(
           suffixIcon: suffixIcon,
+        ),
+      ),
+    );
+  }
+}
+
+class AdminModalActionField extends StatelessWidget {
+  const AdminModalActionField({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.valueText,
+    this.hintText,
+    this.suffixIcon,
+    this.bottomPadding = 10,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final String? valueText;
+  final String? hintText;
+  final Widget? suffixIcon;
+  final double bottomPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmedValue = valueText?.trim() ?? '';
+    final hasValue = trimmedValue.isNotEmpty;
+    final decoration = adminFormInputDecoration(
+      label,
+      hintText: hintText,
+    ).copyWith(suffixIcon: suffixIcon);
+
+    final borderRadius =
+        (decoration.enabledBorder is OutlineInputBorder)
+            ? (decoration.enabledBorder as OutlineInputBorder).borderRadius
+            : BorderRadius.circular(16);
+
+    return AdminModalFieldSlot(
+      bottomPadding: bottomPadding,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: borderRadius,
+          onTap: onTap,
+          child: InputDecorator(
+            isEmpty: !hasValue,
+            isFocused: false,
+            decoration: decoration,
+            child: Text(
+              hasValue ? trimmedValue : (hintText?.trim().isNotEmpty == true ? hintText!.trim() : ''),
+              style: hasValue
+                  ? const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.w400,
+                      height: 1.2,
+                    )
+                  : TextStyle(
+                      color: AppColors.primaryColor.withValues(alpha: 0.72),
+                      fontWeight: FontWeight.w400,
+                      height: 1.2,
+                    ),
+            ),
+          ),
         ),
       ),
     );
@@ -177,6 +247,7 @@ class AdminModalDropdownField<T> extends StatelessWidget {
     this.iconEnabledColor,
     this.style,
     this.isExpanded = false,
+    this.disabledTapMessage,
   });
 
   final String label;
@@ -187,6 +258,7 @@ class AdminModalDropdownField<T> extends StatelessWidget {
   final Color? iconEnabledColor;
   final TextStyle? style;
   final bool isExpanded;
+  final String? disabledTapMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -200,6 +272,7 @@ class AdminModalDropdownField<T> extends StatelessWidget {
         decoration: adminFormInputDecoration(label),
         items: items,
         onChanged: onChanged,
+        disabledTapMessage: disabledTapMessage,
       ),
     );
   }

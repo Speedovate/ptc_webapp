@@ -13,11 +13,11 @@ import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
-import 'package:webapp/view_models/admin/admin_status_form.vm.dart';
+import 'package:webapp/view_models/admin/admin_flow.vm.dart';
 import 'package:webapp/widgets/status_form/status_form_preview.dart';
 
-class AdminFormsView extends StatelessWidget {
-  const AdminFormsView({super.key});
+class AdminFlowsView extends StatelessWidget {
+  const AdminFlowsView({super.key});
 
   static const sectionGap = 14.0;
   static const controlHeight = 52.0;
@@ -25,8 +25,8 @@ class AdminFormsView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ViewModelBuilder<AdminStatusFormViewModel>.reactive(
-      viewModelBuilder: AdminStatusFormViewModel.new,
+    return ViewModelBuilder<AdminFlowViewModel>.reactive(
+      viewModelBuilder: AdminFlowViewModel.new,
       onViewModelReady: (vm) => vm.loadForms(),
       builder: (context, vm, _) {
         return SingleChildScrollView(
@@ -47,7 +47,7 @@ class AdminFormsView extends StatelessWidget {
 class _StatusFormsListSection extends StatefulWidget {
   const _StatusFormsListSection({required this.vm});
 
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
 
   @override
   State<_StatusFormsListSection> createState() =>
@@ -484,7 +484,7 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
               onActiveChanged: (value) => setState(() => _activeFilter = value),
               onNewPressed: _openNewFormDialog,
             ),
-            const SizedBox(height: AdminFormsView.sectionGap),
+            const SizedBox(height: AdminFlowsView.sectionGap),
             ListenableBuilder(
               listenable: widget.vm,
               builder: (context, _) {
@@ -558,8 +558,8 @@ class _StatusFormsToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AdminListToolbar(
-      controlHeight: AdminFormsView.controlHeight,
-      surfaceRadius: AdminFormsView.surfaceRadius,
+      controlHeight: AdminFlowsView.controlHeight,
+      surfaceRadius: AdminFlowsView.surfaceRadius,
       search: _StatusFormsSearchField(
         initialValue: searchQuery,
         onChanged: onSearchChanged,
@@ -619,8 +619,8 @@ class _StatusFormsSearchFieldState extends State<_StatusFormsSearchField> {
   @override
   Widget build(BuildContext context) {
     return AdminListSearchField(
-      controlHeight: AdminFormsView.controlHeight,
-      surfaceRadius: AdminFormsView.surfaceRadius,
+      controlHeight: AdminFlowsView.controlHeight,
+      surfaceRadius: AdminFlowsView.surfaceRadius,
       initialValue: widget.initialValue,
       onChanged: widget.onChanged,
     );
@@ -682,8 +682,8 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
     final itemWidth = contentWidth;
 
     return AdminListFiltersButton(
-      controlHeight: AdminFormsView.controlHeight,
-      surfaceRadius: AdminFormsView.surfaceRadius,
+      controlHeight: AdminFlowsView.controlHeight,
+      surfaceRadius: AdminFlowsView.surfaceRadius,
       iconOnly: widget.iconOnly,
       menuChildren: [
         SizedBox(
@@ -698,7 +698,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                 children: [
                   SizedBox(
                     width: itemWidth,
-                    height: AdminFormsView.controlHeight,
+                    height: AdminFlowsView.controlHeight,
                     child: _StatusFormsFilterDropdown(
                       label: 'Roles',
                       value: widget.roleFilter,
@@ -716,7 +716,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                   const SizedBox(height: 12),
                   SizedBox(
                     width: itemWidth,
-                    height: AdminFormsView.controlHeight,
+                    height: AdminFlowsView.controlHeight,
                     child: _StatusFormsFilterDropdown(
                       label: 'Is Active',
                       value: widget.activeFilter,
@@ -728,7 +728,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                   const SizedBox(height: 16),
                   SizedBox(
                     width: itemWidth,
-                    height: AdminFormsView.controlHeight,
+                    height: AdminFlowsView.controlHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
@@ -740,7 +740,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(
-                            AdminFormsView.surfaceRadius,
+                            AdminFlowsView.surfaceRadius,
                           ),
                         ),
                       ),
@@ -786,7 +786,7 @@ class _StatusFormsFilterDropdown extends StatelessWidget {
       style: _subtlePrimaryTextStyle,
       decoration: adminFormInputDecoration(
         label,
-        radius: AdminFormsView.surfaceRadius,
+        radius: AdminFlowsView.surfaceRadius,
       ),
       items: items
           .where((item) => item != 'All')
@@ -824,7 +824,7 @@ class _StatusFormsTable extends StatelessWidget {
 
   final List<StatusForm> forms;
   final String emptyMessage;
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
   final Future<void> Function(StatusForm form) onViewPressed;
   final Future<void> Function(StatusForm form) onEditPressed;
   final Future<void> Function(StatusForm form) onDeactivatePressed;
@@ -996,8 +996,8 @@ class _StatusFormsTable extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AdminListHeaderBar(
-              minHeight: AdminFormsView.controlHeight,
-              borderRadius: AdminFormsView.surfaceRadius,
+              minHeight: AdminFlowsView.controlHeight,
+              borderRadius: AdminFlowsView.surfaceRadius,
               child: Row(
                 children: [
                   _FixedSlot(
@@ -1063,7 +1063,7 @@ class _StatusFormsTable extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: AdminFormsView.sectionGap),
+            const SizedBox(height: AdminFlowsView.sectionGap),
             if (forms.isEmpty)
               _StatusFormsEmptyState(message: emptyMessage)
             else
@@ -1163,7 +1163,7 @@ class _StatusFormsTableRow extends StatelessWidget {
   });
 
   final StatusForm form;
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
   final VoidCallback onViewPressed;
   final VoidCallback onEditPressed;
   final VoidCallback onDeactivatePressed;
@@ -1339,7 +1339,7 @@ class _StatusFormResponsiveCard extends StatelessWidget {
   });
 
   final StatusForm form;
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
   final VoidCallback onViewPressed;
   final VoidCallback onEditPressed;
   final VoidCallback onDeactivatePressed;
@@ -1515,7 +1515,7 @@ class _InlineEditorContent extends StatelessWidget {
     this.onClose,
   });
 
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
   final StatusForm form;
   final VoidCallback? onClose;
 
@@ -1559,7 +1559,7 @@ class _InlineEditorContent extends StatelessWidget {
 class _BasicInfoSection extends StatelessWidget {
   const _BasicInfoSection({required this.vm, required this.form});
 
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
   final StatusForm form;
 
   @override
@@ -1656,14 +1656,14 @@ class _BasicInfoSection extends StatelessWidget {
 class _DependenciesSection extends StatelessWidget {
   const _DependenciesSection({required this.vm, required this.form});
 
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
   final StatusForm form;
 
   @override
   Widget build(BuildContext context) {
     final dependencies = form.dependencies;
     final labelStyle = _modalRowLabelStyle(context);
-    final dependencyRoles = AdminStatusFormViewModel.dependencyStatusTypes
+    final dependencyRoles = AdminFlowViewModel.dependencyStatusTypes
         .map(_dependencyStatusTypeToRole)
         .whereType<String>()
         .toList();
@@ -1827,6 +1827,7 @@ class _DependencyCard extends StatelessWidget {
                 ? selectedStatusKey
                 : null,
             iconEnabledColor: AppColors.primaryColor,
+            disabledTapMessage: 'No statuses available for the selected role.',
             items: dependencyStatuses
                 .map(
                   (status) => DropdownMenuItem<String>(
@@ -1960,7 +1961,7 @@ String? _roleToDependencyStatusType(String? role) {
 class _FieldsSection extends StatefulWidget {
   const _FieldsSection({required this.vm});
 
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
 
   @override
   State<_FieldsSection> createState() => _FieldsSectionState();
@@ -2092,7 +2093,7 @@ class _AssignedFieldCard extends StatelessWidget {
     required this.onRemove,
   });
 
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
   final StatusField field;
   final int index;
   final VoidCallback onRemove;
@@ -2316,7 +2317,7 @@ double _resolvedResponsiveFieldWidth(
 
 Widget _fullWidthRolesField({
   required BuildContext context,
-  required AdminStatusFormViewModel vm,
+  required AdminFlowViewModel vm,
   required StatusForm form,
 }) {
   final selectedRoles = form.resolvedRoles.toSet();
@@ -2333,7 +2334,7 @@ Widget _fullWidthRolesField({
       Wrap(
         spacing: 10,
         runSpacing: 10,
-        children: AdminStatusFormViewModel.roleOptions.map((role) {
+        children: AdminFlowViewModel.roleOptions.map((role) {
           final isSelected = selectedRoles.contains(role);
           return _FormApplicableRoleChip(
             label: humanizeDropdownValue(role),
@@ -2392,7 +2393,7 @@ Widget _fullWidthStatusField({
 
 Widget _activeToggleField(
   BuildContext context, {
-  required AdminStatusFormViewModel vm,
+  required AdminFlowViewModel vm,
   required StatusForm form,
 }) {
   return AdminModalToggleRow(
@@ -2404,7 +2405,7 @@ Widget _activeToggleField(
 
 Widget _mainFormToggleField(
   BuildContext context, {
-  required AdminStatusFormViewModel vm,
+  required AdminFlowViewModel vm,
   required StatusForm form,
 }) {
   return AdminModalToggleRow(
@@ -2422,7 +2423,7 @@ String _resolvedFormRolesText(StatusForm form) {
   return roles.map(_titleCase).join(', ');
 }
 
-String _resolvedFormStatusLabel(AdminStatusFormViewModel vm, StatusForm form) {
+String _resolvedFormStatusLabel(AdminFlowViewModel vm, StatusForm form) {
   final currentStatusKey = form.currentStatusKey?.trim() ?? '';
   if (currentStatusKey.isEmpty) {
     return '';
@@ -2438,7 +2439,7 @@ String _resolvedFormStatusLabel(AdminStatusFormViewModel vm, StatusForm form) {
 }
 
 String _resolvedFormStatusDescription(
-  AdminStatusFormViewModel vm,
+  AdminFlowViewModel vm,
   StatusForm form,
 ) {
   final currentStatusKey = form.currentStatusKey?.trim() ?? '';
@@ -2455,7 +2456,7 @@ String _resolvedFormStatusDescription(
   return '';
 }
 
-List<Status> _availableStatusesForForm(AdminStatusFormViewModel vm) {
+List<Status> _availableStatusesForForm(AdminFlowViewModel vm) {
   return vm.statuses.where((status) => status.isActive != false).toList();
 }
 
@@ -2526,9 +2527,9 @@ ButtonStyle _primaryButtonStyle() {
   return FilledButton.styleFrom(
     backgroundColor: AppColors.primaryColor,
     foregroundColor: Colors.white,
-    minimumSize: const Size(0, AdminFormsView.controlHeight),
+    minimumSize: const Size(0, AdminFlowsView.controlHeight),
     shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(AdminFormsView.surfaceRadius),
+      borderRadius: BorderRadius.circular(AdminFlowsView.surfaceRadius),
     ),
   );
 }

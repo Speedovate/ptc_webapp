@@ -43,6 +43,14 @@ class AdminBookingsViewModel extends BaseViewModel {
   static List<VehicleCatalogItem> _cachedVehicleSizes = const [];
   static String? _cachedErrorMessage;
 
+  static void clearCachedState() {
+    _cachedBookings = const [];
+    _cachedUsersById = const {};
+    _cachedStatusesByKey = const {};
+    _cachedVehicleSizes = const [];
+    _cachedErrorMessage = null;
+  }
+
   final List<Booking> _bookings = [];
   final Map<String, UserModel> _usersById = {};
   final Map<String, Status> _statusesByKey = {};

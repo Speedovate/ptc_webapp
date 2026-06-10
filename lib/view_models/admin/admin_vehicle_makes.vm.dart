@@ -26,6 +26,13 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   static List<VehicleCatalogItem> _cachedTypes = const [];
   static String? _cachedErrorMessage;
 
+  static void clearCachedState() {
+    _cachedMakes = const [];
+    _cachedDrivers = const [];
+    _cachedTypes = const [];
+    _cachedErrorMessage = null;
+  }
+
   List<VehicleMake> _makes = const [];
   List<UserModel> _drivers = const [];
   List<VehicleCatalogItem> _types = const [];

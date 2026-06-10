@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/vehicle.request.dart';
+import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/auth/auth.vm.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
@@ -33,12 +36,15 @@ class _AuthViewState extends State<AuthView> {
   final _registerLatController = TextEditingController();
   final _registerLngController = TextEditingController();
   final _registerPasswordController = TextEditingController();
+  final AuthRequest _authRequest = AuthRequest.instance;
 
   String? _registerRole;
   String? _registerVehicleTypeId;
   bool _isLoginMode = true;
   bool _isLoadingVehicleTypes = true;
   List<VehicleCatalogItem> _vehicleTypes = const [];
+  _PendingAuthImageUpload? _registerProfilePhotoUpload;
+  _PendingAuthImageUpload? _registerLicensePhotoUpload;
 
   static const _roleOptions = ['client', 'driver', 'helper'];
 
@@ -95,6 +101,8 @@ class _AuthViewState extends State<AuthView> {
     _registerPasswordController.clear();
     _registerRole = null;
     _registerVehicleTypeId = null;
+    _registerProfilePhotoUpload = null;
+    _registerLicensePhotoUpload = null;
   }
 
   void _switchAuthMode() {
@@ -111,15 +119,6 @@ class _AuthViewState extends State<AuthView> {
       viewModelBuilder: AuthViewModel.new,
       builder: (context, vm, child) {
         final isBusy = vm.isBusy;
-        if (isBusy) {
-          return const Scaffold(
-            backgroundColor: AppColors.primaryColor,
-            body: SafeArea(
-              child: AppPageLoading(message: 'Loading, please wait ...'),
-            ),
-          );
-        }
-
         return Scaffold(
           backgroundColor: AppColors.primaryColor,
           body: SafeArea(
@@ -208,6 +207,14 @@ class _AuthViewState extends State<AuthView> {
                                       ],
                                     ),
                                   ),
+                                  if (!_isLoginMode) ...[
+                                    const SizedBox(width: 14),
+                                    _AuthHeaderCameraButton(
+                                      hasSelection:
+                                          _registerProfilePhotoUpload != null,
+                                      onTap: _pickRegisterProfilePhoto,
+                                    ),
+                                  ],
                                 ],
                               ),
                               const SizedBox(height: 24),
@@ -287,7 +294,7 @@ class _AuthViewState extends State<AuthView> {
                                                             item.id == value,
                                                       );
                                                   if (match.isEmpty) {
-                                                    return value;
+                                                    return 'Selected vehicle type';
                                                   }
                                                   final item = match.first;
                                                   final name =
@@ -342,10 +349,13 @@ class _AuthViewState extends State<AuthView> {
                                             ),
                                             if (_registerRole == 'driver') ...[
                                               const SizedBox(height: 14),
-                                              _AuthTextField(
-                                                controller:
-                                                    _registerLicenseController,
+                                              _AuthActionField(
                                                 label: 'License',
+                                                valueText:
+                                                    _registerLicenseController
+                                                        .text,
+                                                onTap:
+                                                    _pickRegisterLicensePhoto,
                                               ),
                                               const SizedBox(height: 14),
                                               _AuthTextField(
@@ -405,8 +415,8 @@ class _AuthViewState extends State<AuthView> {
                                         ),
                                         child: Text(
                                           _isLoginMode
-                                              ? 'Create Account'
-                                              : 'Back to Login',
+                                              ? 'Sign Up'
+                                              : 'Sign In',
                                           style: const TextStyle(
                                             fontWeight: FontWeight.w700,
                                           ),
@@ -444,8 +454,8 @@ class _AuthViewState extends State<AuthView> {
                                               )
                                             : Text(
                                                 _isLoginMode
-                                                    ? 'Login'
-                                                    : 'Register',
+                                                    ? 'Sign In'
+                                                    : 'Sign Up',
                                                 style: const TextStyle(
                                                   fontWeight: FontWeight.w700,
                                                 ),
@@ -513,7 +523,7 @@ class _AuthViewState extends State<AuthView> {
               name: _registerNameController.text.trim(),
               phone: normalizedPhone,
               password: _registerPasswordController.text,
-              license: _registerLicenseController.text.trim(),
+              license: null,
               lat: _tryParseDouble(_registerLatController.text),
               lng: _tryParseDouble(_registerLngController.text),
               vehicleType: resolvedVehicleType,
@@ -531,8 +541,12 @@ class _AuthViewState extends State<AuthView> {
             ),
     );
     if (user != null) {
+      final uploadedUser = await _completeRegisterImageUploads(user);
+      if (!mounted) {
+        return;
+      }
       if (user.isActive ?? false) {
-        widget.onAuthenticated(user);
+        widget.onAuthenticated(uploadedUser);
       } else {
         if (!mounted) {
           return;
@@ -566,7 +580,7 @@ class _AuthViewState extends State<AuthView> {
         _validateRequired('Name')(_registerNameController.text) ??
         _validatePhone(_registerPhoneController.text) ??
         (_registerRole == 'driver'
-            ? _validateLicense(_registerLicenseController.text)
+            ? _validateLicensePhoto()
             : null) ??
         (_registerRole == 'driver'
             ? _validateLatitude(_registerLatController.text)
@@ -627,10 +641,96 @@ class _AuthViewState extends State<AuthView> {
     if (text.isEmpty) {
       return 'License is required.';
     }
-    if (text.length < 4) {
-      return 'License must be at least 4 characters.';
-    }
     return null;
+  }
+
+  String? _validateLicensePhoto() {
+    if (_registerLicensePhotoUpload != null) {
+      return null;
+    }
+    return _validateLicense(_registerLicenseController.text);
+  }
+
+  Future<void> _pickRegisterProfilePhoto() async {
+    final upload = await _pickAuthImageUpload();
+    if (upload == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _registerProfilePhotoUpload = upload;
+    });
+  }
+
+  Future<void> _pickRegisterLicensePhoto() async {
+    final upload = await _pickAuthImageUpload();
+    if (upload == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _registerLicensePhotoUpload = upload;
+      _registerLicenseController.text = upload.fileName;
+    });
+  }
+
+  Future<_PendingAuthImageUpload?> _pickAuthImageUpload() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null) {
+      return null;
+    }
+    return _PendingAuthImageUpload(
+      bytes: bytes,
+      fileName: file.name,
+      size: file.size,
+      mimeType: _resolvedMimeType(file.extension),
+    );
+  }
+
+  Future<UserModel> _completeRegisterImageUploads(UserModel user) async {
+    var updatedUser = user;
+
+    try {
+      final profileUpload = _registerProfilePhotoUpload;
+      if (profileUpload != null && (updatedUser.id?.isNotEmpty == true)) {
+        updatedUser = await _authRequest.saveUserPhoto(
+          userId: updatedUser.id!,
+          bytes: profileUpload.bytes,
+          fileName: profileUpload.fileName,
+          mimeType: profileUpload.mimeType,
+          size: profileUpload.size,
+        );
+      }
+
+      final licenseUpload = _registerLicensePhotoUpload;
+      if (licenseUpload != null &&
+          updatedUser.role == 'driver' &&
+          (updatedUser.id?.isNotEmpty == true)) {
+        updatedUser = await _authRequest.saveDriverLicensePhoto(
+          userId: updatedUser.id!,
+          bytes: licenseUpload.bytes,
+          fileName: licenseUpload.fileName,
+          mimeType: licenseUpload.mimeType,
+          size: licenseUpload.size,
+        );
+      }
+    } on AuthFailure catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(context, error.message);
+      }
+    } catch (_) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          'Account created, but an image upload could not be completed.',
+        );
+      }
+    }
+
+    return updatedUser;
   }
 
   String? _validateLatitude(String? value) {
@@ -664,6 +764,35 @@ class _AuthViewState extends State<AuthView> {
     }
     return double.tryParse(text);
   }
+
+  String? _resolvedMimeType(String? extension) {
+    switch ((extension ?? '').toLowerCase()) {
+      case 'png':
+        return 'image/png';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'bmp':
+        return 'image/bmp';
+      default:
+        return 'image/jpeg';
+    }
+  }
+}
+
+class _PendingAuthImageUpload {
+  const _PendingAuthImageUpload({
+    required this.bytes,
+    required this.fileName,
+    required this.size,
+    this.mimeType,
+  });
+
+  final Uint8List bytes;
+  final String fileName;
+  final int size;
+  final String? mimeType;
 }
 
 class _AuthTextField extends StatefulWidget {
@@ -746,6 +875,115 @@ class _AuthTextFieldState extends State<_AuthTextField> {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(18),
           borderSide: const BorderSide(color: AppColors.primaryColor),
+        ),
+      ),
+    );
+  }
+}
+
+class _AuthActionField extends StatelessWidget {
+  const _AuthActionField({
+    required this.label,
+    required this.valueText,
+    required this.onTap,
+  });
+
+  final String label;
+  final String valueText;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmedValue = valueText.trim();
+    final hasValue = trimmedValue.isNotEmpty;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: InputDecorator(
+          isEmpty: !hasValue,
+          isFocused: false,
+          decoration: InputDecoration(
+            labelText: label,
+            labelStyle: TextStyle(
+              color: AppColors.primaryColor.withValues(alpha: 0.74),
+              fontWeight: FontWeight.w500,
+            ),
+            floatingLabelStyle: const TextStyle(
+              color: AppColors.primaryColor,
+              fontWeight: FontWeight.w600,
+            ),
+            suffixIcon: const Icon(
+              Icons.upload_rounded,
+              color: AppColors.primaryColor,
+            ),
+            filled: true,
+            fillColor: AppColors.primarySurface,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 18,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: const BorderSide(color: AppColors.primaryBorder),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: const BorderSide(color: AppColors.primaryBorder),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: const BorderSide(color: AppColors.primaryColor),
+            ),
+          ),
+          child: Text(
+            hasValue ? trimmedValue : '',
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AuthHeaderCameraButton extends StatelessWidget {
+  const _AuthHeaderCameraButton({
+    required this.hasSelection,
+    required this.onTap,
+  });
+
+  final bool hasSelection;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: hasSelection ? const Color(0xFFF1EBFF) : Colors.white,
+            border: Border.all(
+              color: hasSelection
+                  ? AppColors.primaryColor
+                  : AppColors.primaryBorder,
+            ),
+          ),
+          child: Icon(
+            Icons.photo_camera_rounded,
+            color: AppColors.primaryColor,
+            size: 22,
+          ),
         ),
       ),
     );

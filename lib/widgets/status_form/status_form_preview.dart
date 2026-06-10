@@ -4,6 +4,7 @@ import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/services/status_form_engine.dart';
+import 'package:webapp/widgets/shared/booking_form_primitives.dart';
 import 'package:webapp/widgets/status_form/status_form_runtime_fields.dart';
 
 class StatusFormPreview extends StatefulWidget {
@@ -25,9 +26,7 @@ class StatusFormPreview extends StatefulWidget {
 }
 
 class _StatusFormPreviewState extends State<StatusFormPreview> {
-  final StatusFormEngine _engine = StatusFormEngine(
-    StatusRequest.instance,
-  );
+  final StatusFormEngine _engine = StatusFormEngine(StatusRequest.instance);
   Map<String, dynamic> _answers = {};
   Map<String, String> _errors = {};
   int _resetTick = 0;
@@ -82,7 +81,8 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
     final statusSubtext =
         widget.subtitleText?.trim() ?? widget.form?.statusSubtext?.trim();
     final buttonText = widget.form?.buttonText?.trim();
-    final dependencies = widget.form?.dependencies ?? const <StatusDependency>[];
+    final dependencies =
+        widget.form?.dependencies ?? const <StatusDependency>[];
     final actionRowTopSpacing = widget.fields.isEmpty ? 14.0 : 6.0;
 
     return Container(
@@ -112,6 +112,9 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
                       ? statusText!
                       : 'Untitled Status Form',
                   subtitle: statusSubtext,
+                  showRequiredLegend: widget.fields.any(
+                    (field) => field.required == true,
+                  ),
                   showDependencyNotice: dependencies.isNotEmpty,
                 ),
                 const SizedBox(height: 14),
@@ -176,23 +179,18 @@ class _PreviewHeaderCard extends StatelessWidget {
   const _PreviewHeaderCard({
     required this.title,
     required this.subtitle,
+    required this.showRequiredLegend,
     required this.showDependencyNotice,
   });
 
   final String title;
   final String? subtitle;
+  final bool showRequiredLegend;
   final bool showDependencyNotice;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.primaryBorder),
-      ),
+    return BookingFormTitleCardShell(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -211,10 +209,28 @@ class _PreviewHeaderCard extends StatelessWidget {
               child: Text(
                 subtitle!.trim(),
                 style: const TextStyle(
-                  color: AppColors.textSecondary,
+                  color: AppColors.textPrimary,
                   fontWeight: FontWeight.w500,
                   height: 1.35,
                 ),
+              ),
+            ),
+          ],
+          if (showRequiredLegend) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              height: 1,
+              color: AppColors.primaryBorder,
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              '* indicates required input',
+              style: TextStyle(
+                color: AppColors.primaryColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+                height: 1.3,
               ),
             ),
           ],

@@ -3,7 +3,7 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/utils/functions.dart';
-import 'package:webapp/view_models/admin/admin_status_form.vm.dart';
+import 'package:webapp/view_models/admin/admin_flow.vm.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
@@ -19,7 +19,7 @@ class AdminFieldsView extends StatelessWidget {
 
   static Future<void> confirmToggleFieldActive(
     BuildContext context,
-    AdminStatusFormViewModel vm,
+    AdminFlowViewModel vm,
     StatusField field,
   ) async {
     final willBeActive = !(field.isActive ?? false);
@@ -46,7 +46,7 @@ class AdminFieldsView extends StatelessWidget {
 
   static Future<void> confirmDeleteField(
     BuildContext context,
-    AdminStatusFormViewModel vm,
+    AdminFlowViewModel vm,
     StatusField field,
   ) async {
     final confirmed = await showAdminActionConfirmation(
@@ -166,8 +166,8 @@ class AdminFieldsView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ViewModelBuilder<AdminStatusFormViewModel>.reactive(
-      viewModelBuilder: AdminStatusFormViewModel.new,
+    return ViewModelBuilder<AdminFlowViewModel>.reactive(
+      viewModelBuilder: AdminFlowViewModel.new,
       onViewModelReady: (vm) => vm.loadForms(),
       builder: (context, vm, child) {
         return Column(
@@ -185,7 +185,7 @@ class AdminFieldsView extends StatelessWidget {
 
   static Future<void> openFieldDialog(
     BuildContext context,
-    AdminStatusFormViewModel vm, {
+    AdminFlowViewModel vm, {
     StatusField? initialField,
     required String title,
     bool readOnly = false,
@@ -231,7 +231,7 @@ class AdminFieldsView extends StatelessWidget {
 class _FieldsContent extends StatefulWidget {
   const _FieldsContent({required this.vm});
 
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
 
   @override
   State<_FieldsContent> createState() => _FieldsContentState();
@@ -503,7 +503,7 @@ class _FieldsFiltersPanelState extends State<_FieldsFiltersPanel> {
                       focusNode: _typeFocusNode,
                       items: const [
                         'All',
-                        ...AdminStatusFormViewModel.fieldTypeOptions,
+                        ...AdminFlowViewModel.fieldTypeOptions,
                       ],
                       onChanged: widget.onTypeChanged,
                     ),
@@ -615,7 +615,7 @@ class _FieldsTable extends StatelessWidget {
 
   final List<StatusField> fields;
   final String emptyMessage;
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
 
   static const _headerStyle = TextStyle(
     color: AppColors.textSecondary,
@@ -856,7 +856,7 @@ class _FieldTableRow extends StatelessWidget {
   });
 
   final StatusField field;
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
   final double resolvedIdWidth;
   final double resolvedKeyWidth;
   final double resolvedTitleWidth;
@@ -975,7 +975,7 @@ class _FieldResponsiveCard extends StatelessWidget {
   const _FieldResponsiveCard({required this.field, required this.vm});
 
   final StatusField field;
-  final AdminStatusFormViewModel vm;
+  final AdminFlowViewModel vm;
 
   @override
   Widget build(BuildContext context) {
@@ -1280,7 +1280,7 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
             child: StatusFieldEditorCard(
               field: _field,
               index: 0,
-              fieldTypeOptions: AdminStatusFormViewModel.fieldTypeOptions,
+              fieldTypeOptions: AdminFlowViewModel.fieldTypeOptions,
               showContainer: false,
               sectionGap: 10,
               headerBottomGap: 12,

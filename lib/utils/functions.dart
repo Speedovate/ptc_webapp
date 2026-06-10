@@ -100,6 +100,54 @@ bool isValidPhilippinePhone(String? value) {
   return normalizePhilippinePhone(value) != null;
 }
 
+Uint8List? decodePhotoBytes(dynamic value, {String key = 'bytes'}) {
+  if (value is Uint8List) {
+    return value;
+  }
+  if (value is List<int>) {
+    return Uint8List.fromList(value);
+  }
+  final mapValue = value is Map<String, dynamic>
+      ? value
+      : value is Map
+      ? Map<String, dynamic>.from(value)
+      : null;
+  final sourceValue = mapValue?[key] ?? value;
+  if (sourceValue is Uint8List) {
+    return sourceValue;
+  }
+  if (sourceValue is List<int>) {
+    return Uint8List.fromList(sourceValue);
+  }
+  return null;
+}
+
+String? photoDownloadUrl(dynamic value, {String key = 'download_url'}) {
+  final mapValue = value is Map<String, dynamic>
+      ? value
+      : value is Map
+      ? Map<String, dynamic>.from(value)
+      : null;
+  final url = mapValue?[key]?.toString().trim();
+  if (url == null || url.isEmpty) {
+    return null;
+  }
+  return url;
+}
+
+String? photoStoragePath(dynamic value, {String key = 'storage_path'}) {
+  final mapValue = value is Map<String, dynamic>
+      ? value
+      : value is Map
+      ? Map<String, dynamic>.from(value)
+      : null;
+  final path = mapValue?[key]?.toString().trim();
+  if (path == null || path.isEmpty) {
+    return null;
+  }
+  return path;
+}
+
 class PhilippinesPhoneInputFormatter extends TextInputFormatter {
   const PhilippinesPhoneInputFormatter();
 

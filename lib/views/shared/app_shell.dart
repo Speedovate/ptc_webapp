@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
-import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/view_models/shared/app_shell.vm.dart';
 import 'package:webapp/views/admin/admin_home.dart';
@@ -8,7 +7,6 @@ import 'package:webapp/views/auth/auth_view.dart';
 import 'package:webapp/views/client/client_home.dart';
 import 'package:webapp/views/driver/driver_home.dart';
 import 'package:webapp/views/helper/helper_home.dart';
-import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/in_app_browser_guard.dart';
 
 class AppShell extends StatelessWidget {
@@ -20,12 +18,7 @@ class AppShell extends StatelessWidget {
       viewModelBuilder: AppShellViewModel.new,
       onViewModelReady: (vm) => vm.initialize(),
       builder: (context, vm, child) {
-        final content = vm.isLoading
-            ? const Scaffold(
-                backgroundColor: AppColors.primaryColor,
-                body: AppPageLoading(message: 'Loading, please wait ...'),
-              )
-            : vm.currentUser == null
+        final content = vm.currentUser == null
             ? AuthView(onAuthenticated: (_) => vm.refreshCurrentUser())
             : _buildRoleHome(
                 vm.currentUser!,
