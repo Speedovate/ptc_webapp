@@ -123,303 +123,346 @@ class _AuthViewState extends State<AuthView> {
         return Scaffold(
           backgroundColor: AppColors.primaryColor,
           body: SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 460),
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(28, 26, 28, 28),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(color: AppColors.primaryBorder),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x120E0A1F),
-                          blurRadius: 32,
-                          offset: Offset(0, 18),
-                        ),
-                      ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isCompact = constraints.maxWidth < 700;
+
+                return SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(24, isCompact ? 20 : 24, 24, 24),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - (isCompact ? 44 : 48),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 56,
-                              height: 56,
-                              decoration: BoxDecoration(
-                                color: AppColors.primaryColor,
-                                shape: BoxShape.circle,
-                                boxShadow: const [
-                                  BoxShadow(
-                                    color: Color(0x1F5B34D6),
-                                    blurRadius: 18,
-                                    offset: Offset(0, 10),
-                                  ),
-                                ],
+                    child: Align(
+                      alignment: isCompact
+                          ? Alignment.topCenter
+                          : Alignment.center,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 460),
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(28, 26, 28, 28),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(color: AppColors.primaryBorder),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x120E0A1F),
+                                blurRadius: 32,
+                                offset: Offset(0, 18),
                               ),
-                              child: const Icon(
-                                Icons.local_shipping_rounded,
-                                color: Colors.white,
-                                size: 28,
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
-                                  const Text(
-                                    'Paltranco',
-                                    style: TextStyle(
+                                  Container(
+                                    width: 56,
+                                    height: 56,
+                                    decoration: BoxDecoration(
                                       color: AppColors.primaryColor,
-                                      fontSize: 25,
-                                      fontWeight: FontWeight.w800,
-                                      height: 1.2,
+                                      shape: BoxShape.circle,
+                                      boxShadow: const [
+                                        BoxShadow(
+                                          color: Color(0x1F5B34D6),
+                                          blurRadius: 18,
+                                          offset: Offset(0, 10),
+                                        ),
+                                      ],
+                                    ),
+                                    child: const Icon(
+                                      Icons.local_shipping_rounded,
+                                      color: Colors.white,
+                                      size: 28,
                                     ),
                                   ),
-                                  const Text(
-                                    'Digital Platform',
-                                    style: TextStyle(
-                                      color: AppColors.textPrimary,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w500,
-                                      height: 1.2,
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Paltranco',
+                                          style: TextStyle(
+                                            color: AppColors.primaryColor,
+                                            fontSize: 25,
+                                            fontWeight: FontWeight.w800,
+                                            height: 1.2,
+                                          ),
+                                        ),
+                                        const Text(
+                                          'Digital Platform',
+                                          style: TextStyle(
+                                            color: AppColors.textPrimary,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w500,
+                                            height: 1.2,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ],
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 24),
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 220),
-                          switchInCurve: Curves.easeOut,
-                          switchOutCurve: Curves.easeIn,
-                          child: _isLoginMode
-                              ? Form(
-                                  key: _loginFormKey,
-                                  child: Column(
-                                    key: const ValueKey('login_form'),
-                                    children: [
-                                      _AuthTextField(
-                                        controller: _loginEmailController,
-                                        label: 'Email',
-                                        keyboardType:
-                                            TextInputType.emailAddress,
-                                      ),
-                                      const SizedBox(height: 14),
-                                      _AuthTextField(
-                                        controller: _loginPasswordController,
-                                        label: 'Password',
-                                        obscureText: true,
-                                      ),
-                                    ],
-                                  ),
-                                )
-                              : _isLoadingVehicleTypes
-                              ? const SizedBox(
-                                  key: ValueKey('register_loading'),
-                                  height: 220,
-                                  child: AppPageLoading(
-                                    message: 'Loading vehicle types...',
-                                    compact: true,
-                                    padding: EdgeInsets.zero,
-                                  ),
-                                )
-                              : Form(
-                                  key: _registerFormKey,
-                                  child: Column(
-                                    key: const ValueKey('register_form'),
-                                    children: [
-                                      _AuthDropdownField(
-                                        label: 'Role',
-                                        value: _registerRole,
-                                        items: _roleOptions,
-                                        onChanged: (value) {
-                                          setState(() {
-                                            _registerRole = value;
-                                            if (value != 'driver') {
-                                              _registerVehicleTypeId = null;
-                                            }
-                                          });
-                                        },
-                                      ),
-                                      if (_registerRole == 'driver') ...[
-                                        const SizedBox(height: 14),
-                                        _AuthDropdownField(
-                                          label: 'Vehicle Type',
-                                          value: _registerVehicleTypeId,
-                                          items: _vehicleTypes
-                                              .map((item) => item.id ?? '')
-                                              .where(
-                                                (value) => value.isNotEmpty,
-                                              )
-                                              .toList(),
-                                          itemLabelBuilder: (value) {
-                                            final match = _vehicleTypes.where(
-                                              (item) => item.id == value,
-                                            );
-                                            if (match.isEmpty) {
-                                              return value;
-                                            }
-                                            final item = match.first;
-                                            final name =
-                                                item.name?.trim() ?? '';
-                                            final slug =
-                                                item.slug?.trim() ?? '';
-                                            if (name.isEmpty) {
-                                              return slug;
-                                            }
-                                            if (slug.isEmpty) {
-                                              return name;
-                                            }
-                                            return '$name ($slug)';
-                                          },
-                                          onChanged: (value) {
-                                            setState(
-                                              () => _registerVehicleTypeId =
-                                                  value,
-                                            );
-                                          },
+                              const SizedBox(height: 24),
+                              AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 220),
+                                switchInCurve: Curves.easeOut,
+                                switchOutCurve: Curves.easeIn,
+                                child: _isLoginMode
+                                    ? Form(
+                                        key: _loginFormKey,
+                                        child: Column(
+                                          key: const ValueKey('login_form'),
+                                          children: [
+                                            _AuthTextField(
+                                              controller: _loginEmailController,
+                                              label: 'Email',
+                                              keyboardType:
+                                                  TextInputType.emailAddress,
+                                            ),
+                                            const SizedBox(height: 14),
+                                            _AuthTextField(
+                                              controller:
+                                                  _loginPasswordController,
+                                              label: 'Password',
+                                              obscureText: true,
+                                            ),
+                                          ],
                                         ),
-                                      ],
-                                      const SizedBox(height: 14),
-                                      _AuthTextField(
-                                        controller: _registerEmailController,
-                                        label: 'Email',
-                                        keyboardType:
-                                            TextInputType.emailAddress,
-                                      ),
-                                      const SizedBox(height: 14),
-                                      _AuthTextField(
-                                        controller: _registerNameController,
-                                        label: 'Name',
-                                        textCapitalization:
-                                            TextCapitalization.words,
-                                        inputFormatters: const [
-                                          NameCaseTextInputFormatter(),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 14),
-                                      _AuthTextField(
-                                        controller: _registerPhoneController,
-                                        label: 'Phone',
-                                        keyboardType: TextInputType.phone,
-                                        inputFormatters: const [
-                                          PhilippinesPhoneInputFormatter(),
-                                        ],
-                                      ),
-                                      if (_registerRole == 'driver') ...[
-                                        const SizedBox(height: 14),
-                                        _AuthTextField(
-                                          controller:
-                                              _registerLicenseController,
-                                          label: 'License',
+                                      )
+                                    : _isLoadingVehicleTypes
+                                    ? const SizedBox(
+                                        key: ValueKey('register_loading'),
+                                        height: 220,
+                                        child: AppPageLoading(
+                                          message: 'Loading vehicle types...',
+                                          compact: true,
+                                          padding: EdgeInsets.zero,
                                         ),
-                                        const SizedBox(height: 14),
-                                        _AuthTextField(
-                                          controller: _registerLatController,
-                                          label: 'Latitude',
-                                          keyboardType:
-                                              const TextInputType.numberWithOptions(
-                                                decimal: true,
-                                                signed: true,
+                                      )
+                                    : Form(
+                                        key: _registerFormKey,
+                                        child: Column(
+                                          key: const ValueKey('register_form'),
+                                          children: [
+                                            _AuthDropdownField(
+                                              label: 'Role',
+                                              value: _registerRole,
+                                              items: _roleOptions,
+                                              onChanged: (value) {
+                                                setState(() {
+                                                  _registerRole = value;
+                                                  if (value != 'driver') {
+                                                    _registerVehicleTypeId =
+                                                        null;
+                                                  }
+                                                });
+                                              },
+                                            ),
+                                            if (_registerRole == 'driver') ...[
+                                              const SizedBox(height: 14),
+                                              _AuthDropdownField(
+                                                label: 'Vehicle Type',
+                                                value: _registerVehicleTypeId,
+                                                items: _vehicleTypes
+                                                    .map(
+                                                      (item) => item.id ?? '',
+                                                    )
+                                                    .where(
+                                                      (value) =>
+                                                          value.isNotEmpty,
+                                                    )
+                                                    .toList(),
+                                                itemLabelBuilder: (value) {
+                                                  final match = _vehicleTypes
+                                                      .where(
+                                                        (item) =>
+                                                            item.id == value,
+                                                      );
+                                                  if (match.isEmpty) {
+                                                    return value;
+                                                  }
+                                                  final item = match.first;
+                                                  final name =
+                                                      item.name?.trim() ?? '';
+                                                  final slug =
+                                                      item.slug?.trim() ?? '';
+                                                  if (name.isEmpty) {
+                                                    return slug;
+                                                  }
+                                                  if (slug.isEmpty) {
+                                                    return name;
+                                                  }
+                                                  return '$name ($slug)';
+                                                },
+                                                onChanged: (value) {
+                                                  setState(
+                                                    () =>
+                                                        _registerVehicleTypeId =
+                                                            value,
+                                                  );
+                                                },
                                               ),
-                                        ),
-                                        const SizedBox(height: 14),
-                                        _AuthTextField(
-                                          controller: _registerLngController,
-                                          label: 'Longitude',
-                                          keyboardType:
-                                              const TextInputType.numberWithOptions(
-                                                decimal: true,
-                                                signed: true,
+                                            ],
+                                            const SizedBox(height: 14),
+                                            _AuthTextField(
+                                              controller:
+                                                  _registerEmailController,
+                                              label: 'Email',
+                                              keyboardType:
+                                                  TextInputType.emailAddress,
+                                            ),
+                                            const SizedBox(height: 14),
+                                            _AuthTextField(
+                                              controller:
+                                                  _registerNameController,
+                                              label: 'Name',
+                                              textCapitalization:
+                                                  TextCapitalization.words,
+                                              inputFormatters: const [
+                                                NameCaseTextInputFormatter(),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 14),
+                                            _AuthTextField(
+                                              controller:
+                                                  _registerPhoneController,
+                                              label: 'Phone',
+                                              keyboardType: TextInputType.phone,
+                                              inputFormatters: const [
+                                                PhilippinesPhoneInputFormatter(),
+                                              ],
+                                            ),
+                                            if (_registerRole == 'driver') ...[
+                                              const SizedBox(height: 14),
+                                              _AuthTextField(
+                                                controller:
+                                                    _registerLicenseController,
+                                                label: 'License',
                                               ),
+                                              const SizedBox(height: 14),
+                                              _AuthTextField(
+                                                controller:
+                                                    _registerLatController,
+                                                label: 'Latitude',
+                                                keyboardType:
+                                                    const TextInputType.numberWithOptions(
+                                                      decimal: true,
+                                                      signed: true,
+                                                    ),
+                                              ),
+                                              const SizedBox(height: 14),
+                                              _AuthTextField(
+                                                controller:
+                                                    _registerLngController,
+                                                label: 'Longitude',
+                                                keyboardType:
+                                                    const TextInputType.numberWithOptions(
+                                                      decimal: true,
+                                                      signed: true,
+                                                    ),
+                                              ),
+                                            ],
+                                            const SizedBox(height: 14),
+                                            _AuthTextField(
+                                              controller:
+                                                  _registerPasswordController,
+                                              label: 'Password',
+                                              obscureText: true,
+                                            ),
+                                          ],
                                         ),
-                                      ],
-                                      const SizedBox(height: 14),
-                                      _AuthTextField(
-                                        controller: _registerPasswordController,
-                                        label: 'Password',
-                                        obscureText: true,
                                       ),
-                                    ],
-                                  ),
-                                ),
-                        ),
-                        const SizedBox(height: 22),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: SizedBox(
-                                height: 52,
-                                child: OutlinedButton(
-                                  onPressed: isBusy ? null : _switchAuthMode,
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: AppColors.primaryColor,
-                                    side: const BorderSide(
-                                      color: AppColors.primaryBorder,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(18),
-                                    ),
-                                  ),
-                                  child: Text(
-                                    _isLoginMode
-                                        ? 'Create Account'
-                                        : 'Back to Login',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: SizedBox(
-                                height: 52,
-                                child: FilledButton(
-                                  onPressed: isBusy ? null : () => _submit(vm),
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: AppColors.primaryColor,
-                                    foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(18),
-                                    ),
-                                  ),
-                                  child: isBusy
-                                      ? const SizedBox(
-                                          width: 22,
-                                          height: 22,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2.4,
-                                            color: Colors.white,
+                              const SizedBox(height: 22),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: SizedBox(
+                                      height: 52,
+                                      child: OutlinedButton(
+                                        onPressed: isBusy
+                                            ? null
+                                            : _switchAuthMode,
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor:
+                                              AppColors.primaryColor,
+                                          side: const BorderSide(
+                                            color: AppColors.primaryBorder,
                                           ),
-                                        )
-                                      : Text(
-                                          _isLoginMode ? 'Login' : 'Register',
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              18,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          _isLoginMode
+                                              ? 'Create Account'
+                                              : 'Back to Login',
                                           style: const TextStyle(
                                             fontWeight: FontWeight.w700,
                                           ),
                                         ),
-                                ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: SizedBox(
+                                      height: 52,
+                                      child: FilledButton(
+                                        onPressed: isBusy
+                                            ? null
+                                            : () => _submit(vm),
+                                        style: FilledButton.styleFrom(
+                                          backgroundColor:
+                                              AppColors.primaryColor,
+                                          foregroundColor: Colors.white,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              18,
+                                            ),
+                                          ),
+                                        ),
+                                        child: isBusy
+                                            ? const SizedBox(
+                                                width: 22,
+                                                height: 22,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2.4,
+                                                      color: Colors.white,
+                                                    ),
+                                              )
+                                            : Text(
+                                                _isLoginMode
+                                                    ? 'Login'
+                                                    : 'Register',
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ],
+                      ),
                     ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
         );

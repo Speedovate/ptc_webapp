@@ -7,9 +7,7 @@ import 'package:webapp/views/shared/app_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(true);
   runApp(const MyApp());
 }
@@ -41,22 +39,21 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final baseLightTheme = ThemeData.light();
-    final colorScheme = ColorScheme.fromSeed(
-      seedColor: AppColors.primaryColor,
-    ).copyWith(
-      primary: AppColors.primaryColor,
-      onPrimary: Colors.white,
-      secondary: AppColors.primaryColor,
-      onSecondary: Colors.white,
-      surface: Colors.white,
-      onSurface: AppColors.textPrimary,
-      error: const Color(0xFFD94B4B),
-      onError: Colors.white,
-      outline: AppColors.primaryBorder,
-    );
+    final colorScheme = ColorScheme.fromSeed(seedColor: AppColors.primaryColor)
+        .copyWith(
+          primary: AppColors.primaryColor,
+          onPrimary: Colors.white,
+          secondary: AppColors.primaryColor,
+          onSecondary: Colors.white,
+          surface: Colors.white,
+          onSurface: AppColors.textPrimary,
+          error: const Color(0xFFD94B4B),
+          onError: Colors.white,
+          outline: AppColors.primaryBorder,
+        );
 
     return MaterialApp(
-      title: 'Paltranco',
+      title: 'Paltranco Digital Platform',
       debugShowCheckedModeBanner: false,
       builder: (context, child) {
         return GestureDetector(
@@ -81,10 +78,7 @@ class MyApp extends StatelessWidget {
         hintColor: AppColors.textSecondary,
         shadowColor: const Color(0x120E0A1F),
         textTheme: _withTextHeight(baseLightTheme.textTheme, 1.2),
-        primaryTextTheme: _withTextHeight(
-          baseLightTheme.primaryTextTheme,
-          1.2,
-        ),
+        primaryTextTheme: _withTextHeight(baseLightTheme.primaryTextTheme, 1.2),
         dialogTheme: const DialogThemeData(
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.white,

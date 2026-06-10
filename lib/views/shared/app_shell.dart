@@ -9,6 +9,7 @@ import 'package:webapp/views/client/client_home.dart';
 import 'package:webapp/views/driver/driver_home.dart';
 import 'package:webapp/views/helper/helper_home.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
+import 'package:webapp/widgets/shared/in_app_browser_guard.dart';
 
 class AppShell extends StatelessWidget {
   const AppShell({super.key});
@@ -19,36 +20,29 @@ class AppShell extends StatelessWidget {
       viewModelBuilder: AppShellViewModel.new,
       onViewModelReady: (vm) => vm.initialize(),
       builder: (context, vm, child) {
-        if (vm.isLoading) {
-          return const Scaffold(
-            backgroundColor: AppColors.primaryColor,
-            body: AppPageLoading(
-              message: 'Loading, please wait ...',
-            ),
-          );
-        }
+        final content = vm.isLoading
+            ? const Scaffold(
+                backgroundColor: AppColors.primaryColor,
+                body: AppPageLoading(message: 'Loading, please wait ...'),
+              )
+            : vm.currentUser == null
+            ? AuthView(onAuthenticated: (_) => vm.refreshCurrentUser())
+            : _buildRoleHome(
+                vm.currentUser!,
+                isQuickLoggedIn: vm.isQuickLoggedIn,
+                onUserUpdated: () async {
+                  await vm.refreshCurrentUser();
+                },
+                onLogout: () async {
+                  if (vm.isQuickLoggedIn) {
+                    await vm.goBackFromQuickLogin();
+                    return;
+                  }
+                  await vm.logout();
+                },
+              );
 
-        final user = vm.currentUser;
-        if (user == null) {
-          return AuthView(
-            onAuthenticated: (_) => vm.refreshCurrentUser(),
-          );
-        }
-
-        return _buildRoleHome(
-          user,
-          isQuickLoggedIn: vm.isQuickLoggedIn,
-          onUserUpdated: () async {
-            await vm.refreshCurrentUser();
-          },
-          onLogout: () async {
-            if (vm.isQuickLoggedIn) {
-              await vm.goBackFromQuickLogin();
-              return;
-            }
-            await vm.logout();
-          },
-        );
+        return InAppBrowserGuard(child: content);
       },
     );
   }

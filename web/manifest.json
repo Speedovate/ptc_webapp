@@ -1,11 +1,12 @@
 {
-    "name": "webapp",
-    "short_name": "webapp",
+    "name": "Paltranco Digital Platform",
+    "short_name": "Paltranco",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "Paltranco Web App",
+    "display_override": ["standalone", "minimal-ui", "browser"],
+    "background_color": "#5B34D6",
+    "theme_color": "#5B34D6",
+    "description": "Transport at your fingertips.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
