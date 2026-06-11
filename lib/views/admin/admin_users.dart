@@ -1067,7 +1067,6 @@ class _UsersFilterDropdown extends StatelessWidget {
           minHeight: AdminUsersView.usersFilterControlHeight,
         ),
         items: items
-            .where((item) => item != 'All')
             .map(
               (item) => DropdownMenuItem<String>(
                 value: item,

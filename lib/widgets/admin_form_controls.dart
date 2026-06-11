@@ -11,10 +11,7 @@ const double adminModalFieldMinHeight = 56;
 const double adminFilterFieldMinHeight = 52;
 
 Color appFieldInteractiveFillColor(BuildContext context) {
-  return Color.alphaBlend(
-    Theme.of(context).hoverColor,
-    AppColors.primarySurface,
-  );
+  return AppColors.primarySurfaceAlt;
 }
 
 class AdminDropdownFormField<T> extends StatefulWidget {

@@ -71,10 +71,8 @@ class BookingRecordCard extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: appPressablePressed(context)
+            color: appPressableActive(context)
                 ? AppColors.primarySurfaceAlt.withValues(alpha: 0.28)
-                : appPressableHovered(context)
-                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.14)
                 : Colors.white,
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: AppColors.primaryBorder),
@@ -872,10 +870,8 @@ class _BookingPhotoValue extends StatelessWidget {
               builder: (context) => Container(
                 padding: const EdgeInsets.all(2),
                 decoration: BoxDecoration(
-                  color: appPressablePressed(context)
-                      ? AppColors.primarySurfaceAlt.withValues(alpha: 0.28)
-                      : appPressableHovered(context)
-                      ? AppColors.primarySurfaceAlt.withValues(alpha: 0.14)
+                  color: appPressableActive(context)
+                      ? AppColors.primarySurfaceAlt.withValues(alpha: 0.34)
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(999),
                 ),

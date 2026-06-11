@@ -24,7 +24,9 @@ class AppPageLoadingOverlay extends StatelessWidget {
         final hasBoundedWidth = constraints.hasBoundedWidth;
         final hasBoundedHeight = constraints.hasBoundedHeight;
         final overlayChild = Stack(
-          fit: StackFit.expand,
+          fit: hasBoundedWidth && hasBoundedHeight
+              ? StackFit.expand
+              : StackFit.passthrough,
           children: [
             IgnorePointer(ignoring: isVisible, child: child),
             if (isVisible)

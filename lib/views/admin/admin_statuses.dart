@@ -590,7 +590,6 @@ class _StatusesFilterDropdown extends StatelessWidget {
         minHeight: AdminStatusesView.controlHeight,
       ),
       items: items
-          .where((item) => item != 'All')
           .map(
             (item) => DropdownMenuItem<String>(
               value: item,
@@ -1440,10 +1439,8 @@ class _ApplicableRoleChip extends StatelessWidget {
           duration: const Duration(milliseconds: 120),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: appPressablePressed(context)
+            color: appPressableActive(context)
                 ? AppColors.primarySurfaceAlt.withValues(alpha: 0.34)
-                : appPressableHovered(context)
-                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.2)
                 : backgroundColor,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(color: borderColor),

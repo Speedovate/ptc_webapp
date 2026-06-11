@@ -44,10 +44,8 @@ class SidebarMenuItem extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: isSelected
                       ? AppColors.primarySurfaceAlt.withValues(alpha: 0.22)
-                      : appPressablePressed(context)
-                      ? Colors.white.withValues(alpha: 0.14)
-                      : appPressableHovered(context)
-                      ? Colors.white.withValues(alpha: 0.08)
+                      : appPressableActive(context)
+                      ? Colors.white.withValues(alpha: 0.24)
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(

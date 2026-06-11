@@ -596,7 +596,6 @@ class _FieldsFilterDropdown extends StatelessWidget {
         minHeight: AdminFieldsView.controlHeight,
       ),
       items: items
-          .where((item) => item != 'All')
           .map(
             (item) => DropdownMenuItem<String>(
               value: item,

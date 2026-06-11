@@ -1722,7 +1722,6 @@ class _BookingsFilterDropdown extends StatelessWidget {
         minHeight: adminFilterFieldMinHeight,
       ),
       items: items
-          .where((item) => item != 'All')
           .map(
             (item) => DropdownMenuItem<String>(
               value: item,

@@ -52,8 +52,8 @@ class _AdminIconActionButtonState extends State<AdminIconActionButton> {
               final color = isPressed
                   ? _pressColor(widget.backgroundColor)
                   : isHovered
-                      ? _hoverColor(widget.backgroundColor)
-                      : widget.backgroundColor;
+                  ? _hoverColor(widget.backgroundColor)
+                  : widget.backgroundColor;
 
               return GestureDetector(
                 behavior: HitTestBehavior.opaque,
@@ -97,7 +97,7 @@ class _AdminIconActionButtonState extends State<AdminIconActionButton> {
         .toColor();
   }
 
-  Color _hoverColor(Color color, [double amount = 0.08]) {
+  Color _hoverColor(Color color, [double amount = 0.16]) {
     final hsl = HSLColor.fromColor(color);
     return hsl
         .withLightness((hsl.lightness - amount).clamp(0.0, 1.0))

@@ -639,7 +639,7 @@ class _ProfileEditButton extends StatelessWidget {
           decoration: BoxDecoration(
             color: appPressableActive(context)
                 ? AppColors.primarySurfaceAlt.withValues(
-                    alpha: appPressablePressed(context) ? 0.34 : 0.22,
+                    alpha: appPressablePressed(context) ? 0.38 : 0.26,
                   )
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
@@ -666,14 +666,13 @@ class _ProfilePhotoCameraButton extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
       child: Builder(
-        builder: (context) => Container(
+        builder: (context) => AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
           width: 28,
           height: 28,
           decoration: BoxDecoration(
-            color: appPressablePressed(context)
-                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.28)
-                : appPressableHovered(context)
-                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.14)
+            color: appPressableActive(context)
+                ? AppColors.primaryBorder
                 : Colors.white,
             shape: BoxShape.circle,
             border: Border.all(color: AppColors.primaryBorder),
@@ -714,10 +713,8 @@ class _ProfileActionPill extends StatelessWidget {
             duration: const Duration(milliseconds: 120),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: appPressablePressed(context)
+              color: appPressableActive(context)
                   ? AppColors.primarySurfaceAlt.withValues(alpha: 0.28)
-                  : appPressableHovered(context)
-                  ? AppColors.primarySurfaceAlt.withValues(alpha: 0.16)
                   : Colors.white,
               borderRadius: BorderRadius.circular(1000),
               border: Border.all(color: borderColor),

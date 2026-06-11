@@ -18,8 +18,8 @@ import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/view_models/admin/admin_flow.vm.dart';
 import 'package:webapp/widgets/status_form/status_form_preview.dart';
 
-class AdminFlowsView extends StatelessWidget {
-  const AdminFlowsView({super.key});
+class AdminFormsView extends StatelessWidget {
+  const AdminFormsView({super.key});
 
   static const sectionGap = 14.0;
   static const controlHeight = 52.0;
@@ -490,7 +490,7 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
               onActiveChanged: (value) => setState(() => _activeFilter = value),
               onNewPressed: _openNewFormDialog,
             ),
-            const SizedBox(height: AdminFlowsView.sectionGap),
+            const SizedBox(height: AdminFormsView.sectionGap),
             ListenableBuilder(
               listenable: widget.vm,
               builder: (context, _) {
@@ -564,8 +564,8 @@ class _StatusFormsToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AdminListToolbar(
-      controlHeight: AdminFlowsView.controlHeight,
-      surfaceRadius: AdminFlowsView.surfaceRadius,
+      controlHeight: AdminFormsView.controlHeight,
+      surfaceRadius: AdminFormsView.surfaceRadius,
       search: _StatusFormsSearchField(
         initialValue: searchQuery,
         onChanged: onSearchChanged,
@@ -625,8 +625,8 @@ class _StatusFormsSearchFieldState extends State<_StatusFormsSearchField> {
   @override
   Widget build(BuildContext context) {
     return AdminListSearchField(
-      controlHeight: AdminFlowsView.controlHeight,
-      surfaceRadius: AdminFlowsView.surfaceRadius,
+      controlHeight: AdminFormsView.controlHeight,
+      surfaceRadius: AdminFormsView.surfaceRadius,
       initialValue: widget.initialValue,
       onChanged: widget.onChanged,
     );
@@ -688,8 +688,8 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
     final itemWidth = contentWidth;
 
     return AdminListFiltersButton(
-      controlHeight: AdminFlowsView.controlHeight,
-      surfaceRadius: AdminFlowsView.surfaceRadius,
+      controlHeight: AdminFormsView.controlHeight,
+      surfaceRadius: AdminFormsView.surfaceRadius,
       iconOnly: widget.iconOnly,
       menuChildren: [
         SizedBox(
@@ -704,7 +704,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                 children: [
                   SizedBox(
                     width: itemWidth,
-                    height: AdminFlowsView.controlHeight,
+                    height: AdminFormsView.controlHeight,
                     child: _StatusFormsFilterDropdown(
                       label: 'Roles',
                       value: widget.roleFilter,
@@ -722,7 +722,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                   const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: AdminFlowsView.controlHeight,
+                    height: AdminFormsView.controlHeight,
                     child: _StatusFormsFilterDropdown(
                       label: 'Is Active',
                       value: widget.activeFilter,
@@ -734,7 +734,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                   const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: AdminFlowsView.controlHeight,
+                    height: AdminFormsView.controlHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
@@ -746,7 +746,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(
-                            AdminFlowsView.surfaceRadius,
+                            AdminFormsView.surfaceRadius,
                           ),
                         ),
                       ),
@@ -792,11 +792,10 @@ class _StatusFormsFilterDropdown extends StatelessWidget {
       style: _subtlePrimaryTextStyle,
       decoration: adminFormInputDecoration(
         label,
-        radius: AdminFlowsView.surfaceRadius,
-        minHeight: AdminFlowsView.controlHeight,
+        radius: AdminFormsView.surfaceRadius,
+        minHeight: AdminFormsView.controlHeight,
       ),
       items: items
-          .where((item) => item != 'All')
           .map(
             (item) => DropdownMenuItem<String>(
               value: item,
@@ -1003,8 +1002,8 @@ class _StatusFormsTable extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AdminListHeaderBar(
-              minHeight: AdminFlowsView.controlHeight,
-              borderRadius: AdminFlowsView.surfaceRadius,
+              minHeight: AdminFormsView.controlHeight,
+              borderRadius: AdminFormsView.surfaceRadius,
               child: Row(
                 children: [
                   _FixedSlot(
@@ -1070,7 +1069,7 @@ class _StatusFormsTable extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: AdminFlowsView.sectionGap),
+            const SizedBox(height: AdminFormsView.sectionGap),
             if (forms.isEmpty)
               _StatusFormsEmptyState(message: emptyMessage)
             else
@@ -1889,10 +1888,8 @@ class _DependencyRoleChip extends StatelessWidget {
             duration: const Duration(milliseconds: 120),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: appPressablePressed(context)
+              color: appPressableActive(context)
                   ? AppColors.primarySurfaceAlt.withValues(alpha: 0.34)
-                  : appPressableHovered(context)
-                  ? AppColors.primarySurfaceAlt.withValues(alpha: 0.2)
                   : backgroundColor,
               borderRadius: BorderRadius.circular(1000),
               border: Border.all(color: borderColor),
@@ -2495,10 +2492,8 @@ class _FormApplicableRoleChip extends StatelessWidget {
           duration: const Duration(milliseconds: 120),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: appPressablePressed(context)
+            color: appPressableActive(context)
                 ? AppColors.primarySurfaceAlt.withValues(alpha: 0.34)
-                : appPressableHovered(context)
-                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.2)
                 : backgroundColor,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(color: borderColor),
@@ -2539,9 +2534,9 @@ ButtonStyle _primaryButtonStyle() {
   return FilledButton.styleFrom(
     backgroundColor: AppColors.primaryColor,
     foregroundColor: Colors.white,
-    minimumSize: const Size(0, AdminFlowsView.controlHeight),
+    minimumSize: const Size(0, AdminFormsView.controlHeight),
     shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(AdminFlowsView.surfaceRadius),
+      borderRadius: BorderRadius.circular(AdminFormsView.surfaceRadius),
     ),
   );
 }

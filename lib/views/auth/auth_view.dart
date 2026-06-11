@@ -630,10 +630,6 @@ class _AuthViewState extends State<AuthView> {
   }
 
   Future<void> _submit(AuthViewModel vm) async {
-    await _showAuthFlowStage('Loading, please wait ...');
-    if (!mounted) {
-      return;
-    }
     try {
       if (_isLoginMode) {
         debugPrint('[AUTH][LOGIN] Submit start');
@@ -641,6 +637,10 @@ class _AuthViewState extends State<AuthView> {
         if (validationMessage != null) {
           debugPrint('[AUTH][LOGIN] Validation failed: $validationMessage');
           AppSnackbar.showError(context, validationMessage);
+          return;
+        }
+        await _showAuthFlowStage('Loading, please wait ...');
+        if (!mounted) {
           return;
         }
         await _showAuthFlowStage('Signing you in...');
@@ -667,6 +667,10 @@ class _AuthViewState extends State<AuthView> {
       if (validationMessage != null) {
         debugPrint('[AUTH][REGISTER] Validation failed: $validationMessage');
         AppSnackbar.showError(context, validationMessage);
+        return;
+      }
+      await _showAuthFlowStage('Loading, please wait ...');
+      if (!mounted) {
         return;
       }
       final isPendingRole =
@@ -1075,6 +1079,8 @@ class _AuthTextField extends StatefulWidget {
 
 class _AuthTextFieldState extends State<_AuthTextField> {
   late bool _isObscured;
+  bool _isHovered = false;
+  bool _isPressed = false;
 
   @override
   void initState() {
@@ -1084,58 +1090,84 @@ class _AuthTextFieldState extends State<_AuthTextField> {
 
   @override
   Widget build(BuildContext context) {
-    return TextFormField(
-      controller: widget.controller,
-      keyboardType: widget.keyboardType,
-      obscureText: _isObscured,
-      textCapitalization: widget.textCapitalization,
-      inputFormatters: widget.inputFormatters,
-      decoration: InputDecoration(
-        labelText: widget.label,
-        labelStyle: TextStyle(
-          color: AppColors.primaryColor.withValues(alpha: 0.72),
-          fontWeight: FontWeight.w400,
-        ),
-        floatingLabelStyle: const TextStyle(
-          color: AppColors.primaryColor,
-          fontWeight: FontWeight.w500,
-        ),
-        hintStyle: TextStyle(
-          color: AppColors.primaryColor.withValues(alpha: 0.72),
-          fontWeight: FontWeight.w400,
-        ),
-        prefixIconColor: AppColors.primaryColor,
-        suffixIconColor: AppColors.primaryColor,
-        filled: true,
-        fillColor: AppColors.primarySurface,
-        constraints: const BoxConstraints(minHeight: adminModalFieldMinHeight),
-        suffixIcon: widget.obscureText
-            ? Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: IconButton(
-                  onPressed: () {
-                    setState(() => _isObscured = !_isObscured);
-                  },
-                  icon: Icon(
-                    _isObscured
-                        ? Icons.visibility_off_rounded
-                        : Icons.visibility_rounded,
-                    color: AppColors.primaryColor,
-                  ),
-                ),
-              )
-            : null,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: AppColors.primaryBorder),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: AppColors.primaryBorder),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: AppColors.primaryColor),
+    final activeFillColor = appFieldInteractiveFillColor(context);
+    return MouseRegion(
+      cursor: SystemMouseCursors.text,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() {
+        _isHovered = false;
+        _isPressed = false;
+      }),
+      child: Listener(
+        onPointerDown: (_) => setState(() => _isPressed = true),
+        onPointerUp: (_) {
+          if (_isPressed) {
+            setState(() => _isPressed = false);
+          }
+        },
+        onPointerCancel: (_) {
+          if (_isPressed) {
+            setState(() => _isPressed = false);
+          }
+        },
+        child: TextFormField(
+          controller: widget.controller,
+          keyboardType: widget.keyboardType,
+          obscureText: _isObscured,
+          textCapitalization: widget.textCapitalization,
+          inputFormatters: widget.inputFormatters,
+          decoration: InputDecoration(
+            labelText: widget.label,
+            labelStyle: TextStyle(
+              color: AppColors.primaryColor.withValues(alpha: 0.72),
+              fontWeight: FontWeight.w400,
+            ),
+            floatingLabelStyle: const TextStyle(
+              color: AppColors.primaryColor,
+              fontWeight: FontWeight.w500,
+            ),
+            hintStyle: TextStyle(
+              color: AppColors.primaryColor.withValues(alpha: 0.72),
+              fontWeight: FontWeight.w400,
+            ),
+            prefixIconColor: AppColors.primaryColor,
+            suffixIconColor: AppColors.primaryColor,
+            filled: true,
+            fillColor: _isHovered || _isPressed
+                ? activeFillColor
+                : AppColors.primarySurface,
+            constraints: const BoxConstraints(
+              minHeight: adminModalFieldMinHeight,
+            ),
+            suffixIcon: widget.obscureText
+                ? Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: IconButton(
+                      onPressed: () {
+                        setState(() => _isObscured = !_isObscured);
+                      },
+                      icon: Icon(
+                        _isObscured
+                            ? Icons.visibility_off_rounded
+                            : Icons.visibility_rounded,
+                        color: AppColors.primaryColor,
+                      ),
+                    ),
+                  )
+                : null,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: const BorderSide(color: AppColors.primaryBorder),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: const BorderSide(color: AppColors.primaryBorder),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: const BorderSide(color: AppColors.primaryColor),
+            ),
+          ),
         ),
       ),
     );
@@ -1279,11 +1311,11 @@ class _AuthHeaderCameraButton extends StatelessWidget {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: hasSelection
-                ? const Color(0xFFF1EBFF)
-                : appPressablePressed(context)
-                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.28)
-                : appPressableHovered(context)
-                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.16)
+                ? (appPressableActive(context)
+                      ? const Color(0xFFE0D4FF)
+                      : const Color(0xFFF1EBFF))
+                : appPressableActive(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.34)
                 : Colors.white,
             border: Border.all(
               color: hasSelection

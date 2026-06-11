@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_icon_action_button.dart';
 import 'package:webapp/widgets/shared/admin_shell_layout_scope.dart';
 
@@ -90,6 +91,8 @@ class AdminListSearchField extends StatefulWidget {
 
 class _AdminListSearchFieldState extends State<AdminListSearchField> {
   late final TextEditingController _controller;
+  bool _isHovered = false;
+  bool _isPressed = false;
 
   @override
   void initState() {
@@ -116,47 +119,71 @@ class _AdminListSearchFieldState extends State<AdminListSearchField> {
 
   @override
   Widget build(BuildContext context) {
+    final activeFillColor = appFieldInteractiveFillColor(context);
     return SizedBox(
       height: widget.controlHeight,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
-        child: TextField(
-          controller: _controller,
-          onChanged: widget.onChanged,
-          textAlignVertical: TextAlignVertical.center,
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: 'Search',
-            hintStyle: TextStyle(
-              color: AppColors.primaryColor.withValues(alpha: 0.72),
-              fontWeight: FontWeight.w400,
-            ),
-            prefixIcon: const Icon(
-              Icons.search_rounded,
-              color: AppColors.primaryColor,
-            ),
-            prefixIconConstraints: const BoxConstraints(
-              minWidth: 46,
-              minHeight: 46,
-            ),
-            filled: true,
-            fillColor: AppColors.primarySurface,
-            contentPadding: const EdgeInsets.only(
-              top: 18,
-              right: 14,
-              bottom: 18,
-            ),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(widget.surfaceRadius),
-              borderSide: const BorderSide(color: AppColors.primaryBorder),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(widget.surfaceRadius),
-              borderSide: const BorderSide(color: AppColors.primaryBorder),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(widget.surfaceRadius),
-              borderSide: const BorderSide(color: AppColors.primaryColor),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.text,
+          onEnter: (_) => setState(() => _isHovered = true),
+          onExit: (_) => setState(() {
+            _isHovered = false;
+            _isPressed = false;
+          }),
+          child: Listener(
+            onPointerDown: (_) => setState(() => _isPressed = true),
+            onPointerUp: (_) {
+              if (_isPressed) {
+                setState(() => _isPressed = false);
+              }
+            },
+            onPointerCancel: (_) {
+              if (_isPressed) {
+                setState(() => _isPressed = false);
+              }
+            },
+            child: TextField(
+              controller: _controller,
+              onChanged: widget.onChanged,
+              textAlignVertical: TextAlignVertical.center,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Search',
+                hintStyle: TextStyle(
+                  color: AppColors.primaryColor.withValues(alpha: 0.72),
+                  fontWeight: FontWeight.w400,
+                ),
+                prefixIcon: const Icon(
+                  Icons.search_rounded,
+                  color: AppColors.primaryColor,
+                ),
+                prefixIconConstraints: const BoxConstraints(
+                  minWidth: 46,
+                  minHeight: 46,
+                ),
+                filled: true,
+                fillColor: _isHovered || _isPressed
+                    ? activeFillColor
+                    : AppColors.primarySurface,
+                contentPadding: const EdgeInsets.only(
+                  top: 18,
+                  right: 14,
+                  bottom: 18,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(widget.surfaceRadius),
+                  borderSide: const BorderSide(color: AppColors.primaryBorder),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(widget.surfaceRadius),
+                  borderSide: const BorderSide(color: AppColors.primaryBorder),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(widget.surfaceRadius),
+                  borderSide: const BorderSide(color: AppColors.primaryColor),
+                ),
+              ),
             ),
           ),
         ),

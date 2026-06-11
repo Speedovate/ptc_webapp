@@ -7,7 +7,7 @@ import 'package:webapp/view_models/admin/admin_home.vm.dart';
 import 'package:webapp/views/admin/admin_bookings.dart';
 import 'package:webapp/views/admin/admin_dashboard.dart';
 import 'package:webapp/views/admin/admin_fields.dart';
-import 'package:webapp/views/admin/admin_flows.dart';
+import 'package:webapp/views/admin/admin_forms.dart';
 import 'package:webapp/views/admin/admin_statuses.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/views/admin/admin_vehicle_makes.dart';
@@ -200,7 +200,7 @@ class _AdminHomeState extends State<AdminHome> {
                   ),
                   SidebarMenuItem(
                     label: AdminVehiclesSection.types.title,
-                    icon: Icons.category,
+                    icon: Icons.category_rounded,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.vehicles &&
@@ -215,7 +215,7 @@ class _AdminHomeState extends State<AdminHome> {
                   ),
                   SidebarMenuItem(
                     label: AdminVehiclesSection.sizes.title,
-                    icon: Icons.aspect_ratio,
+                    icon: Icons.crop_16_9_rounded,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.vehicles &&
@@ -247,7 +247,7 @@ class _AdminHomeState extends State<AdminHome> {
               ? [
                   SidebarMenuItem(
                     label: AdminSettingsSection.statuses.title,
-                    icon: Icons.flag,
+                    icon: Icons.flag_rounded,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.settings &&
@@ -261,15 +261,15 @@ class _AdminHomeState extends State<AdminHome> {
                     },
                   ),
                   SidebarMenuItem(
-                    label: AdminSettingsSection.flows.title,
-                    icon: Icons.account_tree,
+                    label: AdminSettingsSection.forms.title,
+                    icon: Icons.description_rounded,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.settings &&
                         vm.selectedSettingsSection ==
-                            AdminSettingsSection.flows,
+                            AdminSettingsSection.forms,
                     onTap: () {
-                      vm.selectSettingsSection(AdminSettingsSection.flows);
+                      vm.selectSettingsSection(AdminSettingsSection.forms);
                       if (isCompact) {
                         Navigator.of(context).pop();
                       }
@@ -277,7 +277,7 @@ class _AdminHomeState extends State<AdminHome> {
                   ),
                   SidebarMenuItem(
                     label: AdminSettingsSection.fields.title,
-                    icon: Icons.list_alt,
+                    icon: Icons.list_alt_rounded,
                     isChild: true,
                     isSelected:
                         vm.selectedSection == AdminSection.settings &&
@@ -329,7 +329,7 @@ class _AdminHomeState extends State<AdminHome> {
         AdminVehiclesSection.types => const AdminVehicleTypesView(),
       },
       AdminSection.settings => switch (_viewModel.selectedSettingsSection) {
-        AdminSettingsSection.flows => const AdminFlowsView(),
+        AdminSettingsSection.forms => const AdminFormsView(),
         AdminSettingsSection.fields => const AdminFieldsView(),
         AdminSettingsSection.statuses => const AdminStatusesView(),
       },

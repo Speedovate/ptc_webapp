@@ -72,7 +72,7 @@ class AdminModalFieldSlot extends StatelessWidget {
   }
 }
 
-class AdminModalTextField extends StatelessWidget {
+class AdminModalTextField extends StatefulWidget {
   const AdminModalTextField({
     super.key,
     required this.controller,
@@ -105,23 +105,60 @@ class AdminModalTextField extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
+  State<AdminModalTextField> createState() => _AdminModalTextFieldState();
+}
+
+class _AdminModalTextFieldState extends State<AdminModalTextField> {
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
   Widget build(BuildContext context) {
+    final activeFillColor = appFieldInteractiveFillColor(context);
     return AdminModalFieldSlot(
-      bottomPadding: bottomPadding,
-      child: TextFormField(
-        controller: controller,
-        obscureText: obscureText,
-        readOnly: readOnly,
-        textCapitalization: textCapitalization,
-        inputFormatters: inputFormatters,
-        minLines: minLines,
-        maxLines: maxLines,
-        keyboardType: keyboardType,
-        onTap: onTap,
-        decoration: adminFormInputDecoration(
-          label,
-          hintText: hintText,
-        ).copyWith(suffixIcon: suffixIcon),
+      bottomPadding: widget.bottomPadding,
+      child: MouseRegion(
+        cursor: widget.readOnly && widget.onTap != null
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.text,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() {
+          _isHovered = false;
+          _isPressed = false;
+        }),
+        child: Listener(
+          onPointerDown: (_) => setState(() => _isPressed = true),
+          onPointerUp: (_) {
+            if (_isPressed) {
+              setState(() => _isPressed = false);
+            }
+          },
+          onPointerCancel: (_) {
+            if (_isPressed) {
+              setState(() => _isPressed = false);
+            }
+          },
+          child: TextFormField(
+            controller: widget.controller,
+            obscureText: widget.obscureText,
+            readOnly: widget.readOnly,
+            textCapitalization: widget.textCapitalization,
+            inputFormatters: widget.inputFormatters,
+            minLines: widget.minLines,
+            maxLines: widget.maxLines,
+            keyboardType: widget.keyboardType,
+            onTap: widget.onTap,
+            decoration: adminFormInputDecoration(
+              widget.label,
+              hintText: widget.hintText,
+            ).copyWith(
+              suffixIcon: widget.suffixIcon,
+              fillColor: _isPressed || _isHovered
+                  ? activeFillColor
+                  : AppColors.primarySurface,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -228,7 +265,7 @@ class _AdminModalActionFieldState extends State<AdminModalActionField> {
   }
 }
 
-class AdminModalValueTextField extends StatelessWidget {
+class AdminModalValueTextField extends StatefulWidget {
   const AdminModalValueTextField({
     super.key,
     required this.label,
@@ -251,16 +288,54 @@ class AdminModalValueTextField extends StatelessWidget {
   final TextInputType? keyboardType;
 
   @override
+  State<AdminModalValueTextField> createState() =>
+      _AdminModalValueTextFieldState();
+}
+
+class _AdminModalValueTextFieldState extends State<AdminModalValueTextField> {
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
   Widget build(BuildContext context) {
+    final activeFillColor = appFieldInteractiveFillColor(context);
     return AdminModalFieldSlot(
-      bottomPadding: bottomPadding,
-      child: TextFormField(
-        initialValue: initialValue,
-        minLines: minLines,
-        maxLines: maxLines,
-        keyboardType: keyboardType,
-        decoration: adminFormInputDecoration(label, hintText: hintText),
-        onChanged: onChanged,
+      bottomPadding: widget.bottomPadding,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.text,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() {
+          _isHovered = false;
+          _isPressed = false;
+        }),
+        child: Listener(
+          onPointerDown: (_) => setState(() => _isPressed = true),
+          onPointerUp: (_) {
+            if (_isPressed) {
+              setState(() => _isPressed = false);
+            }
+          },
+          onPointerCancel: (_) {
+            if (_isPressed) {
+              setState(() => _isPressed = false);
+            }
+          },
+          child: TextFormField(
+            initialValue: widget.initialValue,
+            minLines: widget.minLines,
+            maxLines: widget.maxLines,
+            keyboardType: widget.keyboardType,
+            decoration: adminFormInputDecoration(
+              widget.label,
+              hintText: widget.hintText,
+            ).copyWith(
+              fillColor: _isPressed || _isHovered
+                  ? activeFillColor
+                  : AppColors.primarySurface,
+            ),
+            onChanged: widget.onChanged,
+          ),
+        ),
       ),
     );
   }

@@ -151,10 +151,8 @@ class PlatformAppBar extends StatelessWidget {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: appPressablePressed(context)
+                  color: appPressableActive(context)
                       ? Colors.white.withValues(alpha: 0.22)
-                      : appPressableHovered(context)
-                      ? Colors.white.withValues(alpha: 0.16)
                       : Colors.white12,
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(color: Colors.white24),
@@ -237,10 +235,8 @@ class PlatformSidebarBrandTile extends StatelessWidget {
           height: PlatformShell.sidebarHeaderHeight,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: appPressablePressed(context)
+            color: appPressableActive(context)
                 ? AppColors.primarySurfaceAlt.withValues(alpha: 0.32)
-                : appPressableHovered(context)
-                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.16)
                 : Colors.white,
             borderRadius: BorderRadius.circular(20),
           ),

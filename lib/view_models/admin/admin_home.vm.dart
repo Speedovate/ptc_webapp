@@ -15,7 +15,7 @@ enum AdminSection {
 
 enum AdminSettingsSection {
   statuses('Statuses'),
-  flows('Flows'),
+  forms('Forms'),
   fields('Fields');
 
   const AdminSettingsSection(this.title);
