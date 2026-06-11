@@ -17,6 +17,7 @@ import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 
@@ -59,6 +60,7 @@ class AdminUsersView extends StatefulWidget {
 
   static const usersSectionGap = 14.0;
   static const usersHeaderControlHeight = 52.0;
+  static const usersFilterControlHeight = adminFilterFieldMinHeight;
   static const usersSurfaceRadius = 16.0;
 
   static String formatRole(String? role) =>
@@ -129,126 +131,54 @@ class _AdminUsersViewState extends State<AdminUsersView> {
   bool _isUploadingViewedProfilePhoto = false;
   bool _isUploadingViewedLicensePhoto = false;
 
-  Future<void> _uploadViewedUserPhoto(
+  Future<void> _saveViewedUserProfileChanges(
     AdminUsersViewModel vm,
     UserModel user,
+    ProfilePendingProfileChanges changes,
   ) async {
-    if (_isUploadingViewedProfilePhoto) {
+    if ((_isUploadingViewedProfilePhoto || _isUploadingViewedLicensePhoto) ||
+        !changes.hasChanges) {
       return;
     }
     final userId = user.id?.trim();
     if (userId == null || userId.isEmpty) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, 'User ID is required.');
-      return;
-    }
-
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final file = result?.files.singleOrNull;
-    final bytes = file?.bytes;
-    if (file == null || bytes == null) {
-      return;
+      throw const AuthFailure('User ID is required.');
     }
 
     setState(() {
-      _isUploadingViewedProfilePhoto = true;
+      _isUploadingViewedProfilePhoto = changes.photoUpload != null;
+      _isUploadingViewedLicensePhoto = changes.licenseUpload != null;
     });
     try {
-      final updatedUser = await _authRepository.saveUserPhoto(
-        userId: userId,
-        bytes: bytes,
-        fileName: file.name,
-        size: file.size,
-      );
+      var updatedUser = user;
+      final photoUpload = changes.photoUpload;
+      if (photoUpload != null) {
+        updatedUser = await _authRepository.saveUserPhoto(
+          userId: userId,
+          bytes: photoUpload.bytes,
+          fileName: photoUpload.fileName,
+          mimeType: photoUpload.mimeType,
+          size: photoUpload.size,
+        );
+      }
+      final licenseUpload = changes.licenseUpload;
+      if (licenseUpload != null) {
+        updatedUser = await _authRepository.saveDriverLicensePhoto(
+          userId: userId,
+          bytes: licenseUpload.bytes,
+          fileName: licenseUpload.fileName,
+          mimeType: licenseUpload.mimeType,
+          size: licenseUpload.size,
+        );
+      }
       vm.syncUser(updatedUser);
       if (updatedUser.id == widget.user.id) {
         await widget.onCurrentUserUpdated();
       }
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showSuccess(context, 'Profile photo updated.');
-    } on AuthFailure catch (error) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, error.message);
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, 'Failed to upload profile photo.');
     } finally {
       if (mounted) {
         setState(() {
           _isUploadingViewedProfilePhoto = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _uploadViewedUserLicense(
-    AdminUsersViewModel vm,
-    UserModel user,
-  ) async {
-    if (_isUploadingViewedLicensePhoto) {
-      return;
-    }
-    final userId = user.id?.trim();
-    if (userId == null || userId.isEmpty) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, 'User ID is required.');
-      return;
-    }
-
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final file = result?.files.singleOrNull;
-    final bytes = file?.bytes;
-    if (file == null || bytes == null) {
-      return;
-    }
-
-    setState(() {
-      _isUploadingViewedLicensePhoto = true;
-    });
-    try {
-      final updatedUser = await _authRepository.saveDriverLicensePhoto(
-        userId: userId,
-        bytes: bytes,
-        fileName: file.name,
-        size: file.size,
-      );
-      vm.syncUser(updatedUser);
-      if (updatedUser.id == widget.user.id) {
-        await widget.onCurrentUserUpdated();
-      }
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showSuccess(context, 'License photo updated.');
-    } on AuthFailure catch (error) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, error.message);
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, 'Failed to upload license photo.');
-    } finally {
-      if (mounted) {
-        setState(() {
           _isUploadingViewedLicensePhoto = false;
         });
       }
@@ -301,134 +231,156 @@ class _AdminUsersViewState extends State<AdminUsersView> {
 
         if (viewedUser != null) {
           final isViewingCurrentUser = viewedUser.id == widget.user.id;
-          return SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Transform.translate(
-                  offset: const Offset(-12, 0),
-                  child: _UserDetailHeader(
-                    user: viewedUser,
-                    onBack: vm.closeUserView,
+          return AppPageLoadingOverlay(
+            isVisible:
+                vm.isBusy ||
+                _isUploadingViewedProfilePhoto ||
+                _isUploadingViewedLicensePhoto,
+            message: _isUploadingViewedLicensePhoto
+                ? 'Uploading license photo...'
+                : _isUploadingViewedProfilePhoto
+                ? 'Uploading profile photo...'
+                : vm.busyMessage,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Transform.translate(
+                    offset: const Offset(-12, 0),
+                    child: _UserDetailHeader(
+                      user: viewedUser,
+                      onBack: vm.closeUserView,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                ProfileView(
-                  user: viewedUser,
-                  scrollable: false,
-                  padding: const EdgeInsets.fromLTRB(0, 0, 0, 24),
-                  isCurrentUserView: isViewingCurrentUser,
-                  onLogout: widget.onLogout,
-                  logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-                  onChangePhotoPressed: isViewingCurrentUser
-                      ? () => _uploadViewedUserPhoto(vm, viewedUser)
-                      : null,
-                  onChangeLicensePressed:
-                      isViewingCurrentUser && viewedUser.role == 'driver'
-                      ? () => _uploadViewedUserLicense(vm, viewedUser)
-                      : null,
-                  onQuickActionPressed: isViewingCurrentUser
-                      ? null
-                      : () async {
-                          try {
-                            await vm.loginAsUser(viewedUser);
-                            if (!context.mounted) {
-                              return;
+                  const SizedBox(height: 16),
+                  ProfileView(
+                    user: viewedUser,
+                    scrollable: false,
+                    padding: const EdgeInsets.fromLTRB(0, 0, 0, 24),
+                    isCurrentUserView: isViewingCurrentUser,
+                    onLogout: widget.onLogout,
+                    logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
+                    onSaveProfileChanges: isViewingCurrentUser
+                        ? (changes) => _saveViewedUserProfileChanges(
+                            vm,
+                            viewedUser,
+                            changes,
+                          )
+                        : null,
+                    onQuickActionPressed: isViewingCurrentUser
+                        ? null
+                        : () async {
+                            try {
+                              await vm.loginAsUser(viewedUser);
+                              if (!context.mounted) {
+                                return;
+                              }
+                              await widget.onCurrentUserUpdated();
+                            } on AuthFailure catch (error) {
+                              if (!context.mounted) {
+                                return;
+                              }
+                              AppSnackbar.showError(context, error.message);
                             }
-                            await widget.onCurrentUserUpdated();
-                          } on AuthFailure catch (error) {
-                            if (!context.mounted) {
-                              return;
-                            }
-                            AppSnackbar.showError(context, error.message);
-                          }
-                        },
-                  quickActionLabel: isViewingCurrentUser ? null : 'Sign In',
-                  onEditPressed: () {
-                    vm.closeUserView();
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (!mounted) {
-                        return;
-                      }
-                      AdminUsersView.showEditUserDialog(
-                        context,
-                        vm,
-                        viewedUser,
-                        widget.onCurrentUserUpdated,
-                      );
-                    });
-                  },
-                ),
-              ],
+                          },
+                    quickActionLabel: isViewingCurrentUser ? null : 'Sign In',
+                    onEditPressed: () {
+                      vm.closeUserView();
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) {
+                          return;
+                        }
+                        AdminUsersView.showEditUserDialog(
+                          context,
+                          vm,
+                          viewedUser,
+                          widget.onCurrentUserUpdated,
+                        );
+                      });
+                    },
+                  ),
+                ],
+              ),
             ),
           );
         }
 
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final isNarrow = constraints.maxWidth < 900;
-            final hasAnyData = vm.users.isNotEmpty;
-            final hasSearch = vm.searchQuery.trim().isNotEmpty;
-            final activeFilterCount = [
-              vm.roleFilter != 'All',
-              vm.activeFilter != 'All',
-              vm.onlineFilter != 'All',
-              vm.startDate != null,
-              vm.endDate != null,
-            ].where((isActive) => isActive).length;
-            final emptyMessage = hasAnyData
-                ? AdminUsersView.buildEmptyStateMessage(
-                    noun: 'users',
-                    hasSearch: hasSearch,
-                    activeFilterCount: activeFilterCount,
-                  )
-                : 'No users yet.';
+        return AppPageLoadingOverlay(
+          isVisible:
+              vm.isBusy ||
+              _isUploadingViewedProfilePhoto ||
+              _isUploadingViewedLicensePhoto,
+          message: _isUploadingViewedLicensePhoto
+              ? 'Uploading license photo...'
+              : _isUploadingViewedProfilePhoto
+              ? 'Uploading profile photo...'
+              : vm.busyMessage,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 900;
+              final hasAnyData = vm.users.isNotEmpty;
+              final hasSearch = vm.searchQuery.trim().isNotEmpty;
+              final activeFilterCount = [
+                vm.roleFilter != 'All',
+                vm.activeFilter != 'All',
+                vm.onlineFilter != 'All',
+                vm.startDate != null,
+                vm.endDate != null,
+              ].where((isActive) => isActive).length;
+              final emptyMessage = hasAnyData
+                  ? AdminUsersView.buildEmptyStateMessage(
+                      noun: 'users',
+                      hasSearch: hasSearch,
+                      activeFilterCount: activeFilterCount,
+                    )
+                  : 'No users yet.';
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AppRefreshStrip(isVisible: vm.isBusy),
-                  _UsersToolbar(vm: vm),
-                  const SizedBox(height: AdminUsersView.usersSectionGap),
-                  if (isNarrow)
-                    if (filteredUsers.isNotEmpty)
-                      Column(
-                        children: filteredUsers
-                            .map(
-                              (item) => Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: SizedBox(
-                                  width: double.infinity,
-                                  child: _UsersResponsiveCard(
-                                    user: item,
-                                    vm: vm,
-                                    onCurrentUserUpdated:
-                                        widget.onCurrentUserUpdated,
+              return SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppRefreshStrip(isVisible: vm.isBusy),
+                    _UsersToolbar(vm: vm),
+                    const SizedBox(height: AdminUsersView.usersSectionGap),
+                    if (isNarrow)
+                      if (filteredUsers.isNotEmpty)
+                        Column(
+                          children: filteredUsers
+                              .map(
+                                (item) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: SizedBox(
+                                    width: double.infinity,
+                                    child: _UsersResponsiveCard(
+                                      user: item,
+                                      vm: vm,
+                                      onCurrentUserUpdated:
+                                          widget.onCurrentUserUpdated,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            )
-                            .toList(),
-                      )
+                              )
+                              .toList(),
+                        )
+                      else
+                        SizedBox(
+                          width: double.infinity,
+                          child: _UsersEmptyState(message: emptyMessage),
+                        )
                     else
-                      SizedBox(
-                        width: double.infinity,
-                        child: _UsersEmptyState(message: emptyMessage),
-                      )
-                  else
-                    _UsersTable(
-                      users: filteredUsers,
-                      emptyMessage: emptyMessage,
-                      vm: vm,
-                      onCurrentUserUpdated: widget.onCurrentUserUpdated,
-                    ),
-                ],
-              ),
-            );
-          },
+                      _UsersTable(
+                        users: filteredUsers,
+                        emptyMessage: emptyMessage,
+                        vm: vm,
+                        onCurrentUserUpdated: widget.onCurrentUserUpdated,
+                      ),
+                  ],
+                ),
+              );
+            },
+          ),
         );
       },
     );
@@ -565,7 +517,11 @@ class _AdminUsersViewState extends State<AdminUsersView> {
 
     if (editedUser != null && context.mounted) {
       var savedUser = await vm.updateUser(editedUser.user);
-      savedUser = await _applyPendingUserImageUploads(vm, savedUser, editedUser);
+      savedUser = await _applyPendingUserImageUploads(
+        vm,
+        savedUser,
+        editedUser,
+      );
       if (!context.mounted) {
         return;
       }
@@ -831,7 +787,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     final subjectLabel = roleLabel == '-' ? 'User' : roleLabel;
     final idLabel = user?.id?.trim() ?? '';
 
-    if (idLabel.isNotEmpty) {
+    if (action == 'Edit' && idLabel.isNotEmpty) {
       return '$action $subjectLabel $idLabel';
     }
     return '$action $subjectLabel';
@@ -954,7 +910,7 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
     final itemWidth = contentWidth;
 
     return AdminListFiltersButton(
-      controlHeight: AdminUsersView.usersHeaderControlHeight,
+      controlHeight: AdminUsersView.usersFilterControlHeight,
       surfaceRadius: AdminUsersView.usersSurfaceRadius,
       iconOnly: widget.iconOnly,
       menuChildren: [
@@ -970,7 +926,7 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
                 children: [
                   SizedBox(
                     width: itemWidth,
-                    height: AdminUsersView.usersHeaderControlHeight,
+                    height: AdminUsersView.usersFilterControlHeight,
                     child: _UsersFilterDropdown(
                       label: 'Role',
                       value: widget.vm.roleFilter,
@@ -979,10 +935,10 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
                       onChanged: widget.vm.updateRoleFilter,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: AdminUsersView.usersHeaderControlHeight,
+                    height: AdminUsersView.usersFilterControlHeight,
                     child: _UsersFilterDropdown(
                       label: 'Is Active',
                       value: widget.vm.activeFilter,
@@ -991,10 +947,10 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
                       onChanged: widget.vm.updateActiveFilter,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: AdminUsersView.usersHeaderControlHeight,
+                    height: AdminUsersView.usersFilterControlHeight,
                     child: _UsersFilterDropdown(
                       label: 'Is Online',
                       value: widget.vm.onlineFilter,
@@ -1003,10 +959,10 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
                       onChanged: widget.vm.updateOnlineFilter,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: AdminUsersView.usersHeaderControlHeight,
+                    height: AdminUsersView.usersFilterControlHeight,
                     child: _UsersDateFilter(
                       label: 'Start Date',
                       value: widget.vm.startDate,
@@ -1014,10 +970,10 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
                       onSelected: widget.vm.updateStartDate,
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: AdminUsersView.usersHeaderControlHeight,
+                    height: AdminUsersView.usersFilterControlHeight,
                     child: _UsersDateFilter(
                       label: 'End Date',
                       value: widget.vm.endDate,
@@ -1025,10 +981,10 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
                       onSelected: widget.vm.updateEndDate,
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: AdminUsersView.usersHeaderControlHeight,
+                    height: AdminUsersView.usersFilterControlHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
@@ -1099,7 +1055,7 @@ class _UsersFilterDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: AdminUsersView.usersHeaderControlHeight,
+      height: AdminUsersView.usersFilterControlHeight,
       child: AdminDropdownFormField<String>(
         initialValue: value == 'All' ? null : value,
         focusNode: focusNode,
@@ -1108,6 +1064,7 @@ class _UsersFilterDropdown extends StatelessWidget {
         decoration: adminFormInputDecoration(
           label,
           radius: AdminUsersView.usersSurfaceRadius,
+          minHeight: AdminUsersView.usersFilterControlHeight,
         ),
         items: items
             .where((item) => item != 'All')
@@ -1131,7 +1088,7 @@ class _UsersFilterDropdown extends StatelessWidget {
   }
 }
 
-class _UsersDateFilter extends StatelessWidget {
+class _UsersDateFilter extends StatefulWidget {
   const _UsersDateFilter({
     required this.label,
     required this.value,
@@ -1145,57 +1102,112 @@ class _UsersDateFilter extends StatelessWidget {
   final ValueChanged<DateTime?> onSelected;
 
   @override
+  State<_UsersDateFilter> createState() => _UsersDateFilterState();
+}
+
+class _UsersDateFilterState extends State<_UsersDateFilter> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _displayValue);
+    _focusNode = FocusNode()..canRequestFocus = false;
+  }
+
+  @override
+  void didUpdateWidget(covariant _UsersDateFilter oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_controller.text != _displayValue) {
+      _controller.value = _controller.value.copyWith(
+        text: _displayValue,
+        selection: TextSelection.collapsed(offset: _displayValue.length),
+        composing: TextRange.empty,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  String get _displayValue =>
+      widget.value == null ? '' : widget.formatter(widget.value);
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: widget.value ?? now,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (context.mounted) {
+      widget.onSelected(picked);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final activeFillColor = appFieldInteractiveFillColor(context);
     return SizedBox(
-      height: AdminUsersView.usersHeaderControlHeight,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AdminUsersView.usersSurfaceRadius),
-        onTap: () async {
-          final now = DateTime.now();
-          final picked = await showDatePicker(
-            context: context,
-            initialDate: value ?? now,
-            firstDate: DateTime(2000),
-            lastDate: DateTime(2100),
-          );
-          if (context.mounted) {
-            onSelected(picked);
-          }
-        },
-        child: InputDecorator(
-          isEmpty: value == null,
-          isFocused: false,
-          decoration:
-              adminFormInputDecoration(
-                label,
-                radius: AdminUsersView.usersSurfaceRadius,
-              ).copyWith(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 16,
-                ),
-                suffixIcon: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: value == null ? null : () => onSelected(null),
-                  child: Icon(
-                    value == null
-                        ? Icons.calendar_today_rounded
-                        : Icons.close_rounded,
-                    size: 18,
-                    color: AppColors.primaryColor,
-                  ),
-                ),
-                suffixIconConstraints: const BoxConstraints(
-                  minWidth: 42,
-                  minHeight: 42,
-                ),
+      height: AdminUsersView.usersFilterControlHeight,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() {
+          _isHovered = false;
+          _isPressed = false;
+        }),
+        child: Listener(
+          onPointerDown: (_) => setState(() => _isPressed = true),
+          onPointerUp: (_) => setState(() => _isPressed = false),
+          onPointerCancel: (_) => setState(() => _isPressed = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _pickDate,
+            child: IgnorePointer(
+              child: TextFormField(
+                controller: _controller,
+                focusNode: _focusNode,
+                readOnly: true,
+                showCursor: false,
+                enableInteractiveSelection: false,
+                style: adminDropdownDisplayTextStyle,
+                decoration:
+                    adminFormInputDecoration(
+                      widget.label,
+                      radius: AdminUsersView.usersSurfaceRadius,
+                      minHeight: AdminUsersView.usersFilterControlHeight,
+                    ).copyWith(
+                      fillColor: _isHovered || _isPressed
+                          ? activeFillColor
+                          : AppColors.primarySurface,
+                      suffixIcon: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: widget.value == null
+                            ? _pickDate
+                            : () => widget.onSelected(null),
+                        child: Icon(
+                          widget.value == null
+                              ? Icons.calendar_today_rounded
+                              : Icons.close_rounded,
+                          size: 18,
+                          color: AppColors.primaryColor,
+                        ),
+                      ),
+                      suffixIconConstraints: const BoxConstraints(
+                        minWidth: 42,
+                        minHeight: 42,
+                      ),
+                    ),
               ),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              value == null ? '' : formatter(value),
-              overflow: TextOverflow.ellipsis,
-              style: adminDropdownDisplayTextStyle,
             ),
           ),
         ),
@@ -2278,7 +2290,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
             final selectedVehicleType = _vehicleTypes.where(
               (item) => item.id == _vehicleTypeId,
             );
-            final fallbackVehicleType = widget.initialUser?.asDriver?.vehicleType;
+            final fallbackVehicleType =
+                widget.initialUser?.asDriver?.vehicleType;
             Navigator.of(context).pop(
               _UserFormDialogResult(
                 user: baseUser.copyWith(
@@ -2335,7 +2348,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                       label: 'Role',
                       initialValue: _roleValue,
                       iconEnabledColor: AppColors.primaryColor,
-                      bottomPadding: 8,
+                      bottomPadding: 6,
                       items: _roleOptions
                           .map(
                             (role) => DropdownMenuItem<String>(
@@ -2361,15 +2374,16 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                         label: 'Vehicle Type',
                         initialValue: _vehicleTypeId,
                         iconEnabledColor: AppColors.primaryColor,
-                        bottomPadding: 8,
-                        disabledTapMessage: 'No active vehicle types available.',
+                        bottomPadding: 6,
+                        disabledTapMessage:
+                            'No active vehicle types available.',
                         items: _vehicleTypeDropdownItems(),
                         onChanged: (value) => setState(() {
                           _vehicleTypeId = value;
                           _handleDraftChanged();
                         }),
-                    ),
-                    _buildField(_emailController, 'Email', bottomPadding: 2),
+                      ),
+                    _buildField(_emailController, 'Email', bottomPadding: 4),
                     _buildField(_nameController, 'Name'),
                     _buildUploadField(
                       label: 'Photo',
@@ -2537,17 +2551,20 @@ class _UserFormDialogState extends State<_UserFormDialog> {
           : null,
       bottomPadding: bottomPadding,
       suffixIcon: obscureText
-          ? IconButton(
-              onPressed: () {
-                setState(() {
-                  _isPasswordObscured = !_isPasswordObscured;
-                });
-              },
-              icon: Icon(
-                _isPasswordObscured
-                    ? Icons.visibility_off_rounded
-                    : Icons.visibility_rounded,
-                color: AppColors.primaryColor,
+          ? Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: IconButton(
+                onPressed: () {
+                  setState(() {
+                    _isPasswordObscured = !_isPasswordObscured;
+                  });
+                },
+                icon: Icon(
+                  _isPasswordObscured
+                      ? Icons.visibility_off_rounded
+                      : Icons.visibility_rounded,
+                  color: AppColors.primaryColor,
+                ),
               ),
             )
           : null,
@@ -2566,9 +2583,9 @@ class _UserFormDialogState extends State<_UserFormDialog> {
       hintText: '',
       bottomPadding: bottomPadding,
       onTap: onTap,
-      suffixIcon: const Icon(
-        Icons.upload_rounded,
-        color: AppColors.primaryColor,
+      suffixIcon: const Padding(
+        padding: EdgeInsets.only(right: 6),
+        child: Icon(Icons.upload_rounded, color: AppColors.primaryColor),
       ),
     );
   }

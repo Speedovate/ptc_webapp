@@ -8,6 +8,8 @@ class FirestoreCacheStore {
   FirestoreCacheStore._();
 
   static final FirestoreCacheStore instance = FirestoreCacheStore._();
+  static const _dataPrefix = 'firestore_cache_data_';
+  static const _versionPrefix = 'firestore_cache_version_';
 
   SharedPreferences? _prefs;
   final Map<String, List<Map<String, dynamic>>> _documentMemoryCache = {};
@@ -82,9 +84,20 @@ class FirestoreCacheStore {
     await _prefs!.remove(_versionKey(resourceKey));
   }
 
-  String _dataKey(String resourceKey) => 'firestore_cache_data_$resourceKey';
-  String _versionKey(String resourceKey) =>
-      'firestore_cache_version_$resourceKey';
+  Future<void> clearAll() async {
+    _documentMemoryCache.clear();
+    _versionMemoryCache.clear();
+    await _ensurePrefs();
+    final keysToRemove = _prefs!.getKeys().where((key) {
+      return key.startsWith(_dataPrefix) || key.startsWith(_versionPrefix);
+    }).toList();
+    for (final key in keysToRemove) {
+      await _prefs!.remove(key);
+    }
+  }
+
+  String _dataKey(String resourceKey) => '$_dataPrefix$resourceKey';
+  String _versionKey(String resourceKey) => '$_versionPrefix$resourceKey';
 }
 
 class FirestoreCollectionCache {

@@ -9,6 +9,7 @@ import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 
 class AdminVehicleSizesView extends StatefulWidget {
@@ -19,6 +20,7 @@ class AdminVehicleSizesView extends StatefulWidget {
 }
 
 class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
+  static const _toolbarControlHeight = 52.0;
   String _searchQuery = '';
   String _activeFilter = 'All';
   AdminVehicleSizesViewModel? _vm;
@@ -142,81 +144,87 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
                 12;
             final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AppRefreshStrip(isVisible: vm.isBusy),
-                  AdminListToolbar(
-                    controlHeight: 52,
-                    surfaceRadius: 16,
-                    search: AdminListSearchField(
-                      controlHeight: 52,
+            return AppPageLoadingOverlay(
+              isVisible: vm.isBusy,
+              message: vm.busyMessage,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppRefreshStrip(isVisible: vm.isBusy),
+                    AdminListToolbar(
+                      controlHeight: _toolbarControlHeight,
                       surfaceRadius: 16,
-                      initialValue: _searchQuery,
-                      onChanged: (value) {
-                        setState(() {
-                          _searchQuery = value;
-                        });
-                      },
-                    ),
-                    filtersBuilder: (context, iconOnly) => _CatalogFiltersPanel(
-                      iconOnly: iconOnly,
-                      activeFilter: _activeFilter,
-                      onActiveChanged: (value) {
-                        setState(() {
-                          _activeFilter = value;
-                        });
-                      },
-                    ),
-                    onNewPressed: () {
-                      _handleNew(vm);
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  if (vm.errorMessage != null)
-                    AdminListStateText(message: vm.errorMessage!)
-                  else if (vm.sizes.isEmpty)
-                    const _VehicleSizeEmptyState(
-                      message: 'No vehicle sizes yet.',
-                    )
-                  else if (filteredSizes.isEmpty)
-                    const _VehicleSizeEmptyState(
-                      message: 'No vehicle sizes matched your current search.',
-                    )
-                  else ...[
-                    if (useWideTable)
-                      _VehicleSizeHeaderRow(
-                        idWidth: resolvedIdWidth,
-                        nameWidth: resolvedNameWidth,
-                        slugWidth: resolvedSlugWidth,
-                        activeWidth: resolvedActiveWidth,
-                        actionsWidth: resolvedActionsWidth,
+                      search: AdminListSearchField(
+                        controlHeight: _toolbarControlHeight,
+                        surfaceRadius: 16,
+                        initialValue: _searchQuery,
+                        onChanged: (value) {
+                          setState(() {
+                            _searchQuery = value;
+                          });
+                        },
                       ),
-                    if (useWideTable) const SizedBox(height: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: filteredSizes
-                          .map(
-                            (item) => Padding(
-                              padding: const EdgeInsets.only(bottom: 14),
-                              child: useWideTable
-                                  ? _VehicleSizeDesktopRow(
-                                      item: item,
-                                      idWidth: resolvedIdWidth,
-                                      nameWidth: resolvedNameWidth,
-                                      slugWidth: resolvedSlugWidth,
-                                      activeWidth: resolvedActiveWidth,
-                                      actionsWidth: resolvedActionsWidth,
-                                    )
-                                  : _VehicleSizeResponsiveCard(item: item),
-                            ),
-                          )
-                          .toList(),
+                      filtersBuilder: (context, iconOnly) =>
+                          _CatalogFiltersPanel(
+                            iconOnly: iconOnly,
+                            activeFilter: _activeFilter,
+                            onActiveChanged: (value) {
+                              setState(() {
+                                _activeFilter = value;
+                              });
+                            },
+                          ),
+                      onNewPressed: () {
+                        _handleNew(vm);
+                      },
                     ),
+                    const SizedBox(height: 14),
+                    if (vm.errorMessage != null)
+                      AdminListStateText(message: vm.errorMessage!)
+                    else if (vm.sizes.isEmpty)
+                      const _VehicleSizeEmptyState(
+                        message: 'No vehicle sizes yet.',
+                      )
+                    else if (filteredSizes.isEmpty)
+                      const _VehicleSizeEmptyState(
+                        message:
+                            'No vehicle sizes matched your current search.',
+                      )
+                    else ...[
+                      if (useWideTable)
+                        _VehicleSizeHeaderRow(
+                          idWidth: resolvedIdWidth,
+                          nameWidth: resolvedNameWidth,
+                          slugWidth: resolvedSlugWidth,
+                          activeWidth: resolvedActiveWidth,
+                          actionsWidth: resolvedActionsWidth,
+                        ),
+                      if (useWideTable) const SizedBox(height: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: filteredSizes
+                            .map(
+                              (item) => Padding(
+                                padding: const EdgeInsets.only(bottom: 14),
+                                child: useWideTable
+                                    ? _VehicleSizeDesktopRow(
+                                        item: item,
+                                        idWidth: resolvedIdWidth,
+                                        nameWidth: resolvedNameWidth,
+                                        slugWidth: resolvedSlugWidth,
+                                        activeWidth: resolvedActiveWidth,
+                                        actionsWidth: resolvedActionsWidth,
+                                      )
+                                    : _VehicleSizeResponsiveCard(item: item),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             );
           },
@@ -709,7 +717,7 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
     );
 
     return AdminListFiltersButton(
-      controlHeight: 52,
+      controlHeight: adminFilterFieldMinHeight,
       surfaceRadius: 16,
       iconOnly: widget.iconOnly,
       menuChildren: [
@@ -725,7 +733,7 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
                 children: [
                   SizedBox(
                     width: contentWidth,
-                    height: 52,
+                    height: adminFilterFieldMinHeight,
                     child: _CatalogFilterDropdown(
                       label: 'Is Active',
                       value: widget.activeFilter,
@@ -734,10 +742,10 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
                       onChanged: widget.onActiveChanged,
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: contentWidth,
-                    height: 52,
+                    height: adminFilterFieldMinHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
@@ -788,7 +796,11 @@ class _CatalogFilterDropdown extends StatelessWidget {
       focusNode: focusNode,
       iconEnabledColor: AppColors.primaryColor,
       style: adminDropdownDisplayTextStyle,
-      decoration: adminFormInputDecoration(label, radius: 16),
+      decoration: adminFormInputDecoration(
+        label,
+        radius: 16,
+        minHeight: adminFilterFieldMinHeight,
+      ),
       items: items
           .where((item) => item != 'All')
           .map(

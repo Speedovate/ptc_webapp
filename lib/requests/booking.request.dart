@@ -32,8 +32,10 @@ class BookingRequest implements BookingRepository {
 
   @override
   Future<List<Booking>> getBookings() async {
-    final snapshot = await _bookingsCollection.get();
-    return _inflateBookings(snapshot.docs.map(documentData).toList());
+    return _runRequest(() async {
+      final snapshot = await _bookingsCollection.get();
+      return _inflateBookings(snapshot.docs.map(documentData).toList());
+    }, fallback: 'We could not load the bookings right now.');
   }
 
   @override
@@ -45,29 +47,38 @@ class BookingRequest implements BookingRepository {
 
   @override
   Future<List<Booking>> getBookingsForClient(String clientId) async {
-    final bookings = await getBookings();
-    return bookings.where((booking) => booking.client?.id == clientId).toList();
+    return _runRequest(() async {
+      final bookings = await getBookings();
+      return bookings
+          .where((booking) => booking.client?.id == clientId)
+          .toList();
+    }, fallback: 'We could not load the bookings right now.');
   }
 
   @override
   Future<Booking> saveBooking(Booking booking) async {
-    final existingBookings = await getBookings();
-    final nextId = normalizeId(booking.id) ?? _nextBookingId(existingBookings);
-    final existingBooking = existingBookings.where((item) => item.id == nextId).firstOrNull;
-    final now = DateTime.now();
-    final persistedStatusOutputs = await _persistPhotoFields(
-      booking.statusOutputs,
-      bookingId: nextId,
-      existingStatusOutputs: existingBooking?.statusOutputs,
-    );
-    final saved = booking.copyWith(
-      id: nextId,
-      createdAt: booking.createdAt ?? now,
-      statusOutputs: persistedStatusOutputs,
-      updatedAt: now,
-    );
-    await _bookingsCollection.doc(nextId).set(_toFirestoreMap(saved));
-    return saved;
+    return _runRequest(() async {
+      final existingBookings = await getBookings();
+      final nextId =
+          normalizeId(booking.id) ?? _nextBookingId(existingBookings);
+      final existingBooking = existingBookings
+          .where((item) => item.id == nextId)
+          .firstOrNull;
+      final now = DateTime.now();
+      final persistedStatusOutputs = await _persistPhotoFields(
+        booking.statusOutputs,
+        bookingId: nextId,
+        existingStatusOutputs: existingBooking?.statusOutputs,
+      );
+      final saved = booking.copyWith(
+        id: nextId,
+        createdAt: booking.createdAt ?? now,
+        statusOutputs: persistedStatusOutputs,
+        updatedAt: now,
+      );
+      await _bookingsCollection.doc(nextId).set(_toFirestoreMap(saved));
+      return saved;
+    }, fallback: 'We could not save the booking right now.');
   }
 
   Future<Map<String, dynamic>?> _persistPhotoFields(
@@ -291,5 +302,18 @@ class BookingRequest implements BookingRepository {
       return value.toInt();
     }
     return int.tryParse(value.toString());
+  }
+
+  Future<T> _runRequest<T>(
+    Future<T> Function() action, {
+    required String fallback,
+  }) async {
+    try {
+      return await action();
+    } on FirebaseException catch (error) {
+      throw Exception(userFacingErrorMessage(error, fallback: fallback));
+    } catch (error) {
+      throw Exception(userFacingErrorMessage(error, fallback: fallback));
+    }
   }
 }

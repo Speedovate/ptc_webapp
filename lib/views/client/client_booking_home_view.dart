@@ -6,6 +6,7 @@ import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/view_models/client/client_booking_home.vm.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/booking_form_primitives.dart';
@@ -132,44 +133,56 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
         _viewModel = vm;
         final loadError = vm.loadError;
         if (loadError != null) {
-          return _ClientBookingStateCard(
-            scrollable: widget.scrollable,
-            padding: widget.padding,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AppRefreshStrip(isVisible: vm.isBusyLoading),
-                Text(
-                  loadError,
-                  style: TextStyle(
-                    color: AppColors.primaryColor.withValues(alpha: 0.72),
-                    fontWeight: FontWeight.w600,
+          return AppPageLoadingOverlay(
+            isVisible: vm.isBusyLoading || vm.isSubmitting,
+            message: vm.isSubmitting
+                ? 'Submitting booking...'
+                : 'Loading booking form...',
+            child: _ClientBookingStateCard(
+              scrollable: widget.scrollable,
+              padding: widget.padding,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AppRefreshStrip(isVisible: vm.isBusyLoading),
+                  Text(
+                    loadError,
+                    style: TextStyle(
+                      color: AppColors.primaryColor.withValues(alpha: 0.72),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         }
 
         final form = vm.form;
         if (form == null || vm.mainForms.isEmpty) {
-          return _ClientBookingStateCard(
-            scrollable: widget.scrollable,
-            padding: widget.padding,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AppRefreshStrip(isVisible: vm.isBusyLoading),
-                Text(
-                  vm.isBusyLoading
-                      ? 'Preparing booking form...'
-                      : 'No client booking form available yet.',
-                  style: TextStyle(
-                    color: AppColors.primaryColor.withValues(alpha: 0.72),
-                    fontWeight: FontWeight.w600,
+          return AppPageLoadingOverlay(
+            isVisible: vm.isBusyLoading || vm.isSubmitting,
+            message: vm.isSubmitting
+                ? 'Submitting booking...'
+                : 'Loading booking form...',
+            child: _ClientBookingStateCard(
+              scrollable: widget.scrollable,
+              padding: widget.padding,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AppRefreshStrip(isVisible: vm.isBusyLoading),
+                  Text(
+                    vm.isBusyLoading
+                        ? 'Preparing booking form...'
+                        : 'No client booking form available yet.',
+                    style: TextStyle(
+                      color: AppColors.primaryColor.withValues(alpha: 0.72),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         }
@@ -197,9 +210,16 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
           ],
         );
 
-        return widget.scrollable
+        final scaffold = widget.scrollable
             ? SingleChildScrollView(padding: widget.padding, child: content)
             : Padding(padding: widget.padding, child: content);
+        return AppPageLoadingOverlay(
+          isVisible: vm.isBusyLoading || vm.isSubmitting,
+          message: vm.isSubmitting
+              ? 'Submitting booking...'
+              : 'Loading booking form...',
+          child: scaffold,
+        );
       },
     );
   }

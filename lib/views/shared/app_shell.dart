@@ -7,6 +7,7 @@ import 'package:webapp/views/auth/auth_view.dart';
 import 'package:webapp/views/client/client_home.dart';
 import 'package:webapp/views/driver/driver_home.dart';
 import 'package:webapp/views/helper/helper_home.dart';
+import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/in_app_browser_guard.dart';
 
 class AppShell extends StatelessWidget {
@@ -19,7 +20,7 @@ class AppShell extends StatelessWidget {
       onViewModelReady: (vm) => vm.initialize(),
       builder: (context, vm, child) {
         final content = vm.currentUser == null
-            ? AuthView(onAuthenticated: (_) => vm.refreshCurrentUser())
+            ? AuthView(onAuthenticated: vm.completeAuthentication)
             : _buildRoleHome(
                 vm.currentUser!,
                 isQuickLoggedIn: vm.isQuickLoggedIn,
@@ -27,6 +28,19 @@ class AppShell extends StatelessWidget {
                   await vm.refreshCurrentUser();
                 },
                 onLogout: () async {
+                  final isQuickLoggedIn = vm.isQuickLoggedIn;
+                  final confirmed = await showAdminActionConfirmation(
+                    context,
+                    title: isQuickLoggedIn ? 'Go Back?' : 'Logout?',
+                    message: isQuickLoggedIn
+                        ? 'Are you sure you want to go back to your previous account?'
+                        : 'Are you sure you want to log out of your account?',
+                    confirmLabel: isQuickLoggedIn ? 'Go Back' : 'Logout',
+                    isDanger: !isQuickLoggedIn,
+                  );
+                  if (!confirmed) {
+                    return;
+                  }
                   if (vm.isQuickLoggedIn) {
                     await vm.goBackFromQuickLogin();
                     return;

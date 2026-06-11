@@ -9,7 +9,9 @@ import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 
@@ -163,14 +165,18 @@ class AdminStatusesView extends StatelessWidget {
       viewModelBuilder: AdminFlowViewModel.new,
       onViewModelReady: (vm) => vm.loadForms(),
       builder: (context, vm, child) {
-        return Column(
-          children: [
-            AppRefreshStrip(
-              isVisible: vm.isLoading,
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-            ),
-            Expanded(child: _StatusesContent(vm: vm)),
-          ],
+        return AppPageLoadingOverlay(
+          isVisible: vm.isLoading,
+          message: vm.busyMessage,
+          child: Column(
+            children: [
+              AppRefreshStrip(
+                isVisible: vm.isLoading,
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+              ),
+              Expanded(child: _StatusesContent(vm: vm)),
+            ],
+          ),
         );
       },
     );
@@ -211,11 +217,17 @@ class AdminStatusesView extends StatelessWidget {
             originalStatus: initialStatus,
           ),
         );
-      } catch (_) {
+      } catch (error) {
         if (!context.mounted) {
           return;
         }
-        AppSnackbar.showError(context, 'Failed to save status.');
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'We could not save the status right now.',
+          ),
+        );
       }
     }
   }
@@ -501,7 +513,7 @@ class _StatusesFiltersPanelState extends State<_StatusesFiltersPanel> {
                       onChanged: widget.onRoleChanged,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
                     height: AdminStatusesView.controlHeight,
@@ -513,7 +525,7 @@ class _StatusesFiltersPanelState extends State<_StatusesFiltersPanel> {
                       onChanged: widget.onActiveChanged,
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
                     height: AdminStatusesView.controlHeight,
@@ -575,6 +587,7 @@ class _StatusesFilterDropdown extends StatelessWidget {
       decoration: adminFormInputDecoration(
         label,
         radius: AdminStatusesView.surfaceRadius,
+        minHeight: AdminStatusesView.controlHeight,
       ),
       items: items
           .where((item) => item != 'All')
@@ -1419,15 +1432,19 @@ class _ApplicableRoleChip extends StatelessWidget {
     final backgroundColor = selected ? AppColors.primarySurface : Colors.white;
     final textColor = selected ? AppColors.primaryColor : AppColors.textPrimary;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Ink(
+    return AppMousePressable(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Builder(
+        builder: (context) => AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: backgroundColor,
+            color: appPressablePressed(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.34)
+                : appPressableHovered(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.2)
+                : backgroundColor,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(color: borderColor),
           ),

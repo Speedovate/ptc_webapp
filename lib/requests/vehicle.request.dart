@@ -32,109 +32,119 @@ class VehicleRequest implements VehicleCatalogRepository {
 
   @override
   Future<List<VehicleMake>> getMakes() async {
-    final snapshots = await Future.wait([
-      _cache.getDocuments(
-        resourceKey: _vehicleMakesResourceKey,
+    return _runRequest(() async {
+      final snapshots = await Future.wait([
+        _cache.getDocuments(
+          resourceKey: _vehicleMakesResourceKey,
+          fetchDocuments: () async {
+            final snapshot = await _makesCollection.get();
+            return snapshot.docs.map(documentData).toList();
+          },
+        ),
+        _cache.getDocuments(
+          resourceKey: _vehicleTypesResourceKey,
+          fetchDocuments: () async {
+            final snapshot = await _typesCollection.get();
+            return snapshot.docs.map(documentData).toList();
+          },
+        ),
+        _cache.getDocuments(
+          resourceKey: _usersResourceKey,
+          fetchDocuments: () async {
+            final snapshot = await _usersCollection.get();
+            return snapshot.docs.map(documentData).toList();
+          },
+        ),
+      ]);
+      final typeById = {
+        for (final doc in snapshots[1])
+          doc['id']?.toString() ?? '': VehicleCatalogItem.fromMap(doc),
+      };
+      final userById = {
+        for (final doc in snapshots[2])
+          doc['id']?.toString() ?? '': _userFromFirestoreMap(
+            doc,
+            typeById: typeById,
+          ),
+      };
+      final makes = snapshots[0]
+          .map(
+            (doc) => _makeFromFirestoreMap(
+              doc,
+              typeById: typeById,
+              userById: userById,
+            ),
+          )
+          .toList();
+      makes.sort(_compareByNewestIdFirst);
+      return makes;
+    }, fallback: 'We could not load the vehicle makes right now.');
+  }
+
+  @override
+  Future<List<VehicleCatalogItem>> getSizes() async {
+    return _runRequest(() async {
+      final documents = await _cache.getDocuments(
+        resourceKey: _vehicleSizesResourceKey,
         fetchDocuments: () async {
-          final snapshot = await _makesCollection.get();
+          final snapshot = await _sizesCollection.get();
           return snapshot.docs.map(documentData).toList();
         },
-      ),
-      _cache.getDocuments(
+      );
+      final items = documents.map(VehicleCatalogItem.fromMap).toList();
+      items.sort(_compareByNewestIdFirst);
+      return items;
+    }, fallback: 'We could not load the vehicle sizes right now.');
+  }
+
+  @override
+  Future<List<VehicleCatalogItem>> getTypes() async {
+    return _runRequest(() async {
+      final documents = await _cache.getDocuments(
         resourceKey: _vehicleTypesResourceKey,
         fetchDocuments: () async {
           final snapshot = await _typesCollection.get();
           return snapshot.docs.map(documentData).toList();
         },
-      ),
-      _cache.getDocuments(
-        resourceKey: _usersResourceKey,
-        fetchDocuments: () async {
-          final snapshot = await _usersCollection.get();
-          return snapshot.docs.map(documentData).toList();
-        },
-      ),
-    ]);
-    final typeById = {
-      for (final doc in snapshots[1])
-        doc['id']?.toString() ?? '': VehicleCatalogItem.fromMap(doc),
-    };
-    final userById = {
-      for (final doc in snapshots[2])
-        doc['id']?.toString() ?? '': _userFromFirestoreMap(
-          doc,
-          typeById: typeById,
-        ),
-    };
-    final makes = snapshots[0]
-        .map(
-          (doc) => _makeFromFirestoreMap(
-            doc,
-            typeById: typeById,
-            userById: userById,
-          ),
-        )
-        .toList();
-    makes.sort(_compareByNewestIdFirst);
-    return makes;
-  }
-
-  @override
-  Future<List<VehicleCatalogItem>> getSizes() async {
-    final documents = await _cache.getDocuments(
-      resourceKey: _vehicleSizesResourceKey,
-      fetchDocuments: () async {
-        final snapshot = await _sizesCollection.get();
-        return snapshot.docs.map(documentData).toList();
-      },
-    );
-    final items = documents.map(VehicleCatalogItem.fromMap).toList();
-    items.sort(_compareByNewestIdFirst);
-    return items;
-  }
-
-  @override
-  Future<List<VehicleCatalogItem>> getTypes() async {
-    final documents = await _cache.getDocuments(
-      resourceKey: _vehicleTypesResourceKey,
-      fetchDocuments: () async {
-        final snapshot = await _typesCollection.get();
-        return snapshot.docs.map(documentData).toList();
-      },
-    );
-    final items = documents.map(VehicleCatalogItem.fromMap).toList();
-    items.sort(_compareByNewestIdFirst);
-    return items;
+      );
+      final items = documents.map(VehicleCatalogItem.fromMap).toList();
+      items.sort(_compareByNewestIdFirst);
+      return items;
+    }, fallback: 'We could not load the vehicle types right now.');
   }
 
   @override
   Future<VehicleMake> saveMake(VehicleMake make) async {
-    final nextId = normalizeId(make.id) ?? await _nextId(_makesCollection);
-    final now = DateTime.now();
-    final saved = make.copyWith(
-      id: nextId,
-      createdAt: make.createdAt ?? now,
-      updatedAt: now,
-    );
-    await _makesCollection.doc(nextId).set(_toFirestoreMap(saved));
-    await _cache.upsertDocument(
-      resourceKey: _vehicleMakesResourceKey,
-      document: _toFirestoreMap(saved),
-    );
-    return saved;
+    return _runRequest(() async {
+      final nextId = normalizeId(make.id) ?? await _nextId(_makesCollection);
+      final now = DateTime.now();
+      final saved = make.copyWith(
+        id: nextId,
+        createdAt: make.createdAt ?? now,
+        updatedAt: now,
+      );
+      await _makesCollection.doc(nextId).set(_toFirestoreMap(saved));
+      await _cache.upsertDocument(
+        resourceKey: _vehicleMakesResourceKey,
+        document: _toFirestoreMap(saved),
+      );
+      return saved;
+    }, fallback: 'We could not save the vehicle make right now.');
   }
 
   @override
   Future<void> deleteMake(String makeId) async {
-    final normalized = normalizeId(makeId);
-    if (normalized == null) {
-      return;
-    }
-    await _makesCollection.doc(normalized).delete();
-    await _cache.removeDocument(
-      resourceKey: _vehicleMakesResourceKey,
-      documentId: normalized,
-    );
+    await _runRequest(() async {
+      final normalized = normalizeId(makeId);
+      if (normalized == null) {
+        return;
+      }
+      await _makesCollection.doc(normalized).delete();
+      await _cache.removeDocument(
+        resourceKey: _vehicleMakesResourceKey,
+        documentId: normalized,
+      );
+    }, fallback: 'We could not delete the vehicle make right now.');
   }
 
   @override
@@ -148,15 +158,17 @@ class VehicleRequest implements VehicleCatalogRepository {
 
   @override
   Future<void> deleteSize(String sizeId) async {
-    final normalized = normalizeId(sizeId);
-    if (normalized == null) {
-      return;
-    }
-    await _sizesCollection.doc(normalized).delete();
-    await _cache.removeDocument(
-      resourceKey: _vehicleSizesResourceKey,
-      documentId: normalized,
-    );
+    await _runRequest(() async {
+      final normalized = normalizeId(sizeId);
+      if (normalized == null) {
+        return;
+      }
+      await _sizesCollection.doc(normalized).delete();
+      await _cache.removeDocument(
+        resourceKey: _vehicleSizesResourceKey,
+        documentId: normalized,
+      );
+    }, fallback: 'We could not delete the vehicle size right now.');
   }
 
   @override
@@ -170,15 +182,17 @@ class VehicleRequest implements VehicleCatalogRepository {
 
   @override
   Future<void> deleteType(String typeId) async {
-    final normalized = normalizeId(typeId);
-    if (normalized == null) {
-      return;
-    }
-    await _typesCollection.doc(normalized).delete();
-    await _cache.removeDocument(
-      resourceKey: _vehicleTypesResourceKey,
-      documentId: normalized,
-    );
+    await _runRequest(() async {
+      final normalized = normalizeId(typeId);
+      if (normalized == null) {
+        return;
+      }
+      await _typesCollection.doc(normalized).delete();
+      await _cache.removeDocument(
+        resourceKey: _vehicleTypesResourceKey,
+        documentId: normalized,
+      );
+    }, fallback: 'We could not delete the vehicle type right now.');
   }
 
   Future<VehicleCatalogItem> _saveCatalogItem({
@@ -186,19 +200,21 @@ class VehicleRequest implements VehicleCatalogRepository {
     required String resourceKey,
     required VehicleCatalogItem item,
   }) async {
-    final nextId = normalizeId(item.id) ?? await _nextId(collection);
-    final now = DateTime.now();
-    final saved = item.copyWith(
-      id: nextId,
-      createdAt: item.createdAt ?? now,
-      updatedAt: now,
-    );
-    await collection.doc(nextId).set(saved.toMap());
-    await _cache.upsertDocument(
-      resourceKey: resourceKey,
-      document: saved.toMap(),
-    );
-    return saved;
+    return _runRequest(() async {
+      final nextId = normalizeId(item.id) ?? await _nextId(collection);
+      final now = DateTime.now();
+      final saved = item.copyWith(
+        id: nextId,
+        createdAt: item.createdAt ?? now,
+        updatedAt: now,
+      );
+      await collection.doc(nextId).set(saved.toMap());
+      await _cache.upsertDocument(
+        resourceKey: resourceKey,
+        document: saved.toMap(),
+      );
+      return saved;
+    }, fallback: 'We could not save this item right now.');
   }
 
   Map<String, dynamic> _toFirestoreMap(VehicleMake make) {
@@ -302,5 +318,18 @@ class VehicleRequest implements VehicleCatalogRepository {
       return value.toDouble();
     }
     return double.tryParse(value.toString());
+  }
+
+  Future<T> _runRequest<T>(
+    Future<T> Function() action, {
+    required String fallback,
+  }) async {
+    try {
+      return await action();
+    } on FirebaseException catch (error) {
+      throw Exception(userFacingErrorMessage(error, fallback: fallback));
+    } catch (error) {
+      throw Exception(userFacingErrorMessage(error, fallback: fallback));
+    }
   }
 }

@@ -10,6 +10,7 @@ import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/status_form/status_field_editor_card.dart';
@@ -170,14 +171,18 @@ class AdminFieldsView extends StatelessWidget {
       viewModelBuilder: AdminFlowViewModel.new,
       onViewModelReady: (vm) => vm.loadForms(),
       builder: (context, vm, child) {
-        return Column(
-          children: [
-            AppRefreshStrip(
-              isVisible: vm.isLoading,
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-            ),
-            Expanded(child: _FieldsContent(vm: vm)),
-          ],
+        return AppPageLoadingOverlay(
+          isVisible: vm.isLoading,
+          message: vm.busyMessage,
+          child: Column(
+            children: [
+              AppRefreshStrip(
+                isVisible: vm.isLoading,
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+              ),
+              Expanded(child: _FieldsContent(vm: vm)),
+            ],
+          ),
         );
       },
     );
@@ -218,11 +223,17 @@ class AdminFieldsView extends StatelessWidget {
             originalField: initialField,
           ),
         );
-      } catch (_) {
+      } catch (error) {
         if (!context.mounted) {
           return;
         }
-        AppSnackbar.showError(context, 'Failed to save field.');
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'We could not save the field right now.',
+          ),
+        );
       }
     }
   }
@@ -508,7 +519,7 @@ class _FieldsFiltersPanelState extends State<_FieldsFiltersPanel> {
                       onChanged: widget.onTypeChanged,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
                     height: AdminFieldsView.controlHeight,
@@ -520,7 +531,7 @@ class _FieldsFiltersPanelState extends State<_FieldsFiltersPanel> {
                       onChanged: widget.onActiveChanged,
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
                     height: AdminFieldsView.controlHeight,
@@ -582,6 +593,7 @@ class _FieldsFilterDropdown extends StatelessWidget {
       decoration: adminFormInputDecoration(
         label,
         radius: AdminFieldsView.surfaceRadius,
+        minHeight: AdminFieldsView.controlHeight,
       ),
       items: items
           .where((item) => item != 'All')

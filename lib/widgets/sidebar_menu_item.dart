@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 
 class SidebarMenuItem extends StatelessWidget {
   const SidebarMenuItem({
@@ -26,19 +27,16 @@ class SidebarMenuItem extends StatelessWidget {
     final hasChildren = children.isNotEmpty;
 
     return Padding(
-      padding: EdgeInsets.only(
-        left: 0,
-        bottom: hasChildren ? 8 : 10,
-      ),
+      padding: EdgeInsets.only(left: 0, bottom: hasChildren ? 8 : 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(16),
-              child: Container(
+          AppMousePressable(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Builder(
+              builder: (context) => AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
                 padding: EdgeInsets.symmetric(
                   horizontal: isChild ? 14 : 16,
                   vertical: isChild ? 12 : 14,
@@ -46,6 +44,10 @@ class SidebarMenuItem extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: isSelected
                       ? AppColors.primarySurfaceAlt.withValues(alpha: 0.22)
+                      : appPressablePressed(context)
+                      ? Colors.white.withValues(alpha: 0.14)
+                      : appPressableHovered(context)
+                      ? Colors.white.withValues(alpha: 0.08)
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
@@ -78,8 +80,9 @@ class SidebarMenuItem extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: Colors.white,
-                              fontWeight:
-                                  isChild ? FontWeight.w500 : FontWeight.w600,
+                              fontWeight: isChild
+                                  ? FontWeight.w500
+                                  : FontWeight.w600,
                               fontSize: isChild ? 14 : null,
                             ),
                           ),
@@ -103,9 +106,7 @@ class SidebarMenuItem extends StatelessWidget {
               decoration: BoxDecoration(
                 color: Colors.black.withValues(alpha: 0.14),
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.06),
-                ),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

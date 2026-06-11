@@ -10,6 +10,7 @@ import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/utils/functions.dart';
 
 class ClientBookingHistoryViewModel extends BaseViewModel {
   ClientBookingHistoryViewModel({
@@ -47,6 +48,23 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   List<Booking> bookings = [];
   bool isLoading = false;
   String? errorMessage;
+  String _searchQuery = '';
+  String _statusFilter = 'All';
+  DateTime? _startDate;
+  DateTime? _endDate;
+
+  String get searchQuery => _searchQuery;
+  String get statusFilter => _statusFilter;
+  DateTime? get startDate => _startDate;
+  DateTime? get endDate => _endDate;
+  List<String> get statusOptions => [
+    'All',
+    ..._statusesByKey.values
+        .map((status) => status.label?.trim())
+        .whereType<String>()
+        .where((label) => label.isNotEmpty)
+        .toSet(),
+  ];
 
   Future<void> load(UserModel user) async {
     if (isLoading) {
@@ -86,8 +104,11 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
       _cachedErrorMessage = null;
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
-    } catch (_) {
-      errorMessage = 'Failed to load booking history.';
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load your booking history right now.',
+      );
       _cachedErrorMessage = errorMessage;
     } finally {
       isLoading = false;
@@ -175,6 +196,101 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
     return values.join(' ').toLowerCase().contains(normalizedQuery);
   }
 
+  void setSearchQuery(String value) {
+    if (_searchQuery == value) {
+      return;
+    }
+    _searchQuery = value;
+    notifyListeners();
+  }
+
+  void setStatusFilter(String value) {
+    if (_statusFilter == value) {
+      return;
+    }
+    _statusFilter = value;
+    notifyListeners();
+  }
+
+  void clearFilters() {
+    var changed = false;
+    if (_statusFilter != 'All') {
+      _statusFilter = 'All';
+      changed = true;
+    }
+    if (_startDate != null) {
+      _startDate = null;
+      changed = true;
+    }
+    if (_endDate != null) {
+      _endDate = null;
+      changed = true;
+    }
+    if (changed) {
+      notifyListeners();
+    }
+  }
+
+  void updateStartDate(DateTime? value) {
+    _startDate = value;
+    if (_startDate != null &&
+        _endDate != null &&
+        _endDate!.isBefore(_startDate!)) {
+      _endDate = _startDate;
+    }
+    notifyListeners();
+  }
+
+  void updateEndDate(DateTime? value) {
+    _endDate = value;
+    if (_startDate != null &&
+        _endDate != null &&
+        _startDate!.isAfter(_endDate!)) {
+      _startDate = _endDate;
+    }
+    notifyListeners();
+  }
+
+  String formatDate(DateTime? value) {
+    if (value == null) {
+      return 'All';
+    }
+
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '$month/$day/${value.year}';
+  }
+
+  List<Booking> filteredBookings() {
+    final query = _searchQuery.trim().toLowerCase();
+    return bookings.where((booking) {
+      final matchesStatus =
+          _statusFilter == 'All' ||
+          statusLabelForKey(booking.clientStatus) == _statusFilter;
+      if (!matchesStatus) {
+        return false;
+      }
+
+      final createdAt = booking.createdAt;
+      final matchesStartDate =
+          _startDate == null ||
+          (createdAt != null &&
+              !_dateOnly(createdAt).isBefore(_dateOnly(_startDate!)));
+      final matchesEndDate =
+          _endDate == null ||
+          (createdAt != null &&
+              !_dateOnly(createdAt).isAfter(_dateOnly(_endDate!)));
+      if (!matchesStartDate || !matchesEndDate) {
+        return false;
+      }
+
+      if (query.isEmpty) {
+        return true;
+      }
+      return matchesBooking(booking, query);
+    }).toList();
+  }
+
   String _userName(String? userId, String fallback) {
     final user = _usersById[userId];
     final name = user?.name?.trim();
@@ -192,6 +308,9 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
     final phone = user?.phone?.trim();
     return phone?.isNotEmpty == true ? phone! : '-';
   }
+
+  DateTime _dateOnly(DateTime value) =>
+      DateTime(value.year, value.month, value.day);
 
   static List<String> _flattenBookingOutputValues(
     Map<String, dynamic>? outputs,

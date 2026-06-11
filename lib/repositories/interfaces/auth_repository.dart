@@ -6,7 +6,7 @@ abstract class AuthRepository {
   Future<List<UserModel>> getUsers();
   Future<UserModel?> getCurrentUser();
   Future<UserModel> login({
-    required String email,
+    required String identifier,
     required String password,
   });
   Future<UserModel> register(UserModel user);

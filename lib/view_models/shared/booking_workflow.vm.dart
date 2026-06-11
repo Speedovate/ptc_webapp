@@ -12,6 +12,7 @@ import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
+import 'package:webapp/utils/functions.dart';
 
 class _BookingWorkflowCacheSnapshot {
   const _BookingWorkflowCacheSnapshot({
@@ -289,8 +290,11 @@ class BookingWorkflowViewModel extends BaseViewModel {
       errors = {};
       cancelErrors = {};
       _cacheCurrentState();
-    } catch (_) {
-      loadError = 'Failed to load booking workflow.';
+    } catch (error) {
+      loadError = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load the booking workflow right now.',
+      );
     } finally {
       isBusyLoading = false;
       notifyListeners();

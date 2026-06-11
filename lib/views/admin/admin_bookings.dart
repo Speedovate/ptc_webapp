@@ -13,6 +13,7 @@ import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
@@ -26,6 +27,7 @@ class AdminBookingsView extends StatefulWidget {
 }
 
 class _AdminBookingsViewState extends State<AdminBookingsView> {
+  static const _toolbarControlHeight = 52.0;
   Booking? _selectedBooking;
   late final ScrollController _detailScrollController;
 
@@ -104,91 +106,101 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
         final filteredBookings = vm.filteredBookings();
 
         if (selectedBooking != null) {
-          return SingleChildScrollView(
-            key: PageStorageKey(
-              'admin-booking-detail-${selectedBooking.id ?? ''}',
-            ),
-            controller: _detailScrollController,
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _AdminBookingDetailHeader(
-                  booking: selectedBooking,
-                  onBack: () {
-                    setState(() {
-                      _selectedBooking = null;
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
-                BookingWorkflowView(
-                  key: ValueKey(
-                    'admin-booking-workflow-${selectedBooking.id ?? ''}-${selectedBooking.updatedAt?.toIso8601String() ?? ''}',
+          return AppPageLoadingOverlay(
+            isVisible: vm.isBusy,
+            message: vm.busyMessage,
+            child: SingleChildScrollView(
+              key: PageStorageKey(
+                'admin-booking-detail-${selectedBooking.id ?? ''}',
+              ),
+              controller: _detailScrollController,
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _AdminBookingDetailHeader(
+                    booking: selectedBooking,
+                    onBack: () {
+                      setState(() {
+                        _selectedBooking = null;
+                      });
+                    },
                   ),
-                  user: widget.user,
-                  booking: selectedBooking,
-                  embedded: true,
-                  embeddedScrollController: _detailScrollController,
-                  onBookingUpdated: (updatedBooking) {
-                    setState(() {
-                      _selectedBooking = updatedBooking;
-                    });
-                  },
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  BookingWorkflowView(
+                    key: ValueKey(
+                      'admin-booking-workflow-${selectedBooking.id ?? ''}-${selectedBooking.updatedAt?.toIso8601String() ?? ''}',
+                    ),
+                    user: widget.user,
+                    booking: selectedBooking,
+                    embedded: true,
+                    embeddedScrollController: _detailScrollController,
+                    onBookingUpdated: (updatedBooking) {
+                      setState(() {
+                        _selectedBooking = updatedBooking;
+                      });
+                    },
+                  ),
+                ],
+              ),
             ),
           );
         }
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AppRefreshStrip(isVisible: vm.isBusy),
-              AdminListToolbar(
-                controlHeight: 52,
-                surfaceRadius: 16,
-                search: AdminListSearchField(
-                  controlHeight: 52,
+        return AppPageLoadingOverlay(
+          isVisible: vm.isBusy,
+          message: vm.busyMessage,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppRefreshStrip(isVisible: vm.isBusy),
+                AdminListToolbar(
+                  controlHeight: _toolbarControlHeight,
                   surfaceRadius: 16,
-                  initialValue: vm.searchQuery,
-                  onChanged: vm.setSearchQuery,
-                ),
-                filtersBuilder: (context, iconOnly) =>
-                    _BookingsFiltersPanel(vm: vm, iconOnly: iconOnly),
-                onNewPressed: () => _openNewBookingDialog(vm),
-              ),
-              const SizedBox(height: 14),
-              if (vm.errorMessage != null)
-                _AdminBookingsStateCard(
-                  child: AdminListStateText(message: vm.errorMessage!),
-                )
-              else if (vm.bookings.isEmpty)
-                _AdminBookingsStateCard(
-                  child: const AdminListStateText(message: 'No bookings yet.'),
-                )
-              else if (filteredBookings.isEmpty)
-                _AdminBookingsStateCard(
-                  child: const AdminListStateText(
-                    message: 'No bookings matched your current search.',
+                  search: AdminListSearchField(
+                    controlHeight: _toolbarControlHeight,
+                    surfaceRadius: 16,
+                    initialValue: vm.searchQuery,
+                    onChanged: vm.setSearchQuery,
                   ),
-                )
-              else
-                _AdminBookingsTable(
-                  bookings: filteredBookings,
-                  vm: vm,
-                  onView: (booking) {
-                    setState(() {
-                      _selectedBooking = booking;
-                    });
-                  },
-                  onEdit: (booking) {
-                    _openEditBookingDialog(vm, booking);
-                  },
+                  filtersBuilder: (context, iconOnly) =>
+                      _BookingsFiltersPanel(vm: vm, iconOnly: iconOnly),
+                  onNewPressed: () => _openNewBookingDialog(vm),
                 ),
-            ],
+                const SizedBox(height: 14),
+                if (vm.errorMessage != null)
+                  _AdminBookingsStateCard(
+                    child: AdminListStateText(message: vm.errorMessage!),
+                  )
+                else if (vm.bookings.isEmpty)
+                  _AdminBookingsStateCard(
+                    child: const AdminListStateText(
+                      message: 'No bookings yet.',
+                    ),
+                  )
+                else if (filteredBookings.isEmpty)
+                  _AdminBookingsStateCard(
+                    child: const AdminListStateText(
+                      message: 'No bookings matched your current search.',
+                    ),
+                  )
+                else
+                  _AdminBookingsTable(
+                    bookings: filteredBookings,
+                    vm: vm,
+                    onView: (booking) {
+                      setState(() {
+                        _selectedBooking = booking;
+                      });
+                    },
+                    onEdit: (booking) {
+                      _openEditBookingDialog(vm, booking);
+                    },
+                  ),
+              ],
+            ),
           ),
         );
       },
@@ -475,7 +487,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                   AdminModalDropdownField<String>(
                     label: 'Van Size',
                     initialValue: _vanSize,
-                    bottomPadding: 10,
+                    bottomPadding: 8,
                     isExpanded: true,
                     disabledTapMessage: 'No active vehicle sizes available.',
                     items: _buildVanSizeItems(),
@@ -505,6 +517,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     label: 'Status',
                     initialValue: _statusKey.isEmpty ? null : _statusKey,
                     isExpanded: true,
+                    bottomPadding: 8,
                     disabledTapMessage: 'No active statuses available.',
                     items: _buildStatusItems(),
                     onChanged: (value) {
@@ -517,6 +530,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     label: 'Driver',
                     initialValue: _driverId,
                     isExpanded: true,
+                    bottomPadding: 8,
                     disabledTapMessage: 'No online drivers available.',
                     items: _buildRoleUserItems(
                       selectedUserId: _driverId,
@@ -1473,7 +1487,7 @@ class _BookingsFiltersPanelState extends State<_BookingsFiltersPanel> {
     final itemWidth = contentWidth;
 
     return AdminListFiltersButton(
-      controlHeight: 52,
+      controlHeight: adminFilterFieldMinHeight,
       surfaceRadius: 16,
       iconOnly: widget.iconOnly,
       menuChildren: [
@@ -1489,7 +1503,7 @@ class _BookingsFiltersPanelState extends State<_BookingsFiltersPanel> {
                 children: [
                   SizedBox(
                     width: itemWidth,
-                    height: 52,
+                    height: adminFilterFieldMinHeight,
                     child: _BookingsFilterDropdown(
                       label: 'Status',
                       value: widget.vm.statusFilter,
@@ -1498,10 +1512,10 @@ class _BookingsFiltersPanelState extends State<_BookingsFiltersPanel> {
                       onChanged: widget.vm.setStatusFilter,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: 52,
+                    height: adminFilterFieldMinHeight,
                     child: _BookingsDateFilter(
                       label: 'Start Date',
                       value: widget.vm.startDate,
@@ -1509,10 +1523,10 @@ class _BookingsFiltersPanelState extends State<_BookingsFiltersPanel> {
                       onSelected: widget.vm.updateStartDate,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: 52,
+                    height: adminFilterFieldMinHeight,
                     child: _BookingsDateFilter(
                       label: 'End Date',
                       value: widget.vm.endDate,
@@ -1520,10 +1534,10 @@ class _BookingsFiltersPanelState extends State<_BookingsFiltersPanel> {
                       onSelected: widget.vm.updateEndDate,
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: 52,
+                    height: adminFilterFieldMinHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
@@ -1552,7 +1566,7 @@ class _BookingsFiltersPanelState extends State<_BookingsFiltersPanel> {
   }
 }
 
-class _BookingsDateFilter extends StatelessWidget {
+class _BookingsDateFilter extends StatefulWidget {
   const _BookingsDateFilter({
     required this.label,
     required this.value,
@@ -1566,53 +1580,112 @@ class _BookingsDateFilter extends StatelessWidget {
   final ValueChanged<DateTime?> onSelected;
 
   @override
+  State<_BookingsDateFilter> createState() => _BookingsDateFilterState();
+}
+
+class _BookingsDateFilterState extends State<_BookingsDateFilter> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _displayValue);
+    _focusNode = FocusNode()..canRequestFocus = false;
+  }
+
+  @override
+  void didUpdateWidget(covariant _BookingsDateFilter oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_controller.text != _displayValue) {
+      _controller.value = _controller.value.copyWith(
+        text: _displayValue,
+        selection: TextSelection.collapsed(offset: _displayValue.length),
+        composing: TextRange.empty,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  String get _displayValue =>
+      widget.value == null ? '' : widget.formatter(widget.value);
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: widget.value ?? now,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (context.mounted) {
+      widget.onSelected(picked);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final activeFillColor = appFieldInteractiveFillColor(context);
     return SizedBox(
-      height: 52,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () async {
-          final now = DateTime.now();
-          final picked = await showDatePicker(
-            context: context,
-            initialDate: value ?? now,
-            firstDate: DateTime(2000),
-            lastDate: DateTime(2100),
-          );
-          if (context.mounted) {
-            onSelected(picked);
-          }
-        },
-        child: InputDecorator(
-          isEmpty: value == null,
-          isFocused: false,
-          decoration: adminFormInputDecoration(label, radius: 16).copyWith(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 16,
-            ),
-            suffixIcon: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: value == null ? null : () => onSelected(null),
-              child: Icon(
-                value == null
-                    ? Icons.calendar_today_rounded
-                    : Icons.close_rounded,
-                size: 18,
-                color: AppColors.primaryColor,
+      height: adminFilterFieldMinHeight,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() {
+          _isHovered = false;
+          _isPressed = false;
+        }),
+        child: Listener(
+          onPointerDown: (_) => setState(() => _isPressed = true),
+          onPointerUp: (_) => setState(() => _isPressed = false),
+          onPointerCancel: (_) => setState(() => _isPressed = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _pickDate,
+            child: IgnorePointer(
+              child: TextFormField(
+                controller: _controller,
+                focusNode: _focusNode,
+                readOnly: true,
+                showCursor: false,
+                enableInteractiveSelection: false,
+                style: adminDropdownDisplayTextStyle,
+                decoration:
+                    adminFormInputDecoration(
+                      widget.label,
+                      radius: 16,
+                      minHeight: adminFilterFieldMinHeight,
+                    ).copyWith(
+                      fillColor: _isHovered || _isPressed
+                          ? activeFillColor
+                          : AppColors.primarySurface,
+                      suffixIcon: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: widget.value == null
+                            ? _pickDate
+                            : () => widget.onSelected(null),
+                        child: Icon(
+                          widget.value == null
+                              ? Icons.calendar_today_rounded
+                              : Icons.close_rounded,
+                          size: 18,
+                          color: AppColors.primaryColor,
+                        ),
+                      ),
+                      suffixIconConstraints: const BoxConstraints(
+                        minWidth: 42,
+                        minHeight: 42,
+                      ),
+                    ),
               ),
-            ),
-            suffixIconConstraints: const BoxConstraints(
-              minWidth: 42,
-              minHeight: 42,
-            ),
-          ),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              value == null ? '' : formatter(value),
-              overflow: TextOverflow.ellipsis,
-              style: adminDropdownDisplayTextStyle,
             ),
           ),
         ),
@@ -1643,7 +1716,11 @@ class _BookingsFilterDropdown extends StatelessWidget {
       focusNode: focusNode,
       iconEnabledColor: AppColors.primaryColor,
       style: adminDropdownDisplayTextStyle,
-      decoration: adminFormInputDecoration(label, radius: 16),
+      decoration: adminFormInputDecoration(
+        label,
+        radius: 16,
+        minHeight: adminFilterFieldMinHeight,
+      ),
       items: items
           .where((item) => item != 'All')
           .map(

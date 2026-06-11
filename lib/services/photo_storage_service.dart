@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:webapp/services/image_upload_processor.dart';
+import 'package:webapp/utils/functions.dart';
 
 class PhotoStorageService {
   PhotoStorageService({FirebaseStorage? storage})
@@ -9,6 +11,8 @@ class PhotoStorageService {
   static final PhotoStorageService instance = PhotoStorageService();
 
   final FirebaseStorage _storage;
+  final ImageUploadProcessor _imageUploadProcessor =
+      ImageUploadProcessor.instance;
 
   Future<Map<String, dynamic>> uploadBookingPhoto({
     required Uint8List bytes,
@@ -19,7 +23,12 @@ class PhotoStorageService {
     String? mimeType,
     int? size,
   }) async {
-    final normalizedFileName = _sanitizeFileName(fileName);
+    final processed = await _imageUploadProcessor.prepare(
+      bytes: bytes,
+      fileName: fileName,
+      mimeType: mimeType,
+    );
+    final normalizedFileName = _sanitizeFileName(processed.fileName);
     final timestamp = DateTime.now().toUtc().millisecondsSinceEpoch;
     final extension = _fileExtension(normalizedFileName);
     final objectName = extension == null || extension.isEmpty
@@ -28,21 +37,39 @@ class PhotoStorageService {
     final storagePath =
         'bookings/$bookingId/status_outputs/$statusKey/$fieldKey/$objectName';
     final metadata = SettableMetadata(
-      contentType: mimeType?.trim().isNotEmpty == true
-          ? mimeType!.trim()
+      contentType: processed.mimeType.trim().isNotEmpty
+          ? processed.mimeType.trim()
           : _guessMimeType(extension),
     );
-    final reference = _storage.ref(storagePath);
-    await reference.putData(bytes, metadata);
-    final downloadUrl = await reference.getDownloadURL();
+    try {
+      final reference = _storage.ref(storagePath);
+      await reference.putData(processed.bytes, metadata);
+      final downloadUrl = await reference.getDownloadURL();
 
-    return {
-      'name': normalizedFileName,
-      'download_url': downloadUrl,
-      'storage_path': storagePath,
-      'mime_type': metadata.contentType,
-      'size': size ?? bytes.length,
-    };
+      return {
+        'name': normalizedFileName,
+        'download_url': downloadUrl,
+        'storage_path': storagePath,
+        'mime_type': metadata.contentType,
+        'size': processed.size,
+        'width': processed.width,
+        'height': processed.height,
+      };
+    } on FirebaseException catch (error) {
+      throw Exception(
+        userFacingErrorMessage(
+          error,
+          fallback: 'We could not upload the photo. Please try again.',
+        ),
+      );
+    } catch (error) {
+      throw Exception(
+        userFacingErrorMessage(
+          error,
+          fallback: 'We could not upload the photo. Please try again.',
+        ),
+      );
+    }
   }
 
   Future<Map<String, dynamic>> uploadUserPhoto({
@@ -53,7 +80,12 @@ class PhotoStorageService {
     String? mimeType,
     int? size,
   }) async {
-    final normalizedFileName = _sanitizeFileName(fileName);
+    final processed = await _imageUploadProcessor.prepare(
+      bytes: bytes,
+      fileName: fileName,
+      mimeType: mimeType,
+    );
+    final normalizedFileName = _sanitizeFileName(processed.fileName);
     final timestamp = DateTime.now().toUtc().millisecondsSinceEpoch;
     final extension = _fileExtension(normalizedFileName);
     final objectName = extension == null || extension.isEmpty
@@ -61,21 +93,39 @@ class PhotoStorageService {
         : '$timestamp.$extension';
     final storagePath = 'users/$userId/$fieldKey/$objectName';
     final metadata = SettableMetadata(
-      contentType: mimeType?.trim().isNotEmpty == true
-          ? mimeType!.trim()
+      contentType: processed.mimeType.trim().isNotEmpty
+          ? processed.mimeType.trim()
           : _guessMimeType(extension),
     );
-    final reference = _storage.ref(storagePath);
-    await reference.putData(bytes, metadata);
-    final downloadUrl = await reference.getDownloadURL();
+    try {
+      final reference = _storage.ref(storagePath);
+      await reference.putData(processed.bytes, metadata);
+      final downloadUrl = await reference.getDownloadURL();
 
-    return {
-      'name': normalizedFileName,
-      'download_url': downloadUrl,
-      'storage_path': storagePath,
-      'mime_type': metadata.contentType,
-      'size': size ?? bytes.length,
-    };
+      return {
+        'name': normalizedFileName,
+        'download_url': downloadUrl,
+        'storage_path': storagePath,
+        'mime_type': metadata.contentType,
+        'size': processed.size,
+        'width': processed.width,
+        'height': processed.height,
+      };
+    } on FirebaseException catch (error) {
+      throw Exception(
+        userFacingErrorMessage(
+          error,
+          fallback: 'We could not upload the photo. Please try again.',
+        ),
+      );
+    } catch (error) {
+      throw Exception(
+        userFacingErrorMessage(
+          error,
+          fallback: 'We could not upload the photo. Please try again.',
+        ),
+      );
+    }
   }
 
   Future<void> deleteByPath(String? storagePath) async {
@@ -85,6 +135,39 @@ class PhotoStorageService {
     }
     try {
       await _storage.ref(normalized).delete();
+    } on FirebaseException catch (error) {
+      if (error.code != 'object-not-found') {
+        rethrow;
+      }
+    }
+  }
+
+  Future<void> deleteUserAssets(String? userId) async {
+    final normalizedUserId = userId?.trim();
+    if (normalizedUserId == null || normalizedUserId.isEmpty) {
+      return;
+    }
+    await _deleteFolderRecursively('users/$normalizedUserId');
+  }
+
+  Future<void> _deleteFolderRecursively(String storagePath) async {
+    try {
+      final reference = _storage.ref(storagePath);
+      final result = await reference.listAll();
+
+      for (final item in result.items) {
+        try {
+          await item.delete();
+        } on FirebaseException catch (error) {
+          if (error.code != 'object-not-found') {
+            rethrow;
+          }
+        }
+      }
+
+      for (final prefix in result.prefixes) {
+        await _deleteFolderRecursively(prefix.fullPath);
+      }
     } on FirebaseException catch (error) {
       if (error.code != 'object-not-found') {
         rethrow;

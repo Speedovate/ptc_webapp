@@ -29,38 +29,44 @@ class StatusRequest implements StatusFormRepository {
 
   @override
   Future<List<StatusForm>> getStatusForms() async {
-    final forms = await _getHydratedForms();
-    forms.sort(_compareFormsForStatus);
-    return forms;
+    return _runRequest(() async {
+      final forms = await _getHydratedForms();
+      forms.sort(_compareFormsForStatus);
+      return forms;
+    }, fallback: 'We could not load the flows right now.');
   }
 
   @override
   Future<List<StatusField>> getAllFields() async {
-    final documents = await _cache.getDocuments(
-      resourceKey: _statusFieldsResourceKey,
-      fetchDocuments: () async {
-        final snapshot = await _fieldsCollection.get();
-        return snapshot.docs.map(documentData).toList();
-      },
-    );
-    final fields = documents.map(StatusField.fromMap).toList();
-    fields.sort(
-      (a, b) =>
-          (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
-    );
-    return fields;
+    return _runRequest(() async {
+      final documents = await _cache.getDocuments(
+        resourceKey: _statusFieldsResourceKey,
+        fetchDocuments: () async {
+          final snapshot = await _fieldsCollection.get();
+          return snapshot.docs.map(documentData).toList();
+        },
+      );
+      final fields = documents.map(StatusField.fromMap).toList();
+      fields.sort(
+        (a, b) =>
+            (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+      );
+      return fields;
+    }, fallback: 'We could not load the fields right now.');
   }
 
   @override
   Future<List<Status>> getStatuses() async {
-    final documents = await _cache.getDocuments(
-      resourceKey: _statusesResourceKey,
-      fetchDocuments: () async {
-        final snapshot = await _statusesCollection.get();
-        return snapshot.docs.map(documentData).toList();
-      },
-    );
-    return documents.map(Status.fromMap).toList();
+    return _runRequest(() async {
+      final documents = await _cache.getDocuments(
+        resourceKey: _statusesResourceKey,
+        fetchDocuments: () async {
+          final snapshot = await _statusesCollection.get();
+          return snapshot.docs.map(documentData).toList();
+        },
+      );
+      return documents.map(Status.fromMap).toList();
+    }, fallback: 'We could not load the statuses right now.');
   }
 
   @override
@@ -137,152 +143,172 @@ class StatusRequest implements StatusFormRepository {
 
   @override
   Future<void> saveStatusForm(StatusForm form) async {
-    final now = DateTime.now();
-    final nextId = normalizeId(form.id) ?? await _nextId(_formsCollection);
-    final saved = form.copyWith(
-      id: nextId,
-      createdAt: form.createdAt ?? now,
-      updatedAt: now,
-    );
-    final document = _formToFirestoreMap(saved);
-    await _formsCollection.doc(nextId).set(document);
-    await _cache.upsertDocument(
-      resourceKey: _statusFormsResourceKey,
-      document: document,
-    );
+    await _runRequest(() async {
+      final now = DateTime.now();
+      final nextId = normalizeId(form.id) ?? await _nextId(_formsCollection);
+      final saved = form.copyWith(
+        id: nextId,
+        createdAt: form.createdAt ?? now,
+        updatedAt: now,
+      );
+      final document = _formToFirestoreMap(saved);
+      await _formsCollection.doc(nextId).set(document);
+      await _cache.upsertDocument(
+        resourceKey: _statusFormsResourceKey,
+        document: document,
+      );
+    }, fallback: 'We could not save the flow right now.');
   }
 
   @override
   Future<void> saveFields(String statusFormId, List<StatusField> fields) async {
-    final doc = await _formsCollection.doc(statusFormId).get();
-    if (!doc.exists) {
-      return;
-    }
-    final form = _formFromFirestoreMap(
-      documentData(doc),
-      fieldsById: {for (final field in fields) field.id ?? '': field},
-    );
-    final updatedFormDocument = _formToFirestoreMap(
-      form.copyWith(fields: fields, updatedAt: DateTime.now()),
-    );
-    await _formsCollection.doc(statusFormId).set(updatedFormDocument);
-    await _cache.upsertDocument(
-      resourceKey: _statusFormsResourceKey,
-      document: updatedFormDocument,
-    );
+    await _runRequest(() async {
+      final doc = await _formsCollection.doc(statusFormId).get();
+      if (!doc.exists) {
+        return;
+      }
+      final form = _formFromFirestoreMap(
+        documentData(doc),
+        fieldsById: {for (final field in fields) field.id ?? '': field},
+      );
+      final updatedFormDocument = _formToFirestoreMap(
+        form.copyWith(fields: fields, updatedAt: DateTime.now()),
+      );
+      await _formsCollection.doc(statusFormId).set(updatedFormDocument);
+      await _cache.upsertDocument(
+        resourceKey: _statusFormsResourceKey,
+        document: updatedFormDocument,
+      );
+    }, fallback: 'We could not save the fields right now.');
   }
 
   @override
   Future<void> saveField(StatusField field) async {
-    final now = DateTime.now();
-    final nextId = normalizeId(field.id) ?? await _nextId(_fieldsCollection);
-    final saved = field.copyWith(
-      id: nextId,
-      createdAt: field.createdAt ?? now,
-      updatedAt: now,
-    );
-    final document = saved.toMap();
-    await _fieldsCollection.doc(nextId).set(document);
-    await _cache.upsertDocument(
-      resourceKey: _statusFieldsResourceKey,
-      document: document,
-    );
+    await _runRequest(() async {
+      final now = DateTime.now();
+      final nextId = normalizeId(field.id) ?? await _nextId(_fieldsCollection);
+      final saved = field.copyWith(
+        id: nextId,
+        createdAt: field.createdAt ?? now,
+        updatedAt: now,
+      );
+      final document = saved.toMap();
+      await _fieldsCollection.doc(nextId).set(document);
+      await _cache.upsertDocument(
+        resourceKey: _statusFieldsResourceKey,
+        document: document,
+      );
+    }, fallback: 'We could not save the field right now.');
   }
 
   @override
   Future<void> saveStatus(Status status) async {
-    final now = DateTime.now();
-    final nextId = normalizeId(status.id) ?? await _nextId(_statusesCollection);
-    final saved = status.copyWith(
-      id: nextId,
-      createdAt: status.createdAt ?? now,
-      updatedAt: now,
-    );
-    final document = saved.toMap();
-    await _statusesCollection.doc(nextId).set(document);
-    await _cache.upsertDocument(
-      resourceKey: _statusesResourceKey,
-      document: document,
-    );
+    await _runRequest(() async {
+      final now = DateTime.now();
+      final nextId =
+          normalizeId(status.id) ?? await _nextId(_statusesCollection);
+      final saved = status.copyWith(
+        id: nextId,
+        createdAt: status.createdAt ?? now,
+        updatedAt: now,
+      );
+      final document = saved.toMap();
+      await _statusesCollection.doc(nextId).set(document);
+      await _cache.upsertDocument(
+        resourceKey: _statusesResourceKey,
+        document: document,
+      );
+    }, fallback: 'We could not save the status right now.');
   }
 
   @override
   Future<void> deleteField(String fieldId) async {
-    final normalized = normalizeId(fieldId);
-    if (normalized == null) {
-      return;
-    }
-    await _fieldsCollection.doc(normalized).delete();
-    final forms = await _getHydratedForms();
-    for (final form in forms) {
-      if (!form.fields.any((field) => field.id == normalized)) {
-        continue;
+    await _runRequest(() async {
+      final normalized = normalizeId(fieldId);
+      if (normalized == null) {
+        return;
       }
-      await _formsCollection
-          .doc(form.id)
-          .set(
-            _formToFirestoreMap(
-              form.copyWith(
-                fields: form.fields
-                    .where((field) => field.id != normalized)
-                    .toList(),
-                fieldOverrides: Map<String, StatusFieldOverride>.from(
-                  form.fieldOverrides,
-                )..remove(normalized),
-                updatedAt: DateTime.now(),
+      await _fieldsCollection.doc(normalized).delete();
+      final forms = await _getHydratedForms();
+      for (final form in forms) {
+        if (!form.fields.any((field) => field.id == normalized)) {
+          continue;
+        }
+        await _formsCollection
+            .doc(form.id)
+            .set(
+              _formToFirestoreMap(
+                form.copyWith(
+                  fields: form.fields
+                      .where((field) => field.id != normalized)
+                      .toList(),
+                  fieldOverrides: Map<String, StatusFieldOverride>.from(
+                    form.fieldOverrides,
+                  )..remove(normalized),
+                  updatedAt: DateTime.now(),
+                ),
               ),
-            ),
-          );
-    }
-    await _cache.touchMany([_statusFieldsResourceKey, _statusFormsResourceKey]);
+            );
+      }
+      await _cache.touchMany([
+        _statusFieldsResourceKey,
+        _statusFormsResourceKey,
+      ]);
+    }, fallback: 'We could not delete the field right now.');
   }
 
   @override
   Future<void> deleteStatus(String statusId) async {
-    final normalized = normalizeId(statusId);
-    if (normalized == null) {
-      return;
-    }
-    await _statusesCollection.doc(normalized).delete();
-    await _cache.removeDocument(
-      resourceKey: _statusesResourceKey,
-      documentId: normalized,
-    );
+    await _runRequest(() async {
+      final normalized = normalizeId(statusId);
+      if (normalized == null) {
+        return;
+      }
+      await _statusesCollection.doc(normalized).delete();
+      await _cache.removeDocument(
+        resourceKey: _statusesResourceKey,
+        documentId: normalized,
+      );
+    }, fallback: 'We could not delete the status right now.');
   }
 
   @override
   Future<void> deleteStatusForm(String formId) async {
-    final normalized = normalizeId(formId);
-    if (normalized == null) {
-      return;
-    }
-    await _formsCollection.doc(normalized).delete();
-    await _cache.removeDocument(
-      resourceKey: _statusFormsResourceKey,
-      documentId: normalized,
-    );
+    await _runRequest(() async {
+      final normalized = normalizeId(formId);
+      if (normalized == null) {
+        return;
+      }
+      await _formsCollection.doc(normalized).delete();
+      await _cache.removeDocument(
+        resourceKey: _statusFormsResourceKey,
+        documentId: normalized,
+      );
+    }, fallback: 'We could not delete the flow right now.');
   }
 
   @override
   Future<void> deactivateStatusForm(String formId) async {
-    final normalized = normalizeId(formId);
-    if (normalized == null) {
-      return;
-    }
-    final forms = await _getHydratedForms();
-    for (final form in forms) {
-      if (form.id == normalized) {
-        final updatedFormDocument = _formToFirestoreMap(
-          form.copyWith(isActive: false, updatedAt: DateTime.now()),
-        );
-        await _formsCollection.doc(normalized).set(updatedFormDocument);
-        await _cache.upsertDocument(
-          resourceKey: _statusFormsResourceKey,
-          document: updatedFormDocument,
-        );
-        break;
+    await _runRequest(() async {
+      final normalized = normalizeId(formId);
+      if (normalized == null) {
+        return;
       }
-    }
+      final forms = await _getHydratedForms();
+      for (final form in forms) {
+        if (form.id == normalized) {
+          final updatedFormDocument = _formToFirestoreMap(
+            form.copyWith(isActive: false, updatedAt: DateTime.now()),
+          );
+          await _formsCollection.doc(normalized).set(updatedFormDocument);
+          await _cache.upsertDocument(
+            resourceKey: _statusFormsResourceKey,
+            document: updatedFormDocument,
+          );
+          break;
+        }
+      }
+    }, fallback: 'We could not deactivate the flow right now.');
   }
 
   Future<List<StatusForm>> _getHydratedForms() async {
@@ -442,5 +468,18 @@ class StatusRequest implements StatusFormRepository {
       return null;
     }
     return DateTime.tryParse(value.toString());
+  }
+
+  Future<T> _runRequest<T>(
+    Future<T> Function() action, {
+    required String fallback,
+  }) async {
+    try {
+      return await action();
+    } on FirebaseException catch (error) {
+      throw Exception(userFacingErrorMessage(error, fallback: fallback));
+    } catch (error) {
+      throw Exception(userFacingErrorMessage(error, fallback: fallback));
+    }
   }
 }

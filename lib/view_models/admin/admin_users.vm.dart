@@ -21,6 +21,7 @@ class AdminUsersViewModel extends BaseViewModel {
     _cachedCurrentUser = null;
     _cachedViewedUser = null;
   }
+
   final List<UserModel> _users = [];
   UserModel? _currentUser;
   UserModel? _viewedUser;
@@ -31,6 +32,7 @@ class AdminUsersViewModel extends BaseViewModel {
   String _onlineFilter = 'All';
   DateTime? _startDate;
   DateTime? _endDate;
+  String _busyMessage = 'Loading, please wait ...';
   String get searchQuery => _searchQuery;
   List<UserModel> get users => List.unmodifiable(_users);
   UserModel? get currentUser => _currentUser;
@@ -41,8 +43,10 @@ class AdminUsersViewModel extends BaseViewModel {
   String get onlineFilter => _onlineFilter;
   DateTime? get startDate => _startDate;
   DateTime? get endDate => _endDate;
+  String get busyMessage => _busyMessage;
 
   Future<void> loadUsers({UserModel? fallbackCurrentUser}) async {
+    _busyMessage = 'Loading users...';
     setBusy(true);
     try {
       final users = await _repository.getUsers();
@@ -62,42 +66,54 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<UserModel> updateUser(UserModel user) async {
-    final saved = await _repository.saveUser(user);
-    final existingIndex = _users.indexWhere((item) => item.id == saved.id);
-    if (existingIndex >= 0) {
-      _users[existingIndex] = saved;
-    } else {
-      _users.add(saved);
+    _busyMessage = 'Saving user...';
+    setBusy(true);
+    try {
+      final saved = await _repository.saveUser(user);
+      final existingIndex = _users.indexWhere((item) => item.id == saved.id);
+      if (existingIndex >= 0) {
+        _users[existingIndex] = saved;
+      } else {
+        _users.add(saved);
+      }
+      _sortUsers();
+      _currentUser = await _resolveCurrentUser(fallback: saved);
+      if (_viewedUser?.id == saved.id) {
+        _viewedUser = saved;
+      }
+      _cachedUsers = List<UserModel>.from(_users);
+      _cachedCurrentUser = _currentUser;
+      _cachedViewedUser = _viewedUser;
+      _searchQuery = '';
+      notifyListeners();
+      return saved;
+    } finally {
+      setBusy(false);
     }
-    _sortUsers();
-    _currentUser = await _resolveCurrentUser(fallback: saved);
-    if (_viewedUser?.id == saved.id) {
-      _viewedUser = saved;
-    }
-    _cachedUsers = List<UserModel>.from(_users);
-    _cachedCurrentUser = _currentUser;
-    _cachedViewedUser = _viewedUser;
-    _searchQuery = '';
-    notifyListeners();
-    return saved;
   }
 
   Future<UserModel> addUser(UserModel user) async {
-    final saved = await _repository.saveUser(
-      user.copyWith(isOnline: user.isOnline ?? false),
-    );
-    _users.add(saved);
-    _sortUsers();
-    _currentUser = await _resolveCurrentUser();
-    _searchQuery = '';
-    _roleFilter = 'All';
-    _activeFilter = 'All';
-    _onlineFilter = 'All';
-    _draftNewUser = null;
-    _cachedUsers = List<UserModel>.from(_users);
-    _cachedCurrentUser = _currentUser;
-    notifyListeners();
-    return saved;
+    _busyMessage = 'Creating user...';
+    setBusy(true);
+    try {
+      final saved = await _repository.saveUser(
+        user.copyWith(isOnline: user.isOnline ?? false),
+      );
+      _users.add(saved);
+      _sortUsers();
+      _currentUser = await _resolveCurrentUser();
+      _searchQuery = '';
+      _roleFilter = 'All';
+      _activeFilter = 'All';
+      _onlineFilter = 'All';
+      _draftNewUser = null;
+      _cachedUsers = List<UserModel>.from(_users);
+      _cachedCurrentUser = _currentUser;
+      notifyListeners();
+      return saved;
+    } finally {
+      setBusy(false);
+    }
   }
 
   void syncUser(UserModel user) {
@@ -129,17 +145,23 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<void> deleteUser(UserModel user) async {
-    await _repository.deleteUser(user.id ?? '');
-    _users.removeWhere((item) => item.id == user.id);
-    _sortUsers();
-    _currentUser = await _resolveCurrentUser();
-    if (_viewedUser?.id == user.id) {
-      _viewedUser = null;
+    _busyMessage = 'Deleting user...';
+    setBusy(true);
+    try {
+      await _repository.deleteUser(user.id ?? '');
+      _users.removeWhere((item) => item.id == user.id);
+      _sortUsers();
+      _currentUser = await _resolveCurrentUser();
+      if (_viewedUser?.id == user.id) {
+        _viewedUser = null;
+      }
+      _cachedUsers = List<UserModel>.from(_users);
+      _cachedCurrentUser = _currentUser;
+      _cachedViewedUser = _viewedUser;
+      notifyListeners();
+    } finally {
+      setBusy(false);
     }
-    _cachedUsers = List<UserModel>.from(_users);
-    _cachedCurrentUser = _currentUser;
-    _cachedViewedUser = _viewedUser;
-    notifyListeners();
   }
 
   Future<void> loginAsUser(UserModel user) async {
@@ -147,7 +169,13 @@ class AdminUsersViewModel extends BaseViewModel {
     if (userId.isEmpty) {
       throw const AuthFailure('User ID is required.');
     }
-    await _repository.loginAsUser(userId);
+    _busyMessage = 'Signing in as user...';
+    setBusy(true);
+    try {
+      await _repository.loginAsUser(userId);
+    } finally {
+      setBusy(false);
+    }
   }
 
   void openUserView(UserModel user) {
@@ -163,6 +191,7 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<void> setUserActive(UserModel user, bool isActive) async {
+    _busyMessage = isActive ? 'Activating user...' : 'Deactivating user...';
     await updateUser(
       user.copyWith(
         isActive: isActive,

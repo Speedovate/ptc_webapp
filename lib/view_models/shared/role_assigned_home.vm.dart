@@ -10,6 +10,7 @@ import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/utils/functions.dart';
 
 class RoleAssignedHomeViewModel extends BaseViewModel {
   RoleAssignedHomeViewModel({
@@ -50,8 +51,10 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   List<Booking> assignedBookings = [];
   UserModel? currentUser;
   String? errorMessage;
+  String busyMessage = 'Loading, please wait ...';
 
   Future<void> load(UserModel user) async {
+    busyMessage = 'Loading assigned bookings...';
     setBusy(true);
     errorMessage = null;
     try {
@@ -88,8 +91,11 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       _cachedErrorMessage = null;
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
-    } catch (_) {
-      errorMessage = 'Failed to load assigned bookings.';
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load the assigned bookings right now.',
+      );
       _cachedErrorMessage = errorMessage;
     } finally {
       setBusy(false);
@@ -133,12 +139,20 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
     if (user == null) {
       return null;
     }
-    final savedUser = await _authRepository.saveUser(
-      user.copyWith(isOnline: isOnline, updatedAt: DateTime.now()),
-    );
-    currentUser = savedUser;
-    notifyListeners();
-    return savedUser;
+    busyMessage = isOnline
+        ? 'Turning availability on...'
+        : 'Turning availability off...';
+    setBusy(true);
+    try {
+      final savedUser = await _authRepository.saveUser(
+        user.copyWith(isOnline: isOnline, updatedAt: DateTime.now()),
+      );
+      currentUser = savedUser;
+      notifyListeners();
+      return savedUser;
+    } finally {
+      setBusy(false);
+    }
   }
 
   String clientName(Booking booking) =>

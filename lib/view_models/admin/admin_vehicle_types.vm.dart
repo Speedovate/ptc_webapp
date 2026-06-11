@@ -2,6 +2,7 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/utils/functions.dart';
 
 class AdminVehicleTypesViewModel extends BaseViewModel {
   AdminVehicleTypesViewModel({VehicleCatalogRepository? repository})
@@ -21,11 +22,14 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
 
   List<VehicleCatalogItem> _types = const [];
   String? _errorMessage;
+  String _busyMessage = 'Loading, please wait ...';
 
   List<VehicleCatalogItem> get types => _types;
   String? get errorMessage => _errorMessage;
+  String get busyMessage => _busyMessage;
 
   Future<void> load() async {
+    _busyMessage = 'Loading vehicle types...';
     setBusy(true);
     _errorMessage = null;
     try {
@@ -33,8 +37,11 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
       _sortTypes();
       _cachedTypes = List<VehicleCatalogItem>.from(_types);
       _cachedErrorMessage = null;
-    } catch (_) {
-      _errorMessage = 'Failed to load vehicle types.';
+    } catch (error) {
+      _errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load the vehicle types right now.',
+      );
       _cachedErrorMessage = _errorMessage;
     } finally {
       setBusy(false);
@@ -42,17 +49,23 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
   }
 
   Future<VehicleCatalogItem> saveType(VehicleCatalogItem type) async {
-    final saved = await _repository.saveType(type);
-    final index = _types.indexWhere((item) => item.id == saved.id);
-    if (index >= 0) {
-      _types[index] = saved;
-    } else {
-      _types = [..._types, saved];
+    _busyMessage = 'Saving vehicle type...';
+    setBusy(true);
+    try {
+      final saved = await _repository.saveType(type);
+      final index = _types.indexWhere((item) => item.id == saved.id);
+      if (index >= 0) {
+        _types[index] = saved;
+      } else {
+        _types = [..._types, saved];
+      }
+      _sortTypes();
+      _cachedTypes = List<VehicleCatalogItem>.from(_types);
+      notifyListeners();
+      return saved;
+    } finally {
+      setBusy(false);
     }
-    _sortTypes();
-    _cachedTypes = List<VehicleCatalogItem>.from(_types);
-    notifyListeners();
-    return saved;
   }
 
   Future<void> deleteType(VehicleCatalogItem type) async {
@@ -60,16 +73,25 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
     if (typeId == null || typeId.isEmpty) {
       return;
     }
-    await _repository.deleteType(typeId);
-    _types = _types.where((item) => item.id != typeId).toList();
-    _cachedTypes = List<VehicleCatalogItem>.from(_types);
-    notifyListeners();
+    _busyMessage = 'Deleting vehicle type...';
+    setBusy(true);
+    try {
+      await _repository.deleteType(typeId);
+      _types = _types.where((item) => item.id != typeId).toList();
+      _cachedTypes = List<VehicleCatalogItem>.from(_types);
+      notifyListeners();
+    } finally {
+      setBusy(false);
+    }
   }
 
   Future<VehicleCatalogItem> setTypeActive(
     VehicleCatalogItem type,
     bool isActive,
   ) {
+    _busyMessage = isActive
+        ? 'Activating vehicle type...'
+        : 'Deactivating vehicle type...';
     return saveType(
       type.copyWith(isActive: isActive, updatedAt: DateTime.now()),
     );

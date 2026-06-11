@@ -6,6 +6,7 @@ import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
+import 'package:webapp/utils/functions.dart';
 
 class AdminFlowViewModel extends BaseViewModel {
   AdminFlowViewModel({StatusFormRepository? repository})
@@ -100,8 +101,10 @@ class AdminFlowViewModel extends BaseViewModel {
   String? errorMessage;
   String? successMessage;
   bool isPreviewVisible = true;
+  String busyMessage = 'Loading, please wait ...';
 
   Future<void> loadForms() async {
+    busyMessage = 'Loading flows...';
     isLoading = true;
     notifyListeners();
 
@@ -143,7 +146,10 @@ class AdminFlowViewModel extends BaseViewModel {
       errorMessage = null;
       _cacheSnapshot();
     } catch (error) {
-      errorMessage = 'Failed to load status forms.';
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load the flows right now.',
+      );
       _cachedErrorMessage = errorMessage;
     } finally {
       isLoading = false;
@@ -529,12 +535,22 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> saveLibraryField(StatusField field) async {
-    final now = DateTime.now();
-    await _repository.saveField(
-      field.copyWith(updatedAt: now, createdAt: field.createdAt ?? now),
-    );
-    draftNewField = null;
-    await loadForms();
+    busyMessage = 'Saving field...';
+    isLoading = true;
+    notifyListeners();
+    try {
+      final now = DateTime.now();
+      await _repository.saveField(
+        field.copyWith(updatedAt: now, createdAt: field.createdAt ?? now),
+      );
+      draftNewField = null;
+      await loadForms();
+    } finally {
+      if (isLoading) {
+        isLoading = false;
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> deleteLibraryField(StatusField field) async {
@@ -542,8 +558,18 @@ class AdminFlowViewModel extends BaseViewModel {
     if (fieldId.isEmpty) {
       return;
     }
-    await _repository.deleteField(fieldId);
-    await loadForms();
+    busyMessage = 'Deleting field...';
+    isLoading = true;
+    notifyListeners();
+    try {
+      await _repository.deleteField(fieldId);
+      await loadForms();
+    } finally {
+      if (isLoading) {
+        isLoading = false;
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> setLibraryFieldActive(StatusField field, bool isActive) async {
@@ -551,24 +577,44 @@ class AdminFlowViewModel extends BaseViewModel {
     if (fieldId.isEmpty) {
       return;
     }
-    final now = DateTime.now();
-    await _repository.saveField(
-      field.copyWith(
-        isActive: isActive,
-        updatedAt: now,
-        createdAt: field.createdAt ?? now,
-      ),
-    );
-    await loadForms();
+    busyMessage = isActive ? 'Activating field...' : 'Deactivating field...';
+    isLoading = true;
+    notifyListeners();
+    try {
+      final now = DateTime.now();
+      await _repository.saveField(
+        field.copyWith(
+          isActive: isActive,
+          updatedAt: now,
+          createdAt: field.createdAt ?? now,
+        ),
+      );
+      await loadForms();
+    } finally {
+      if (isLoading) {
+        isLoading = false;
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> saveStatus(Status status) async {
-    final now = DateTime.now();
-    await _repository.saveStatus(
-      status.copyWith(updatedAt: now, createdAt: status.createdAt ?? now),
-    );
-    draftNewStatus = null;
-    await loadForms();
+    busyMessage = 'Saving status...';
+    isLoading = true;
+    notifyListeners();
+    try {
+      final now = DateTime.now();
+      await _repository.saveStatus(
+        status.copyWith(updatedAt: now, createdAt: status.createdAt ?? now),
+      );
+      draftNewStatus = null;
+      await loadForms();
+    } finally {
+      if (isLoading) {
+        isLoading = false;
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> deleteStatus(Status status) async {
@@ -576,8 +622,18 @@ class AdminFlowViewModel extends BaseViewModel {
     if (statusId.isEmpty) {
       return;
     }
-    await _repository.deleteStatus(statusId);
-    await loadForms();
+    busyMessage = 'Deleting status...';
+    isLoading = true;
+    notifyListeners();
+    try {
+      await _repository.deleteStatus(statusId);
+      await loadForms();
+    } finally {
+      if (isLoading) {
+        isLoading = false;
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> setStatusActive(Status status, bool isActive) async {
@@ -585,15 +641,25 @@ class AdminFlowViewModel extends BaseViewModel {
     if (statusId.isEmpty) {
       return;
     }
-    final now = DateTime.now();
-    await _repository.saveStatus(
-      status.copyWith(
-        isActive: isActive,
-        updatedAt: now,
-        createdAt: status.createdAt ?? now,
-      ),
-    );
-    await loadForms();
+    busyMessage = isActive ? 'Activating status...' : 'Deactivating status...';
+    isLoading = true;
+    notifyListeners();
+    try {
+      final now = DateTime.now();
+      await _repository.saveStatus(
+        status.copyWith(
+          isActive: isActive,
+          updatedAt: now,
+          createdAt: status.createdAt ?? now,
+        ),
+      );
+      await loadForms();
+    } finally {
+      if (isLoading) {
+        isLoading = false;
+        notifyListeners();
+      }
+    }
   }
 
   Status createDraftStatus() {
@@ -853,6 +919,7 @@ class AdminFlowViewModel extends BaseViewModel {
       return;
     }
 
+    busyMessage = 'Saving flow...';
     isLoading = true;
     notifyListeners();
 
@@ -878,8 +945,11 @@ class AdminFlowViewModel extends BaseViewModel {
       _sortFormsLatestFirst();
       successMessage = 'Status form saved successfully.';
       errorMessage = null;
-    } catch (_) {
-      errorMessage = 'Failed to save status form.';
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not save the flow right now.',
+      );
     } finally {
       isLoading = false;
       notifyListeners();
@@ -887,6 +957,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> deleteForm(StatusForm form) async {
+    busyMessage = 'Deleting flow...';
     isLoading = true;
     notifyListeners();
     try {
@@ -901,8 +972,11 @@ class AdminFlowViewModel extends BaseViewModel {
       }
       successMessage = 'Status form deleted.';
       errorMessage = null;
-    } catch (_) {
-      errorMessage = 'Failed to delete status form.';
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not delete the flow right now.',
+      );
     } finally {
       isLoading = false;
       notifyListeners();
@@ -910,6 +984,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> deactivateForm(StatusForm form) async {
+    busyMessage = 'Deactivating flow...';
     isLoading = true;
     notifyListeners();
     try {
@@ -925,8 +1000,11 @@ class AdminFlowViewModel extends BaseViewModel {
       }
       successMessage = 'Status form deactivated.';
       errorMessage = null;
-    } catch (_) {
-      errorMessage = 'Failed to deactivate status form.';
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not deactivate the flow right now.',
+      );
     } finally {
       isLoading = false;
       notifyListeners();

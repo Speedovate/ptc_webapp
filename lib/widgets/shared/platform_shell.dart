@@ -4,6 +4,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/services/app_version_service.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/collapsible_sidebar.dart';
+import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
 
 class PlatformShell extends StatelessWidget {
@@ -141,18 +142,25 @@ class PlatformAppBar extends StatelessWidget {
       decoration: const BoxDecoration(color: AppColors.primaryColor),
       child: Row(
         children: [
-          InkWell(
+          AppMousePressable(
             borderRadius: BorderRadius.circular(16),
             onTap: onMenuPressed,
-            child: Ink(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: Colors.white12,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.white24),
+            child: Builder(
+              builder: (context) => AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: appPressablePressed(context)
+                      ? Colors.white.withValues(alpha: 0.22)
+                      : appPressableHovered(context)
+                      ? Colors.white.withValues(alpha: 0.16)
+                      : Colors.white12,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: const Icon(Icons.menu_rounded, color: Colors.white),
               ),
-              child: const Icon(Icons.menu_rounded, color: Colors.white),
             ),
           ),
           const SizedBox(width: 16),
@@ -214,25 +222,26 @@ class PlatformSidebarContainer extends StatelessWidget {
 }
 
 class PlatformSidebarBrandTile extends StatelessWidget {
-  const PlatformSidebarBrandTile({
-    super.key,
-    required this.onTap,
-  });
+  const PlatformSidebarBrandTile({super.key, required this.onTap});
 
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: onTap,
-        child: Container(
+    return AppMousePressable(
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: Builder(
+        builder: (context) => AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
           height: PlatformShell.sidebarHeaderHeight,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: appPressablePressed(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.32)
+                : appPressableHovered(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.16)
+                : Colors.white,
             borderRadius: BorderRadius.circular(20),
           ),
           child: LayoutBuilder(
@@ -591,8 +600,8 @@ class _PlatformProfileDropdownActionRowState
               final backgroundColor = isPressed
                   ? AppColors.primarySurfaceAlt.withValues(alpha: 0.38)
                   : isHovered
-                      ? AppColors.primarySurfaceAlt.withValues(alpha: 0.22)
-                      : Colors.transparent;
+                  ? AppColors.primarySurfaceAlt.withValues(alpha: 0.22)
+                  : Colors.transparent;
 
               return GestureDetector(
                 behavior: widget.behavior,

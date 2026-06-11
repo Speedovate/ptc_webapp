@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:webapp/utils/functions.dart';
 
 class AppSnackbar {
   static const _errorColor = Color(0xFFD94B4B);
   static const _successColor = Color(0xFF2EAD62);
 
   static void showError(BuildContext context, String message) {
-    _show(context, message, _errorColor);
+    _show(context, normalizeUserErrorText(message), _errorColor);
   }
 
   static void showSuccess(BuildContext context, String message) {
@@ -16,10 +17,7 @@ class AppSnackbar {
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
     messenger.showSnackBar(
-      SnackBar(
-        backgroundColor: color,
-        content: Text(message),
-      ),
+      SnackBar(backgroundColor: color, content: Text(message)),
     );
   }
 }

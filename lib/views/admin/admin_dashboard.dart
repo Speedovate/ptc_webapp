@@ -4,6 +4,7 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/view_models/admin/admin_dashboard.vm.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 
 class AdminDashboardView extends StatelessWidget {
@@ -16,47 +17,59 @@ class AdminDashboardView extends StatelessWidget {
       onViewModelReady: (vm) => vm.load(),
       builder: (context, vm, child) {
         if (vm.errorMessage != null) {
-          return Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                AppRefreshStrip(isVisible: vm.isBusy),
-                AdminListItemCard(
-                  padding: const EdgeInsets.all(24),
-                  child: AdminListStateText(message: vm.errorMessage!),
-                ),
-              ],
+          return AppPageLoadingOverlay(
+            isVisible: vm.isBusy,
+            message: vm.busyMessage,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  AppRefreshStrip(isVisible: vm.isBusy),
+                  AdminListItemCard(
+                    padding: const EdgeInsets.all(24),
+                    child: AdminListStateText(message: vm.errorMessage!),
+                  ),
+                ],
+              ),
             ),
           );
         }
 
         if (vm.completedBookings.isEmpty) {
-          return Padding(
-            padding: EdgeInsets.all(24),
-            child: Column(
-              children: [
-                AppRefreshStrip(isVisible: vm.isBusy),
-                const AdminListItemCard(
-                  padding: EdgeInsets.all(24),
-                  child: AdminListStateText(
-                    message: 'No completed bookings yet.',
+          return AppPageLoadingOverlay(
+            isVisible: vm.isBusy,
+            message: vm.busyMessage,
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  AppRefreshStrip(isVisible: vm.isBusy),
+                  AdminListItemCard(
+                    padding: EdgeInsets.all(24),
+                    child: AdminListStateText(
+                      message: 'No completed bookings yet.',
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         }
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-          child: Column(
-            children: [
-              AppRefreshStrip(isVisible: vm.isBusy),
-              _AdminDashboardCompletedBookingsTable(
-                bookings: vm.completedBookings,
-                vm: vm,
-              ),
-            ],
+        return AppPageLoadingOverlay(
+          isVisible: vm.isBusy,
+          message: vm.busyMessage,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+            child: Column(
+              children: [
+                AppRefreshStrip(isVisible: vm.isBusy),
+                _AdminDashboardCompletedBookingsTable(
+                  bookings: vm.completedBookings,
+                  vm: vm,
+                ),
+              ],
+            ),
           ),
         );
       },

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
@@ -12,6 +11,7 @@ import 'package:webapp/view_models/shared/role_assigned_home.vm.dart';
 import 'package:webapp/view_models/shared/role_platform_home.vm.dart';
 import 'package:webapp/views/shared/profile_view.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
@@ -58,118 +58,52 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
     }
   }
 
-  Future<void> _uploadProfilePhoto() async {
-    if (_isUploadingProfilePhoto) {
+  Future<void> _saveProfileChanges(ProfilePendingProfileChanges changes) async {
+    if ((_isUploadingProfilePhoto || _isUploadingLicensePhoto) ||
+        !changes.hasChanges) {
       return;
     }
     final userId = _shellUser.id?.trim();
     if (userId == null || userId.isEmpty) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, 'User ID is required.');
-      return;
-    }
-
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final file = result?.files.singleOrNull;
-    final bytes = file?.bytes;
-    if (file == null || bytes == null) {
-      return;
+      throw const AuthFailure('User ID is required.');
     }
 
     setState(() {
-      _isUploadingProfilePhoto = true;
+      _isUploadingProfilePhoto = changes.photoUpload != null;
+      _isUploadingLicensePhoto = changes.licenseUpload != null;
     });
     try {
-      final updatedUser = await _authRepository.saveUserPhoto(
-        userId: userId,
-        bytes: bytes,
-        fileName: file.name,
-        size: file.size,
-      );
+      var updatedUser = _shellUser;
+      final photoUpload = changes.photoUpload;
+      if (photoUpload != null) {
+        updatedUser = await _authRepository.saveUserPhoto(
+          userId: userId,
+          bytes: photoUpload.bytes,
+          fileName: photoUpload.fileName,
+          mimeType: photoUpload.mimeType,
+          size: photoUpload.size,
+        );
+      }
+      final licenseUpload = changes.licenseUpload;
+      if (licenseUpload != null) {
+        updatedUser = await _authRepository.saveDriverLicensePhoto(
+          userId: userId,
+          bytes: licenseUpload.bytes,
+          fileName: licenseUpload.fileName,
+          mimeType: licenseUpload.mimeType,
+          size: licenseUpload.size,
+        );
+      }
       if (!mounted) {
         return;
       }
       setState(() {
         _shellUser = updatedUser;
       });
-      AppSnackbar.showSuccess(context, 'Profile photo updated.');
-    } on AuthFailure catch (error) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, error.message);
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, 'Failed to upload profile photo.');
     } finally {
       if (mounted) {
         setState(() {
           _isUploadingProfilePhoto = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _uploadLicensePhoto() async {
-    if (_isUploadingLicensePhoto) {
-      return;
-    }
-    final userId = _shellUser.id?.trim();
-    if (userId == null || userId.isEmpty) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, 'User ID is required.');
-      return;
-    }
-
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final file = result?.files.singleOrNull;
-    final bytes = file?.bytes;
-    if (file == null || bytes == null) {
-      return;
-    }
-
-    setState(() {
-      _isUploadingLicensePhoto = true;
-    });
-    try {
-      final updatedUser = await _authRepository.saveDriverLicensePhoto(
-        userId: userId,
-        bytes: bytes,
-        fileName: file.name,
-        size: file.size,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _shellUser = updatedUser;
-      });
-      AppSnackbar.showSuccess(context, 'License photo updated.');
-    } on AuthFailure catch (error) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, error.message);
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, 'Failed to upload license photo.');
-    } finally {
-      if (mounted) {
-        setState(() {
           _isUploadingLicensePhoto = false;
         });
       }
@@ -184,6 +118,11 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
         final width = MediaQuery.of(context).size.width;
         final isCompact = width < 1100;
         final showRail = !isCompact && vm.showDrawer;
+        final overlayVisible =
+            _isUploadingProfilePhoto || _isUploadingLicensePhoto;
+        final overlayMessage = _isUploadingLicensePhoto
+            ? 'Uploading license photo...'
+            : 'Uploading profile photo...';
 
         return PlatformShell(
           scaffoldKey: _scaffoldKey,
@@ -196,9 +135,13 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
           onLogout: widget.onLogout,
           logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
           sidebar: _buildSidebar(vm, isCompact: isCompact),
-          body: KeyedSubtree(
-            key: ValueKey(vm.selectedSection),
-            child: _buildSelectedSection(vm.selectedSection),
+          body: AppPageLoadingOverlay(
+            isVisible: overlayVisible,
+            message: overlayMessage,
+            child: KeyedSubtree(
+              key: ValueKey(vm.selectedSection),
+              child: _buildSelectedSection(vm.selectedSection),
+            ),
           ),
         );
       },
@@ -308,8 +251,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
         isCurrentUserView: true,
         onLogout: widget.onLogout,
         logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-        onChangePhotoPressed: _uploadProfilePhoto,
-        onChangeLicensePressed: _uploadLicensePhoto,
+        onSaveProfileChanges: _saveProfileChanges,
       ),
     };
   }
@@ -345,117 +287,121 @@ class _RoleAssignedHomeSection extends StatelessWidget {
         final currentUser = vm.currentUser ?? user;
         final roleLabel = currentUser.role == 'driver' ? 'Driver' : 'Helper';
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AppRefreshStrip(isVisible: vm.isBusy),
-              AdminListItemCard(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 16,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '$roleLabel Availability',
-                            style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            (currentUser.isOnline ?? false)
-                                ? 'You are currently online and assignable.'
-                                : 'You are currently offline.',
-                            style: TextStyle(
-                              color: AppColors.primaryColor.withValues(
-                                alpha: 0.72,
-                              ),
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Switch(
-                      value: currentUser.isOnline ?? false,
-                      trackOutlineColor: WidgetStateProperty.all(
-                        AppColors.primaryColor,
-                      ),
-                      inactiveThumbColor: AppColors.primaryColor,
-                      onChanged: vm.isBusy
-                          ? null
-                          : (value) async {
-                              try {
-                                final updatedUser = await vm.setOnline(value);
-                                if (updatedUser != null) {
-                                  onUserUpdated(updatedUser);
-                                }
-                              } on AuthFailure catch (error) {
-                                if (!context.mounted) {
-                                  return;
-                                }
-                                AppSnackbar.showError(context, error.message);
-                              }
-                            },
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              if (vm.errorMessage != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: AdminListItemCard(
-                    padding: const EdgeInsets.all(24),
-                    child: AdminListStateText(message: vm.errorMessage!),
-                  ),
-                ),
-              if (vm.assignedBookings.isEmpty)
+        return AppPageLoadingOverlay(
+          isVisible: vm.isBusy,
+          message: vm.busyMessage,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppRefreshStrip(isVisible: vm.isBusy),
                 AdminListItemCard(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(
-                    'No active assigned bookings yet.',
-                    style: TextStyle(
-                      color: AppColors.primaryColor.withValues(alpha: 0.72),
-                      fontWeight: FontWeight.w600,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 16,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '$roleLabel Availability',
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              (currentUser.isOnline ?? false)
+                                  ? 'You are currently online and assignable.'
+                                  : 'You are currently offline.',
+                              style: TextStyle(
+                                color: AppColors.primaryColor.withValues(
+                                  alpha: 0.72,
+                                ),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Switch(
+                        value: currentUser.isOnline ?? false,
+                        trackOutlineColor: WidgetStateProperty.all(
+                          AppColors.primaryColor,
+                        ),
+                        inactiveThumbColor: AppColors.primaryColor,
+                        onChanged: vm.isBusy
+                            ? null
+                            : (value) async {
+                                try {
+                                  final updatedUser = await vm.setOnline(value);
+                                  if (updatedUser != null) {
+                                    onUserUpdated(updatedUser);
+                                  }
+                                } on AuthFailure catch (error) {
+                                  if (!context.mounted) {
+                                    return;
+                                  }
+                                  AppSnackbar.showError(context, error.message);
+                                }
+                              },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                if (vm.errorMessage != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: AdminListItemCard(
+                      padding: const EdgeInsets.all(24),
+                      child: AdminListStateText(message: vm.errorMessage!),
                     ),
                   ),
-                )
-              else
-                Column(
-                  children: vm.assignedBookings
-                      .map(
-                        (booking) => Padding(
-                          padding: const EdgeInsets.only(bottom: 14),
-                          child: BookingRecordCard(
-                            booking: booking,
-                            onTap: () => onOpenBooking(booking),
-                            headlineStatusLabel: vm.statusLabelForKey(
-                              booking.clientStatus,
+                if (vm.assignedBookings.isEmpty)
+                  AdminListItemCard(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'No active assigned bookings yet.',
+                      style: TextStyle(
+                        color: AppColors.primaryColor.withValues(alpha: 0.72),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  )
+                else
+                  Column(
+                    children: vm.assignedBookings
+                        .map(
+                          (booking) => Padding(
+                            padding: const EdgeInsets.only(bottom: 14),
+                            child: BookingRecordCard(
+                              booking: booking,
+                              onTap: () => onOpenBooking(booking),
+                              headlineStatusLabel: vm.statusLabelForKey(
+                                booking.clientStatus,
+                              ),
+                              statusLabelForKey: vm.statusLabelForKey,
+                              showStatusSubmissions: false,
+                              clientName: vm.clientName(booking),
+                              clientPhone: vm.clientPhone(booking),
+                              driverName: vm.driverName(booking),
+                              driverPhone: vm.driverPhone(booking),
+                              helperName: vm.helperName(booking),
+                              helperPhone: vm.helperPhone(booking),
                             ),
-                            statusLabelForKey: vm.statusLabelForKey,
-                            showStatusSubmissions: false,
-                            clientName: vm.clientName(booking),
-                            clientPhone: vm.clientPhone(booking),
-                            driverName: vm.driverName(booking),
-                            driverPhone: vm.driverPhone(booking),
-                            helperName: vm.helperName(booking),
-                            helperPhone: vm.helperPhone(booking),
                           ),
-                        ),
-                      )
-                      .toList(),
-                ),
-            ],
+                        )
+                        .toList(),
+                  ),
+              ],
+            ),
           ),
         );
       },

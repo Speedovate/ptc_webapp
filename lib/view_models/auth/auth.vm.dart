@@ -2,27 +2,37 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
+import 'package:webapp/utils/functions.dart';
 
 class AuthViewModel extends BaseViewModel {
-  AuthViewModel({
-    AuthRepository? repository,
-  }) : _repository = repository ?? AuthRequest.instance;
+  AuthViewModel({AuthRepository? repository})
+    : _repository = repository ?? AuthRequest.instance;
 
   final AuthRepository _repository;
 
   String? errorMessage;
 
   Future<UserModel?> login({
-    required String email,
+    required String identifier,
     required String password,
   }) async {
     setBusy(true);
     errorMessage = null;
     notifyListeners();
     try {
-      return await _repository.login(email: email, password: password);
+      return await _repository.login(
+        identifier: identifier,
+        password: password,
+      );
     } on AuthFailure catch (error) {
       errorMessage = error.message;
+      notifyListeners();
+      return null;
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not sign you in right now. Please try again.',
+      );
       notifyListeners();
       return null;
     } finally {
@@ -38,6 +48,14 @@ class AuthViewModel extends BaseViewModel {
       return await _repository.register(user);
     } on AuthFailure catch (error) {
       errorMessage = error.message;
+      notifyListeners();
+      return null;
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback:
+            'We could not create your account right now. Please try again.',
+      );
       notifyListeners();
       return null;
     } finally {

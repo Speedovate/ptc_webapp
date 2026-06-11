@@ -199,3 +199,140 @@ String _titleCasePart(String part) {
       })
       .join('-');
 }
+
+String userFacingErrorMessage(
+  Object error, {
+  String fallback = 'Something went wrong. Please try again.',
+}) {
+  if (error is FirebaseException) {
+    final mapped = _firebaseErrorMessage(error.code, fallback: fallback);
+    if (mapped != null) {
+      return mapped;
+    }
+    final fromMessage = normalizeUserErrorText(error.message, fallback: '');
+    if (fromMessage.isNotEmpty) {
+      return fromMessage;
+    }
+    return fallback;
+  }
+
+  if (error is PlatformException) {
+    final mapped = _firebaseErrorMessage(error.code, fallback: fallback);
+    if (mapped != null) {
+      return mapped;
+    }
+    return normalizeUserErrorText(
+      error.message ?? error.code,
+      fallback: fallback,
+    );
+  }
+
+  return normalizeUserErrorText(error.toString(), fallback: fallback);
+}
+
+String normalizeUserErrorText(
+  String? rawMessage, {
+  String fallback = 'Something went wrong. Please try again.',
+}) {
+  final text = (rawMessage ?? '').trim();
+  if (text.isEmpty) {
+    return fallback;
+  }
+
+  final normalized = text
+      .replaceFirst(
+        RegExp(r'^(Exception|Error|StateError|AuthFailure):\s*'),
+        '',
+      )
+      .replaceFirst(RegExp(r'^\[[^\]]+\]\s*'), '')
+      .trim();
+  if (normalized.isEmpty) {
+    return fallback;
+  }
+
+  final lower = normalized.toLowerCase();
+  final mapped = _firebaseErrorMessage(lower, fallback: fallback);
+  if (mapped != null) {
+    return mapped;
+  }
+
+  if (_looksTechnical(lower)) {
+    return fallback;
+  }
+
+  return _sentenceCase(normalized);
+}
+
+String _sentenceCase(String value) {
+  if (value.isEmpty) {
+    return value;
+  }
+  return '${value[0].toUpperCase()}${value.substring(1)}';
+}
+
+bool _looksTechnical(String value) {
+  return value.contains("type '") ||
+      value.contains('stack trace') ||
+      value.contains('null check operator used on a null value') ||
+      value.contains('instance of') ||
+      value.contains('dart') ||
+      value.contains('firebaseexception') ||
+      value.contains('platformexception');
+}
+
+String? _firebaseErrorMessage(
+  String codeOrMessage, {
+  required String fallback,
+}) {
+  final normalized = codeOrMessage.trim().toLowerCase();
+  if (normalized.isEmpty) {
+    return null;
+  }
+
+  if (normalized.contains('permission-denied') ||
+      normalized.contains('storage/unauthorized') ||
+      normalized.contains('unauthorized')) {
+    return 'You do not have permission to do that right now.';
+  }
+  if (normalized.contains('unauthenticated')) {
+    return 'Please sign in again and try again.';
+  }
+  if (normalized.contains('network-request-failed') ||
+      normalized.contains('network error')) {
+    return 'Please check your internet connection and try again.';
+  }
+  if (normalized.contains('unavailable')) {
+    return 'Service is temporarily unavailable. Please try again.';
+  }
+  if (normalized.contains('deadline-exceeded')) {
+    return 'The request took too long. Please try again.';
+  }
+  if (normalized.contains('not-found') ||
+      normalized.contains('object-not-found')) {
+    return 'The requested item could not be found anymore.';
+  }
+  if (normalized.contains('already-exists')) {
+    return 'That item already exists.';
+  }
+  if (normalized.contains('invalid-argument') ||
+      normalized.contains('invalid value')) {
+    return 'Some information is invalid. Please review and try again.';
+  }
+  if (normalized.contains('failed-precondition')) {
+    return 'This action cannot be completed right now.';
+  }
+  if (normalized.contains('aborted') || normalized.contains('cancelled')) {
+    return 'This action could not be completed. Please try again.';
+  }
+  if (normalized.contains('resource-exhausted') ||
+      normalized.contains('quota-exceeded')) {
+    return 'Service is busy right now. Please try again later.';
+  }
+  if (normalized.contains('storage/unknown') ||
+      normalized.contains('unknown error occurred') ||
+      normalized.contains('internal')) {
+    return fallback;
+  }
+
+  return null;
+}

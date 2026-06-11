@@ -25,9 +25,7 @@ class AdminModalFormBody extends StatelessWidget {
       ignoring: readOnly,
       child: Opacity(
         opacity: readOnly ? readOnlyOpacity : 1,
-        child: Column(
-          children: children,
-        ),
+        child: Column(children: children),
       ),
     );
   }
@@ -59,7 +57,7 @@ class AdminModalFieldSlot extends StatelessWidget {
   const AdminModalFieldSlot({
     super.key,
     required this.child,
-    this.bottomPadding = 10,
+    this.bottomPadding = 6,
   });
 
   final Widget child;
@@ -84,7 +82,7 @@ class AdminModalTextField extends StatelessWidget {
     this.suffixIcon,
     this.textCapitalization = TextCapitalization.none,
     this.inputFormatters,
-    this.bottomPadding = 10,
+    this.bottomPadding = 6,
     this.minLines = 1,
     this.maxLines = 1,
     this.keyboardType,
@@ -123,15 +121,13 @@ class AdminModalTextField extends StatelessWidget {
         decoration: adminFormInputDecoration(
           label,
           hintText: hintText,
-        ).copyWith(
-          suffixIcon: suffixIcon,
-        ),
+        ).copyWith(suffixIcon: suffixIcon),
       ),
     );
   }
 }
 
-class AdminModalActionField extends StatelessWidget {
+class AdminModalActionField extends StatefulWidget {
   const AdminModalActionField({
     super.key,
     required this.label,
@@ -139,7 +135,7 @@ class AdminModalActionField extends StatelessWidget {
     this.valueText,
     this.hintText,
     this.suffixIcon,
-    this.bottomPadding = 10,
+    this.bottomPadding = 6,
   });
 
   final String label;
@@ -150,43 +146,80 @@ class AdminModalActionField extends StatelessWidget {
   final double bottomPadding;
 
   @override
-  Widget build(BuildContext context) {
-    final trimmedValue = valueText?.trim() ?? '';
-    final hasValue = trimmedValue.isNotEmpty;
-    final decoration = adminFormInputDecoration(
-      label,
-      hintText: hintText,
-    ).copyWith(suffixIcon: suffixIcon);
+  State<AdminModalActionField> createState() => _AdminModalActionFieldState();
+}
 
-    final borderRadius =
-        (decoration.enabledBorder is OutlineInputBorder)
-            ? (decoration.enabledBorder as OutlineInputBorder).borderRadius
-            : BorderRadius.circular(16);
+class _AdminModalActionFieldState extends State<AdminModalActionField> {
+  late final TextEditingController _controller;
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.valueText ?? '');
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminModalActionField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextValue = widget.valueText ?? '';
+    if (_controller.text != nextValue) {
+      _controller.value = _controller.value.copyWith(
+        text: nextValue,
+        selection: TextSelection.collapsed(offset: nextValue.length),
+        composing: TextRange.empty,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hoveredFillColor = appFieldInteractiveFillColor(context);
+    final decoration =
+        adminFormInputDecoration(
+          widget.label,
+          hintText: widget.hintText,
+        ).copyWith(
+          suffixIcon: widget.suffixIcon,
+          fillColor: _isPressed || _isHovered
+              ? hoveredFillColor
+              : AppColors.primarySurface,
+        );
 
     return AdminModalFieldSlot(
-      bottomPadding: bottomPadding,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: borderRadius,
-          onTap: onTap,
-          child: InputDecorator(
-            isEmpty: !hasValue,
-            isFocused: false,
-            decoration: decoration,
-            child: Text(
-              hasValue ? trimmedValue : (hintText?.trim().isNotEmpty == true ? hintText!.trim() : ''),
-              style: hasValue
-                  ? const TextStyle(
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.w400,
-                      height: 1.2,
-                    )
-                  : TextStyle(
-                      color: AppColors.primaryColor.withValues(alpha: 0.72),
-                      fontWeight: FontWeight.w400,
-                      height: 1.2,
-                    ),
+      bottomPadding: widget.bottomPadding,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() {
+          _isHovered = false;
+          _isPressed = false;
+        }),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (_) => setState(() => _isPressed = true),
+          onTapCancel: () => setState(() => _isPressed = false),
+          onTapUp: (_) => setState(() => _isPressed = false),
+          onTap: widget.onTap,
+          child: IgnorePointer(
+            child: TextFormField(
+              controller: _controller,
+              readOnly: true,
+              showCursor: false,
+              enableInteractiveSelection: false,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w400,
+                height: 1.2,
+              ),
+              decoration: decoration,
             ),
           ),
         ),
@@ -202,7 +235,7 @@ class AdminModalValueTextField extends StatelessWidget {
     this.initialValue,
     this.hintText,
     this.onChanged,
-    this.bottomPadding = 10,
+    this.bottomPadding = 6,
     this.minLines = 1,
     this.maxLines = 1,
     this.keyboardType,
@@ -226,10 +259,7 @@ class AdminModalValueTextField extends StatelessWidget {
         minLines: minLines,
         maxLines: maxLines,
         keyboardType: keyboardType,
-        decoration: adminFormInputDecoration(
-          label,
-          hintText: hintText,
-        ),
+        decoration: adminFormInputDecoration(label, hintText: hintText),
         onChanged: onChanged,
       ),
     );
@@ -243,7 +273,7 @@ class AdminModalDropdownField<T> extends StatelessWidget {
     this.initialValue,
     this.items,
     this.onChanged,
-    this.bottomPadding = 10,
+    this.bottomPadding = 6,
     this.iconEnabledColor,
     this.style,
     this.isExpanded = false,

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
@@ -15,7 +14,7 @@ import 'package:webapp/views/admin/admin_vehicle_makes.dart';
 import 'package:webapp/views/admin/admin_vehicle_sizes.dart';
 import 'package:webapp/views/admin/admin_vehicle_types.dart';
 import 'package:webapp/views/shared/profile_view.dart';
-import 'package:webapp/widgets/shared/app_snackbar.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/admin_shell_layout_scope.dart';
 import 'package:webapp/widgets/shared/platform_shell.dart';
 import 'package:webapp/widgets/sidebar_menu_item.dart';
@@ -60,39 +59,30 @@ class _AdminHomeState extends State<AdminHome> {
     }
   }
 
-  Future<void> _uploadProfilePhoto() async {
-    if (_isUploadingProfilePhoto) {
+  Future<void> _saveProfileChanges(ProfilePendingProfileChanges changes) async {
+    if (_isUploadingProfilePhoto || !changes.hasChanges) {
       return;
     }
     final userId = _shellUser.id?.trim();
     if (userId == null || userId.isEmpty) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, 'User ID is required.');
-      return;
-    }
-
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final file = result?.files.singleOrNull;
-    final bytes = file?.bytes;
-    if (file == null || bytes == null) {
-      return;
+      throw const AuthFailure('User ID is required.');
     }
 
     setState(() {
       _isUploadingProfilePhoto = true;
     });
     try {
-      final updatedUser = await _authRepository.saveUserPhoto(
-        userId: userId,
-        bytes: bytes,
-        fileName: file.name,
-        size: file.size,
-      );
+      var updatedUser = _shellUser;
+      final photoUpload = changes.photoUpload;
+      if (photoUpload != null) {
+        updatedUser = await _authRepository.saveUserPhoto(
+          userId: userId,
+          bytes: photoUpload.bytes,
+          fileName: photoUpload.fileName,
+          mimeType: photoUpload.mimeType,
+          size: photoUpload.size,
+        );
+      }
       if (!mounted) {
         return;
       }
@@ -100,20 +90,6 @@ class _AdminHomeState extends State<AdminHome> {
         _shellUser = updatedUser;
       });
       await widget.onUserUpdated();
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showSuccess(context, 'Profile photo updated.');
-    } on AuthFailure catch (error) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, error.message);
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(context, 'Failed to upload profile photo.');
     } finally {
       if (mounted) {
         setState(() {
@@ -131,6 +107,7 @@ class _AdminHomeState extends State<AdminHome> {
         final width = MediaQuery.of(context).size.width;
         final isCompact = width < 1100;
         final showRail = !isCompact && vm.showDrawer;
+        final overlayVisible = _isUploadingProfilePhoto;
 
         return PlatformShell(
           scaffoldKey: _scaffoldKey,
@@ -143,13 +120,17 @@ class _AdminHomeState extends State<AdminHome> {
           onLogout: widget.onLogout,
           logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
           sidebar: _buildSidebar(vm, isCompact: isCompact),
-          body: KeyedSubtree(
-            key: ValueKey(
-              '${vm.selectedSection}:${vm.selectedSettingsSection}',
-            ),
-            child: AdminShellLayoutScope(
-              filtersRightGap: showRail ? 44 : 24,
-              child: _buildSelectedSection(vm.selectedSection),
+          body: AppPageLoadingOverlay(
+            isVisible: overlayVisible,
+            message: 'Uploading profile photo...',
+            child: KeyedSubtree(
+              key: ValueKey(
+                '${vm.selectedSection}:${vm.selectedSettingsSection}',
+              ),
+              child: AdminShellLayoutScope(
+                filtersRightGap: showRail ? 44 : 24,
+                child: _buildSelectedSection(vm.selectedSection),
+              ),
             ),
           ),
         );
@@ -365,7 +346,7 @@ class _AdminHomeState extends State<AdminHome> {
         isCurrentUserView: true,
         onLogout: widget.onLogout,
         logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-        onChangePhotoPressed: _uploadProfilePhoto,
+        onSaveProfileChanges: _saveProfileChanges,
         onEditPressed: () {
           _viewModel.openUsersForEdit(_shellUser.id);
         },

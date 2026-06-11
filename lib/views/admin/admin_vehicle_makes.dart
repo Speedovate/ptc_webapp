@@ -11,6 +11,7 @@ import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 
 class AdminVehicleMakesView extends StatefulWidget {
@@ -21,6 +22,7 @@ class AdminVehicleMakesView extends StatefulWidget {
 }
 
 class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
+  static const _toolbarControlHeight = 52.0;
   String _searchQuery = '';
   String _activeFilter = 'All';
   AdminVehicleMakesViewModel? _vm;
@@ -179,83 +181,89 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                 12;
             final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AppRefreshStrip(isVisible: vm.isBusy),
-                  AdminListToolbar(
-                    controlHeight: 52,
-                    surfaceRadius: 16,
-                    search: AdminListSearchField(
-                      controlHeight: 52,
+            return AppPageLoadingOverlay(
+              isVisible: vm.isBusy,
+              message: vm.busyMessage,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppRefreshStrip(isVisible: vm.isBusy),
+                    AdminListToolbar(
+                      controlHeight: _toolbarControlHeight,
                       surfaceRadius: 16,
-                      initialValue: _searchQuery,
-                      onChanged: (value) {
-                        setState(() {
-                          _searchQuery = value;
-                        });
-                      },
-                    ),
-                    filtersBuilder: (context, iconOnly) => _CatalogFiltersPanel(
-                      iconOnly: iconOnly,
-                      activeFilter: _activeFilter,
-                      onActiveChanged: (value) {
-                        setState(() {
-                          _activeFilter = value;
-                        });
-                      },
-                    ),
-                    onNewPressed: () {
-                      _handleNew(vm);
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  if (vm.errorMessage != null)
-                    AdminListStateText(message: vm.errorMessage!)
-                  else if (vm.makes.isEmpty)
-                    const _VehicleCatalogEmptyState(
-                      message: 'No vehicle makes yet.',
-                    )
-                  else if (filteredMakes.isEmpty)
-                    const _VehicleCatalogEmptyState(
-                      message: 'No vehicle makes matched your current search.',
-                    )
-                  else ...[
-                    if (useWideTable)
-                      _VehicleMakeHeaderRow(
-                        idWidth: resolvedIdWidth,
-                        codeWidth: resolvedCodeWidth,
-                        typeWidth: resolvedTypeWidth,
-                        driverWidth: resolvedDriverWidth,
-                        activeWidth: resolvedActiveWidth,
-                        actionsWidth: resolvedActionsWidth,
+                      search: AdminListSearchField(
+                        controlHeight: _toolbarControlHeight,
+                        surfaceRadius: 16,
+                        initialValue: _searchQuery,
+                        onChanged: (value) {
+                          setState(() {
+                            _searchQuery = value;
+                          });
+                        },
                       ),
-                    if (useWideTable) const SizedBox(height: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: filteredMakes
-                          .map(
-                            (item) => Padding(
-                              padding: const EdgeInsets.only(bottom: 14),
-                              child: useWideTable
-                                  ? _VehicleMakeDesktopRow(
-                                      item: item,
-                                      idWidth: resolvedIdWidth,
-                                      codeWidth: resolvedCodeWidth,
-                                      typeWidth: resolvedTypeWidth,
-                                      driverWidth: resolvedDriverWidth,
-                                      activeWidth: resolvedActiveWidth,
-                                      actionsWidth: resolvedActionsWidth,
-                                    )
-                                  : _VehicleMakeResponsiveCard(item: item),
-                            ),
-                          )
-                          .toList(),
+                      filtersBuilder: (context, iconOnly) =>
+                          _CatalogFiltersPanel(
+                            iconOnly: iconOnly,
+                            activeFilter: _activeFilter,
+                            onActiveChanged: (value) {
+                              setState(() {
+                                _activeFilter = value;
+                              });
+                            },
+                          ),
+                      onNewPressed: () {
+                        _handleNew(vm);
+                      },
                     ),
+                    const SizedBox(height: 14),
+                    if (vm.errorMessage != null)
+                      AdminListStateText(message: vm.errorMessage!)
+                    else if (vm.makes.isEmpty)
+                      const _VehicleCatalogEmptyState(
+                        message: 'No vehicle makes yet.',
+                      )
+                    else if (filteredMakes.isEmpty)
+                      const _VehicleCatalogEmptyState(
+                        message:
+                            'No vehicle makes matched your current search.',
+                      )
+                    else ...[
+                      if (useWideTable)
+                        _VehicleMakeHeaderRow(
+                          idWidth: resolvedIdWidth,
+                          codeWidth: resolvedCodeWidth,
+                          typeWidth: resolvedTypeWidth,
+                          driverWidth: resolvedDriverWidth,
+                          activeWidth: resolvedActiveWidth,
+                          actionsWidth: resolvedActionsWidth,
+                        ),
+                      if (useWideTable) const SizedBox(height: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: filteredMakes
+                            .map(
+                              (item) => Padding(
+                                padding: const EdgeInsets.only(bottom: 14),
+                                child: useWideTable
+                                    ? _VehicleMakeDesktopRow(
+                                        item: item,
+                                        idWidth: resolvedIdWidth,
+                                        codeWidth: resolvedCodeWidth,
+                                        typeWidth: resolvedTypeWidth,
+                                        driverWidth: resolvedDriverWidth,
+                                        activeWidth: resolvedActiveWidth,
+                                        actionsWidth: resolvedActionsWidth,
+                                      )
+                                    : _VehicleMakeResponsiveCard(item: item),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             );
           },
@@ -789,7 +797,7 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
     );
 
     return AdminListFiltersButton(
-      controlHeight: 52,
+      controlHeight: adminFilterFieldMinHeight,
       surfaceRadius: 16,
       iconOnly: widget.iconOnly,
       menuChildren: [
@@ -805,7 +813,7 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
                 children: [
                   SizedBox(
                     width: contentWidth,
-                    height: 52,
+                    height: adminFilterFieldMinHeight,
                     child: _CatalogFilterDropdown(
                       label: 'Is Active',
                       value: widget.activeFilter,
@@ -814,10 +822,10 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
                       onChanged: widget.onActiveChanged,
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: contentWidth,
-                    height: 52,
+                    height: adminFilterFieldMinHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
@@ -868,7 +876,11 @@ class _CatalogFilterDropdown extends StatelessWidget {
       focusNode: focusNode,
       iconEnabledColor: AppColors.primaryColor,
       style: adminDropdownDisplayTextStyle,
-      decoration: adminFormInputDecoration(label, radius: 16),
+      decoration: adminFormInputDecoration(
+        label,
+        radius: 16,
+        minHeight: adminFilterFieldMinHeight,
+      ),
       items: items
           .where((item) => item != 'All')
           .map(
@@ -924,7 +936,10 @@ Future<VehicleMake?> _showMakeDialog(
 
     addItem(initialItem?.type?.id, (initialItem?.type?.name ?? '').trim());
     for (final item in types) {
-      addItem(item.id, (item.name ?? '').trim().isNotEmpty ? item.name!.trim() : '-');
+      addItem(
+        item.id,
+        (item.name ?? '').trim().isNotEmpty ? item.name!.trim() : '-',
+      );
     }
     return items;
   }
@@ -1035,7 +1050,7 @@ Future<VehicleMake?> _showMakeDialog(
                 AdminModalDropdownField<String>(
                   label: 'Type',
                   initialValue: typeId,
-                  bottomPadding: 10,
+                  bottomPadding: 6,
                   iconEnabledColor: AppColors.primaryColor,
                   disabledTapMessage: 'No active vehicle types available.',
                   items: buildTypeItems(),

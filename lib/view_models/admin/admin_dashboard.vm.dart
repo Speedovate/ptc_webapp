@@ -5,6 +5,7 @@ import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
 class AdminDashboardViewModel extends BaseViewModel {
@@ -33,8 +34,10 @@ class AdminDashboardViewModel extends BaseViewModel {
 
   List<Booking> get completedBookings => List.unmodifiable(_completedBookings);
   String? errorMessage;
+  String busyMessage = 'Loading, please wait ...';
 
   Future<void> load() async {
+    busyMessage = 'Loading dashboard...';
     setBusy(true);
     errorMessage = null;
     try {
@@ -76,8 +79,11 @@ class AdminDashboardViewModel extends BaseViewModel {
       _cachedCompletedBookings = List<Booking>.from(_completedBookings);
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedErrorMessage = null;
-    } catch (_) {
-      errorMessage = 'Failed to load completed bookings.';
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load the completed bookings right now.',
+      );
       _cachedErrorMessage = errorMessage;
     } finally {
       setBusy(false);

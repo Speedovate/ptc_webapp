@@ -8,6 +8,14 @@ const adminDropdownDisplayTextStyle = TextStyle(
   height: 1.2,
 );
 const double adminModalFieldMinHeight = 56;
+const double adminFilterFieldMinHeight = 52;
+
+Color appFieldInteractiveFillColor(BuildContext context) {
+  return Color.alphaBlend(
+    Theme.of(context).hoverColor,
+    AppColors.primarySurface,
+  );
+}
 
 class AdminDropdownFormField<T> extends StatefulWidget {
   const AdminDropdownFormField({
@@ -41,6 +49,8 @@ class AdminDropdownFormField<T> extends StatefulWidget {
 class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
   late final FocusNode _focusNode;
   late final bool _ownsFocusNode;
+  bool _isHovered = false;
+  bool _isPressed = false;
 
   @override
   void initState() {
@@ -62,6 +72,22 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
   Widget build(BuildContext context) {
     final decoration = widget.decoration ?? const InputDecoration();
     final neutralBorder = decoration.enabledBorder ?? decoration.border;
+    final activeFillColor = appFieldInteractiveFillColor(context);
+    final contentPadding = switch (decoration.contentPadding) {
+      EdgeInsets edgeInsets => EdgeInsets.fromLTRB(
+        edgeInsets.left,
+        14,
+        edgeInsets.right,
+        14,
+      ),
+      EdgeInsetsDirectional edgeInsets => EdgeInsetsDirectional.fromSTEB(
+        edgeInsets.start,
+        14,
+        edgeInsets.end,
+        14,
+      ),
+      _ => const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    };
     final hasItems = widget.items?.isNotEmpty == true;
     final isDisabled = widget.onChanged == null || !hasItems;
     final hintText = decoration.hintText?.trim();
@@ -72,11 +98,7 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
           fontWeight: FontWeight.w400,
         );
     final hintWidget = hintText?.isNotEmpty == true
-        ? Text(
-            hintText!,
-            overflow: TextOverflow.ellipsis,
-            style: hintStyle,
-          )
+        ? Text(hintText!, overflow: TextOverflow.ellipsis, style: hintStyle)
         : null;
     final disabledTapMessage = _disabledTapMessage(decoration, hasItems);
     final dropdown = Focus(
@@ -87,9 +109,14 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
         initialValue: widget.initialValue,
         focusNode: _focusNode,
         autofocus: false,
+        isDense: true,
         iconEnabledColor: widget.iconEnabledColor,
         style: widget.style,
         decoration: decoration.copyWith(
+          fillColor: _isHovered || _isPressed
+              ? activeFillColor
+              : (decoration.fillColor ?? AppColors.primarySurface),
+          contentPadding: contentPadding,
           focusedBorder: neutralBorder,
           focusColor: Colors.transparent,
           hoverColor: Colors.transparent,
@@ -107,13 +134,40 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
       ),
     );
 
+    final interactiveDropdown = MouseRegion(
+      cursor: isDisabled ? SystemMouseCursors.basic : SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() {
+        _isHovered = false;
+        _isPressed = false;
+      }),
+      child: Listener(
+        onPointerDown: (_) {
+          if (!isDisabled) {
+            setState(() => _isPressed = true);
+          }
+        },
+        onPointerUp: (_) {
+          if (_isPressed) {
+            setState(() => _isPressed = false);
+          }
+        },
+        onPointerCancel: (_) {
+          if (_isPressed) {
+            setState(() => _isPressed = false);
+          }
+        },
+        child: dropdown,
+      ),
+    );
+
     if (!isDisabled || disabledTapMessage == null) {
-      return dropdown;
+      return interactiveDropdown;
     }
 
     return Stack(
       children: [
-        dropdown,
+        interactiveDropdown,
         Positioned.fill(
           child: MouseRegion(
             cursor: SystemMouseCursors.basic,
@@ -149,12 +203,13 @@ InputDecoration adminFormInputDecoration(
   String? hintText,
   String? helperText,
   double radius = 16,
+  double minHeight = adminModalFieldMinHeight,
 }) {
   return InputDecoration(
     labelText: label,
     hintText: hintText,
     helperText: helperText,
-    constraints: const BoxConstraints(minHeight: adminModalFieldMinHeight),
+    constraints: BoxConstraints(minHeight: minHeight),
     labelStyle: TextStyle(
       color: AppColors.primaryColor.withValues(alpha: 0.72),
       fontWeight: FontWeight.w400,

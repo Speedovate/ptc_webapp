@@ -6,6 +6,7 @@ import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/utils/functions.dart';
 
 class AdminVehicleMakesViewModel extends BaseViewModel {
   AdminVehicleMakesViewModel({
@@ -37,13 +38,16 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   List<UserModel> _drivers = const [];
   List<VehicleCatalogItem> _types = const [];
   String? _errorMessage;
+  String _busyMessage = 'Loading, please wait ...';
 
   List<VehicleMake> get makes => _makes;
   List<UserModel> get drivers => _drivers;
   List<VehicleCatalogItem> get types => _types;
   String? get errorMessage => _errorMessage;
+  String get busyMessage => _busyMessage;
 
   Future<void> load() async {
+    _busyMessage = 'Loading vehicle makes...';
     setBusy(true);
     _errorMessage = null;
     try {
@@ -59,8 +63,11 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
       _cachedDrivers = List<UserModel>.from(_drivers);
       _cachedTypes = List<VehicleCatalogItem>.from(_types);
       _cachedErrorMessage = null;
-    } catch (_) {
-      _errorMessage = 'Failed to load vehicle makes.';
+    } catch (error) {
+      _errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load the vehicle makes right now.',
+      );
       _cachedErrorMessage = _errorMessage;
     } finally {
       setBusy(false);
@@ -68,17 +75,23 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   }
 
   Future<VehicleMake> saveMake(VehicleMake make) async {
-    final saved = await _repository.saveMake(make);
-    final index = _makes.indexWhere((item) => item.id == saved.id);
-    if (index >= 0) {
-      _makes[index] = saved;
-    } else {
-      _makes = [..._makes, saved];
+    _busyMessage = 'Saving vehicle make...';
+    setBusy(true);
+    try {
+      final saved = await _repository.saveMake(make);
+      final index = _makes.indexWhere((item) => item.id == saved.id);
+      if (index >= 0) {
+        _makes[index] = saved;
+      } else {
+        _makes = [..._makes, saved];
+      }
+      _sortMakes();
+      _cachedMakes = List<VehicleMake>.from(_makes);
+      notifyListeners();
+      return saved;
+    } finally {
+      setBusy(false);
     }
-    _sortMakes();
-    _cachedMakes = List<VehicleMake>.from(_makes);
-    notifyListeners();
-    return saved;
   }
 
   Future<void> deleteMake(VehicleMake make) async {
@@ -86,13 +99,22 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
     if (makeId == null || makeId.isEmpty) {
       return;
     }
-    await _repository.deleteMake(makeId);
-    _makes = _makes.where((item) => item.id != makeId).toList();
-    _cachedMakes = List<VehicleMake>.from(_makes);
-    notifyListeners();
+    _busyMessage = 'Deleting vehicle make...';
+    setBusy(true);
+    try {
+      await _repository.deleteMake(makeId);
+      _makes = _makes.where((item) => item.id != makeId).toList();
+      _cachedMakes = List<VehicleMake>.from(_makes);
+      notifyListeners();
+    } finally {
+      setBusy(false);
+    }
   }
 
   Future<VehicleMake> setMakeActive(VehicleMake make, bool isActive) {
+    _busyMessage = isActive
+        ? 'Activating vehicle make...'
+        : 'Deactivating vehicle make...';
     return saveMake(
       make.copyWith(isActive: isActive, updatedAt: DateTime.now()),
     );

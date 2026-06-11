@@ -449,6 +449,8 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                               previewUrl!,
                               width: double.infinity,
                               fit: BoxFit.fitWidth,
+                              webHtmlElementStrategy:
+                                  WebHtmlElementStrategy.prefer,
                               errorBuilder: (context, error, stackTrace) {
                                 return const _BookingPhotoPreviewFallback(
                                   height: 180,

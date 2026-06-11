@@ -1,12 +1,40 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
+import 'package:webapp/widgets/shared/app_snackbar.dart';
+
+class ProfilePendingImageUpload {
+  const ProfilePendingImageUpload({
+    required this.bytes,
+    required this.fileName,
+    required this.size,
+    this.mimeType,
+  });
+
+  final Uint8List bytes;
+  final String fileName;
+  final int size;
+  final String? mimeType;
+}
+
+class ProfilePendingProfileChanges {
+  const ProfilePendingProfileChanges({this.photoUpload, this.licenseUpload});
+
+  final ProfilePendingImageUpload? photoUpload;
+  final ProfilePendingImageUpload? licenseUpload;
+
+  bool get hasChanges => photoUpload != null || licenseUpload != null;
+}
 
 class ProfileView extends StatefulWidget {
   const ProfileView({
@@ -17,8 +45,7 @@ class ProfileView extends StatefulWidget {
     this.onEditPressed,
     this.onLogout,
     this.logoutLabel = 'Logout',
-    this.onChangePhotoPressed,
-    this.onChangeLicensePressed,
+    this.onSaveProfileChanges,
     this.onRemoveLicensePressed,
     this.isCurrentUserView = false,
     this.onQuickActionPressed,
@@ -34,8 +61,8 @@ class ProfileView extends StatefulWidget {
   final VoidCallback? onEditPressed;
   final VoidCallback? onLogout;
   final String logoutLabel;
-  final VoidCallback? onChangePhotoPressed;
-  final VoidCallback? onChangeLicensePressed;
+  final Future<void> Function(ProfilePendingProfileChanges changes)?
+  onSaveProfileChanges;
   final VoidCallback? onRemoveLicensePressed;
   final bool isCurrentUserView;
   final VoidCallback? onQuickActionPressed;
@@ -52,6 +79,9 @@ class _ProfileViewState extends State<ProfileView> {
   static final Map<String, VehicleMake?> _assignedMakeCacheByDriverId = {};
   VehicleMake? _assignedMake;
   bool _isLoadingAssignedMake = true;
+  ProfilePendingImageUpload? _pendingPhotoUpload;
+  ProfilePendingImageUpload? _pendingLicenseUpload;
+  bool _isSavingProfileChanges = false;
 
   VehicleCatalogRepository get _vehicleCatalogRepository =>
       widget.vehicleCatalogRepository ?? VehicleRequest.instance;
@@ -73,9 +103,21 @@ class _ProfileViewState extends State<ProfileView> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user.id != widget.user.id ||
         oldWidget.user.role != widget.user.role) {
+      _pendingPhotoUpload = null;
+      _pendingLicenseUpload = null;
       _loadAssignedMake();
+      return;
+    }
+    if (oldWidget.user.photo != widget.user.photo) {
+      _pendingPhotoUpload = null;
+    }
+    if (oldWidget.user.asDriver?.license != widget.user.asDriver?.license) {
+      _pendingLicenseUpload = null;
     }
   }
+
+  bool get _hasPendingChanges =>
+      _pendingPhotoUpload != null || _pendingLicenseUpload != null;
 
   Future<void> _loadAssignedMake() async {
     final driverId = widget.user.id?.trim();
@@ -112,13 +154,113 @@ class _ProfileViewState extends State<ProfileView> {
     }
   }
 
+  Future<void> _pickProfilePhoto() async {
+    final upload = await _pickImageUpload();
+    if (!mounted || upload == null) {
+      return;
+    }
+    setState(() {
+      _pendingPhotoUpload = upload;
+    });
+  }
+
+  Future<void> _pickLicensePhoto() async {
+    final upload = await _pickImageUpload();
+    if (!mounted || upload == null) {
+      return;
+    }
+    setState(() {
+      _pendingLicenseUpload = upload;
+    });
+  }
+
+  Future<ProfilePendingImageUpload?> _pickImageUpload() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null) {
+      return null;
+    }
+
+    return ProfilePendingImageUpload(
+      bytes: bytes,
+      fileName: file.name,
+      size: file.size,
+      mimeType: _resolvedMimeType(file.extension),
+    );
+  }
+
+  String? _resolvedMimeType(String? extension) {
+    switch ((extension ?? '').trim().toLowerCase()) {
+      case 'png':
+        return 'image/png';
+      case 'webp':
+        return 'image/webp';
+      case 'gif':
+        return 'image/gif';
+      case 'bmp':
+        return 'image/bmp';
+      default:
+        return 'image/jpeg';
+    }
+  }
+
+  Future<void> _saveProfileChanges() async {
+    final onSave = widget.onSaveProfileChanges;
+    if (onSave == null || !_hasPendingChanges || _isSavingProfileChanges) {
+      return;
+    }
+
+    setState(() {
+      _isSavingProfileChanges = true;
+    });
+
+    try {
+      await onSave(
+        ProfilePendingProfileChanges(
+          photoUpload: _pendingPhotoUpload,
+          licenseUpload: _pendingLicenseUpload,
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _pendingPhotoUpload = null;
+        _pendingLicenseUpload = null;
+      });
+      AppSnackbar.showSuccess(context, 'Profile changes saved.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        error is Exception
+            ? error.toString().replaceFirst('Exception: ', '')
+            : 'We could not save your profile changes right now.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingProfileChanges = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = widget.user;
     final roleLabel = _formatRole(user.role);
     final driver = user.asDriver;
     final showDriverFields = driver != null;
-    final hasLicensePreview = _hasLicensePreviewValue(driver?.license);
+    final hasLicensePreview =
+        _pendingLicenseUpload != null ||
+        _hasLicensePreviewValue(driver?.license);
     final showOnlineField = user.role == 'driver' || user.role == 'helper';
     final joinedLabel = _formatDateTime(user.createdAt);
     final updatedLabel = _formatDateTime(user.updatedAt);
@@ -137,7 +279,10 @@ class _ProfileViewState extends State<ProfileView> {
             onEditPressed: widget.onEditPressed,
             onLogout: widget.onLogout,
             logoutLabel: widget.logoutLabel,
-            onChangePhotoPressed: widget.onChangePhotoPressed,
+            onChangePhotoPressed: widget.isCurrentUserView
+                ? _pickProfilePhoto
+                : null,
+            pendingPhotoBytes: _pendingPhotoUpload?.bytes,
             isCurrentUserView: widget.isCurrentUserView,
             onQuickActionPressed: widget.onQuickActionPressed,
             quickActionLabel: widget.quickActionLabel,
@@ -202,20 +347,43 @@ class _ProfileViewState extends State<ProfileView> {
                 if (widget.isCurrentUserView || widget.onEditPressed != null)
                   _LicenseActionButton(
                     hasImage: hasLicensePreview,
-                    onPressed:
-                        widget.onChangeLicensePressed ??
-                        widget.onEditPressed ??
-                        widget.onChangePhotoPressed,
+                    onPressed: widget.isCurrentUserView
+                        ? _pickLicensePhoto
+                        : widget.onEditPressed,
                   ),
               ],
             ),
             const SizedBox(height: 10),
-            _LicensePreview(imageValue: driver.license),
+            _LicensePreview(
+              imageValue: driver.license,
+              memoryBytes: _pendingLicenseUpload?.bytes,
+            ),
           ],
           const SizedBox(height: 18),
           const AdminSectionTitle(title: 'Security'),
           const SizedBox(height: 10),
           const _SecuritySection(),
+          if (widget.isCurrentUserView && _hasPendingChanges) ...[
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _isSavingProfileChanges ? null : _saveProfileChanges,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                  backgroundColor: AppColors.primaryColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                child: Text(
+                  _isSavingProfileChanges ? 'Saving...' : 'Save',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -320,6 +488,7 @@ class _ProfileIdentityHeader extends StatelessWidget {
     required this.onLogout,
     required this.logoutLabel,
     required this.onChangePhotoPressed,
+    required this.pendingPhotoBytes,
     required this.isCurrentUserView,
     required this.onQuickActionPressed,
     required this.quickActionLabel,
@@ -335,6 +504,7 @@ class _ProfileIdentityHeader extends StatelessWidget {
   final VoidCallback? onLogout;
   final String logoutLabel;
   final VoidCallback? onChangePhotoPressed;
+  final Uint8List? pendingPhotoBytes;
   final bool isCurrentUserView;
   final VoidCallback? onQuickActionPressed;
   final String? quickActionLabel;
@@ -348,7 +518,8 @@ class _ProfileIdentityHeader extends StatelessWidget {
         final isCompact = constraints.maxWidth < 560;
         final nameFontSize = constraints.maxWidth < 420 ? 14.0 : 16.0;
         final avatarRadius = isCompact ? 32.0 : 38.0;
-        final showChangePhoto = isCurrentUserView && onChangePhotoPressed != null;
+        final showChangePhoto =
+            isCurrentUserView && onChangePhotoPressed != null;
         final actionLabel = isCurrentUserView ? logoutLabel : quickActionLabel;
         final actionOnTap = isCurrentUserView ? onLogout : onQuickActionPressed;
 
@@ -366,6 +537,7 @@ class _ProfileIdentityHeader extends StatelessWidget {
                       children: [
                         AppProfileAvatar(
                           photo: user.photo,
+                          memoryBytes: pendingPhotoBytes,
                           fallbackText: _ProfileViewState._initials(user.name),
                           radius: avatarRadius,
                         ),
@@ -458,14 +630,25 @@ class _ProfileEditButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return AppMousePressable(
       onTap: onTap,
-      child: const Padding(
-        padding: EdgeInsets.all(2),
-        child: Icon(
-          Icons.edit_rounded,
-          size: 18,
-          color: AppColors.primaryColor,
+      borderRadius: BorderRadius.circular(8),
+      child: Builder(
+        builder: (context) => Container(
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            color: appPressableActive(context)
+                ? AppColors.primarySurfaceAlt.withValues(
+                    alpha: appPressablePressed(context) ? 0.34 : 0.22,
+                  )
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(
+            Icons.edit_rounded,
+            size: 18,
+            color: AppColors.primaryColor,
+          ),
         ),
       ),
     );
@@ -479,20 +662,21 @@ class _ProfilePhotoCameraButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: Ink(
+    return AppMousePressable(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Builder(
+        builder: (context) => Container(
           width: 28,
           height: 28,
-          decoration: const BoxDecoration(
-            color: Colors.white,
+          decoration: BoxDecoration(
+            color: appPressablePressed(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.28)
+                : appPressableHovered(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.14)
+                : Colors.white,
             shape: BoxShape.circle,
-            border: Border.fromBorderSide(
-              BorderSide(color: AppColors.primaryBorder),
-            ),
+            border: Border.all(color: AppColors.primaryBorder),
           ),
           child: const Icon(
             Icons.photo_camera_rounded,
@@ -520,17 +704,21 @@ class _ProfileActionPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(1000),
-        child: ConstrainedBox(
+    return AppMousePressable(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(1000),
+      child: Builder(
+        builder: (context) => ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 32),
-          child: Ink(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: appPressablePressed(context)
+                  ? AppColors.primarySurfaceAlt.withValues(alpha: 0.28)
+                  : appPressableHovered(context)
+                  ? AppColors.primarySurfaceAlt.withValues(alpha: 0.16)
+                  : Colors.white,
               borderRadius: BorderRadius.circular(1000),
               border: Border.all(color: borderColor),
             ),
@@ -685,12 +873,24 @@ class _InfoRow extends StatelessWidget {
 }
 
 class _LicensePreview extends StatelessWidget {
-  const _LicensePreview({required this.imageValue});
+  const _LicensePreview({required this.imageValue, this.memoryBytes});
 
   final String? imageValue;
+  final Uint8List? memoryBytes;
 
   @override
   Widget build(BuildContext context) {
+    if (memoryBytes != null && memoryBytes!.isNotEmpty) {
+      return _LicenseImageFrame(
+        child: Image.memory(
+          memoryBytes!,
+          width: double.infinity,
+          height: 220,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+
     final normalizedValue = imageValue?.trim();
     final hasNetworkImage =
         normalizedValue != null && normalizedValue.startsWith('http');
@@ -706,6 +906,7 @@ class _LicensePreview extends StatelessWidget {
             width: double.infinity,
             height: 220,
             fit: BoxFit.cover,
+            webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
             errorBuilder: (context, error, stackTrace) {
               return const _LicenseImageFallback(
                 icon: Icons.broken_image_rounded,

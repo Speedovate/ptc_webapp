@@ -5,6 +5,7 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 
 class BookingRecordCard extends StatelessWidget {
   const BookingRecordCard({
@@ -61,14 +62,23 @@ class BookingRecordCard extends StatelessWidget {
       _BookingMetaData(label: 'Amount', value: amount),
     ];
 
-    return Material(
-      color: Colors.transparent,
+    return AppMousePressable(
+      onTap: onTap,
       borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: AdminListItemCard(
+      child: Builder(
+        builder: (context) => AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          width: double.infinity,
           padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: appPressablePressed(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.28)
+                : appPressableHovered(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.14)
+                : Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppColors.primaryBorder),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -809,7 +819,7 @@ class _BookingPhotoValue extends StatelessWidget {
         Flexible(child: Text(fileName, style: _bookingItemValueTextStyle)),
         if (previewBytes != null || previewUrl?.trim().isNotEmpty == true) ...[
           const SizedBox(width: 4),
-          InkWell(
+          AppMousePressable(
             borderRadius: BorderRadius.circular(999),
             onTap: () {
               showDialog<void>(
@@ -847,6 +857,8 @@ class _BookingPhotoValue extends StatelessWidget {
                                 : Image.network(
                                     previewUrl!,
                                     fit: BoxFit.fitHeight,
+                                    webHtmlElementStrategy:
+                                        WebHtmlElementStrategy.prefer,
                                   ),
                           ),
                         ),
@@ -856,12 +868,22 @@ class _BookingPhotoValue extends StatelessWidget {
                 ),
               );
             },
-            child: const Padding(
-              padding: EdgeInsets.all(2),
-              child: Icon(
-                Icons.visibility_outlined,
-                size: 18,
-                color: AppColors.primaryColor,
+            child: Builder(
+              builder: (context) => Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  color: appPressablePressed(context)
+                      ? AppColors.primarySurfaceAlt.withValues(alpha: 0.28)
+                      : appPressableHovered(context)
+                      ? AppColors.primarySurfaceAlt.withValues(alpha: 0.14)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Icon(
+                  Icons.visibility_outlined,
+                  size: 18,
+                  color: AppColors.primaryColor,
+                ),
               ),
             ),
           ),

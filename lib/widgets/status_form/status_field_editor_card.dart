@@ -103,7 +103,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                     ),
                   ),
                   if (fieldType == 'dropdown') ...[
-                    SizedBox(height: 10),
+                    SizedBox(height: 6),
                     _fullWidthField(
                       child: _dropdownField(
                         label: 'Source',
@@ -114,7 +114,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                       ),
                     ),
                     if (showStaticChoices) ...[
-                      SizedBox(height: 10),
+                      SizedBox(height: 6),
                       _fullWidthField(
                         child: _valueField(
                           label: 'Options',
@@ -131,7 +131,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                       ),
                     ],
                   ],
-                  SizedBox(height: showStaticChoices ? 4 : 8),
+                  SizedBox(height: showStaticChoices ? 4 : 6),
                   _fullWidthField(
                     child: _valueField(
                       label: 'Title',
@@ -255,7 +255,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                   ],
                 ),
                 if (fieldType == 'dropdown') ...[
-                  SizedBox(height: 10),
+                  SizedBox(height: 6),
                   _dropdownField(
                     label: 'Source',
                     initialValue: optionSourceKey,
@@ -263,7 +263,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                     onChanged: (value) => onUpdate('optionSourceKey', value),
                   ),
                   if (showStaticChoices) ...[
-                    SizedBox(height: 10),
+                    SizedBox(height: 6),
                     _valueField(
                       label: 'Options',
                       initialValue: field.options.join(', '),
@@ -369,7 +369,7 @@ class StatusFieldEditorCard extends StatelessWidget {
             onChanged: (value) => onUpdate('required', value),
           ),
         ),
-        SizedBox(height: 8),
+        SizedBox(height: 6),
         _toggle(
           context: context,
           title: 'Active',

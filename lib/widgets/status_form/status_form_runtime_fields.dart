@@ -3,6 +3,7 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
+import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/booking_form_primitives.dart';
 
 class StatusFormRuntimeFieldCard extends StatelessWidget {
@@ -351,37 +352,42 @@ class _CheckboxFieldInputState extends State<_CheckboxFieldInput> {
         ...widget.field.options.map(
           (option) => Padding(
             padding: const EdgeInsets.only(bottom: 10),
-            child: InkWell(
+            child: AppMousePressable(
               borderRadius: BorderRadius.circular(14),
               onTap: () => _toggle(option, !_selected.contains(option)),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.primarySurface,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.primaryBorder),
-                ),
-                child: Row(
-                  children: [
-                    Checkbox(
-                      value: _selected.contains(option),
-                      onChanged: (value) => _toggle(option, value ?? false),
-                      activeColor: AppColors.primaryColor,
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        option,
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w500,
+              child: Builder(
+                builder: (context) => AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: appPressableActive(context)
+                        ? appFieldInteractiveFillColor(context)
+                        : AppColors.primarySurface,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.primaryBorder),
+                  ),
+                  child: Row(
+                    children: [
+                      Checkbox(
+                        value: _selected.contains(option),
+                        onChanged: (value) => _toggle(option, value ?? false),
+                        activeColor: AppColors.primaryColor,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          option,
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -518,7 +524,7 @@ class _TimeFieldInputState extends State<_TimeFieldInput> {
   }
 }
 
-class _PickerFieldShell extends StatelessWidget {
+class _PickerFieldShell extends StatefulWidget {
   const _PickerFieldShell({
     required this.text,
     required this.isPlaceholder,
@@ -534,46 +540,79 @@ class _PickerFieldShell extends StatelessWidget {
   final String? errorText;
 
   @override
+  State<_PickerFieldShell> createState() => _PickerFieldShellState();
+}
+
+class _PickerFieldShellState extends State<_PickerFieldShell> {
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
   Widget build(BuildContext context) {
+    final activeFillColor = appFieldInteractiveFillColor(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-            decoration: BoxDecoration(
-              color: AppColors.primarySurface,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: errorText == null ? AppColors.primaryBorder : Colors.red,
-              ),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    text,
-                    style: TextStyle(
-                      color: isPlaceholder
-                          ? AppColors.primaryColor.withValues(alpha: 0.72)
-                          : AppColors.textPrimary,
-                      fontWeight: FontWeight.w500,
+        SizedBox(
+          height: adminModalFieldMinHeight,
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _isHovered = true),
+            onExit: (_) => setState(() {
+              _isHovered = false;
+              _isPressed = false;
+            }),
+            child: Listener(
+              onPointerDown: (_) => setState(() => _isPressed = true),
+              onPointerUp: (_) => setState(() => _isPressed = false),
+              onPointerCancel: (_) => setState(() => _isPressed = false),
+              child: AppMousePressable(
+                borderRadius: BorderRadius.circular(14),
+                onTap: widget.onTap,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  decoration: BoxDecoration(
+                    color: _isHovered || _isPressed
+                        ? activeFillColor
+                        : AppColors.primarySurface,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: widget.errorText == null
+                          ? AppColors.primaryBorder
+                          : Colors.red,
                     ),
                   ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.text,
+                          style: TextStyle(
+                            color: widget.isPlaceholder
+                                ? AppColors.primaryColor.withValues(alpha: 0.72)
+                                : AppColors.textPrimary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        widget.icon,
+                        size: 18,
+                        color: AppColors.primaryColor,
+                      ),
+                    ],
+                  ),
                 ),
-                Icon(icon, size: 18, color: AppColors.primaryColor),
-              ],
+              ),
             ),
           ),
         ),
-        if (errorText != null)
+        if (widget.errorText != null)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(
-              errorText!,
+              widget.errorText!,
               style: const TextStyle(color: Colors.red, fontSize: 12),
             ),
           ),

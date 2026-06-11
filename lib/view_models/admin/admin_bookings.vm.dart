@@ -13,6 +13,7 @@ import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/utils/functions.dart';
 
 class AdminBookingsViewModel extends BaseViewModel {
   AdminBookingsViewModel({
@@ -60,12 +61,14 @@ class AdminBookingsViewModel extends BaseViewModel {
   DateTime? _startDate;
   DateTime? _endDate;
   String? errorMessage;
+  String _busyMessage = 'Loading, please wait ...';
 
   List<Booking> get bookings => List.unmodifiable(_bookings);
   String get searchQuery => _searchQuery;
   String get statusFilter => _statusFilter;
   DateTime? get startDate => _startDate;
   DateTime? get endDate => _endDate;
+  String get busyMessage => _busyMessage;
   List<String> get statusOptions => [
     'All',
     ..._statusesByKey.values
@@ -76,6 +79,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   ];
 
   Future<void> load() async {
+    _busyMessage = 'Loading bookings...';
     setBusy(true);
     errorMessage = null;
     try {
@@ -110,8 +114,11 @@ class AdminBookingsViewModel extends BaseViewModel {
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
       _cachedVehicleSizes = List<VehicleCatalogItem>.from(_vehicleSizes);
       _cachedErrorMessage = null;
-    } catch (_) {
-      errorMessage = 'Failed to load bookings.';
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load the bookings right now.',
+      );
       _cachedErrorMessage = errorMessage;
     } finally {
       setBusy(false);
@@ -296,8 +303,14 @@ class AdminBookingsViewModel extends BaseViewModel {
   }
 
   Future<Booking> saveEditedBooking(Booking booking) async {
-    final updatedBooking = booking.copyWith(updatedAt: DateTime.now());
-    return _bookingRepository.saveBooking(updatedBooking);
+    _busyMessage = 'Saving booking...';
+    setBusy(true);
+    try {
+      final updatedBooking = booking.copyWith(updatedAt: DateTime.now());
+      return await _bookingRepository.saveBooking(updatedBooking);
+    } finally {
+      setBusy(false);
+    }
   }
 
   @override

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 
@@ -6,11 +8,13 @@ class AppProfileAvatar extends StatelessWidget {
     super.key,
     required this.radius,
     this.photo,
+    this.memoryBytes,
     this.fallbackText,
   });
 
   final double radius;
   final String? photo;
+  final Uint8List? memoryBytes;
   final String? fallbackText;
 
   static const double _borderRatio = 0.16;
@@ -19,10 +23,13 @@ class AppProfileAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final normalizedPhoto = photo?.trim();
     final borderColor = AppColors.primarySurfaceAlt;
+    final hasMemoryImage = memoryBytes != null && memoryBytes!.isNotEmpty;
     final hasPhotoValue = normalizedPhoto != null && normalizedPhoto.isNotEmpty;
     final hasNetworkImage =
-        normalizedPhoto != null && normalizedPhoto.startsWith('http');
-    final hasImageError = hasPhotoValue && !hasNetworkImage;
+        !hasMemoryImage &&
+        normalizedPhoto != null &&
+        normalizedPhoto.startsWith('http');
+    final hasImageError = !hasMemoryImage && hasPhotoValue && !hasNetworkImage;
 
     final innerBorderWidth = radius * _borderRatio;
     final diameter = radius * 2;
@@ -39,6 +46,7 @@ class AppProfileAvatar extends StatelessWidget {
             child: ClipOval(
               child: SizedBox.expand(
                 child: _buildAvatarContent(
+                  memoryBytes: memoryBytes,
                   normalizedPhoto: normalizedPhoto,
                   hasNetworkImage: hasNetworkImage,
                   hasImageError: hasImageError,
@@ -50,10 +58,7 @@ class AppProfileAvatar extends StatelessWidget {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(
-                  color: borderColor,
-                  width: innerBorderWidth,
-                ),
+                border: Border.all(color: borderColor, width: innerBorderWidth),
               ),
             ),
           ),
@@ -63,14 +68,20 @@ class AppProfileAvatar extends StatelessWidget {
   }
 
   Widget _buildAvatarContent({
+    required Uint8List? memoryBytes,
     required String? normalizedPhoto,
     required bool hasNetworkImage,
     required bool hasImageError,
   }) {
+    if (memoryBytes != null && memoryBytes.isNotEmpty) {
+      return Image.memory(memoryBytes, fit: BoxFit.cover);
+    }
+
     if (hasNetworkImage) {
       return Image.network(
         normalizedPhoto!,
         fit: BoxFit.cover,
+        webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
         errorBuilder: (context, error, stackTrace) {
           return _FallbackAvatarContent(
             radius: radius,

@@ -11,7 +11,9 @@ import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/view_models/admin/admin_flow.vm.dart';
 import 'package:webapp/widgets/status_form/status_form_preview.dart';
@@ -29,14 +31,18 @@ class AdminFlowsView extends StatelessWidget {
       viewModelBuilder: AdminFlowViewModel.new,
       onViewModelReady: (vm) => vm.loadForms(),
       builder: (context, vm, _) {
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AppRefreshStrip(isVisible: vm.isLoading),
-              _StatusFormsListSection(vm: vm),
-            ],
+        return AppPageLoadingOverlay(
+          isVisible: vm.isLoading,
+          message: vm.busyMessage,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppRefreshStrip(isVisible: vm.isLoading),
+                _StatusFormsListSection(vm: vm),
+              ],
+            ),
           ),
         );
       },
@@ -713,7 +719,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                       onChanged: widget.onRoleChanged,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
                     height: AdminFlowsView.controlHeight,
@@ -725,7 +731,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                       onChanged: widget.onActiveChanged,
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
                     height: AdminFlowsView.controlHeight,
@@ -787,6 +793,7 @@ class _StatusFormsFilterDropdown extends StatelessWidget {
       decoration: adminFormInputDecoration(
         label,
         radius: AdminFlowsView.surfaceRadius,
+        minHeight: AdminFlowsView.controlHeight,
       ),
       items: items
           .where((item) => item != 'All')
@@ -1580,7 +1587,7 @@ class _BasicInfoSection extends StatelessWidget {
                 onChanged: (value) =>
                     vm.updateFormField('currentStatusKey', value),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               _fullWidthStatusField(
                 statuses: roleStatuses,
                 value: form.nextStatusKey,
@@ -1588,7 +1595,7 @@ class _BasicInfoSection extends StatelessWidget {
                 onChanged: (value) =>
                     vm.updateFormField('nextStatusKey', value),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               _fullWidthTextField(
                 initialValue: form.buttonText,
                 label: 'Text On Button',
@@ -1872,17 +1879,21 @@ class _DependencyRoleChip extends StatelessWidget {
     final backgroundColor = selected ? AppColors.primarySurface : Colors.white;
     final textColor = selected ? AppColors.primaryColor : AppColors.textPrimary;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(1000),
-        child: ConstrainedBox(
+    return AppMousePressable(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(1000),
+      child: Builder(
+        builder: (context) => ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 32),
-          child: Ink(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: backgroundColor,
+              color: appPressablePressed(context)
+                  ? AppColors.primarySurfaceAlt.withValues(alpha: 0.34)
+                  : appPressableHovered(context)
+                  ? AppColors.primarySurfaceAlt.withValues(alpha: 0.2)
+                  : backgroundColor,
               borderRadius: BorderRadius.circular(1000),
               border: Border.all(color: borderColor),
             ),
@@ -2438,10 +2449,7 @@ String _resolvedFormStatusLabel(AdminFlowViewModel vm, StatusForm form) {
   return '';
 }
 
-String _resolvedFormStatusDescription(
-  AdminFlowViewModel vm,
-  StatusForm form,
-) {
+String _resolvedFormStatusDescription(AdminFlowViewModel vm, StatusForm form) {
   final currentStatusKey = form.currentStatusKey?.trim() ?? '';
   if (currentStatusKey.isEmpty) {
     return '';
@@ -2479,15 +2487,19 @@ class _FormApplicableRoleChip extends StatelessWidget {
     final backgroundColor = selected ? AppColors.primarySurface : Colors.white;
     final textColor = selected ? AppColors.primaryColor : AppColors.textPrimary;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Ink(
+    return AppMousePressable(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Builder(
+        builder: (context) => AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: backgroundColor,
+            color: appPressablePressed(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.34)
+                : appPressableHovered(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.2)
+                : backgroundColor,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(color: borderColor),
           ),

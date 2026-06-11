@@ -16,6 +16,7 @@ import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/booking_form_primitives.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
@@ -314,27 +315,42 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             Expanded(child: content),
           ],
         );
+        final overlayVisible =
+            vm.isBusyLoading || vm.isSubmitting || vm.isCancelSubmitting;
+        final overlayMessage = vm.isCancelSubmitting
+            ? 'Submitting cancellation...'
+            : vm.isSubmitting
+            ? 'Submitting update...'
+            : 'Loading booking...';
 
         if (widget.embedded) {
-          return content;
+          return AppPageLoadingOverlay(
+            isVisible: overlayVisible,
+            message: overlayMessage,
+            child: content,
+          );
         }
 
-        return Scaffold(
-          backgroundColor: const Color(0xFFF7F7FB),
-          appBar: AppBar(
-            title: Text('Booking ${currentBooking.id ?? '-'}'),
-            actions: [
-              BookingSupportButton(
-                onPressed: () => launchBookingSupport(context),
-              ),
-              const SizedBox(width: 4),
-            ],
-            backgroundColor: Colors.white,
-            foregroundColor: AppColors.textPrimary,
-            elevation: 0,
-            surfaceTintColor: Colors.white,
+        return AppPageLoadingOverlay(
+          isVisible: overlayVisible,
+          message: overlayMessage,
+          child: Scaffold(
+            backgroundColor: const Color(0xFFF7F7FB),
+            appBar: AppBar(
+              title: Text('Booking ${currentBooking.id ?? '-'}'),
+              actions: [
+                BookingSupportButton(
+                  onPressed: () => launchBookingSupport(context),
+                ),
+                const SizedBox(width: 4),
+              ],
+              backgroundColor: Colors.white,
+              foregroundColor: AppColors.textPrimary,
+              elevation: 0,
+              surfaceTintColor: Colors.white,
+            ),
+            body: contentWithRefreshIndicator,
           ),
-          body: contentWithRefreshIndicator,
         );
       },
     );
@@ -851,6 +867,7 @@ class _WorkflowWaybillPhotoCard extends StatelessWidget {
         imageUrl,
         width: double.infinity,
         fit: BoxFit.fitWidth,
+        webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
         errorBuilder: (context, error, stackTrace) {
           return Container(
             width: double.infinity,

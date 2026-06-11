@@ -10,6 +10,7 @@ import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
+import 'package:webapp/utils/functions.dart';
 
 class ClientBookingHomeViewModel extends BaseViewModel {
   ClientBookingHomeViewModel({
@@ -127,8 +128,11 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       _cachedLoadError = null;
       _cachedBlockedMessage = blockedMessage;
       _cachedActiveClientUser = _activeClientUser;
-    } catch (_) {
-      loadError = 'Failed to load the booking form.';
+    } catch (error) {
+      loadError = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load the booking form right now.',
+      );
       _cachedLoadError = loadError;
     } finally {
       isBusyLoading = false;
