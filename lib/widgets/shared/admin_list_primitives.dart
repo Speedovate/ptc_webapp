@@ -23,7 +23,7 @@ class AdminListToolbar extends StatelessWidget {
   final double surfaceRadius;
   final Widget search;
   final AdminToolbarFilterBuilder filtersBuilder;
-  final VoidCallback onNewPressed;
+  final VoidCallback? onNewPressed;
   final String buttonLabel;
   final IconData buttonIcon;
 
@@ -212,39 +212,59 @@ class AdminListNewButton extends StatelessWidget {
   final double controlHeight;
   final double surfaceRadius;
   final bool iconOnly;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final String label;
   final IconData icon;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: controlHeight,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: FilledButton(
-          onPressed: onTap,
-          style: FilledButton.styleFrom(
-            backgroundColor: AppColors.primaryColor,
-            foregroundColor: Colors.white,
-            padding: EdgeInsets.symmetric(horizontal: iconOnly ? 0 : 16),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(surfaceRadius),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useIconOnlyLayout = iconOnly || constraints.maxWidth < 72;
+        final useCompactRowLayout =
+            !useIconOnlyLayout && constraints.maxWidth < 92;
+        return SizedBox(
+          height: controlHeight,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: FilledButton(
+              onPressed: onTap,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primaryColor,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(
+                  horizontal: useIconOnlyLayout
+                      ? 0
+                      : useCompactRowLayout
+                      ? 10
+                      : 16,
+                ),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(surfaceRadius),
+                ),
+              ),
+              child: useIconOnlyLayout
+                  ? Icon(icon)
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        SizedBox(width: useCompactRowLayout ? 6 : 10),
+                        Icon(icon, size: 18),
+                      ],
+                    ),
             ),
           ),
-          child: iconOnly
-              ? Icon(icon)
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-                    const SizedBox(width: 10),
-                    Icon(icon, size: 18),
-                  ],
-                ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

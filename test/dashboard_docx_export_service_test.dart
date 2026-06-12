@@ -60,13 +60,13 @@ void main() {
       });
     }
 
-    test('builds exact sample-style export filenames', () {
+    test('builds requested export filenames', () {
       final configBase = DashboardExportConfig(
         type: DashboardExportDocumentType.bsRegular,
         documentDate: DateTime(2026, 5, 18),
         coveredStartDate: DateTime(2026, 5, 9),
         coveredEndDate: DateTime(2026, 5, 15),
-        billingStatementNumber: '2026-044',
+        billingStatementNumber: '12345',
         companyName: 'TEST COMPANY',
         representativeName: 'JUAN DELA CRUZ',
         greetingLine: 'Dear Sir/Madam:',
@@ -81,7 +81,7 @@ void main() {
 
       expect(
         dashboardExportFileName(configBase),
-        'BS-No.-2026-044-Regular.docx',
+        'BS-12345-Regular.docx',
       );
       expect(
         dashboardExportFileName(
@@ -90,7 +90,7 @@ void main() {
             documentDate: configBase.documentDate,
             coveredStartDate: configBase.coveredStartDate,
             coveredEndDate: configBase.coveredEndDate,
-            billingStatementNumber: '2026-045',
+            billingStatementNumber: '12345',
             companyName: configBase.companyName,
             representativeName: configBase.representativeName,
             greetingLine: configBase.greetingLine,
@@ -103,7 +103,7 @@ void main() {
             accountNumber: configBase.accountNumber,
           ),
         ),
-        'BS-No.-2026-045-Hustling.docx',
+        'BS-12345-Hustling.docx',
       );
       expect(
         dashboardExportFileName(
@@ -125,7 +125,7 @@ void main() {
             accountNumber: configBase.accountNumber,
           ),
         ),
-        'BT-050926-051526-Regular.docx',
+        'BT-12345-Regular.docx',
       );
       expect(
         dashboardExportFileName(
@@ -147,7 +147,7 @@ void main() {
             accountNumber: configBase.accountNumber,
           ),
         ),
-        'BT-050926-051526-Hustling.docx',
+        'BT-12345-Hustling.docx',
       );
     });
   });

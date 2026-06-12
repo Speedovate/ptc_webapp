@@ -6,10 +6,11 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/services/dashboard_export_naming.dart';
 import 'package:webapp/services/dashboard_docx_export_service.dart';
-import 'package:webapp/services/web_file_download.dart';
+import 'package:webapp/services/export_file_service.dart';
 import 'package:webapp/view_models/admin/admin_dashboard.vm.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
+import 'package:webapp/widgets/shared/admin_icon_action_button.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
@@ -140,6 +141,8 @@ Future<void> _exportBookings(
     return;
   }
 
+  vm.beginExport(exportConfig.types.length + 1);
+  await _yieldExportProgressFrame();
   try {
     final exportedDocuments = <String, Uint8List>{};
     for (final type in exportConfig.types) {
@@ -153,35 +156,43 @@ Future<void> _exportBookings(
         payload,
       );
       exportedDocuments[dashboardExportFileName(config)] = document;
+      vm.advanceExport();
+      await _yieldExportProgressFrame();
     }
 
-    if (exportedDocuments.length == 1) {
-      final entry = exportedDocuments.entries.first;
-      downloadBytes(fileName: entry.key, bytes: entry.value);
-    } else if (exportedDocuments.isNotEmpty) {
-      downloadZip(
-        fileName: _buildDashboardExportZipFileName(exportConfig),
-        files: exportedDocuments,
-      );
-    }
     if (!context.mounted) {
+      vm.endExport();
       return;
     }
-    AppSnackbar.showSuccess(
+    vm.completeExport();
+    await _yieldExportProgressFrame();
+    if (!context.mounted) {
+      vm.endExport();
+      return;
+    }
+    final exportResult = await ExportFileService.export(
       context,
-      exportConfig.types.length == 1
-          ? '${exportConfig.types.first.buttonLabel} document has been downloaded.'
-          : '${exportConfig.types.length} documents have been downloaded as a ZIP file.',
+      bundleFileName: _buildDashboardExportZipFileName(exportConfig),
+      files: exportedDocuments,
     );
+    if (!context.mounted) {
+      vm.endExport();
+      return;
+    }
+    AppSnackbar.showSuccess(context, exportResult.message);
   } catch (error) {
     if (!context.mounted) {
+      vm.endExport();
       return;
     }
-    AppSnackbar.showError(
-      context,
-      dashboardExportErrorMessage(error),
-    );
+    AppSnackbar.showError(context, dashboardExportErrorMessage(error));
+  } finally {
+    vm.endExport();
   }
+}
+
+Future<void> _yieldExportProgressFrame() async {
+  await Future<void>.delayed(const Duration(milliseconds: 16));
 }
 
 class _AdminDashboardToolbar extends StatelessWidget {
@@ -206,8 +217,8 @@ class _AdminDashboardToolbar extends StatelessWidget {
       ),
       filtersBuilder: (context, iconOnly) =>
           _DashboardFiltersPanel(vm: vm, iconOnly: iconOnly),
-      onNewPressed: onExportPressed,
-      buttonLabel: 'Export',
+      onNewPressed: vm.isExporting ? null : onExportPressed,
+      buttonLabel: vm.exportProgressLabel,
       buttonIcon: Icons.download_rounded,
     );
   }
@@ -359,11 +370,12 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
       _selectedTypes.any((type) => type.isBillingStatement);
   bool get _showsBankFields =>
       _selectedTypes.any((type) => type.isBillingStatement);
+  bool get _showsCoveredDateRange => widget.bookings.length > 1;
 
   @override
   Widget build(BuildContext context) {
     return AdminModalShell(
-      title: 'Export Billing Document',
+      title: 'Export As',
       contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
       actionsInset: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       actions: [
@@ -396,39 +408,41 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
                 _DashboardExportDateField(
                   label: 'Document Date',
                   value: _documentDate,
-                  bottomPadding: 4,
+                  bottomPadding: _showsCoveredDateRange ? 4 : 0,
                   onChanged: (value) {
                     setState(() {
                       _documentDate = value;
                     });
                   },
                 ),
-                _DashboardExportDateField(
-                  label: 'Covered Start Date',
-                  value: _coveredStartDate,
-                  bottomPadding: 4,
-                  onChanged: (value) {
-                    setState(() {
-                      _coveredStartDate = value;
-                      if (_coveredEndDate.isBefore(value)) {
-                        _coveredEndDate = value;
-                      }
-                    });
-                  },
-                ),
-                _DashboardExportDateField(
-                  label: 'Covered End Date',
-                  value: _coveredEndDate,
-                  bottomPadding: 4,
-                  onChanged: (value) {
-                    setState(() {
-                      _coveredEndDate = value;
-                      if (_coveredStartDate.isAfter(value)) {
+                if (_showsCoveredDateRange)
+                  _DashboardExportDateField(
+                    label: 'Covered Start Date',
+                    value: _coveredStartDate,
+                    bottomPadding: 4,
+                    onChanged: (value) {
+                      setState(() {
                         _coveredStartDate = value;
-                      }
-                    });
-                  },
-                ),
+                        if (_coveredEndDate.isBefore(value)) {
+                          _coveredEndDate = value;
+                        }
+                      });
+                    },
+                  ),
+                if (_showsCoveredDateRange)
+                  _DashboardExportDateField(
+                    label: 'Covered End Date',
+                    value: _coveredEndDate,
+                    bottomPadding: 4,
+                    onChanged: (value) {
+                      setState(() {
+                        _coveredEndDate = value;
+                        if (_coveredStartDate.isAfter(value)) {
+                          _coveredStartDate = value;
+                        }
+                      });
+                    },
+                  ),
                 if (_requiresRegularStatementNumber)
                   AdminModalTextField(
                     controller: _regularStatementNumberController,
@@ -805,11 +819,17 @@ DashboardDocxExportPayload _buildDashboardExportPayload({
 String _buildDashboardExportZipFileName(
   _DashboardBatchExportConfig exportConfig,
 ) {
-  final date = exportConfig.documentDate;
-  final year = date.year.toString().padLeft(4, '0');
-  final month = date.month.toString().padLeft(2, '0');
-  final day = date.day.toString().padLeft(2, '0');
-  return 'Dashboard-Exports-$year$month$day.zip';
+  final now = DateTime.now();
+  final month = now.month.toString();
+  final day = now.day.toString();
+  final year = (now.year % 100).toString().padLeft(2, '0');
+  final hour24 = now.hour;
+  final meridiem = hour24 >= 12 ? 'PM' : 'AM';
+  final hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12;
+  final hour = hour12.toString();
+  final minute = now.minute.toString().padLeft(2, '0');
+  final second = now.second.toString().padLeft(2, '0');
+  return 'Paltranco Export $month-$day-$year $hour-$minute-$second $meridiem.zip';
 }
 
 String _defaultCompanyName(List<Booking> bookings, AdminDashboardViewModel vm) {
@@ -1131,9 +1151,9 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
           _maxTextWidth(
             context,
             textScaler,
-            'DR NO.',
+            'Dr No.',
             _longerText(
-              'DR NO.',
+              'Dr No.',
               _longestText(
                 bookings.map(AdminDashboardViewModel.deliveryFormNumber),
               ),
@@ -1144,9 +1164,9 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
           _maxTextWidth(
             context,
             textScaler,
-            'DATE',
+            'Date',
             _longerText(
-              'DATE',
+              'Date',
               _longestText(
                 bookings.map(
                   (booking) => _formatBookingDateTime(booking.createdAt),
@@ -1159,20 +1179,20 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
           _maxTextWidth(
             context,
             textScaler,
-            'WAYBILL NO.',
+            'Waybill No.',
             _longerText(
-              'WAYBILL NO.',
+              'Waybill No.',
               _longestText(bookings.map(AdminDashboardViewModel.waybillNumber)),
             ),
-          ),
+          ) + 12,
         );
         final resolvedVanNumberWidth = _resolvedColumnWidth(
           _maxTextWidth(
             context,
             textScaler,
-            'VAN NO.',
+            'Van No.',
             _longerText(
-              'VAN NO.',
+              'Van No.',
               _longestText(bookings.map(AdminDashboardViewModel.vanNumber)),
             ),
           ),
@@ -1181,17 +1201,17 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
           _maxTextWidth(
             context,
             textScaler,
-            'VAN SIZE',
-            _longerText('VAN SIZE', _longestText(bookings.map(vm.vanSize))),
+            'Van Size',
+            _longerText('Van Size', _longestText(bookings.map(vm.vanSize))),
           ),
         );
         final resolvedClientWidth = _resolvedColumnWidth(
           _maxTextWidth(
             context,
             textScaler,
-            'CLIENT',
+            'Client',
             _longerText(
-              'CLIENT',
+              'Client',
               _longestText(
                 bookings.map(
                   (booking) => _widestRenderedLine(
@@ -1206,13 +1226,24 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
           _maxTextWidth(
             context,
             textScaler,
-            'AMOUNT',
+            'Amount',
             _longerText(
-              'AMOUNT',
+              'Amount',
               _longestText(bookings.map(AdminDashboardViewModel.amount)),
             ),
           ),
         );
+        const actionButtonWidth = 38.0;
+        final actionsTitleWidth = AdminListMeasurements.measureTextWidth(
+          context,
+          textScaler,
+          'Actions',
+          _headerStyle,
+        );
+        final actionsWidth = actionsTitleWidth > actionButtonWidth
+            ? actionsTitleWidth
+            : actionButtonWidth;
+        final resolvedActionWidth = actionsWidth + 8;
 
         final totalMeasuredWidth =
             resolvedDeliveryNumberWidth +
@@ -1222,6 +1253,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
             resolvedVanSizeWidth +
             resolvedClientWidth +
             resolvedAmountWidth +
+            resolvedActionWidth +
             40;
         final useResponsiveCards = totalMeasuredWidth > constraints.maxWidth;
 
@@ -1236,6 +1268,8 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                       vm: vm,
                       clientName: vm.client(booking),
                       dateValue: booking.createdAt,
+                      onExportPressed: () =>
+                          _exportBookings(context, vm, <Booking>[booking]),
                     ),
                   ),
                 )
@@ -1253,31 +1287,40 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                 children: [
                   _DashboardFixedSlot(
                     width: resolvedDeliveryNumberWidth,
-                    child: const _DashboardHeaderCell(label: 'DR NO.'),
+                    child: const _DashboardHeaderCell(label: 'Dr No.'),
                   ),
                   _DashboardFixedSlot(
                     width: resolvedDateWidth,
-                    child: const _DashboardHeaderCell(label: 'DATE'),
+                    child: const _DashboardHeaderCell(label: 'Date'),
                   ),
                   _DashboardFixedSlot(
                     width: resolvedWaybillWidth,
-                    child: const _DashboardHeaderCell(label: 'WAYBILL NO.'),
+                    child: const _DashboardHeaderCell(label: 'Waybill No.'),
                   ),
                   _DashboardFixedSlot(
                     width: resolvedVanNumberWidth,
-                    child: const _DashboardHeaderCell(label: 'VAN NO.'),
+                    child: const _DashboardHeaderCell(label: 'Van No.'),
                   ),
                   _DashboardFixedSlot(
                     width: resolvedVanSizeWidth,
-                    child: const _DashboardHeaderCell(label: 'VAN SIZE'),
+                    child: const _DashboardHeaderCell(label: 'Van Size'),
                   ),
                   _DashboardFixedSlot(
                     width: resolvedClientWidth,
-                    child: const _DashboardHeaderCell(label: 'CLIENT'),
+                    child: const _DashboardHeaderCell(label: 'Client'),
                   ),
                   _DashboardFixedSlot(
                     width: resolvedAmountWidth,
-                    child: const _DashboardHeaderCell(label: 'AMOUNT'),
+                    child: const _DashboardHeaderCell(label: 'Amount'),
+                  ),
+                  AdminListTrailingActionsLane(
+                    width: resolvedActionWidth,
+                    child: const _DashboardHeaderCell(
+                      label: 'Actions',
+                      trailingPadding: 0,
+                      alignment: Alignment.centerRight,
+                      textAlign: TextAlign.right,
+                    ),
                   ),
                 ],
               ),
@@ -1298,6 +1341,9 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                   resolvedVanSizeWidth: resolvedVanSizeWidth,
                   resolvedClientWidth: resolvedClientWidth,
                   resolvedAmountWidth: resolvedAmountWidth,
+                  resolvedActionWidth: resolvedActionWidth,
+                  onExportPressed: () =>
+                      _exportBookings(context, vm, <Booking>[booking]),
                 ),
               ),
             ),
@@ -1382,6 +1428,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
     required this.resolvedVanSizeWidth,
     required this.resolvedClientWidth,
     required this.resolvedAmountWidth,
+    required this.resolvedActionWidth,
+    required this.onExportPressed,
   });
 
   final Booking booking;
@@ -1395,6 +1443,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
   final double resolvedVanSizeWidth;
   final double resolvedClientWidth;
   final double resolvedAmountWidth;
+  final double resolvedActionWidth;
+  final VoidCallback? onExportPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1429,7 +1479,9 @@ class _AdminDashboardWideRow extends StatelessWidget {
             width: resolvedWaybillWidth,
             child: _DashboardBodyCell(
               child: Text(
-                AdminDashboardViewModel.waybillNumber(booking),
+                _dashboardDisplayWaybill(
+                  AdminDashboardViewModel.waybillNumber(booking),
+                ),
                 style: _AdminDashboardCompletedBookingsTable._valueStyle,
                 softWrap: true,
               ),
@@ -1477,6 +1529,24 @@ class _AdminDashboardWideRow extends StatelessWidget {
               ),
             ),
           ),
+          AdminListTrailingActionsLane(
+            width: resolvedActionWidth,
+            child: _DashboardBodyCell(
+              trailingPadding: 0,
+              alignment: Alignment.centerRight,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: AdminIconActionButton(
+                  icon: Icons.download_rounded,
+                  onTap: onExportPressed,
+                  backgroundColor: AppColors.primaryColor,
+                  size: 38,
+                  iconSize: 18,
+                  borderRadius: 12,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1489,12 +1559,14 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
     required this.vm,
     required this.clientName,
     required this.dateValue,
+    required this.onExportPressed,
   });
 
   final Booking booking;
   final AdminDashboardViewModel vm;
   final String clientName;
   final DateTime? dateValue;
+  final VoidCallback? onExportPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1506,36 +1578,53 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
             (constraints.maxWidth - (spacing * (columns - 1))) / columns;
 
         final items = [
-          ('DR NO.', AdminDashboardViewModel.deliveryFormNumber(booking)),
+          ('Dr No.', AdminDashboardViewModel.deliveryFormNumber(booking)),
           (
-            'DATE',
+            'Date',
             _AdminDashboardCompletedBookingsTable._formatBookingDateTime(
               dateValue,
             ),
           ),
-          ('WAYBILL NO.', AdminDashboardViewModel.waybillNumber(booking)),
-          ('VAN NO.', AdminDashboardViewModel.vanNumber(booking)),
-          ('VAN SIZE', vm.vanSize(booking)),
-          ('CLIENT', clientName),
-          ('AMOUNT', AdminDashboardViewModel.amount(booking)),
+          ('Waybill No.', AdminDashboardViewModel.waybillNumber(booking)),
+          ('Van No.', AdminDashboardViewModel.vanNumber(booking)),
+          ('Van Size', vm.vanSize(booking)),
+          ('Client', clientName),
+          ('Amount', AdminDashboardViewModel.amount(booking)),
         ];
 
         return AdminListItemCard(
           padding: const EdgeInsets.all(20),
-          child: Wrap(
-            spacing: spacing,
-            runSpacing: 10,
-            children: items
-                .map(
-                  (item) => AdminListResponsiveField(
-                    title: item.$1,
-                    value: item.$2,
-                    width: itemWidth,
-                    centered: false,
-                    isTitle: false,
-                  ),
-                )
-                .toList(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: spacing,
+                runSpacing: 10,
+                children: items
+                    .map(
+                      (item) => AdminListResponsiveField(
+                        title: item.$1,
+                        value: item.$2,
+                        width: itemWidth,
+                        centered: false,
+                        isTitle: false,
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: AdminIconActionButton(
+                  icon: Icons.download_rounded,
+                  onTap: onExportPressed,
+                  backgroundColor: AppColors.primaryColor,
+                  size: 38,
+                  iconSize: 18,
+                  borderRadius: 12,
+                ),
+              ),
+            ],
           ),
         );
       },
@@ -1544,7 +1633,10 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
 }
 
 class _DashboardFixedSlot extends StatelessWidget {
-  const _DashboardFixedSlot({required this.width, required this.child});
+  const _DashboardFixedSlot({
+    required this.width,
+    required this.child,
+  });
 
   final double width;
   final Widget child;
@@ -1556,32 +1648,50 @@ class _DashboardFixedSlot extends StatelessWidget {
 }
 
 class _DashboardHeaderCell extends StatelessWidget {
-  const _DashboardHeaderCell({required this.label});
+  const _DashboardHeaderCell({
+    required this.label,
+    this.trailingPadding = 20,
+    this.alignment = Alignment.centerLeft,
+    this.textAlign = TextAlign.left,
+  });
 
   final String label;
+  final double trailingPadding;
+  final Alignment alignment;
+  final TextAlign textAlign;
 
   @override
   Widget build(BuildContext context) {
     return AdminListHeaderCell(
       label: label,
-      trailingPadding: 20,
-      alignment: Alignment.centerLeft,
-      textAlign: TextAlign.left,
+      trailingPadding: trailingPadding,
+      alignment: alignment,
+      textAlign: textAlign,
     );
   }
 }
 
 class _DashboardBodyCell extends StatelessWidget {
-  const _DashboardBodyCell({required this.child});
+  const _DashboardBodyCell({
+    required this.child,
+    this.trailingPadding = 20,
+    this.alignment = Alignment.centerLeft,
+  });
 
   final Widget child;
+  final double trailingPadding;
+  final Alignment alignment;
 
   @override
   Widget build(BuildContext context) {
     return AdminListBodyCell(
-      trailingPadding: 20,
-      alignment: Alignment.centerLeft,
+      trailingPadding: trailingPadding,
+      alignment: alignment,
       child: child,
     );
   }
+}
+
+String _dashboardDisplayWaybill(String value) {
+  return value.replaceAll('-', '\u2011');
 }

@@ -45,10 +45,70 @@ class AdminDashboardViewModel extends BaseViewModel {
   String _searchQuery = '';
   DateTime? _startDate;
   DateTime? _endDate;
+  bool _isExporting = false;
+  int _exportTotalSteps = 0;
+  int _exportCompletedSteps = 0;
 
   String get searchQuery => _searchQuery;
   DateTime? get startDate => _startDate;
   DateTime? get endDate => _endDate;
+  bool get isExporting => _isExporting;
+  String get exportProgressLabel {
+    if (!_isExporting || _exportTotalSteps <= 0) {
+      return 'Export';
+    }
+    final percent = ((_exportCompletedSteps / _exportTotalSteps) * 100)
+        .round()
+        .clamp(0, 100);
+    return '$percent%';
+  }
+
+  void beginExport(int totalSteps) {
+    _isExporting = true;
+    _exportTotalSteps = totalSteps <= 0 ? 1 : totalSteps;
+    _exportCompletedSteps = 0;
+    notifyListeners();
+  }
+
+  void advanceExport() {
+    if (!_isExporting) {
+      return;
+    }
+    if (_exportCompletedSteps < _exportTotalSteps) {
+      _exportCompletedSteps += 1;
+      notifyListeners();
+    }
+  }
+
+  void completeExport() {
+    if (!_isExporting) {
+      return;
+    }
+    _exportCompletedSteps = _exportTotalSteps;
+    notifyListeners();
+  }
+
+  void setExportProgress({
+    required int completedSteps,
+    required int totalSteps,
+  }) {
+    _isExporting = true;
+    _exportTotalSteps = totalSteps <= 0 ? 1 : totalSteps;
+    _exportCompletedSteps = completedSteps.clamp(0, _exportTotalSteps);
+    notifyListeners();
+  }
+
+  void endExport() {
+    if (!_isExporting &&
+        _exportTotalSteps == 0 &&
+        _exportCompletedSteps == 0) {
+      return;
+    }
+    _isExporting = false;
+    _exportTotalSteps = 0;
+    _exportCompletedSteps = 0;
+    notifyListeners();
+  }
 
   Future<void> load() async {
     busyMessage = 'Loading dashboard ...';
