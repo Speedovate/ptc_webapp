@@ -103,93 +103,78 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
     final showActionRow = showSubmitButton || hasFields;
     final actionRowTopSpacing = widget.fields.isEmpty ? 14.0 : 6.0;
 
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: palette.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: palette.border),
-      ),
+    return BookingFormOuterShell(
+      palette: palette,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _PreviewHeaderCard(
-                  title: resolvedTitle,
-                  subtitle: statusSubtext,
-                  buttonText: buttonText,
-                  currentStatusKey: currentStatusKey,
-                  showRequiredLegend: widget.fields.any(
-                    (field) => field.required == true,
-                  ),
-                  showDependencyNotice: dependencies.isNotEmpty,
+          _PreviewHeaderCard(
+            title: resolvedTitle,
+            subtitle: statusSubtext,
+            buttonText: buttonText,
+            currentStatusKey: currentStatusKey,
+            showRequiredLegend: widget.fields.any(
+              (field) => field.required == true,
+            ),
+            showDependencyNotice: dependencies.isNotEmpty,
+          ),
+          if (hasFields) ...[
+            const SizedBox(height: 14),
+            ...widget.fields.map(
+              (field) => Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: StatusFormRuntimeFieldCard(
+                  key: ValueKey('${field.key}:$_resetTick'),
+                  field: field,
+                  initialValue: _answers[field.key],
+                  errorText: _errors[field.key],
+                  formTitle: resolvedTitle,
+                  formButtonText: buttonText,
+                  formStatusKey: currentStatusKey,
+                  onChanged: (value) {
+                    final key = field.key;
+                    if (key == null || key.isEmpty) {
+                      return;
+                    }
+                    _updateAnswer(key, value);
+                  },
                 ),
-                if (hasFields) ...[
-                  const SizedBox(height: 14),
-                  ...widget.fields.map(
-                    (field) => Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: StatusFormRuntimeFieldCard(
-                        key: ValueKey('${field.key}:$_resetTick'),
-                        field: field,
-                        initialValue: _answers[field.key],
-                        errorText: _errors[field.key],
-                        formTitle: resolvedTitle,
-                        formButtonText: buttonText,
-                        formStatusKey: currentStatusKey,
-                        onChanged: (value) {
-                          final key = field.key;
-                          if (key == null || key.isEmpty) {
-                            return;
-                          }
-                          _updateAnswer(key, value);
-                        },
+              ),
+            ),
+          ],
+          if (showActionRow) ...[
+            SizedBox(height: actionRowTopSpacing),
+            Row(
+              children: [
+                if (showSubmitButton)
+                  FilledButton(
+                    onPressed: _validateForm,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: palette.accent,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(0, 52),
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
                       ),
                     ),
+                    child: Text(
+                      buttonText?.isNotEmpty == true ? buttonText! : 'Submit',
+                    ),
                   ),
-                ],
-                if (showActionRow) ...[
-                  SizedBox(height: actionRowTopSpacing),
-                  Row(
-                    children: [
-                      if (showSubmitButton)
-                        FilledButton(
-                          onPressed: _validateForm,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: palette.accent,
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size(0, 52),
-                            padding: const EdgeInsets.symmetric(horizontal: 18),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          child: Text(
-                            buttonText?.isNotEmpty == true
-                                ? buttonText!
-                                : 'Submit',
-                          ),
-                        ),
-                      if (hasFields) ...[
-                        const Spacer(),
-                        TextButton(
-                          onPressed: _clearForm,
-                          style: TextButton.styleFrom(
-                            foregroundColor: palette.accent,
-                          ),
-                          child: const Text('Clear Form'),
-                        ),
-                      ],
-                    ],
+                if (hasFields) ...[
+                  const Spacer(),
+                  TextButton(
+                    onPressed: _clearForm,
+                    style: TextButton.styleFrom(
+                      foregroundColor: palette.accent,
+                    ),
+                    child: const Text('Clear Form'),
                   ),
                 ],
               ],
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -227,7 +212,7 @@ class _PreviewHeaderCard extends StatelessWidget {
         fallbackColor: palette.strip,
       ),
       borderColor: palette.border,
-      bodyColor: palette.surface,
+      bodyColor: Colors.white,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -278,7 +263,10 @@ class _PreviewHeaderCard extends StatelessWidget {
             const SizedBox(height: 14),
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              padding: const EdgeInsets.symmetric(
+                horizontal: bookingFormContentHorizontalPadding,
+                vertical: 12,
+              ),
               decoration: BoxDecoration(
                 color: palette.surface,
                 borderRadius: BorderRadius.circular(14),

@@ -3,14 +3,20 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
+import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
 class AdminDashboardViewModel extends BaseViewModel {
-  AdminDashboardViewModel({AuthRepository? authRepository})
+  AdminDashboardViewModel({
+    AuthRepository? authRepository,
+    VehicleCatalogRepository? vehicleRepository,
+  })
     : _authRepository = authRepository ?? AuthRequest.instance,
+      _vehicleRepository = vehicleRepository ?? VehicleRequest.instance,
       _bookingRepository = BookingRequest.instance {
     _completedBookings.addAll(_cachedCompletedBookings);
     _usersById.addAll(_cachedUsersById);
@@ -18,6 +24,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   }
 
   final AuthRepository _authRepository;
+  final VehicleCatalogRepository _vehicleRepository;
   final BookingRepository _bookingRepository;
   static List<Booking> _cachedCompletedBookings = const [];
   static Map<String, UserModel> _cachedUsersById = const {};
@@ -35,6 +42,13 @@ class AdminDashboardViewModel extends BaseViewModel {
   List<Booking> get completedBookings => List.unmodifiable(_completedBookings);
   String? errorMessage;
   String busyMessage = 'Loading, please wait ...';
+  String _searchQuery = '';
+  DateTime? _startDate;
+  DateTime? _endDate;
+
+  String get searchQuery => _searchQuery;
+  DateTime? get startDate => _startDate;
+  DateTime? get endDate => _endDate;
 
   Future<void> load() async {
     busyMessage = 'Loading dashboard ...';
@@ -42,8 +56,14 @@ class AdminDashboardViewModel extends BaseViewModel {
     errorMessage = null;
     try {
       await _bookingRepository.initialize();
-      final users = await _authRepository.getUsers();
-      final bookings = await _bookingRepository.getBookings();
+      final results = await Future.wait([
+        _authRepository.getUsers(),
+        _bookingRepository.getBookings(),
+        _vehicleRepository.getSizes(),
+      ]);
+      final users = results[0] as List<UserModel>;
+      final bookings = results[1] as List<Booking>;
+      final _ = results[2] as List;
 
       _usersById
         ..clear()
@@ -96,6 +116,98 @@ class AdminDashboardViewModel extends BaseViewModel {
     final name = client?.name?.trim();
     return "${name?.isNotEmpty == true ? name! : 'Unknown client'} (${start(booking)} - ${end(booking)})"
         .toUpperCase();
+  }
+
+  List<Booking> filteredCompletedBookings() {
+    final query = _searchQuery.trim().toLowerCase();
+    return _completedBookings.where((booking) {
+      final deliveredDate =
+          deliveredAt(booking) ?? booking.updatedAt ?? booking.createdAt;
+      final matchesStartDate =
+          _startDate == null ||
+          (deliveredDate != null &&
+              !_dateOnly(deliveredDate).isBefore(_dateOnly(_startDate!)));
+      final matchesEndDate =
+          _endDate == null ||
+          (deliveredDate != null &&
+              !_dateOnly(deliveredDate).isAfter(_dateOnly(_endDate!)));
+      if (!matchesStartDate || !matchesEndDate) {
+        return false;
+      }
+
+      if (query.isEmpty) {
+        return true;
+      }
+
+      final values = <String>[
+        booking.id ?? '',
+        deliveryFormNumber(booking),
+        waybillNumber(booking),
+        vanNumber(booking),
+        vanSize(booking),
+        amount(booking),
+        client(booking),
+        start(booking),
+        end(booking),
+        booking.clientStatus ?? '',
+        booking.createdAt?.toIso8601String() ?? '',
+        deliveredDate?.toIso8601String() ?? '',
+        ..._flattenBookingOutputValues(booking.statusOutputs),
+      ];
+      return values.join(' ').toLowerCase().contains(query);
+    }).toList();
+  }
+
+  void setSearchQuery(String value) {
+    if (_searchQuery == value) {
+      return;
+    }
+    _searchQuery = value;
+    notifyListeners();
+  }
+
+  void updateStartDate(DateTime? value) {
+    _startDate = value;
+    if (_startDate != null &&
+        _endDate != null &&
+        _endDate!.isBefore(_startDate!)) {
+      _endDate = _startDate;
+    }
+    notifyListeners();
+  }
+
+  void updateEndDate(DateTime? value) {
+    _endDate = value;
+    if (_startDate != null &&
+        _endDate != null &&
+        _startDate!.isAfter(_endDate!)) {
+      _startDate = _endDate;
+    }
+    notifyListeners();
+  }
+
+  void clearFilters() {
+    var changed = false;
+    if (_startDate != null) {
+      _startDate = null;
+      changed = true;
+    }
+    if (_endDate != null) {
+      _endDate = null;
+      changed = true;
+    }
+    if (changed) {
+      notifyListeners();
+    }
+  }
+
+  String formatDate(DateTime? value) {
+    if (value == null) {
+      return 'All';
+    }
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '$month/$day/${value.year}';
   }
 
   static String start(Booking booking) =>
@@ -153,15 +265,49 @@ class AdminDashboardViewModel extends BaseViewModel {
         'van_number',
       ).toUpperCase();
 
-  static String vanSize(Booking booking) =>
-      BookingRecordCard.outputFieldDisplayValue(
-        booking.statusOutputs,
-        'van_size',
-      ).toUpperCase();
+  String vanSize(Booking booking) {
+    final rawValue = BookingRecordCard.outputFieldDisplayValue(
+      booking.statusOutputs,
+      'van_size',
+    );
+    return VehicleRequest.instance.displayVehicleSizeLabel(
+      rawValue,
+      uppercase: true,
+      preferSlug: true,
+    );
+  }
 
   static String amount(Booking booking) =>
       BookingRecordCard.outputFieldDisplayValue(
         booking.statusOutputs,
         'amount',
       ).toUpperCase();
+
+  static DateTime _dateOnly(DateTime value) =>
+      DateTime(value.year, value.month, value.day);
+
+  static List<String> _flattenBookingOutputValues(
+    Map<String, dynamic>? outputs,
+  ) {
+    if (outputs == null || outputs.isEmpty) {
+      return const [];
+    }
+    final values = <String>[];
+    for (final section in outputs.values) {
+      if (section is! Map) {
+        continue;
+      }
+      final fields = section['fields'];
+      if (fields is! Map) {
+        continue;
+      }
+      for (final value in fields.values) {
+        final normalized = value?.toString().trim();
+        if (normalized != null && normalized.isNotEmpty) {
+          values.add(normalized);
+        }
+      }
+    }
+    return values;
+  }
 }

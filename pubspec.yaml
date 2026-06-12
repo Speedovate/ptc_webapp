@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
   stacked: ^3.5.0
+  archive: ^4.0.9
   shared_preferences: ^2.5.3
   file_picker: ^10.3.2
   url_launcher: ^6.3.1
@@ -20,6 +21,7 @@ dependencies:
   firebase_storage: ^13.0.2
   package_info_plus: ^8.3.1
   image: ^4.5.4
+  xml: ^7.0.1
 
 dev_dependencies:
   flutter_test:
@@ -28,3 +30,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/export_templates/bs-regular.docx
+    - assets/export_templates/bs-hustling.docx
+    - assets/export_templates/bt-regular.docx
+    - assets/export_templates/bt-hustling.docx

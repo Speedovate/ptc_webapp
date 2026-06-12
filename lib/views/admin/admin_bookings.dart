@@ -5,6 +5,7 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_bookings.vm.dart';
 import 'package:webapp/views/client/client_booking_home_view.dart';
@@ -260,16 +261,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     _driverId = widget.booking.driver?.id;
     _helperId = widget.booking.helper?.id;
     final rawVanSize = _existingFieldValue('van_size');
-    final normalizedVanSize = rawVanSize?.toString().trim();
-    final matchesKnownSize =
-        normalizedVanSize != null &&
-        normalizedVanSize.isNotEmpty &&
-        widget.vehicleSizes.any(
-          (size) =>
-              (size.name?.trim() ?? '') == normalizedVanSize ||
-              (size.slug?.trim() ?? '') == normalizedVanSize,
-        );
-    _vanSize = matchesKnownSize ? normalizedVanSize : null;
+    _vanSize = _normalizeVehicleSizeId(rawVanSize?.toString());
   }
 
   @override
@@ -337,11 +329,14 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     }
 
     if (_vanSize?.trim().isNotEmpty == true) {
-      addItem(_vanSize!, _vanSize!);
+      addItem(
+        _vanSize!,
+        VehicleRequest.instance.displayVehicleSizeLabel(_vanSize!),
+      );
     }
 
     for (final size in widget.vehicleSizes) {
-      final value = size.name?.trim();
+      final value = size.id?.trim();
       final label = size.name?.trim().isNotEmpty == true
           ? size.name!.trim()
           : (size.slug?.trim() ?? '-');
@@ -356,6 +351,24 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
   List<DropdownMenuItem<String>> _buildStatusItems() {
     final items = <DropdownMenuItem<String>>[];
     final seenValues = <String>{};
+
+    String labelForStatusValue(String value) {
+      final normalizedValue = value.trim();
+      for (final status in widget.statuses) {
+        if ((status.key?.trim() ?? '') != normalizedValue) {
+          continue;
+        }
+        final label = status.label?.trim();
+        if (label != null && label.isNotEmpty) {
+          return label;
+        }
+        break;
+      }
+      if ((widget.booking.clientStatus?.trim() ?? '') == normalizedValue) {
+        return widget.currentStatusLabel;
+      }
+      return normalizedValue;
+    }
 
     void addItem(String value, String label) {
       final normalizedValue = value.trim();
@@ -374,10 +387,6 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
       );
     }
 
-    if (_statusKey.trim().isNotEmpty) {
-      addItem(_statusKey, widget.currentStatusLabel);
-    }
-
     for (final status in widget.statuses) {
       final value = status.key?.trim();
       final label = status.label?.trim().isNotEmpty == true
@@ -386,6 +395,10 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
       if (value != null && value.isNotEmpty) {
         addItem(value, label);
       }
+    }
+
+    if (_statusKey.trim().isNotEmpty && !seenValues.contains(_statusKey.trim())) {
+      addItem(_statusKey, labelForStatusValue(_statusKey));
     }
 
     return items;
@@ -669,6 +682,15 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     }
     final role = (user.role ?? '').trim();
     return role.isNotEmpty ? humanizeDropdownValue(role) : 'User';
+  }
+
+  String? _normalizeVehicleSizeId(String? rawValue) {
+    final normalized = VehicleRequest.instance.normalizeVehicleSizeId(rawValue);
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    final matchesKnownSize = widget.vehicleSizes.any((size) => size.id == normalized);
+    return matchesKnownSize ? normalized : null;
   }
 }
 

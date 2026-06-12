@@ -15,6 +15,7 @@ class VehicleRequest implements VehicleCatalogRepository {
   static const _vehicleMakesResourceKey = 'vehicle_makes';
   static const _vehicleTypesResourceKey = 'vehicle_types';
   static const _vehicleSizesResourceKey = 'vehicle_sizes';
+  static List<VehicleCatalogItem> _cachedSizes = const [];
 
   final FirebaseFirestore _firestore;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
@@ -93,8 +94,55 @@ class VehicleRequest implements VehicleCatalogRepository {
       );
       final items = documents.map(VehicleCatalogItem.fromMap).toList();
       items.sort(_compareByNewestIdFirst);
+      _cachedSizes = List<VehicleCatalogItem>.from(items);
       return items;
     }, fallback: 'We could not load the vehicle sizes right now.');
+  }
+
+  VehicleCatalogItem? resolveVehicleSize(String? value) {
+    final normalizedValue = normalizeId(value);
+    if (normalizedValue == null) {
+      return null;
+    }
+    final upperValue = normalizedValue.toUpperCase();
+    for (final item in _cachedSizes) {
+      if ((item.id?.trim() ?? '') == normalizedValue) {
+        return item;
+      }
+      if ((item.name?.trim().toUpperCase() ?? '') == upperValue) {
+        return item;
+      }
+      if ((item.slug?.trim().toUpperCase() ?? '') == upperValue) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  String? normalizeVehicleSizeId(String? value) {
+    final matched = resolveVehicleSize(value);
+    final matchedId = normalizeId(matched?.id);
+    if (matchedId != null) {
+      return matchedId;
+    }
+    return normalizeId(value);
+  }
+
+  String displayVehicleSizeLabel(
+    String? value, {
+    bool uppercase = false,
+    bool preferSlug = false,
+  }) {
+    final matched = resolveVehicleSize(value);
+    final label =
+        preferSlug && matched?.slug?.trim().isNotEmpty == true
+        ? matched!.slug!.trim()
+        : matched?.name?.trim().isNotEmpty == true
+        ? matched!.name!.trim()
+        : matched?.slug?.trim().isNotEmpty == true
+        ? matched!.slug!.trim()
+        : normalizeId(value) ?? '-';
+    return uppercase ? label.toUpperCase() : label;
   }
 
   @override
@@ -168,6 +216,7 @@ class VehicleRequest implements VehicleCatalogRepository {
         resourceKey: _vehicleSizesResourceKey,
         documentId: normalized,
       );
+      _cachedSizes = _cachedSizes.where((item) => item.id != normalized).toList();
     }, fallback: 'We could not delete the vehicle size right now.');
   }
 
@@ -213,6 +262,17 @@ class VehicleRequest implements VehicleCatalogRepository {
         resourceKey: resourceKey,
         document: saved.toMap(),
       );
+      if (resourceKey == _vehicleSizesResourceKey) {
+        final nextItems = List<VehicleCatalogItem>.from(_cachedSizes);
+        final existingIndex = nextItems.indexWhere((item) => item.id == saved.id);
+        if (existingIndex >= 0) {
+          nextItems[existingIndex] = saved;
+        } else {
+          nextItems.add(saved);
+        }
+        nextItems.sort(_compareByNewestIdFirst);
+        _cachedSizes = nextItems;
+      }
       return saved;
     }, fallback: 'We could not save this item right now.');
   }

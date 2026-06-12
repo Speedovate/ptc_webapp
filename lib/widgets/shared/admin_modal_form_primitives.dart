@@ -148,6 +148,7 @@ class _AdminModalTextFieldState extends State<AdminModalTextField> {
             maxLines: widget.maxLines,
             keyboardType: widget.keyboardType,
             onTap: widget.onTap,
+            style: adminFieldValueTextStyle,
             decoration: adminFormInputDecoration(
               widget.label,
               hintText: widget.hintText,
@@ -251,11 +252,7 @@ class _AdminModalActionFieldState extends State<AdminModalActionField> {
               readOnly: true,
               showCursor: false,
               enableInteractiveSelection: false,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontWeight: FontWeight.w400,
-                height: 1.2,
-              ),
+              style: adminFieldValueTextStyle,
               decoration: decoration,
             ),
           ),
@@ -325,6 +322,7 @@ class _AdminModalValueTextFieldState extends State<AdminModalValueTextField> {
             minLines: widget.minLines,
             maxLines: widget.maxLines,
             keyboardType: widget.keyboardType,
+            style: adminFieldValueTextStyle,
             decoration: adminFormInputDecoration(
               widget.label,
               hintText: widget.hintText,

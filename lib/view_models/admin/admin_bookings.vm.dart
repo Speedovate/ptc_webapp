@@ -281,7 +281,16 @@ class AdminBookingsViewModel extends BaseViewModel {
     return _statusesByKey.values
         .where((status) => status.isActive ?? false)
         .toList()
-      ..sort((left, right) => (left.label ?? '').compareTo(right.label ?? ''));
+      ..sort((left, right) {
+        final leftId = left.id?.trim() ?? '';
+        final rightId = right.id?.trim() ?? '';
+        final leftNumeric = int.tryParse(leftId);
+        final rightNumeric = int.tryParse(rightId);
+        if (leftNumeric != null && rightNumeric != null) {
+          return leftNumeric.compareTo(rightNumeric);
+        }
+        return leftId.compareTo(rightId);
+      });
   }
 
   List<UserModel> roleUsers(String role) {

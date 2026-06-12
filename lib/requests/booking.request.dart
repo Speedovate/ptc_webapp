@@ -58,17 +58,14 @@ class BookingRequest implements BookingRepository {
   @override
   Future<Booking> saveBooking(Booking booking) async {
     return _runRequest(() async {
-      final existingBookings = await getBookings();
-      final nextId =
-          normalizeId(booking.id) ?? _nextBookingId(existingBookings);
-      final existingBooking = existingBookings
-          .where((item) => item.id == nextId)
-          .firstOrNull;
+      final normalizedId = normalizeId(booking.id);
+      final nextId = normalizedId ?? await _nextBookingId();
+      final existingBookingData = await _getExistingBookingData(nextId);
       final now = DateTime.now();
       final persistedStatusOutputs = await _persistPhotoFields(
         booking.statusOutputs,
         bookingId: nextId,
-        existingStatusOutputs: existingBooking?.statusOutputs,
+        existingStatusOutputs: _statusOutputsFromFirestoreMap(existingBookingData),
       );
       final saved = booking.copyWith(
         id: nextId,
@@ -79,6 +76,24 @@ class BookingRequest implements BookingRepository {
       await _bookingsCollection.doc(nextId).set(_toFirestoreMap(saved));
       return saved;
     }, fallback: 'We could not save the booking right now.');
+  }
+
+  Future<Map<String, dynamic>?> _getExistingBookingData(String bookingId) async {
+    final snapshot = await _bookingsCollection.doc(bookingId).get();
+    if (!snapshot.exists) {
+      return null;
+    }
+    return documentData(snapshot);
+  }
+
+  Map<String, dynamic>? _statusOutputsFromFirestoreMap(
+    Map<String, dynamic>? bookingData,
+  ) {
+    final rawValue = bookingData?['status_outputs'];
+    if (rawValue is Map) {
+      return Map<String, dynamic>.from(rawValue);
+    }
+    return null;
   }
 
   Future<Map<String, dynamic>?> _persistPhotoFields(
@@ -202,6 +217,7 @@ class BookingRequest implements BookingRepository {
   ) async {
     final users = await _authRequest.getUsers();
     final makes = await _vehicleRequest.getMakes();
+    await _vehicleRequest.getSizes();
     final userById = {for (final item in users) item.id ?? '': item};
     final makeById = {for (final item in makes) item.id ?? '': item};
     final bookings = documents
@@ -266,9 +282,10 @@ class BookingRequest implements BookingRepository {
     );
   }
 
-  String _nextBookingId(List<Booking> bookings) {
-    final highest = bookings
-        .map((item) => int.tryParse(item.id ?? ''))
+  Future<String> _nextBookingId() async {
+    final snapshot = await _bookingsCollection.get();
+    final highest = snapshot.docs
+        .map((doc) => int.tryParse(documentData(doc)['id']?.toString() ?? ''))
         .whereType<int>()
         .fold<int>(0, (max, value) => value > max ? value : max);
     return '${highest + 1}';

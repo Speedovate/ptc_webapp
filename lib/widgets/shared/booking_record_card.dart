@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
@@ -343,6 +344,9 @@ class BookingRecordCardActions extends StatelessWidget {
 }
 
 String _displayValueForField(String fieldKey, dynamic value) {
+  if (fieldKey == 'van_size') {
+    return VehicleRequest.instance.displayVehicleSizeLabel(value?.toString());
+  }
   if (fieldKey == 'amount') {
     return _currencyDisplayValue(value);
   }

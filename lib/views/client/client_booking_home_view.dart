@@ -32,15 +32,15 @@ _ClientFormHeaderPalette? _terminalClientHeaderPalette(String? statusKey) {
       return const _ClientFormHeaderPalette(
         backgroundColor: Color(0xFF2EAD62),
         borderColor: Color(0xFF2EAD62),
-        titleColor: Colors.white,
-        subtitleColor: Color(0xFFE4F6EA),
+        titleColor: AppColors.textPrimary,
+        subtitleColor: AppColors.textPrimary,
       );
     case 'cancelled':
       return const _ClientFormHeaderPalette(
         backgroundColor: AppColors.dangerStrong,
         borderColor: AppColors.dangerStrong,
-        titleColor: Colors.white,
-        subtitleColor: Color(0xFFFFE0E0),
+        titleColor: AppColors.textPrimary,
+        subtitleColor: AppColors.textPrimary,
       );
     default:
       return null;
@@ -263,6 +263,11 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
     final terminalPalette = form.nextStatusKey == null
         ? _terminalClientHeaderPalette(form.currentStatusKey)
         : null;
+    final palette = bookingFormResolvedStatusPalette(
+      title: vm.resolvedTitleForForm(form),
+      buttonText: form.buttonText,
+      currentStatusKey: form.currentStatusKey,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -271,6 +276,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
           title: vm.resolvedTitleForForm(form),
           subtitle: vm.resolvedSubtitleForForm(form),
           buttonText: form.buttonText,
+          paletteOverride: palette,
           backgroundColor: terminalPalette?.backgroundColor,
           borderColor: terminalPalette?.borderColor,
           titleColor: terminalPalette?.titleColor,
@@ -294,6 +300,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
               initialValue: _answers[field.key],
               formTitle: vm.resolvedTitleForForm(form),
               formButtonText: form.buttonText,
+              formStatusKey: form.currentStatusKey,
               onChanged: (value) {
                 final key = field.key;
                 if (key == null || key.isEmpty) {
@@ -392,14 +399,14 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
             }
             AppSnackbar.showSuccess(context, 'Booking has been created.');
             widget.onBookingSubmitted?.call(booking);
-          },
-          onClear: () {
-            widget.onUnfocusWithoutScroll();
-            setState(() {
-              _answers = {};
-              _errors = {};
-              _resetTick += 1;
-            });
+            },
+            onClear: () {
+              widget.onUnfocusWithoutScroll();
+              setState(() {
+                _answers = {};
+                _errors = {};
+                _resetTick += 1;
+              });
           },
         ),
       ],

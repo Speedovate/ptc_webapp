@@ -5,6 +5,8 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/utils/functions.dart';
 
 const Color bookingFormDangerStripColor = AppColors.dangerStrong;
+const double bookingFormContentHorizontalPadding = 18;
+const EdgeInsets bookingFormOuterShellPadding = EdgeInsets.all(20);
 
 class BookingFormPalette {
   const BookingFormPalette({
@@ -27,7 +29,7 @@ class BookingFormPalette {
 const BookingFormPalette bookingFormPrimaryPalette = BookingFormPalette(
   strip: AppColors.primaryColor,
   accent: AppColors.primaryColor,
-  accentMuted: AppColors.textSecondary,
+  accentMuted: AppColors.primaryBorderDark,
   surface: AppColors.primarySurface,
   surfaceAlt: AppColors.primarySurfaceAlt,
   border: AppColors.primaryBorder,
@@ -126,7 +128,12 @@ class BookingFormTitleCardShell extends StatelessWidget {
     this.radius = 18,
     this.stripRadius = 16,
     this.stripHeight = 12,
-    this.bodyPadding = const EdgeInsets.fromLTRB(20, 12, 20, 16),
+    this.bodyPadding = const EdgeInsets.fromLTRB(
+      bookingFormContentHorizontalPadding,
+      12,
+      bookingFormContentHorizontalPadding,
+      16,
+    ),
   });
 
   final Widget child;
@@ -166,6 +173,35 @@ class BookingFormTitleCardShell extends StatelessWidget {
           child: child,
         ),
       ],
+    );
+  }
+}
+
+class BookingFormOuterShell extends StatelessWidget {
+  const BookingFormOuterShell({
+    super.key,
+    required this.palette,
+    required this.child,
+    this.padding = bookingFormOuterShellPadding,
+    this.radius = 20,
+  });
+
+  final BookingFormPalette palette;
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: palette.border),
+      ),
+      child: child,
     );
   }
 }
@@ -267,7 +303,10 @@ class BookingFormHeaderCard extends StatelessWidget {
           if (message?.trim().isNotEmpty == true) ...[
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              padding: const EdgeInsets.symmetric(
+                horizontal: bookingFormContentHorizontalPadding,
+                vertical: 12,
+              ),
               decoration: BoxDecoration(
                 color: messageBackgroundColor ?? palette.surfaceAlt,
                 borderRadius: BorderRadius.circular(14),

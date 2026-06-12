@@ -99,10 +99,10 @@ class StatusFieldOptionResolver {
           .map((item) => _catalogItemDisplay(item.name, item.slug, item.id))
           .whereType<String>(),
     );
-    final sizeOptions = _uniqueSortedOptions(
+    final sizeOptions = _uniqueOptions(
       sizes
           .where((item) => item.isActive != false)
-          .map((item) => _catalogItemDisplay(item.name, item.slug, item.id))
+          .map((item) => item.id?.trim())
           .whereType<String>(),
     );
     final statusOptions = _uniqueSortedOptions(
@@ -187,6 +187,19 @@ class StatusFieldOptionResolver {
         .toSet()
         .toList();
     unique.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return unique;
+  }
+
+  static List<String> _uniqueOptions(Iterable<String> values) {
+    final unique = <String>[];
+    final seen = <String>{};
+    for (final value in values) {
+      final normalized = value.trim();
+      if (normalized.isEmpty || !seen.add(normalized)) {
+        continue;
+      }
+      unique.add(normalized);
+    }
     return unique;
   }
 

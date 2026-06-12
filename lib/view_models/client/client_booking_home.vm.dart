@@ -196,6 +196,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
     isSubmitting = true;
     notifyListeners();
+    await Future<void>.delayed(const Duration(milliseconds: 16));
 
     try {
       final now = DateTime.now();
@@ -235,6 +236,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
     isSubmitting = true;
     notifyListeners();
+    await Future<void>.delayed(const Duration(milliseconds: 16));
 
     try {
       final now = DateTime.now();

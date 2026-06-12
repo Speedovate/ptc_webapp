@@ -15,6 +15,8 @@ class AdminListToolbar extends StatelessWidget {
     required this.search,
     required this.filtersBuilder,
     required this.onNewPressed,
+    this.buttonLabel = 'New',
+    this.buttonIcon = Icons.add_rounded,
   });
 
   final double controlHeight;
@@ -22,6 +24,8 @@ class AdminListToolbar extends StatelessWidget {
   final Widget search;
   final AdminToolbarFilterBuilder filtersBuilder;
   final VoidCallback onNewPressed;
+  final String buttonLabel;
+  final IconData buttonIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -62,6 +66,8 @@ class AdminListToolbar extends StatelessWidget {
                 surfaceRadius: surfaceRadius,
                 iconOnly: iconOnly,
                 onTap: onNewPressed,
+                label: buttonLabel,
+                icon: buttonIcon,
               ),
             ),
           ],
@@ -146,13 +152,13 @@ class _AdminListSearchFieldState extends State<AdminListSearchField> {
             child: TextField(
               controller: _controller,
               onChanged: widget.onChanged,
+              style: adminFieldValueTextStyle,
               textAlignVertical: TextAlignVertical.center,
               decoration: InputDecoration(
                 isDense: true,
                 hintText: 'Search',
-                hintStyle: TextStyle(
+                hintStyle: adminFieldHintTextStyle.copyWith(
                   color: AppColors.primaryColor.withValues(alpha: 0.72),
-                  fontWeight: FontWeight.w400,
                 ),
                 prefixIcon: const Icon(
                   Icons.search_rounded,
@@ -199,12 +205,16 @@ class AdminListNewButton extends StatelessWidget {
     required this.surfaceRadius,
     required this.iconOnly,
     required this.onTap,
+    this.label = 'New',
+    this.icon = Icons.add_rounded,
   });
 
   final double controlHeight;
   final double surfaceRadius;
   final bool iconOnly;
   final VoidCallback onTap;
+  final String label;
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
@@ -224,13 +234,13 @@ class AdminListNewButton extends StatelessWidget {
             ),
           ),
           child: iconOnly
-              ? const Icon(Icons.add_rounded)
-              : const Row(
+              ? Icon(icon)
+              : Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('New', style: TextStyle(fontWeight: FontWeight.w700)),
-                    SizedBox(width: 10),
-                    Icon(Icons.add_rounded, size: 18),
+                    Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(width: 10),
+                    Icon(icon, size: 18),
                   ],
                 ),
         ),

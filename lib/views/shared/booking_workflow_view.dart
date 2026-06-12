@@ -7,6 +7,7 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/shared/booking_workflow.vm.dart';
@@ -100,15 +101,15 @@ _WorkflowHeaderPalette? _terminalHeaderPaletteForStatus(String? statusKey) {
       return const _WorkflowHeaderPalette(
         backgroundColor: Color(0xFF2EAD62),
         borderColor: Color(0xFF2EAD62),
-        titleColor: Colors.white,
-        subtitleColor: Color(0xFFE4F6EA),
+        titleColor: AppColors.textPrimary,
+        subtitleColor: AppColors.textPrimary,
       );
     case 'cancelled':
       return const _WorkflowHeaderPalette(
         backgroundColor: AppColors.dangerStrong,
         borderColor: AppColors.dangerStrong,
-        titleColor: Colors.white,
-        subtitleColor: Color(0xFFFFE0E0),
+        titleColor: AppColors.textPrimary,
+        subtitleColor: AppColors.textPrimary,
       );
     default:
       return null;
@@ -418,7 +419,6 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
     final primaryActionLabel = vm.form?.buttonText?.trim().isNotEmpty == true
         ? vm.form!.buttonText!.trim()
         : 'Save';
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -430,9 +430,6 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
               : null,
           backgroundColor: terminalPalette?.backgroundColor,
           borderColor: terminalPalette?.borderColor,
-          bodyColor: currentBooking.clientStatus?.trim() == 'delivered'
-              ? _workflowDeliveredPalette.surface
-              : null,
           titleColor: terminalPalette?.titleColor,
           subtitleColor: terminalPalette?.subtitleColor,
         ),
@@ -470,132 +467,135 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
           }),
         ] else if (hasActionForm) ...[
           SizedBox(height: actionSectionTopSpacing),
-          if (showTaskCard) ...[
-            _WorkflowTaskCard(
-              vm: vm,
-              title: vm.form?.buttonText?.trim().isNotEmpty == true
-                  ? vm.form!.buttonText!.trim()
-                  : 'Complete Booking Step',
-              buttonText: vm.form?.buttonText?.trim(),
-              currentStatusKey: currentBooking.clientStatus,
-              preferredScrollController: _preferredScrollController(),
-              blockedMessage: vm.blockedMessage,
-              fields: vm.fields,
-              errors: vm.errors,
-              answers: vm.answers,
-              resetTick: vm.resetTick,
-              onChanged: (fieldKey, value) {
-                vm.updateAnswer(fieldKey, value);
-              },
-            ),
-            SizedBox(height: actionButtonTopSpacing),
-          ],
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: (_) => _unfocusWithoutScroll(context),
-                child: _nonFocusable(
-                  FilledButton(
-                    onPressed: vm.isSubmitting || vm.blockedMessage != null
-                        ? null
-                        : () async {
-                            final scrollSnapshot = _captureScrollSnapshot(
-                              context,
-                            );
-                            final isValid = vm.validateForSubmit();
-                            if (!isValid) {
-                              if (vm.errors.isNotEmpty) {
-                                AppSnackbar.showError(
-                                  context,
-                                  'Please complete the required booking fields.',
-                                );
-                              } else if (vm.blockedMessage != null) {
-                                AppSnackbar.showError(
-                                  context,
-                                  vm.blockedMessage!,
-                                );
-                              }
-                              _restoreScrollSnapshot(scrollSnapshot);
-                              return;
-                            }
-                            final actionLabel =
-                                primaryActionLabel;
-                            final confirmed = await showAdminActionConfirmation(
-                              context,
-                              title: 'Confirm Action',
-                              message:
-                                  'Are you sure you want to ${actionLabel.toLowerCase()}?',
-                              confirmLabel: actionLabel,
-                            );
-                            if (!confirmed || !context.mounted) {
-                              _restoreScrollSnapshot(scrollSnapshot);
-                              return;
-                            }
-                            final savedBooking = await vm.submit();
-                            if (!context.mounted) {
-                              return;
-                            }
-                            if (savedBooking == null) {
-                              if (vm.blockedMessage != null) {
-                                AppSnackbar.showError(
-                                  context,
-                                  vm.blockedMessage!,
-                                );
-                              }
-                              _restoreScrollSnapshot(scrollSnapshot);
-                              return;
-                            }
-                            _unfocusWithoutScroll(context);
-                            widget.onBookingUpdated?.call(savedBooking);
-                            AppSnackbar.showSuccess(
-                              context,
-                              'Booking has been updated.',
-                            );
-                          },
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 52),
-                      backgroundColor: _workflowResolvedActionColor(
-                        title: vm.form?.statusText?.trim(),
-                        buttonText: primaryActionLabel,
-                        currentStatusKey: currentBooking.clientStatus,
-                      ),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: Text(
-                      vm.isSubmitting
-                          ? 'Saving ...'
-                          : primaryActionLabel,
-                    ),
-                  ),
+              if (showTaskCard) ...[
+                _WorkflowTaskCard(
+                  vm: vm,
+                  title: vm.form?.buttonText?.trim().isNotEmpty == true
+                      ? vm.form!.buttonText!.trim()
+                      : 'Complete Booking Step',
+                  buttonText: vm.form?.buttonText?.trim(),
+                  currentStatusKey: currentBooking.clientStatus,
+                  preferredScrollController: _preferredScrollController(),
+                  blockedMessage: vm.blockedMessage,
+                  fields: vm.fields,
+                  errors: vm.errors,
+                  answers: vm.answers,
+                  resetTick: vm.resetTick,
+                  onChanged: (fieldKey, value) {
+                    vm.updateAnswer(fieldKey, value);
+                  },
                 ),
-              ),
-              if (hasFormFields) ...[
-                const Spacer(),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTapDown: (_) => _unfocusWithoutScroll(context),
-                  child: TextButton(
-                    onPressed: vm.isSubmitting
-                        ? null
-                        : () {
-                            _unfocusWithoutScroll(context);
-                            vm.clearForm();
-                          },
-                    style: TextButton.styleFrom(
-                      foregroundColor: _workflowResolvedActionColor(
-                        title: vm.form?.statusText?.trim(),
-                        buttonText: primaryActionLabel,
-                        currentStatusKey: currentBooking.clientStatus,
-                      ),
-                    ),
-                    child: const Text('Clear Form'),
-                  ),
-                ),
+                SizedBox(height: actionButtonTopSpacing),
               ],
+              Row(
+                children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (_) => _unfocusWithoutScroll(context),
+                    child: _nonFocusable(
+                      FilledButton(
+                        onPressed: vm.isSubmitting || vm.blockedMessage != null
+                            ? null
+                            : () async {
+                                final scrollSnapshot = _captureScrollSnapshot(
+                                  context,
+                                );
+                                final isValid = vm.validateForSubmit();
+                                if (!isValid) {
+                                  if (vm.errors.isNotEmpty) {
+                                    AppSnackbar.showError(
+                                      context,
+                                      'Please complete the required booking fields.',
+                                    );
+                                  } else if (vm.blockedMessage != null) {
+                                    AppSnackbar.showError(
+                                      context,
+                                      vm.blockedMessage!,
+                                    );
+                                  }
+                                  _restoreScrollSnapshot(scrollSnapshot);
+                                  return;
+                                }
+                                final actionLabel = primaryActionLabel;
+                                final confirmed =
+                                    await showAdminActionConfirmation(
+                                      context,
+                                      title: 'Confirm Action',
+                                      message:
+                                          'Are you sure you want to ${actionLabel.toLowerCase()}?',
+                                      confirmLabel: actionLabel,
+                                    );
+                                if (!confirmed || !context.mounted) {
+                                  _restoreScrollSnapshot(scrollSnapshot);
+                                  return;
+                                }
+                                final savedBooking = await vm.submit();
+                                if (!context.mounted) {
+                                  return;
+                                }
+                                if (savedBooking == null) {
+                                  if (vm.blockedMessage != null) {
+                                    AppSnackbar.showError(
+                                      context,
+                                      vm.blockedMessage!,
+                                    );
+                                  }
+                                  _restoreScrollSnapshot(scrollSnapshot);
+                                  return;
+                                }
+                                _unfocusWithoutScroll(context);
+                                widget.onBookingUpdated?.call(savedBooking);
+                                AppSnackbar.showSuccess(
+                                  context,
+                                  'Booking has been updated.',
+                                );
+                              },
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 52),
+                          backgroundColor: _workflowResolvedActionColor(
+                            title: vm.form?.statusText?.trim(),
+                            buttonText: primaryActionLabel,
+                            currentStatusKey: currentBooking.clientStatus,
+                          ),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: Text(
+                          vm.isSubmitting ? 'Saving ...' : primaryActionLabel,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (hasFormFields) ...[
+                    const Spacer(),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (_) => _unfocusWithoutScroll(context),
+                      child: TextButton(
+                        onPressed: vm.isSubmitting
+                            ? null
+                            : () {
+                                _unfocusWithoutScroll(context);
+                                vm.clearForm();
+                              },
+                        style: TextButton.styleFrom(
+                          foregroundColor: _workflowResolvedActionColor(
+                            title: vm.form?.statusText?.trim(),
+                            buttonText: primaryActionLabel,
+                            currentStatusKey: currentBooking.clientStatus,
+                          ),
+                        ),
+                        child: const Text('Clear Form'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ],
           ),
         ],
@@ -676,40 +676,44 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
           }),
         ] else if (hasCancelForm) ...[
           const SizedBox(height: 14),
-          _WorkflowAlertHeaderCard(
-            title: vm.cancelForm?.statusText?.trim().isNotEmpty == true
-                ? vm.cancelForm!.statusText!.trim()
-                : (vm.cancelForm?.buttonText?.trim().isNotEmpty == true
-                      ? vm.cancelForm!.buttonText!.trim()
-                      : 'Cancellation'),
-            subtitle: vm.cancelForm?.statusSubtext?.trim().isNotEmpty == true
-                ? vm.cancelForm!.statusSubtext!.trim()
-                : 'This action will mark the booking as cancelled.',
-          ),
-          const SizedBox(height: 14),
-          _WorkflowTaskCard(
-            vm: vm,
-            title: vm.cancelForm?.statusText?.trim().isNotEmpty == true
-                ? vm.cancelForm!.statusText!.trim()
-                : (vm.cancelForm?.buttonText?.trim().isNotEmpty == true
-                      ? vm.cancelForm!.buttonText!.trim()
-                      : 'Cancellation'),
-            buttonText: vm.cancelForm?.buttonText?.trim(),
-            preferredScrollController: _preferredScrollController(),
-            blockedMessage: null,
-            fields: vm.cancelFields,
-            errors: vm.cancelErrors,
-            answers: vm.cancelAnswers,
-            resetTick: vm.cancelResetTick,
-            allowAdditionalFields: false,
-            onChanged: (fieldKey, value) {
-              vm.updateCancelAnswer(fieldKey, value);
-            },
-          ),
-          const SizedBox(height: 14),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final cancelButton = GestureDetector(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _WorkflowAlertHeaderCard(
+                title: vm.cancelForm?.statusText?.trim().isNotEmpty == true
+                    ? vm.cancelForm!.statusText!.trim()
+                    : (vm.cancelForm?.buttonText?.trim().isNotEmpty == true
+                          ? vm.cancelForm!.buttonText!.trim()
+                          : 'Cancellation'),
+                subtitle: vm.cancelForm?.statusSubtext?.trim().isNotEmpty ==
+                        true
+                    ? vm.cancelForm!.statusSubtext!.trim()
+                    : 'This action will mark the booking as cancelled.',
+              ),
+              const SizedBox(height: 14),
+              _WorkflowTaskCard(
+                vm: vm,
+                title: vm.cancelForm?.statusText?.trim().isNotEmpty == true
+                    ? vm.cancelForm!.statusText!.trim()
+                    : (vm.cancelForm?.buttonText?.trim().isNotEmpty == true
+                          ? vm.cancelForm!.buttonText!.trim()
+                          : 'Cancellation'),
+                buttonText: vm.cancelForm?.buttonText?.trim(),
+                preferredScrollController: _preferredScrollController(),
+                blockedMessage: null,
+                fields: vm.cancelFields,
+                errors: vm.cancelErrors,
+                answers: vm.cancelAnswers,
+                resetTick: vm.cancelResetTick,
+                allowAdditionalFields: false,
+                onChanged: (fieldKey, value) {
+                  vm.updateCancelAnswer(fieldKey, value);
+                },
+              ),
+              const SizedBox(height: 14),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final cancelButton = GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTapDown: (_) => _unfocusWithoutScroll(context),
                 child: _nonFocusable(
@@ -782,46 +786,51 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                   ),
                 ),
               );
-              final clearButton = GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: (_) => _unfocusWithoutScroll(context),
-              child: TextButton(
-                onPressed: vm.isCancelSubmitting
-                    ? null
-                    : () {
-                        _unfocusWithoutScroll(context);
-                        vm.clearCancelForm();
-                      },
-                style: TextButton.styleFrom(
-                  foregroundColor: AppColors.dangerStrong,
-                ),
-                child: const Text('Clear Form'),
+                    final clearButton = GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (_) => _unfocusWithoutScroll(context),
+                      child: TextButton(
+                        onPressed: vm.isCancelSubmitting
+                            ? null
+                            : () {
+                                _unfocusWithoutScroll(context);
+                                vm.clearCancelForm();
+                              },
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.dangerStrong,
+                        ),
+                        child: const Text('Clear Form'),
+                      ),
+                    );
+                    final useStackedLayout =
+                        vm.cancelFields.isNotEmpty && constraints.maxWidth < 260;
+
+                    if (useStackedLayout) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          cancelButton,
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: clearButton,
+                          ),
+                        ],
+                      );
+                    }
+
+                    return Row(
+                      children: [
+                        cancelButton,
+                        if (vm.cancelFields.isNotEmpty) ...[
+                          const Spacer(),
+                          clearButton,
+                        ],
+                      ],
+                    );
+                },
               ),
-            );
-              final useStackedLayout =
-                  vm.cancelFields.isNotEmpty && constraints.maxWidth < 260;
-
-              if (useStackedLayout) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    cancelButton,
-                    const SizedBox(height: 8),
-                    Align(alignment: Alignment.centerRight, child: clearButton),
-                  ],
-                );
-              }
-
-              return Row(
-                children: [
-                  cancelButton,
-                  if (vm.cancelFields.isNotEmpty) ...[
-                    const Spacer(),
-                    clearButton,
-                  ],
-                ],
-              );
-            },
+            ],
           ),
         ],
       ],
@@ -846,7 +855,10 @@ class _WorkflowGuidanceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(
+        horizontal: bookingFormContentHorizontalPadding,
+        vertical: 12,
+      ),
       decoration: BoxDecoration(
         color: backgroundColor ?? AppColors.primarySurfaceAlt,
         borderRadius: BorderRadius.circular(14),
@@ -995,6 +1007,11 @@ class _WorkflowInteractiveFormSectionState
     final resolvedSubtitle = form.statusSubtext?.trim().isNotEmpty == true
         ? form.statusSubtext!.trim()
         : vm.currentStatusDescription();
+    final palette = _workflowResolvedPalette(
+      title: resolvedTitle,
+      buttonText: form.buttonText,
+      currentStatusKey: form.currentStatusKey,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1010,16 +1027,9 @@ class _WorkflowInteractiveFormSectionState
             title: resolvedTitle,
             subtitle: resolvedSubtitle,
             buttonText: form.buttonText,
-            paletteOverride: _workflowResolvedPalette(
-              title: resolvedTitle,
-              buttonText: form.buttonText,
-              currentStatusKey: form.currentStatusKey,
-            ),
+            paletteOverride: palette,
             backgroundColor: terminalPalette?.backgroundColor,
             borderColor: terminalPalette?.borderColor,
-            bodyColor: form.currentStatusKey?.trim() == 'delivered'
-                ? _workflowDeliveredPalette.surface
-                : null,
             titleColor: terminalPalette?.titleColor,
             subtitleColor: terminalPalette?.subtitleColor,
             showRequiredLegend: fields.any((field) => field.required == true),
@@ -1058,14 +1068,14 @@ class _WorkflowInteractiveFormSectionState
         ),
         SizedBox(height: widget.isDanger ? 8 : 2),
         LayoutBuilder(
-          builder: (context, constraints) {
-            final actionLabel = form.buttonText?.trim().isNotEmpty == true
-                ? form.buttonText!.trim()
-                : (widget.isDanger ? 'Cancel Booking' : 'Save');
-            final submitButton = GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapDown: (_) => widget.onUnfocusWithoutScroll(),
-              child: ExcludeFocus(
+            builder: (context, constraints) {
+              final actionLabel = form.buttonText?.trim().isNotEmpty == true
+                  ? form.buttonText!.trim()
+                  : (widget.isDanger ? 'Cancel Booking' : 'Save');
+              final submitButton = GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (_) => widget.onUnfocusWithoutScroll(),
+                child: ExcludeFocus(
                 excluding: true,
                 child: FilledButton(
                   onPressed: _isSubmitting
@@ -1163,54 +1173,54 @@ class _WorkflowInteractiveFormSectionState
                 ),
               ),
             );
-            final clearButton = GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapDown: (_) => widget.onUnfocusWithoutScroll(),
-              child: TextButton(
-                onPressed: _isSubmitting
-                    ? null
-                    : () {
-                        widget.onUnfocusWithoutScroll();
-                        setState(() {
-                          _answers = {};
-                          _errors = {};
-                          _resetTick += 1;
-                        });
-                      },
-                style: TextButton.styleFrom(
-                  foregroundColor: widget.isDanger
-                      ? AppColors.dangerStrong
-                      : _workflowResolvedActionColor(
-                          title: resolvedTitle,
-                          buttonText: actionLabel,
-                          currentStatusKey: form.currentStatusKey,
-                        ),
+              final clearButton = GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (_) => widget.onUnfocusWithoutScroll(),
+                child: TextButton(
+                  onPressed: _isSubmitting
+                      ? null
+                      : () {
+                          widget.onUnfocusWithoutScroll();
+                          setState(() {
+                            _answers = {};
+                            _errors = {};
+                            _resetTick += 1;
+                          });
+                        },
+                  style: TextButton.styleFrom(
+                    foregroundColor: widget.isDanger
+                        ? AppColors.dangerStrong
+                        : _workflowResolvedActionColor(
+                            title: resolvedTitle,
+                            buttonText: actionLabel,
+                            currentStatusKey: form.currentStatusKey,
+                          ),
+                  ),
+                  child: const Text('Clear Form'),
                 ),
-                child: const Text('Clear Form'),
-              ),
-            );
-            final useStackedLayout =
-                fields.isNotEmpty && constraints.maxWidth < 260;
+              );
+              final useStackedLayout =
+                  fields.isNotEmpty && constraints.maxWidth < 260;
 
-            if (useStackedLayout) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+              if (useStackedLayout) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    submitButton,
+                    const SizedBox(height: 8),
+                    Align(alignment: Alignment.centerRight, child: clearButton),
+                  ],
+                );
+              }
+
+              return Row(
                 children: [
                   submitButton,
-                  const SizedBox(height: 8),
-                  Align(alignment: Alignment.centerRight, child: clearButton),
+                  if (fields.isNotEmpty) ...[const Spacer(), clearButton],
                 ],
               );
-            }
-
-            return Row(
-              children: [
-                submitButton,
-                if (fields.isNotEmpty) ...[const Spacer(), clearButton],
-              ],
-            );
-          },
-        ),
+            },
+          ),
       ],
     );
   }
@@ -1678,7 +1688,6 @@ class _WorkflowFieldCard extends StatelessWidget {
       required: field.required ?? false,
       subtitle: subtitle,
       instructions: instructions,
-      containerColor: palette.surface,
       containerPadding: usesDropdownCard
           ? const EdgeInsets.fromLTRB(18, 18, 18, 4)
           : const EdgeInsets.all(18),
@@ -1786,6 +1795,9 @@ class _WorkflowFieldCard extends StatelessWidget {
           onChanged: (value) => onChanged(value.trim()),
         );
       case 'dropdown':
+        final optionSourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
+          field,
+        );
         return AdminDropdownFormField<String>(
           initialValue: initialValue?.toString(),
           iconEnabledColor: palette.accent,
@@ -1799,12 +1811,20 @@ class _WorkflowFieldCard extends StatelessWidget {
           ).copyWith(errorText: errorText),
           style: adminDropdownDisplayTextStyle,
           items: field.options
-              .map(
-                (item) => DropdownMenuItem<String>(
+              .map((item) {
+                final label =
+                    optionSourceKey == statusFieldOptionSourceVehicleSizes
+                    ? VehicleRequest.instance.displayVehicleSizeLabel(item)
+                    : item;
+                return DropdownMenuItem<String>(
                   value: item,
-                  child: Text(item, style: adminDropdownDisplayTextStyle),
-                ),
-              )
+                  child: Text(
+                    label,
+                    overflow: TextOverflow.ellipsis,
+                    style: adminDropdownDisplayTextStyle,
+                  ),
+                );
+              })
               .toList(),
           onChanged: (value) => onChanged(value),
         );
@@ -1965,10 +1985,7 @@ class _WorkflowFieldCard extends StatelessWidget {
   ) {
     return adminPlainDropdownDecoration(hintText, radius: 16).copyWith(
       fillColor: palette.surface,
-      hintStyle: TextStyle(
-        color: palette.accentMuted,
-        fontWeight: FontWeight.w400,
-      ),
+      hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
         borderSide: BorderSide(color: palette.border),
@@ -1981,8 +1998,8 @@ class _WorkflowFieldCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         borderSide: BorderSide(color: palette.border),
       ),
-      constraints: const BoxConstraints(minHeight: 60),
-      contentPadding: const EdgeInsets.fromLTRB(14, 18, 14, 12),
+      constraints: const BoxConstraints(minHeight: adminModalFieldMinHeight),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
     );
   }
 }
@@ -2229,13 +2246,11 @@ class _UnderlineTextFieldState extends State<_UnderlineTextField> {
       scrollPadding: EdgeInsets.zero,
       onTapOutside: _unfocusWithoutScroll,
       onChanged: widget.onChanged,
+      style: adminFieldValueTextStyle,
       decoration: InputDecoration(
         hintText: widget.hintText,
         isDense: true,
-        hintStyle: TextStyle(
-          color: palette.accentMuted,
-          fontWeight: FontWeight.w500,
-        ),
+        hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
         contentPadding: const EdgeInsets.only(top: 14, bottom: 10),
         enabledBorder: UnderlineInputBorder(
           borderSide: BorderSide(color: palette.border),

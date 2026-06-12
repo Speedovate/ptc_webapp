@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/status_field.dart';
+import 'package:webapp/requests/vehicle.request.dart';
+import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
@@ -46,7 +48,6 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
       required: field.required == true,
       subtitle: subtitle,
       instructions: instructions,
-      containerColor: palette.surface,
       containerPadding: usesDropdownCard
           ? const EdgeInsets.fromLTRB(18, 18, 18, 12)
           : const EdgeInsets.all(18),
@@ -276,17 +277,11 @@ class _TextFieldInputState extends State<_TextFieldInput> {
           : null,
       scrollPadding: EdgeInsets.zero,
       onTapOutside: _unfocusWithoutScroll,
-      style: const TextStyle(
-        color: AppColors.textPrimary,
-        fontWeight: FontWeight.w500,
-      ),
+      style: adminFieldValueTextStyle,
       cursorColor: palette.accent,
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: TextStyle(
-          color: palette.accentMuted,
-          fontWeight: FontWeight.w500,
-        ),
+        hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
         isDense: true,
         filled: false,
         contentPadding: const EdgeInsets.only(
@@ -309,11 +304,8 @@ class _TextFieldInputState extends State<_TextFieldInput> {
         ),
         errorText: widget.errorText,
         helperText: _constraintHint(widget.field),
-        helperStyle: TextStyle(
+        helperStyle: adminFieldHelperTextStyle.copyWith(
           color: palette.accentMuted,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          height: 1.35,
         ),
       ),
     );
@@ -341,6 +333,9 @@ class _DropdownFieldInput extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final optionSourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
+      field,
+    );
     final palette = bookingFormResolvedStatusPalette(
       title: formTitle,
       buttonText: formButtonText,
@@ -361,10 +356,7 @@ class _DropdownFieldInput extends StatelessWidget {
         hintText,
       ).copyWith(
         fillColor: palette.surface,
-        hintStyle: TextStyle(
-          color: palette.accentMuted,
-          fontWeight: FontWeight.w400,
-        ),
+        hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide(color: palette.border),
@@ -380,16 +372,20 @@ class _DropdownFieldInput extends StatelessWidget {
         errorText: errorText,
       ),
       items: field.options
-          .map(
-            (option) => DropdownMenuItem<String>(
+          .map((option) {
+            final label =
+                optionSourceKey == statusFieldOptionSourceVehicleSizes
+                ? VehicleRequest.instance.displayVehicleSizeLabel(option)
+                : option;
+            return DropdownMenuItem<String>(
               value: option,
               child: Text(
-                option,
+                label,
                 overflow: TextOverflow.ellipsis,
                 style: adminDropdownDisplayTextStyle,
               ),
-            ),
-          )
+            );
+          })
           .toList(),
       onChanged: onChanged,
     );
@@ -483,10 +479,7 @@ class _CheckboxFieldInputState extends State<_CheckboxFieldInput> {
                       Expanded(
                         child: Text(
                           option,
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
-                            fontWeight: FontWeight.w500,
-                          ),
+                          style: adminFieldValueTextStyle,
                         ),
                       ),
                     ],
@@ -720,12 +713,14 @@ class _PickerFieldShellState extends State<_PickerFieldShell> {
                       Expanded(
                         child: Text(
                           widget.text,
-                          style: TextStyle(
-                            color: widget.isPlaceholder
-                                ? palette.accentMuted
-                                : AppColors.textPrimary,
-                            fontWeight: FontWeight.w500,
-                          ),
+                          style: (widget.isPlaceholder
+                                  ? adminFieldHintTextStyle
+                                  : adminFieldValueTextStyle)
+                              .copyWith(
+                                color: widget.isPlaceholder
+                                    ? palette.accentMuted
+                                    : AppColors.textPrimary,
+                              ),
                         ),
                       ),
                       Icon(

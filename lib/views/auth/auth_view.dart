@@ -522,7 +522,7 @@ class _AuthViewState extends State<AuthView> {
                                                 ),
                                               ),
                                       ),
-                                      const SizedBox(height: 22),
+                                      const SizedBox(height: 16),
                                       Row(
                                         children: [
                                           Expanded(
@@ -1121,29 +1121,15 @@ class _AuthTextFieldState extends State<_AuthTextField> {
           obscureText: _isObscured,
           textCapitalization: widget.textCapitalization,
           inputFormatters: widget.inputFormatters,
-          decoration: InputDecoration(
-            labelText: widget.label,
-            labelStyle: TextStyle(
-              color: AppColors.primaryColor.withValues(alpha: 0.72),
-              fontWeight: FontWeight.w400,
-            ),
-            floatingLabelStyle: const TextStyle(
-              color: AppColors.primaryColor,
-              fontWeight: FontWeight.w500,
-            ),
-            hintStyle: TextStyle(
-              color: AppColors.primaryColor.withValues(alpha: 0.72),
-              fontWeight: FontWeight.w400,
-            ),
-            prefixIconColor: AppColors.primaryColor,
-            suffixIconColor: AppColors.primaryColor,
-            filled: true,
+          style: adminFieldValueTextStyle,
+          decoration: adminFormInputDecoration(
+            widget.label,
+            radius: 18,
+            minHeight: adminModalFieldMinHeight,
+          ).copyWith(
             fillColor: _isHovered || _isPressed
                 ? activeFillColor
                 : AppColors.primarySurface,
-            constraints: const BoxConstraints(
-              minHeight: adminModalFieldMinHeight,
-            ),
             suffixIcon: widget.obscureText
                 ? Padding(
                     padding: const EdgeInsets.only(right: 6),
@@ -1160,18 +1146,6 @@ class _AuthTextFieldState extends State<_AuthTextField> {
                     ),
                   )
                 : null,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(18),
-              borderSide: const BorderSide(color: AppColors.primaryBorder),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(18),
-              borderSide: const BorderSide(color: AppColors.primaryBorder),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(18),
-              borderSide: const BorderSide(color: AppColors.primaryColor),
-            ),
           ),
         ),
       ),
@@ -1225,40 +1199,19 @@ class _AuthActionFieldState extends State<_AuthActionField> {
 
   @override
   Widget build(BuildContext context) {
-    final borderRadius = BorderRadius.circular(18);
     final hoveredFillColor = appFieldInteractiveFillColor(context);
-    final decoration = InputDecoration(
-      labelText: widget.label,
-      labelStyle: TextStyle(
-        color: AppColors.primaryColor.withValues(alpha: 0.74),
-        fontWeight: FontWeight.w500,
-      ),
-      floatingLabelStyle: const TextStyle(
-        color: AppColors.primaryColor,
-        fontWeight: FontWeight.w600,
-      ),
+    final decoration = adminFormInputDecoration(
+      widget.label,
+      radius: 18,
+      minHeight: adminModalFieldMinHeight,
+    ).copyWith(
       suffixIcon: const Padding(
         padding: EdgeInsets.only(right: 6),
         child: Icon(Icons.upload_rounded, color: AppColors.primaryColor),
       ),
-      filled: true,
-      constraints: const BoxConstraints(minHeight: adminModalFieldMinHeight),
       fillColor: _isPressed || _isHovered
           ? hoveredFillColor
           : AppColors.primarySurface,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-      border: OutlineInputBorder(
-        borderRadius: borderRadius,
-        borderSide: const BorderSide(color: AppColors.primaryBorder),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: borderRadius,
-        borderSide: const BorderSide(color: AppColors.primaryBorder),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: borderRadius,
-        borderSide: const BorderSide(color: AppColors.primaryColor),
-      ),
     );
 
     return MouseRegion(
@@ -1280,10 +1233,7 @@ class _AuthActionFieldState extends State<_AuthActionField> {
             readOnly: true,
             showCursor: false,
             enableInteractiveSelection: false,
-            style: const TextStyle(
-              color: AppColors.textPrimary,
-              fontWeight: FontWeight.w500,
-            ),
+            style: adminFieldValueTextStyle,
             decoration: decoration,
           ),
         ),
@@ -1372,36 +1322,12 @@ class _AuthDropdownField extends StatelessWidget {
       initialValue: value,
       iconEnabledColor: AppColors.primaryColor,
       onChanged: onChanged,
-      decoration: InputDecoration(
-        labelText: label,
-        labelStyle: TextStyle(
-          color: AppColors.primaryColor.withValues(alpha: 0.72),
-          fontWeight: FontWeight.w400,
-        ),
-        floatingLabelStyle: const TextStyle(
-          color: AppColors.primaryColor,
-          fontWeight: FontWeight.w500,
-        ),
-        hintStyle: TextStyle(
-          color: AppColors.primaryColor.withValues(alpha: 0.72),
-          fontWeight: FontWeight.w400,
-        ),
-        filled: true,
-        fillColor: AppColors.primarySurface,
-        constraints: const BoxConstraints(minHeight: adminModalFieldMinHeight),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: AppColors.primaryBorder),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: AppColors.primaryBorder),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: AppColors.primaryColor),
-        ),
+      decoration: adminFormInputDecoration(
+        label,
+        radius: 18,
+        minHeight: adminModalFieldMinHeight,
       ),
+      style: adminFieldValueTextStyle,
       items: items
           .map(
             (role) => DropdownMenuItem<String>(

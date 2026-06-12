@@ -7,6 +7,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/status.request.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
@@ -583,6 +584,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
 
     isSubmitting = true;
     notifyListeners();
+    await Future<void>.delayed(const Duration(milliseconds: 16));
 
     try {
       final nextBooking = _bookingWithResolvedUsers(
@@ -621,6 +623,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
 
     isSubmitting = true;
     notifyListeners();
+    await Future<void>.delayed(const Duration(milliseconds: 16));
 
     try {
       final nextBooking = _bookingWithResolvedUsers(
@@ -670,6 +673,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
 
     isCancelSubmitting = true;
     notifyListeners();
+    await Future<void>.delayed(const Duration(milliseconds: 16));
 
     try {
       final nextBooking = _bookingWithResolvedUsers(
@@ -796,7 +800,10 @@ class BookingWorkflowViewModel extends BaseViewModel {
     ]) {
       final value = _firstNonEmptyOutputField(booking, key);
       if (value is String && value.trim().isNotEmpty) {
-        answers[key] = value.trim();
+        answers[key] = key == 'van_size'
+            ? (VehicleRequest.instance.normalizeVehicleSizeId(value) ??
+                  value.trim())
+            : value.trim();
       } else if (value != null) {
         answers[key] = value;
       }

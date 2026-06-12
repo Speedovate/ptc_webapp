@@ -2,10 +2,36 @@ import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 
-const adminDropdownDisplayTextStyle = TextStyle(
+const adminFieldValueTextStyle = TextStyle(
   color: AppColors.textPrimary,
   fontWeight: FontWeight.w400,
+  fontSize: 15,
   height: 1.2,
+);
+const adminDropdownDisplayTextStyle = adminFieldValueTextStyle;
+const adminFieldLabelTextStyle = TextStyle(
+  color: AppColors.primaryColor,
+  fontWeight: FontWeight.w400,
+  fontSize: 15,
+  height: 1.2,
+);
+const adminFieldFloatingLabelTextStyle = TextStyle(
+  color: AppColors.primaryColor,
+  fontWeight: FontWeight.w500,
+  fontSize: 15,
+  height: 1.2,
+);
+const adminFieldHintTextStyle = TextStyle(
+  color: AppColors.textSecondary,
+  fontWeight: FontWeight.w400,
+  fontSize: 15,
+  height: 1.2,
+);
+const adminFieldHelperTextStyle = TextStyle(
+  color: AppColors.textSecondary,
+  fontWeight: FontWeight.w400,
+  fontSize: 12,
+  height: 1.35,
 );
 const double adminModalFieldMinHeight = 56;
 const double adminFilterFieldMinHeight = 52;
@@ -24,7 +50,7 @@ class AdminDropdownFormField<T> extends StatefulWidget {
     this.decoration,
     this.items,
     this.onChanged,
-    this.isExpanded = false,
+    this.isExpanded = true,
     this.disabledTapMessage,
   });
 
@@ -46,6 +72,7 @@ class AdminDropdownFormField<T> extends StatefulWidget {
 class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
   late final FocusNode _focusNode;
   late final bool _ownsFocusNode;
+  T? _selectedValue;
   bool _isHovered = false;
   bool _isPressed = false;
 
@@ -54,6 +81,27 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
     super.initState();
     _ownsFocusNode = widget.focusNode == null;
     _focusNode = widget.focusNode ?? FocusNode();
+    _selectedValue = widget.initialValue;
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminDropdownFormField<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextItems = widget.items ?? <DropdownMenuItem<T>>[];
+    final nextWidgetValue = widget.initialValue;
+    final hasSelectedValue = nextItems.any(
+      (item) => item.value == _selectedValue,
+    );
+    final hasWidgetValue = nextItems.any((item) => item.value == nextWidgetValue);
+
+    if (oldWidget.initialValue != nextWidgetValue) {
+      _selectedValue = hasWidgetValue ? nextWidgetValue : null;
+      return;
+    }
+
+    if (!hasSelectedValue) {
+      _selectedValue = hasWidgetValue ? nextWidgetValue : null;
+    }
   }
 
   @override
@@ -89,40 +137,65 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
     final hintText = decoration.hintText?.trim();
     final hintStyle =
         decoration.hintStyle ??
-        TextStyle(
+        adminFieldHintTextStyle.copyWith(
           color: AppColors.primaryColor.withValues(alpha: 0.72),
-          fontWeight: FontWeight.w400,
         );
     final hintWidget = hintText?.isNotEmpty == true
         ? Text(hintText!, overflow: TextOverflow.ellipsis, style: hintStyle)
         : null;
     final disabledTapMessage = _disabledTapMessage(decoration, hasItems);
-    final dropdown = DropdownButtonFormField<T>(
-      initialValue: widget.initialValue,
-      focusNode: _focusNode,
-      autofocus: false,
-      isDense: true,
-      iconEnabledColor: widget.iconEnabledColor,
-      style: widget.style,
-      decoration: decoration.copyWith(
-        fillColor: _isHovered || _isPressed
-            ? activeFillColor
-            : (decoration.fillColor ?? AppColors.primarySurface),
-        contentPadding: contentPadding,
-        focusedBorder: neutralBorder,
-        focusColor: Colors.transparent,
-        hoverColor: Colors.transparent,
+    final menuInteractiveColor = AppColors.primarySurfaceAlt;
+    final dropdown = Theme(
+      data: Theme.of(context).copyWith(
+        hoverColor: menuInteractiveColor,
+        highlightColor: Colors.transparent,
+        splashColor: menuInteractiveColor,
       ),
-      hint: hintWidget,
-      disabledHint: hintWidget,
-      items: widget.items,
-      isExpanded: widget.isExpanded,
-      onChanged: isDisabled
-          ? null
-          : (value) {
-              widget.onChanged?.call(value);
-              _focusNode.unfocus();
-            },
+      child: DropdownButtonFormField<T>(
+        key: ValueKey<Object?>(_selectedValue),
+        initialValue: _selectedValue,
+        focusNode: _focusNode,
+        autofocus: false,
+        isDense: true,
+        iconEnabledColor: widget.iconEnabledColor,
+        style: widget.style,
+        decoration: decoration.copyWith(
+          fillColor: _isHovered || _isPressed
+              ? activeFillColor
+              : (decoration.fillColor ?? AppColors.primarySurface),
+          contentPadding: contentPadding,
+          focusedBorder: neutralBorder,
+          focusColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+        ),
+        hint: hintWidget,
+        disabledHint: hintWidget,
+        items: widget.items,
+        selectedItemBuilder: widget.items == null
+            ? null
+            : (context) => widget.items!.map((item) {
+                return Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _collapsedDropdownLabel(item.child),
+                    style: widget.style ?? adminFieldValueTextStyle,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                );
+              }).toList(),
+        isExpanded: widget.isExpanded,
+        onChanged: isDisabled
+            ? null
+            : (value) {
+                setState(() {
+                  _selectedValue = value;
+                });
+                widget.onChanged?.call(value);
+                _focusNode.unfocus();
+              },
+      ),
     );
 
     final interactiveDropdown = MouseRegion(
@@ -187,6 +260,16 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
     }
     return 'No options available.';
   }
+
+  String _collapsedDropdownLabel(Widget child) {
+    if (child is Text) {
+      final data = child.data;
+      if (data != null) {
+        return data;
+      }
+    }
+    return '';
+  }
 }
 
 InputDecoration adminFormInputDecoration(
@@ -201,22 +284,15 @@ InputDecoration adminFormInputDecoration(
     hintText: hintText,
     helperText: helperText,
     constraints: BoxConstraints(minHeight: minHeight),
-    labelStyle: TextStyle(
+    labelStyle: adminFieldLabelTextStyle.copyWith(
       color: AppColors.primaryColor.withValues(alpha: 0.72),
-      fontWeight: FontWeight.w400,
     ),
-    floatingLabelStyle: const TextStyle(
-      color: AppColors.primaryColor,
-      fontWeight: FontWeight.w500,
-    ),
-    hintStyle: TextStyle(
+    floatingLabelStyle: adminFieldFloatingLabelTextStyle,
+    hintStyle: adminFieldHintTextStyle.copyWith(
       color: AppColors.primaryColor.withValues(alpha: 0.72),
-      fontWeight: FontWeight.w400,
     ),
-    helperStyle: TextStyle(
+    helperStyle: adminFieldHelperTextStyle.copyWith(
       color: AppColors.primaryColor.withValues(alpha: 0.72),
-      fontWeight: FontWeight.w400,
-      fontSize: 12,
     ),
     prefixIconColor: AppColors.primaryColor,
     suffixIconColor: AppColors.primaryColor,

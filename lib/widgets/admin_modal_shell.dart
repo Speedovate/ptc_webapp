@@ -32,7 +32,9 @@ class AdminModalShell extends StatelessWidget {
         : (dialogMaxHeight - 56).clamp(0.0, dialogMaxHeight);
     return Theme(
       data: theme.copyWith(
-        colorScheme: theme.colorScheme.copyWith(primary: AppColors.primaryColor),
+        colorScheme: theme.colorScheme.copyWith(
+          primary: AppColors.primaryColor,
+        ),
         switchTheme: SwitchThemeData(
           thumbColor: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.selected)) {
@@ -68,37 +70,23 @@ class AdminModalShell extends StatelessWidget {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-                  child: Text(
-                    title,
-                    style: theme.textTheme.titleLarge,
-                  ),
+                  child: Text(title, style: theme.textTheme.titleLarge),
                 ),
                 ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: bodyMaxHeight,
-                  ),
+                  constraints: BoxConstraints(maxHeight: bodyMaxHeight),
                   child: SingleChildScrollView(
                     primary: false,
-                    child: Padding(
-                      padding: contentInset,
-                      child: child,
-                    ),
+                    child: Padding(padding: contentInset, child: child),
                   ),
                 ),
                 if (hasActions)
                   Padding(
                     padding: actionsInset,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      mainAxisSize: MainAxisSize.max,
-                      children: [
-                        ...actions!.expand(
-                          (action) => [
-                            if (actions!.first != action) const SizedBox(width: 12),
-                            action,
-                          ],
-                        ),
-                      ],
+                    child: Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 12,
+                      runSpacing: 8,
+                      children: actions!,
                     ),
                   ),
               ],
@@ -128,9 +116,9 @@ class AdminModalToggleRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final labelStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
-      color: AppColors.textPrimary,
-    );
+    final labelStyle = Theme.of(
+      context,
+    ).textTheme.bodyLarge?.copyWith(color: AppColors.textPrimary);
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -139,18 +127,12 @@ class AdminModalToggleRow extends StatelessWidget {
         Expanded(
           child: Padding(
             padding: const EdgeInsets.only(top: 9),
-            child: Text(
-              title,
-              style: labelStyle,
-            ),
+            child: Text(title, style: labelStyle),
           ),
         ),
         Transform.translate(
           offset: const Offset(0, -4),
-          child: Switch(
-            value: value,
-            onChanged: onChanged,
-          ),
+          child: Switch(value: value, onChanged: onChanged),
         ),
         SizedBox(width: rightInset),
       ],
