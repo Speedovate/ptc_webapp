@@ -237,9 +237,9 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                 _isUploadingViewedProfilePhoto ||
                 _isUploadingViewedLicensePhoto,
             message: _isUploadingViewedLicensePhoto
-                ? 'Uploading license photo...'
+                ? 'Uploading license photo ...'
                 : _isUploadingViewedProfilePhoto
-                ? 'Uploading profile photo...'
+                ? 'Uploading profile photo ...'
                 : vm.busyMessage,
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
@@ -312,9 +312,9 @@ class _AdminUsersViewState extends State<AdminUsersView> {
               _isUploadingViewedProfilePhoto ||
               _isUploadingViewedLicensePhoto,
           message: _isUploadingViewedLicensePhoto
-              ? 'Uploading license photo...'
+              ? 'Uploading license photo ...'
               : _isUploadingViewedProfilePhoto
-              ? 'Uploading profile photo...'
+              ? 'Uploading profile photo ...'
               : vm.busyMessage,
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -814,7 +814,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
             onPressed: () => Navigator.of(dialogContext).pop(true),
             style: FilledButton.styleFrom(
               backgroundColor: isDanger
-                  ? const Color(0xFFD94B4B)
+                  ? AppColors.danger
                   : AppColors.primaryColor,
               foregroundColor: Colors.white,
             ),
@@ -991,7 +991,7 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
                         widget.vm.clearFilters();
                       },
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFD94B4B),
+                        backgroundColor: AppColors.danger,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(
@@ -1685,7 +1685,7 @@ class _UsersWideRow extends StatelessWidget {
                         ? Icons.close_rounded
                         : Icons.check_rounded,
                     backgroundColor: (user.isActive ?? false)
-                        ? Colors.red.shade700
+                        ? AppColors.dangerStrong
                         : const Color(0xFF2EAD62),
                     onTap: () {
                       AdminUsersView.handleToggleUserActive(context, vm, user);
@@ -1850,7 +1850,7 @@ class _UsersResponsiveCard extends StatelessWidget {
                                 ? Icons.close_rounded
                                 : Icons.check_rounded,
                             backgroundColor: (user.isActive ?? false)
-                                ? Colors.red.shade700
+                                ? AppColors.dangerStrong
                                 : const Color(0xFF2EAD62),
                             onTap: () {
                               AdminUsersView.handleToggleUserActive(
@@ -1927,7 +1927,7 @@ class _UsersResponsiveCard extends StatelessWidget {
                           ? Icons.close_rounded
                           : Icons.check_rounded,
                       backgroundColor: (user.isActive ?? false)
-                          ? Colors.red.shade700
+                          ? AppColors.dangerStrong
                           : const Color(0xFF2EAD62),
                       onTap: () {
                         AdminUsersView.handleToggleUserActive(
@@ -1977,7 +1977,7 @@ class _UsersResponsiveCard extends StatelessWidget {
                           ? Icons.close_rounded
                           : Icons.check_rounded,
                       backgroundColor: (user.isActive ?? false)
-                          ? Colors.red.shade700
+                          ? AppColors.dangerStrong
                           : const Color(0xFF2EAD62),
                       onTap: () {
                         AdminUsersView.handleToggleUserActive(
@@ -2334,7 +2334,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                 SizedBox(
                   height: 220,
                   child: AppPageLoading(
-                    message: 'Loading vehicle types...',
+                    message: 'Loading vehicle types ...',
                     compact: true,
                     padding: EdgeInsets.zero,
                   ),
@@ -2763,7 +2763,7 @@ class _UserActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final resolvedBackgroundColor =
         backgroundColor ??
-        (isDanger ? Colors.red.shade700 : AppColors.primaryColor);
+        (isDanger ? AppColors.dangerStrong : AppColors.primaryColor);
 
     return AdminListActionButton(
       icon: icon,

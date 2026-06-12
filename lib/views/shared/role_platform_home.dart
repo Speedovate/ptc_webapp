@@ -121,8 +121,8 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
         final overlayVisible =
             _isUploadingProfilePhoto || _isUploadingLicensePhoto;
         final overlayMessage = _isUploadingLicensePhoto
-            ? 'Uploading license photo...'
-            : 'Uploading profile photo...';
+            ? 'Uploading license photo ...'
+            : 'Uploading profile photo ...';
 
         return PlatformShell(
           scaffoldKey: _scaffoldKey,

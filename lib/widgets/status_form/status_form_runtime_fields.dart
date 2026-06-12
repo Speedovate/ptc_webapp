@@ -12,12 +12,18 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    this.formTitle,
+    this.formButtonText,
+    this.formStatusKey,
     this.errorText,
   });
 
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final String? formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final String? errorText;
 
   @override
@@ -27,12 +33,20 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
     final instructions = field.instructions?.trim();
     final fieldType = (field.type ?? '').trim().toLowerCase();
     final usesDropdownCard = fieldType == 'dropdown';
+    final palette = bookingFormResolvedStatusPalette(
+      title: formTitle,
+      buttonText: formButtonText,
+      currentStatusKey: formStatusKey,
+    );
 
     return BookingFormFieldCard(
       title: title?.isNotEmpty == true ? title! : 'Untitled Field',
+      buttonText: formButtonText,
+      paletteOverride: palette,
       required: field.required == true,
       subtitle: subtitle,
       instructions: instructions,
+      containerColor: palette.surface,
       containerPadding: usesDropdownCard
           ? const EdgeInsets.fromLTRB(18, 18, 18, 12)
           : const EdgeInsets.all(18),
@@ -40,6 +54,9 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
         onChanged: onChanged,
       ),
     );
@@ -52,12 +69,18 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    this.formTitle,
+    this.formButtonText,
+    this.formStatusKey,
     this.errorText,
   });
 
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final String? formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final String? errorText;
 
   @override
@@ -67,36 +90,54 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
         onChanged: onChanged,
       ),
       'dropdown' => _DropdownFieldInput(
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
         onChanged: onChanged,
       ),
       'checkbox' => _CheckboxFieldInput(
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
         onChanged: onChanged,
       ),
       'date' => _DateFieldInput(
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
         onChanged: onChanged,
       ),
       'time' => _TimeFieldInput(
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
         onChanged: onChanged,
       ),
       'email' => _TextFieldInput(
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
         onChanged: onChanged,
         keyboardType: TextInputType.emailAddress,
       ),
@@ -104,6 +145,9 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
         onChanged: onChanged,
         keyboardType: TextInputType.phone,
       ),
@@ -111,6 +155,9 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
         onChanged: onChanged,
         keyboardType: TextInputType.number,
       ),
@@ -118,6 +165,9 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
         onChanged: onChanged,
         keyboardType: TextInputType.text,
       ),
@@ -131,6 +181,9 @@ class _TextFieldInput extends StatefulWidget {
     required this.initialValue,
     required this.onChanged,
     required this.keyboardType,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
     this.errorText,
   });
 
@@ -138,6 +191,9 @@ class _TextFieldInput extends StatefulWidget {
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
   final TextInputType keyboardType;
+  final String? formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final String? errorText;
 
   @override
@@ -197,6 +253,11 @@ class _TextFieldInputState extends State<_TextFieldInput> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = bookingFormResolvedStatusPalette(
+      title: widget.formTitle,
+      buttonText: widget.formButtonText,
+      currentStatusKey: widget.formStatusKey,
+    );
     final placeholder = widget.field.placeholder?.trim();
     final hint = placeholder?.isNotEmpty == true
         ? placeholder!
@@ -219,11 +280,11 @@ class _TextFieldInputState extends State<_TextFieldInput> {
         color: AppColors.textPrimary,
         fontWeight: FontWeight.w500,
       ),
-      cursorColor: AppColors.primaryColor,
+      cursorColor: palette.accent,
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: TextStyle(
-          color: AppColors.primaryColor.withValues(alpha: 0.72),
+          color: palette.accentMuted,
           fontWeight: FontWeight.w500,
         ),
         isDense: true,
@@ -234,22 +295,22 @@ class _TextFieldInputState extends State<_TextFieldInput> {
           top: 14,
           bottom: 10,
         ),
-        enabledBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: AppColors.primaryBorder),
+        enabledBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: palette.border),
         ),
-        focusedBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: AppColors.primaryColor, width: 2),
+        focusedBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: palette.accent, width: 2),
         ),
         errorBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Colors.red),
+          borderSide: BorderSide(color: AppColors.danger),
         ),
         focusedErrorBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Colors.red, width: 2),
+          borderSide: BorderSide(color: AppColors.danger, width: 2),
         ),
         errorText: widget.errorText,
         helperText: _constraintHint(widget.field),
         helperStyle: TextStyle(
-          color: AppColors.primaryColor.withValues(alpha: 0.72),
+          color: palette.accentMuted,
           fontSize: 12,
           fontWeight: FontWeight.w600,
           height: 1.35,
@@ -264,16 +325,27 @@ class _DropdownFieldInput extends StatelessWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
     this.errorText,
   });
 
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final String? formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final String? errorText;
 
   @override
   Widget build(BuildContext context) {
+    final palette = bookingFormResolvedStatusPalette(
+      title: formTitle,
+      buttonText: formButtonText,
+      currentStatusKey: formStatusKey,
+    );
     final placeholder = field.placeholder?.trim();
     final hintText = placeholder?.isNotEmpty == true
         ? placeholder!
@@ -283,11 +355,30 @@ class _DropdownFieldInput extends StatelessWidget {
     return AdminDropdownFormField<String>(
       initialValue: initialValue is String ? initialValue : null,
       isExpanded: true,
-      iconEnabledColor: AppColors.primaryColor,
+      iconEnabledColor: palette.accent,
       style: adminDropdownDisplayTextStyle,
       decoration: adminPlainDropdownDecoration(
         hintText,
-      ).copyWith(errorText: errorText),
+      ).copyWith(
+        fillColor: palette.surface,
+        hintStyle: TextStyle(
+          color: palette.accentMuted,
+          fontWeight: FontWeight.w400,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: palette.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: palette.accent),
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: palette.border),
+        ),
+        errorText: errorText,
+      ),
       items: field.options
           .map(
             (option) => DropdownMenuItem<String>(
@@ -310,12 +401,18 @@ class _CheckboxFieldInput extends StatefulWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
     this.errorText,
   });
 
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final String? formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final String? errorText;
 
   @override
@@ -346,6 +443,12 @@ class _CheckboxFieldInputState extends State<_CheckboxFieldInput> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = bookingFormResolvedStatusPalette(
+      title: widget.formTitle,
+      buttonText: widget.formButtonText,
+      currentStatusKey: widget.formStatusKey,
+    );
+    final activeFillColor = palette.surfaceAlt;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -364,17 +467,17 @@ class _CheckboxFieldInputState extends State<_CheckboxFieldInput> {
                   ),
                   decoration: BoxDecoration(
                     color: appPressableActive(context)
-                        ? appFieldInteractiveFillColor(context)
-                        : AppColors.primarySurface,
+                        ? activeFillColor
+                        : palette.surface,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.primaryBorder),
+                    border: Border.all(color: palette.border),
                   ),
                   child: Row(
                     children: [
                       Checkbox(
                         value: _selected.contains(option),
                         onChanged: (value) => _toggle(option, value ?? false),
-                        activeColor: AppColors.primaryColor,
+                        activeColor: palette.accent,
                       ),
                       const SizedBox(width: 6),
                       Expanded(
@@ -398,7 +501,7 @@ class _CheckboxFieldInputState extends State<_CheckboxFieldInput> {
             padding: const EdgeInsets.only(top: 2),
             child: Text(
               widget.errorText!,
-              style: const TextStyle(color: Colors.red, fontSize: 12),
+              style: const TextStyle(color: AppColors.danger, fontSize: 12),
             ),
           ),
       ],
@@ -411,12 +514,18 @@ class _DateFieldInput extends StatefulWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
     this.errorText,
   });
 
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final String? formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final String? errorText;
 
   @override
@@ -461,6 +570,9 @@ class _DateFieldInputState extends State<_DateFieldInput> {
       isPlaceholder: _value == null,
       icon: Icons.calendar_today_rounded,
       errorText: widget.errorText,
+      formTitle: widget.formTitle,
+      formButtonText: widget.formButtonText,
+      formStatusKey: widget.formStatusKey,
       onTap: _pickDate,
     );
   }
@@ -471,12 +583,18 @@ class _TimeFieldInput extends StatefulWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
     this.errorText,
   });
 
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final String? formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final String? errorText;
 
   @override
@@ -519,6 +637,9 @@ class _TimeFieldInputState extends State<_TimeFieldInput> {
       isPlaceholder: _value == null,
       icon: Icons.schedule_rounded,
       errorText: widget.errorText,
+      formTitle: widget.formTitle,
+      formButtonText: widget.formButtonText,
+      formStatusKey: widget.formStatusKey,
       onTap: _pickTime,
     );
   }
@@ -530,6 +651,9 @@ class _PickerFieldShell extends StatefulWidget {
     required this.isPlaceholder,
     required this.icon,
     required this.onTap,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
     this.errorText,
   });
 
@@ -537,6 +661,9 @@ class _PickerFieldShell extends StatefulWidget {
   final bool isPlaceholder;
   final IconData icon;
   final VoidCallback onTap;
+  final String? formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final String? errorText;
 
   @override
@@ -549,7 +676,12 @@ class _PickerFieldShellState extends State<_PickerFieldShell> {
 
   @override
   Widget build(BuildContext context) {
-    final activeFillColor = appFieldInteractiveFillColor(context);
+    final palette = bookingFormResolvedStatusPalette(
+      title: widget.formTitle,
+      buttonText: widget.formButtonText,
+      currentStatusKey: widget.formStatusKey,
+    );
+    final activeFillColor = palette.surfaceAlt;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -575,12 +707,12 @@ class _PickerFieldShellState extends State<_PickerFieldShell> {
                   decoration: BoxDecoration(
                     color: _isHovered || _isPressed
                         ? activeFillColor
-                        : AppColors.primarySurface,
+                        : palette.surface,
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
                       color: widget.errorText == null
-                          ? AppColors.primaryBorder
-                          : Colors.red,
+                          ? palette.border
+                          : AppColors.danger,
                     ),
                   ),
                   child: Row(
@@ -590,7 +722,7 @@ class _PickerFieldShellState extends State<_PickerFieldShell> {
                           widget.text,
                           style: TextStyle(
                             color: widget.isPlaceholder
-                                ? AppColors.primaryColor.withValues(alpha: 0.72)
+                                ? palette.accentMuted
                                 : AppColors.textPrimary,
                             fontWeight: FontWeight.w500,
                           ),
@@ -599,7 +731,7 @@ class _PickerFieldShellState extends State<_PickerFieldShell> {
                       Icon(
                         widget.icon,
                         size: 18,
-                        color: AppColors.primaryColor,
+                        color: palette.accent,
                       ),
                     ],
                   ),
@@ -613,7 +745,7 @@ class _PickerFieldShellState extends State<_PickerFieldShell> {
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               widget.errorText!,
-              style: const TextStyle(color: Colors.red, fontSize: 12),
+              style: const TextStyle(color: AppColors.danger, fontSize: 12),
             ),
           ),
       ],
@@ -626,12 +758,18 @@ class _PhotoFieldInput extends StatefulWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
     this.errorText,
   });
 
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final String? formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final String? errorText;
 
   @override
@@ -644,6 +782,11 @@ class _PhotoFieldInputState extends State<_PhotoFieldInput> {
     return BookingPhotoFieldInput(
       initialValue: widget.initialValue,
       errorText: widget.errorText,
+      palette: bookingFormResolvedStatusPalette(
+        title: widget.formTitle,
+        buttonText: widget.formButtonText,
+        currentStatusKey: widget.formStatusKey,
+      ),
       placeholder: ((widget.field.placeholder ?? '').trim().isNotEmpty
           ? widget.field.placeholder!.trim()
           : 'Upload a photo'),

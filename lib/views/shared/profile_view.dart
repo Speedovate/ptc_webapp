@@ -378,7 +378,7 @@ class _ProfileViewState extends State<ProfileView> {
                   ),
                 ),
                 child: Text(
-                  _isSavingProfileChanges ? 'Saving...' : 'Save',
+                  _isSavingProfileChanges ? 'Saving ...' : 'Save',
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
@@ -597,10 +597,10 @@ class _ProfileIdentityHeader extends StatelessWidget {
                     label: actionLabel!,
                     onTap: actionOnTap,
                     textColor: isCurrentUserView
-                        ? const Color(0xFFC93B3B)
+                        ? AppColors.dangerStrong
                         : (quickActionTextColor ?? AppColors.primaryColor),
                     borderColor: isCurrentUserView
-                        ? const Color(0xFFF2C2C7)
+                        ? AppColors.dangerBorderAlt
                         : (quickActionBorderColor ??
                               AppColors.primaryColor.withValues(alpha: 0.18)),
                   ),
@@ -976,7 +976,7 @@ class _LicenseImageFallback extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final iconColor = isError
-        ? const Color(0xFFD94B4B)
+        ? AppColors.danger
         : AppColors.primaryColor.withValues(alpha: 0.72);
     final textColor = isError
         ? const Color(0xFFB63B3B)

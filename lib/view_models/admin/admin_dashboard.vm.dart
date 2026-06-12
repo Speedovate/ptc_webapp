@@ -37,7 +37,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   String busyMessage = 'Loading, please wait ...';
 
   Future<void> load() async {
-    busyMessage = 'Loading dashboard...';
+    busyMessage = 'Loading dashboard ...';
     setBusy(true);
     errorMessage = null;
     try {

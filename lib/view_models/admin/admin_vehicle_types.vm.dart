@@ -29,7 +29,7 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
   String get busyMessage => _busyMessage;
 
   Future<void> load() async {
-    _busyMessage = 'Loading vehicle types...';
+    _busyMessage = 'Loading vehicle types ...';
     setBusy(true);
     _errorMessage = null;
     try {
@@ -49,7 +49,7 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
   }
 
   Future<VehicleCatalogItem> saveType(VehicleCatalogItem type) async {
-    _busyMessage = 'Saving vehicle type...';
+    _busyMessage = 'Saving vehicle type ...';
     setBusy(true);
     try {
       final saved = await _repository.saveType(type);
@@ -73,7 +73,7 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
     if (typeId == null || typeId.isEmpty) {
       return;
     }
-    _busyMessage = 'Deleting vehicle type...';
+    _busyMessage = 'Deleting vehicle type ...';
     setBusy(true);
     try {
       await _repository.deleteType(typeId);
@@ -90,8 +90,8 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
     bool isActive,
   ) {
     _busyMessage = isActive
-        ? 'Activating vehicle type...'
-        : 'Deactivating vehicle type...';
+        ? 'Activating vehicle type ...'
+        : 'Deactivating vehicle type ...';
     return saveType(
       type.copyWith(isActive: isActive, updatedAt: DateTime.now()),
     );

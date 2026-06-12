@@ -352,7 +352,7 @@ class PlatformProfileChip extends StatelessWidget {
       height: 1.2,
     );
     const logoutStyle = TextStyle(
-      color: Color(0xFFD94B4B),
+      color: AppColors.danger,
       fontWeight: FontWeight.w700,
       height: 1.2,
     );

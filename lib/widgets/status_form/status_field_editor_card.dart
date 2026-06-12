@@ -64,7 +64,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                 icon: const Icon(Icons.delete_outline_rounded, size: 18),
                 label: const Text('Remove'),
                 style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFFD94B4B),
+                  foregroundColor: AppColors.danger,
                   minimumSize: const Size(0, 40),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),

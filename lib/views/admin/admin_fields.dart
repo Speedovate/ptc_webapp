@@ -542,7 +542,7 @@ class _FieldsFiltersPanelState extends State<_FieldsFiltersPanel> {
                         widget.onActiveChanged('All');
                       },
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFD94B4B),
+                        backgroundColor: AppColors.danger,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(
@@ -957,7 +957,7 @@ class _FieldTableRow extends StatelessWidget {
                         ? Icons.close_rounded
                         : Icons.check_rounded,
                     backgroundColor: (field.isActive ?? false)
-                        ? Colors.red.shade700
+                        ? AppColors.dangerStrong
                         : const Color(0xFF2EAD62),
                     onTap: () => AdminFieldsView.confirmToggleFieldActive(
                       context,
@@ -968,7 +968,7 @@ class _FieldTableRow extends StatelessWidget {
                   const SizedBox(width: 8),
                   _MiniActionButton(
                     icon: Icons.delete_rounded,
-                    backgroundColor: Colors.red.shade700,
+                    backgroundColor: AppColors.dangerStrong,
                     onTap: () =>
                         AdminFieldsView.confirmDeleteField(context, vm, field),
                   ),
@@ -1109,13 +1109,13 @@ class _FieldResponsiveCard extends StatelessWidget {
           ? Icons.close_rounded
           : Icons.check_rounded,
       backgroundColor: (field.isActive ?? false)
-          ? Colors.red.shade700
+          ? AppColors.dangerStrong
           : const Color(0xFF2EAD62),
       onTap: () => AdminFieldsView.confirmToggleFieldActive(context, vm, field),
     ),
     _ActionButton(
       icon: Icons.delete_outline_rounded,
-      backgroundColor: Colors.red.shade700,
+      backgroundColor: AppColors.dangerStrong,
       onTap: () => AdminFieldsView.confirmDeleteField(context, vm, field),
     ),
   ];

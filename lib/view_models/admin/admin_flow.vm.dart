@@ -104,7 +104,7 @@ class AdminFlowViewModel extends BaseViewModel {
   String busyMessage = 'Loading, please wait ...';
 
   Future<void> loadForms() async {
-    busyMessage = 'Loading flows...';
+    busyMessage = 'Loading flows ...';
     isLoading = true;
     notifyListeners();
 
@@ -535,7 +535,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> saveLibraryField(StatusField field) async {
-    busyMessage = 'Saving field...';
+    busyMessage = 'Saving field ...';
     isLoading = true;
     notifyListeners();
     try {
@@ -558,7 +558,7 @@ class AdminFlowViewModel extends BaseViewModel {
     if (fieldId.isEmpty) {
       return;
     }
-    busyMessage = 'Deleting field...';
+    busyMessage = 'Deleting field ...';
     isLoading = true;
     notifyListeners();
     try {
@@ -577,7 +577,7 @@ class AdminFlowViewModel extends BaseViewModel {
     if (fieldId.isEmpty) {
       return;
     }
-    busyMessage = isActive ? 'Activating field...' : 'Deactivating field...';
+    busyMessage = isActive ? 'Activating field ...' : 'Deactivating field ...';
     isLoading = true;
     notifyListeners();
     try {
@@ -599,7 +599,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> saveStatus(Status status) async {
-    busyMessage = 'Saving status...';
+    busyMessage = 'Saving status ...';
     isLoading = true;
     notifyListeners();
     try {
@@ -622,7 +622,7 @@ class AdminFlowViewModel extends BaseViewModel {
     if (statusId.isEmpty) {
       return;
     }
-    busyMessage = 'Deleting status...';
+    busyMessage = 'Deleting status ...';
     isLoading = true;
     notifyListeners();
     try {
@@ -641,7 +641,7 @@ class AdminFlowViewModel extends BaseViewModel {
     if (statusId.isEmpty) {
       return;
     }
-    busyMessage = isActive ? 'Activating status...' : 'Deactivating status...';
+    busyMessage = isActive ? 'Activating status ...' : 'Deactivating status ...';
     isLoading = true;
     notifyListeners();
     try {
@@ -919,7 +919,7 @@ class AdminFlowViewModel extends BaseViewModel {
       return;
     }
 
-    busyMessage = 'Saving flow...';
+    busyMessage = 'Saving flow ...';
     isLoading = true;
     notifyListeners();
 
@@ -957,7 +957,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> deleteForm(StatusForm form) async {
-    busyMessage = 'Deleting flow...';
+    busyMessage = 'Deleting flow ...';
     isLoading = true;
     notifyListeners();
     try {
@@ -984,7 +984,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> deactivateForm(StatusForm form) async {
-    busyMessage = 'Deactivating flow...';
+    busyMessage = 'Deactivating flow ...';
     isLoading = true;
     notifyListeners();
     try {

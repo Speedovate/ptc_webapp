@@ -742,7 +742,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                         widget.onActiveChanged('All');
                       },
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFD94B4B),
+                        backgroundColor: AppColors.danger,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(
@@ -1315,7 +1315,7 @@ class _StatusFormsTableRow extends StatelessWidget {
                   const SizedBox(width: 8),
                   _MiniActionButton(
                     icon: Icons.close_rounded,
-                    backgroundColor: Colors.red.shade700,
+                    backgroundColor: AppColors.dangerStrong,
                     onTap: onDeactivatePressed,
                   ),
                   const SizedBox(width: 8),
@@ -1427,7 +1427,7 @@ class _StatusFormResponsiveCard extends StatelessWidget {
                           ),
                           _ActionButton(
                             icon: Icons.close_rounded,
-                            backgroundColor: Colors.red.shade700,
+                            backgroundColor: AppColors.dangerStrong,
                             onTap: onDeactivatePressed,
                           ),
                           _ActionButton(
@@ -1475,7 +1475,7 @@ class _StatusFormResponsiveCard extends StatelessWidget {
                     ),
                     _ActionButton(
                       icon: Icons.close_rounded,
-                      backgroundColor: Colors.red.shade700,
+                      backgroundColor: AppColors.dangerStrong,
                       onTap: onDeactivatePressed,
                     ),
                     _ActionButton(
@@ -1939,7 +1939,7 @@ class _DependencyRemoveButton extends StatelessWidget {
       icon: const Icon(Icons.remove_circle_outline_rounded, size: 18),
       label: const Text('Remove'),
       style: TextButton.styleFrom(
-        foregroundColor: const Color(0xFFD94B4B),
+        foregroundColor: AppColors.danger,
         padding: EdgeInsets.zero,
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -2195,7 +2195,7 @@ class _AssignedFieldCard extends StatelessWidget {
                   ),
                   label: const Text('Remove'),
                   style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFFD94B4B),
+                    foregroundColor: AppColors.danger,
                     padding: EdgeInsets.zero,
                     minimumSize: Size.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,

@@ -73,7 +73,7 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
         if (selectedBooking != null) {
           return AppPageLoadingOverlay(
             isVisible: vm.isLoading,
-            message: 'Loading bookings...',
+            message: 'Loading bookings ...',
             child: SingleChildScrollView(
               key: PageStorageKey(
                 'client-booking-detail-${selectedBooking.id ?? ''}',
@@ -117,7 +117,7 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
         if (vm.errorMessage != null) {
           return AppPageLoadingOverlay(
             isVisible: vm.isLoading,
-            message: 'Loading bookings...',
+            message: 'Loading bookings ...',
             child: _HistoryScaffold(
               toolbar: _HistoryToolbar(
                 vm: vm,
@@ -143,7 +143,7 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
         if (vm.bookings.isEmpty) {
           return AppPageLoadingOverlay(
             isVisible: vm.isLoading,
-            message: 'Loading bookings...',
+            message: 'Loading bookings ...',
             child: _HistoryScaffold(
               toolbar: _HistoryToolbar(
                 vm: vm,
@@ -154,7 +154,7 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
                 children: [
                   AppRefreshStrip(isVisible: vm.isLoading),
                   Text(
-                    vm.isLoading ? 'Preparing bookings...' : 'No bookings yet.',
+                    vm.isLoading ? 'Preparing bookings ...' : 'No bookings yet.',
                     style: TextStyle(
                       color: AppColors.primaryColor.withValues(alpha: 0.72),
                       fontWeight: FontWeight.w600,
@@ -168,7 +168,7 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
 
         return AppPageLoadingOverlay(
           isVisible: vm.isLoading,
-          message: 'Loading bookings...',
+          message: 'Loading bookings ...',
           child: _HistoryScaffold(
             toolbar: _HistoryToolbar(vm: vm, onNewPressed: widget.onNewPressed),
             framed: false,
@@ -382,7 +382,7 @@ class _HistoryFiltersPanelState extends State<_HistoryFiltersPanel> {
                         widget.vm.clearFilters();
                       },
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFD94B4B),
+                        backgroundColor: AppColors.danger,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),

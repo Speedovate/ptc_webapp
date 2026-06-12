@@ -4,6 +4,118 @@ import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/utils/functions.dart';
 
+const Color bookingFormDangerStripColor = AppColors.dangerStrong;
+
+class BookingFormPalette {
+  const BookingFormPalette({
+    required this.strip,
+    required this.accent,
+    required this.accentMuted,
+    required this.surface,
+    required this.surfaceAlt,
+    required this.border,
+  });
+
+  final Color strip;
+  final Color accent;
+  final Color accentMuted;
+  final Color surface;
+  final Color surfaceAlt;
+  final Color border;
+}
+
+const BookingFormPalette bookingFormPrimaryPalette = BookingFormPalette(
+  strip: AppColors.primaryColor,
+  accent: AppColors.primaryColor,
+  accentMuted: AppColors.textSecondary,
+  surface: AppColors.primarySurface,
+  surfaceAlt: AppColors.primarySurfaceAlt,
+  border: AppColors.primaryBorder,
+);
+
+const BookingFormPalette bookingFormDangerPalette = BookingFormPalette(
+  strip: AppColors.dangerStrong,
+  accent: AppColors.dangerStrong,
+  accentMuted: AppColors.danger,
+  surface: AppColors.dangerSurface,
+  surfaceAlt: AppColors.dangerSurfaceAlt,
+  border: AppColors.dangerBorder,
+);
+
+const BookingFormPalette bookingFormDeliveredPalette = BookingFormPalette(
+  strip: Color(0xFF2EAD62),
+  accent: Color(0xFF2EAD62),
+  accentMuted: Color(0xFF4D7C5C),
+  surface: Color(0xFFF4FBF6),
+  surfaceAlt: Color(0xFFE7F5EB),
+  border: Color(0xFFBFE1C8),
+);
+
+bool bookingFormUsesDangerTheme({
+  String? title,
+  String? buttonText,
+}) {
+  bool containsCancel(String? value) =>
+      value?.toLowerCase().contains('cancel') == true;
+
+  return containsCancel(title) || containsCancel(buttonText);
+}
+
+BookingFormPalette bookingFormResolvedPalette({
+  String? title,
+  String? buttonText,
+}) {
+  return bookingFormUsesDangerTheme(title: title, buttonText: buttonText)
+      ? bookingFormDangerPalette
+      : bookingFormPrimaryPalette;
+}
+
+BookingFormPalette bookingFormResolvedStatusPalette({
+  String? title,
+  String? buttonText,
+  String? currentStatusKey,
+}) {
+  if (bookingFormUsesDangerTheme(title: title, buttonText: buttonText)) {
+    return bookingFormDangerPalette;
+  }
+  if (currentStatusKey?.trim() == 'delivered') {
+    return bookingFormDeliveredPalette;
+  }
+  return bookingFormPrimaryPalette;
+}
+
+Color bookingFormResolvedStripColor({
+  String? title,
+  String? buttonText,
+  Color? fallbackColor,
+}) {
+  if (bookingFormUsesDangerTheme(title: title, buttonText: buttonText)) {
+    return bookingFormDangerPalette.strip;
+  }
+  return fallbackColor ?? AppColors.primaryColor;
+}
+
+Color bookingFormResolvedActionColor({
+  String? title,
+  String? buttonText,
+  Color? fallbackColor,
+}) {
+  if (bookingFormUsesDangerTheme(title: title, buttonText: buttonText)) {
+    return bookingFormDangerPalette.accent;
+  }
+  return fallbackColor ?? AppColors.primaryColor;
+}
+
+Color bookingFormResolvedLegendColor({
+  String? title,
+  String? buttonText,
+}) {
+  if (bookingFormUsesDangerTheme(title: title, buttonText: buttonText)) {
+    return bookingFormDangerPalette.accent;
+  }
+  return AppColors.primaryColor;
+}
+
 class BookingFormTitleCardShell extends StatelessWidget {
   const BookingFormTitleCardShell({
     super.key,
@@ -13,7 +125,7 @@ class BookingFormTitleCardShell extends StatelessWidget {
     this.bodyColor = Colors.white,
     this.radius = 18,
     this.stripRadius = 16,
-    this.stripHeight = 20,
+    this.stripHeight = 12,
     this.bodyPadding = const EdgeInsets.fromLTRB(20, 12, 20, 16),
   });
 
@@ -63,8 +175,11 @@ class BookingFormHeaderCard extends StatelessWidget {
     super.key,
     required this.title,
     this.subtitle,
+    this.buttonText,
+    this.paletteOverride,
     this.backgroundColor,
     this.borderColor,
+    this.bodyColor,
     this.titleColor,
     this.subtitleColor,
     this.message,
@@ -78,8 +193,11 @@ class BookingFormHeaderCard extends StatelessWidget {
 
   final String title;
   final String? subtitle;
+  final String? buttonText;
+  final BookingFormPalette? paletteOverride;
   final Color? backgroundColor;
   final Color? borderColor;
+  final Color? bodyColor;
   final Color? titleColor;
   final Color? subtitleColor;
   final String? message;
@@ -92,9 +210,17 @@ class BookingFormHeaderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette =
+        paletteOverride ??
+        bookingFormResolvedPalette(title: title, buttonText: buttonText);
     return BookingFormTitleCardShell(
-      stripColor: backgroundColor ?? AppColors.primaryColor,
-      borderColor: borderColor ?? AppColors.primaryBorder,
+      stripColor: bookingFormResolvedStripColor(
+        title: title,
+        buttonText: buttonText,
+        fallbackColor: backgroundColor,
+      ),
+      borderColor: borderColor ?? palette.border,
+      bodyColor: bodyColor ?? Colors.white,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -121,14 +247,14 @@ class BookingFormHeaderCard extends StatelessWidget {
             Container(
               width: double.infinity,
               height: 1,
-              color: AppColors.primaryBorder,
+              color: palette.border,
             ),
             const SizedBox(height: 14),
             Text(
               '* indicates required input',
               style: TextStyle(
-                color: AppColors.primaryColor,
-                fontSize: 12,
+                color: palette.accent,
+                fontSize: 14,
                 fontWeight: FontWeight.w400,
                 height: 1.3,
               ),
@@ -143,10 +269,10 @@ class BookingFormHeaderCard extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
-                color: messageBackgroundColor ?? AppColors.primarySurfaceAlt,
+                color: messageBackgroundColor ?? palette.surfaceAlt,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: messageBorderColor ?? AppColors.primaryBorder,
+                  color: messageBorderColor ?? palette.border,
                 ),
               ),
               child: Row(
@@ -156,7 +282,7 @@ class BookingFormHeaderCard extends StatelessWidget {
                     Icon(
                       messageIcon,
                       size: 18,
-                      color: messageIconColor ?? AppColors.primaryColor,
+                      color: messageIconColor ?? palette.accent,
                     ),
                     const SizedBox(width: 10),
                   ],
@@ -166,7 +292,7 @@ class BookingFormHeaderCard extends StatelessWidget {
                       style: TextStyle(
                         color:
                             messageTextColor ??
-                            AppColors.primaryColor.withValues(alpha: 0.72),
+                            palette.accent.withValues(alpha: 0.72),
                         fontWeight: FontWeight.w600,
                         height: 1.35,
                       ),
@@ -187,6 +313,8 @@ class BookingFormFieldCard extends StatelessWidget {
     super.key,
     required this.title,
     required this.input,
+    this.buttonText,
+    this.paletteOverride,
     this.required = false,
     this.subtitle,
     this.instructions,
@@ -194,9 +322,12 @@ class BookingFormFieldCard extends StatelessWidget {
     this.inputTopSpacing = 14,
     this.showContainer = true,
     this.containerPadding = const EdgeInsets.all(18),
+    this.containerColor,
   });
 
   final String title;
+  final String? buttonText;
+  final BookingFormPalette? paletteOverride;
   final bool required;
   final String? subtitle;
   final String? instructions;
@@ -205,9 +336,13 @@ class BookingFormFieldCard extends StatelessWidget {
   final double inputTopSpacing;
   final bool showContainer;
   final EdgeInsetsGeometry containerPadding;
+  final Color? containerColor;
 
   @override
   Widget build(BuildContext context) {
+    final palette =
+        paletteOverride ??
+        bookingFormResolvedPalette(title: title, buttonText: buttonText);
     final hasSupportingText =
         subtitle?.trim().isNotEmpty == true ||
         instructions?.trim().isNotEmpty == true;
@@ -230,10 +365,10 @@ class BookingFormFieldCard extends StatelessWidget {
                   ),
                   children: [
                     if (required)
-                      const TextSpan(
+                      TextSpan(
                         text: ' *',
                         style: TextStyle(
-                          color: AppColors.primaryColor,
+                          color: palette.accent,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -251,7 +386,7 @@ class BookingFormFieldCard extends StatelessWidget {
           Text(
             subtitle!.trim(),
             style: TextStyle(
-              color: AppColors.primaryColor.withValues(alpha: 0.72),
+              color: palette.accentMuted,
               fontWeight: FontWeight.w500,
               height: 1.35,
             ),
@@ -260,7 +395,7 @@ class BookingFormFieldCard extends StatelessWidget {
           Text(
             instructions!.trim(),
             style: TextStyle(
-              color: AppColors.primaryColor.withValues(alpha: 0.72),
+              color: palette.accentMuted,
               fontSize: 12,
               fontWeight: FontWeight.w600,
               height: 1.35,
@@ -281,9 +416,9 @@ class BookingFormFieldCard extends StatelessWidget {
       width: double.infinity,
       padding: containerPadding,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: containerColor ?? Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.primaryBorder),
+        border: Border.all(color: palette.border),
       ),
       child: content,
     );
@@ -299,6 +434,7 @@ class BookingPhotoFieldInput extends StatefulWidget {
     this.supportText = 'JPG, PNG, or supported image file',
     this.errorText,
     this.showRemoveAction = false,
+    this.palette = bookingFormPrimaryPalette,
   });
 
   final dynamic initialValue;
@@ -307,6 +443,7 @@ class BookingPhotoFieldInput extends StatefulWidget {
   final String supportText;
   final String? errorText;
   final bool showRemoveAction;
+  final BookingFormPalette palette;
 
   @override
   State<BookingPhotoFieldInput> createState() => _BookingPhotoFieldInputState();
@@ -406,8 +543,8 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
     final hasFileName = fileName?.isNotEmpty == true;
     final hasImage = previewBytes != null || (previewUrl?.isNotEmpty == true);
     final processingLabel = _isSelectingPhoto
-        ? 'Preparing photo...'
-        : 'Processing photo...';
+        ? 'Preparing photo ...'
+        : 'Processing photo ...';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -416,14 +553,14 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
           width: double.infinity,
           padding: hasImage ? EdgeInsets.zero : const EdgeInsets.all(18),
           decoration: hasImage
-              ? null
+                ? null
               : BoxDecoration(
-                  color: AppColors.primarySurface,
+                  color: widget.palette.surface,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
                     color: widget.errorText == null
-                        ? AppColors.primaryBorder
-                        : Colors.red,
+                        ? widget.palette.border
+                        : AppColors.danger,
                   ),
                 ),
           child: Column(
@@ -511,10 +648,10 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                 ),
                 const SizedBox(height: 12),
               ] else ...[
-                const Icon(
+                Icon(
                   Icons.add_a_photo_outlined,
                   size: 28,
-                  color: AppColors.primaryColor,
+                  color: widget.palette.accent,
                 ),
                 const SizedBox(height: 10),
               ],
@@ -523,7 +660,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                 style: TextStyle(
                   color: hasFileName
                       ? AppColors.textPrimary
-                      : AppColors.primaryColor.withValues(alpha: 0.72),
+                      : widget.palette.accentMuted,
                   fontWeight: hasFileName ? FontWeight.w700 : FontWeight.w800,
                   height: 1.2,
                 ),
@@ -533,7 +670,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                 Text(
                   widget.supportText,
                   style: TextStyle(
-                    color: AppColors.primaryColor.withValues(alpha: 0.72),
+                    color: widget.palette.accentMuted,
                     fontWeight: FontWeight.w500,
                     height: 1.2,
                   ),
@@ -555,7 +692,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                       Text(
                         processingLabel,
                         style: TextStyle(
-                          color: AppColors.primaryColor.withValues(alpha: 0.78),
+                          color: widget.palette.accentMuted,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -572,7 +709,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                     child: FilledButton.icon(
                       onPressed: _isProcessing ? null : _pickPhoto,
                       style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.primaryColor,
+                        backgroundColor: widget.palette.accent,
                         foregroundColor: Colors.white,
                         minimumSize: const Size(0, 32),
                         padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -596,8 +733,8 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                       label: Text(
                         _isProcessing
                             ? (_isSelectingPhoto
-                                  ? 'Preparing...'
-                                  : 'Processing...')
+                                  ? 'Preparing ...'
+                                  : 'Processing ...')
                             : (_photo == null ? 'Choose File' : 'Replace File'),
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
@@ -618,7 +755,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
             padding: const EdgeInsets.only(top: 6),
             child: Text(
               widget.errorText!,
-              style: const TextStyle(color: Colors.red, fontSize: 12),
+              style: const TextStyle(color: AppColors.danger, fontSize: 12),
             ),
           ),
       ],
@@ -648,13 +785,13 @@ class _BookingPhotoPreviewFallback extends StatelessWidget {
     return Container(
       width: double.infinity,
       height: height,
-      color: AppColors.primarySurface,
+      color: bookingFormPrimaryPalette.surface,
       alignment: Alignment.center,
       child: Text(
         message,
         textAlign: TextAlign.center,
         style: TextStyle(
-          color: AppColors.primaryColor.withValues(alpha: 0.72),
+          color: bookingFormPrimaryPalette.accentMuted,
           fontWeight: FontWeight.w600,
         ),
       ),

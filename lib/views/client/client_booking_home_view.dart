@@ -37,8 +37,8 @@ _ClientFormHeaderPalette? _terminalClientHeaderPalette(String? statusKey) {
       );
     case 'cancelled':
       return const _ClientFormHeaderPalette(
-        backgroundColor: Color(0xFFC93B3B),
-        borderColor: Color(0xFFC93B3B),
+        backgroundColor: AppColors.dangerStrong,
+        borderColor: AppColors.dangerStrong,
         titleColor: Colors.white,
         subtitleColor: Color(0xFFFFE0E0),
       );
@@ -136,8 +136,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
           return AppPageLoadingOverlay(
             isVisible: vm.isBusyLoading || vm.isSubmitting,
             message: vm.isSubmitting
-                ? 'Submitting booking...'
-                : 'Loading booking form...',
+                ? 'Submitting booking ...'
+                : 'Loading booking form ...',
             child: _ClientBookingStateCard(
               scrollable: widget.scrollable,
               padding: widget.padding,
@@ -163,8 +163,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
           return AppPageLoadingOverlay(
             isVisible: vm.isBusyLoading || vm.isSubmitting,
             message: vm.isSubmitting
-                ? 'Submitting booking...'
-                : 'Loading booking form...',
+                ? 'Submitting booking ...'
+                : 'Loading booking form ...',
             child: _ClientBookingStateCard(
               scrollable: widget.scrollable,
               padding: widget.padding,
@@ -174,7 +174,7 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
                   AppRefreshStrip(isVisible: vm.isBusyLoading),
                   Text(
                     vm.isBusyLoading
-                        ? 'Preparing booking form...'
+                        ? 'Preparing booking form ...'
                         : 'No client booking form available yet.',
                     style: TextStyle(
                       color: AppColors.primaryColor.withValues(alpha: 0.72),
@@ -216,8 +216,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
         return AppPageLoadingOverlay(
           isVisible: vm.isBusyLoading || vm.isSubmitting,
           message: vm.isSubmitting
-              ? 'Submitting booking...'
-              : 'Loading booking form...',
+              ? 'Submitting booking ...'
+              : 'Loading booking form ...',
           child: scaffold,
         );
       },
@@ -270,16 +270,17 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
         BookingFormHeaderCard(
           title: vm.resolvedTitleForForm(form),
           subtitle: vm.resolvedSubtitleForForm(form),
+          buttonText: form.buttonText,
           backgroundColor: terminalPalette?.backgroundColor,
           borderColor: terminalPalette?.borderColor,
           titleColor: terminalPalette?.titleColor,
           subtitleColor: terminalPalette?.subtitleColor,
           showRequiredLegend: fields.any((field) => field.required == true),
           message: blockedMessage,
-          messageBackgroundColor: const Color(0xFFFFF6F6),
-          messageBorderColor: const Color(0xFFFFD2D2),
+          messageBackgroundColor: AppColors.dangerSurface,
+          messageBorderColor: AppColors.dangerBorder,
           messageIcon: Icons.block_rounded,
-          messageIconColor: const Color(0xFFC93B3B),
+          messageIconColor: AppColors.dangerStrong,
           messageTextColor: AppColors.textPrimary,
         ),
         const SizedBox(height: 14),
@@ -291,6 +292,8 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
               field: field,
               errorText: _errors[field.key],
               initialValue: _answers[field.key],
+              formTitle: vm.resolvedTitleForForm(form),
+              formButtonText: form.buttonText,
               onChanged: (value) {
                 final key = field.key;
                 if (key == null || key.isEmpty) {
@@ -314,8 +317,9 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
         _ClientBookingActions(
           isSubmitting: _isSubmitting,
           isBlocked: blockedMessage != null,
+          title: vm.resolvedTitleForForm(form),
           submitLabel: _isSubmitting
-              ? 'Submitting...'
+              ? 'Submitting ...'
               : vm.submitLabelForForm(form),
           onSubmit: () async {
             final validationErrors = vm.validateAnswersForForm(form, _answers);
@@ -423,6 +427,7 @@ class _ClientBookingActions extends StatelessWidget {
   const _ClientBookingActions({
     required this.isSubmitting,
     required this.isBlocked,
+    required this.title,
     required this.submitLabel,
     required this.onSubmit,
     required this.onClear,
@@ -430,6 +435,7 @@ class _ClientBookingActions extends StatelessWidget {
 
   final bool isSubmitting;
   final bool isBlocked;
+  final String title;
   final String submitLabel;
   final Future<void> Function() onSubmit;
   final VoidCallback onClear;
@@ -439,7 +445,10 @@ class _ClientBookingActions extends StatelessWidget {
     final submitButton = FilledButton(
       onPressed: isSubmitting || isBlocked ? null : onSubmit,
       style: FilledButton.styleFrom(
-        backgroundColor: AppColors.primaryColor,
+        backgroundColor: bookingFormResolvedActionColor(
+          title: title,
+          buttonText: submitLabel,
+        ),
         foregroundColor: Colors.white,
         minimumSize: const Size(0, 52),
         padding: const EdgeInsets.symmetric(horizontal: 18),
@@ -448,8 +457,13 @@ class _ClientBookingActions extends StatelessWidget {
       child: Text(submitLabel),
     );
 
+    final clearColor = bookingFormResolvedActionColor(
+      title: title,
+      buttonText: submitLabel,
+    );
     final clearButton = TextButton(
       onPressed: isSubmitting ? null : onClear,
+      style: TextButton.styleFrom(foregroundColor: clearColor),
       child: const Text('Clear Form'),
     );
 

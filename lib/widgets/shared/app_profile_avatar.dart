@@ -119,7 +119,7 @@ class _FallbackAvatarContent extends StatelessWidget {
         child: Center(
           child: Icon(
             Icons.broken_image_rounded,
-            color: const Color(0xFFD94B4B),
+            color: AppColors.danger,
             size: radius * 0.8,
           ),
         ),

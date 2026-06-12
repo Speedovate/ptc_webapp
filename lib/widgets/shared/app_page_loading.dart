@@ -4,7 +4,7 @@ import 'package:webapp/constants/app_colors.dart';
 class AppPageLoading extends StatelessWidget {
   const AppPageLoading({
     super.key,
-    this.message = 'Loading...',
+    this.message = 'Loading ...',
     this.padding = const EdgeInsets.all(24),
     this.compact = false,
   });

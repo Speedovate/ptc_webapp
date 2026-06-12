@@ -76,51 +76,60 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
 
   @override
   Widget build(BuildContext context) {
+    final trimmedOverrideTitle = widget.titleText?.trim();
+    final trimmedFormTitle = widget.form?.statusText?.trim();
     final statusText =
-        widget.titleText?.trim() ?? widget.form?.statusText?.trim();
+        trimmedOverrideTitle != null && trimmedOverrideTitle.isNotEmpty
+        ? trimmedOverrideTitle
+        : trimmedFormTitle;
     final statusSubtext =
         widget.subtitleText?.trim() ?? widget.form?.statusSubtext?.trim();
     final buttonText = widget.form?.buttonText?.trim();
+    final resolvedTitle = statusText?.isNotEmpty == true
+        ? statusText!
+        : 'Untitled Status Form';
+    final currentStatusKey = widget.form?.currentStatusKey?.trim();
+    final nextStatusKey = widget.form?.nextStatusKey?.trim();
+    final palette = bookingFormResolvedStatusPalette(
+      title: resolvedTitle,
+      buttonText: buttonText,
+      currentStatusKey: currentStatusKey,
+    );
     final dependencies =
         widget.form?.dependencies ?? const <StatusDependency>[];
+    final hasFields = widget.fields.isNotEmpty;
+    final hasNextStatus = nextStatusKey != null && nextStatusKey.isNotEmpty;
+    final showSubmitButton = hasFields || hasNextStatus;
+    final showActionRow = showSubmitButton || hasFields;
     final actionRowTopSpacing = widget.fields.isEmpty ? 14.0 : 6.0;
 
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: const Color(0xFFF3EDFf),
+        color: palette.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.primaryBorder),
+        border: Border.all(color: palette.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            height: 10,
-            decoration: const BoxDecoration(
-              color: AppColors.primaryColor,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-            ),
-          ),
           Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _PreviewHeaderCard(
-                  title: statusText?.isNotEmpty == true
-                      ? statusText!
-                      : 'Untitled Status Form',
+                  title: resolvedTitle,
                   subtitle: statusSubtext,
+                  buttonText: buttonText,
+                  currentStatusKey: currentStatusKey,
                   showRequiredLegend: widget.fields.any(
                     (field) => field.required == true,
                   ),
                   showDependencyNotice: dependencies.isNotEmpty,
                 ),
-                const SizedBox(height: 14),
-                if (widget.fields.isEmpty)
-                  const _EmptyPreviewState()
-                else
+                if (hasFields) ...[
+                  const SizedBox(height: 14),
                   ...widget.fields.map(
                     (field) => Padding(
                       padding: const EdgeInsets.only(bottom: 14),
@@ -129,6 +138,9 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
                         field: field,
                         initialValue: _answers[field.key],
                         errorText: _errors[field.key],
+                        formTitle: resolvedTitle,
+                        formButtonText: buttonText,
+                        formStatusKey: currentStatusKey,
                         onChanged: (value) {
                           final key = field.key;
                           if (key == null || key.isEmpty) {
@@ -139,33 +151,42 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
                       ),
                     ),
                   ),
-                SizedBox(height: actionRowTopSpacing),
-                Row(
-                  children: [
-                    FilledButton(
-                      onPressed: _validateForm,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.primaryColor,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size(0, 52),
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                ],
+                if (showActionRow) ...[
+                  SizedBox(height: actionRowTopSpacing),
+                  Row(
+                    children: [
+                      if (showSubmitButton)
+                        FilledButton(
+                          onPressed: _validateForm,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: palette.accent,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(0, 52),
+                            padding: const EdgeInsets.symmetric(horizontal: 18),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: Text(
+                            buttonText?.isNotEmpty == true
+                                ? buttonText!
+                                : 'Submit',
+                          ),
                         ),
-                      ),
-                      child: Text(
-                        buttonText?.isNotEmpty == true ? buttonText! : 'Submit',
-                      ),
-                    ),
-                    if (widget.fields.isNotEmpty) ...[
-                      const Spacer(),
-                      TextButton(
-                        onPressed: _clearForm,
-                        child: const Text('Clear Form'),
-                      ),
+                      if (hasFields) ...[
+                        const Spacer(),
+                        TextButton(
+                          onPressed: _clearForm,
+                          style: TextButton.styleFrom(
+                            foregroundColor: palette.accent,
+                          ),
+                          child: const Text('Clear Form'),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -179,18 +200,34 @@ class _PreviewHeaderCard extends StatelessWidget {
   const _PreviewHeaderCard({
     required this.title,
     required this.subtitle,
+    required this.buttonText,
+    required this.currentStatusKey,
     required this.showRequiredLegend,
     required this.showDependencyNotice,
   });
 
   final String title;
   final String? subtitle;
+  final String? buttonText;
+  final String? currentStatusKey;
   final bool showRequiredLegend;
   final bool showDependencyNotice;
 
   @override
   Widget build(BuildContext context) {
+    final palette = bookingFormResolvedStatusPalette(
+      title: title,
+      buttonText: buttonText,
+      currentStatusKey: currentStatusKey,
+    );
     return BookingFormTitleCardShell(
+      stripColor: bookingFormResolvedStripColor(
+        title: title,
+        buttonText: buttonText,
+        fallbackColor: palette.strip,
+      ),
+      borderColor: palette.border,
+      bodyColor: palette.surface,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -221,14 +258,17 @@ class _PreviewHeaderCard extends StatelessWidget {
             Container(
               width: double.infinity,
               height: 1,
-              color: AppColors.primaryBorder,
+              color: palette.border,
             ),
             const SizedBox(height: 14),
-            const Text(
+            Text(
               '* indicates required input',
               style: TextStyle(
-                color: AppColors.primaryColor,
-                fontSize: 12,
+                color: bookingFormResolvedLegendColor(
+                  title: title,
+                  buttonText: buttonText,
+                ),
+                fontSize: 14,
                 fontWeight: FontWeight.w400,
                 height: 1.3,
               ),
@@ -240,16 +280,16 @@ class _PreviewHeaderCard extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
-                color: AppColors.primarySurface,
+                color: palette.surface,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.primaryBorder),
+                border: Border.all(color: palette.border),
               ),
-              child: const Row(
+              child: Row(
                 children: [
                   Icon(
                     Icons.info_outline_rounded,
                     size: 18,
-                    color: AppColors.primaryColor,
+                    color: palette.accent,
                   ),
                   SizedBox(width: 10),
                   Expanded(
@@ -266,30 +306,6 @@ class _PreviewHeaderCard extends StatelessWidget {
             ),
           ],
         ],
-      ),
-    );
-  }
-}
-
-class _EmptyPreviewState extends StatelessWidget {
-  const _EmptyPreviewState();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.primaryBorder),
-      ),
-      child: const Text(
-        'No fields yet. Add fields to see how the actual form will look.',
-        style: TextStyle(
-          color: AppColors.textSecondary,
-          fontWeight: FontWeight.w600,
-        ),
       ),
     );
   }

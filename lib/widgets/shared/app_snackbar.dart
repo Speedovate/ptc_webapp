@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/utils/functions.dart';
 
+import 'package:webapp/constants/app_colors.dart';
+
 class AppSnackbar {
-  static const _errorColor = Color(0xFFD94B4B);
+  static const _errorColor = AppColors.danger;
   static const _successColor = Color(0xFF2EAD62);
 
   static void showError(BuildContext context, String message) {

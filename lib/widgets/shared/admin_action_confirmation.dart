@@ -22,7 +22,7 @@ Future<bool> showAdminActionConfirmation(
           onPressed: () => Navigator.of(dialogContext).pop(true),
           style: FilledButton.styleFrom(
             backgroundColor: isDanger
-                ? const Color(0xFFD94B4B)
+                ? AppColors.danger
                 : AppColors.primaryColor,
             foregroundColor: Colors.white,
           ),

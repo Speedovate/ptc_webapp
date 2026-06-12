@@ -29,7 +29,7 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
   String get busyMessage => _busyMessage;
 
   Future<void> load() async {
-    _busyMessage = 'Loading vehicle sizes...';
+    _busyMessage = 'Loading vehicle sizes ...';
     setBusy(true);
     _errorMessage = null;
     try {
@@ -49,7 +49,7 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
   }
 
   Future<VehicleCatalogItem> saveSize(VehicleCatalogItem size) async {
-    _busyMessage = 'Saving vehicle size...';
+    _busyMessage = 'Saving vehicle size ...';
     setBusy(true);
     try {
       final saved = await _repository.saveSize(size);
@@ -73,7 +73,7 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
     if (sizeId == null || sizeId.isEmpty) {
       return;
     }
-    _busyMessage = 'Deleting vehicle size...';
+    _busyMessage = 'Deleting vehicle size ...';
     setBusy(true);
     try {
       await _repository.deleteSize(sizeId);
@@ -90,8 +90,8 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
     bool isActive,
   ) {
     _busyMessage = isActive
-        ? 'Activating vehicle size...'
-        : 'Deactivating vehicle size...';
+        ? 'Activating vehicle size ...'
+        : 'Deactivating vehicle size ...';
     return saveSize(
       size.copyWith(isActive: isActive, updatedAt: DateTime.now()),
     );

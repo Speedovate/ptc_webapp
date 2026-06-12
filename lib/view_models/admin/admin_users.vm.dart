@@ -46,7 +46,7 @@ class AdminUsersViewModel extends BaseViewModel {
   String get busyMessage => _busyMessage;
 
   Future<void> loadUsers({UserModel? fallbackCurrentUser}) async {
-    _busyMessage = 'Loading users...';
+    _busyMessage = 'Loading users ...';
     setBusy(true);
     try {
       final users = await _repository.getUsers();
@@ -66,7 +66,7 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<UserModel> updateUser(UserModel user) async {
-    _busyMessage = 'Saving user...';
+    _busyMessage = 'Saving user ...';
     setBusy(true);
     try {
       final saved = await _repository.saveUser(user);
@@ -93,7 +93,7 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<UserModel> addUser(UserModel user) async {
-    _busyMessage = 'Creating user...';
+    _busyMessage = 'Creating user ...';
     setBusy(true);
     try {
       final saved = await _repository.saveUser(
@@ -145,7 +145,7 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<void> deleteUser(UserModel user) async {
-    _busyMessage = 'Deleting user...';
+    _busyMessage = 'Deleting user ...';
     setBusy(true);
     try {
       await _repository.deleteUser(user.id ?? '');
@@ -169,7 +169,7 @@ class AdminUsersViewModel extends BaseViewModel {
     if (userId.isEmpty) {
       throw const AuthFailure('User ID is required.');
     }
-    _busyMessage = 'Signing in as user...';
+    _busyMessage = 'Signing in as user ...';
     setBusy(true);
     try {
       await _repository.loginAsUser(userId);
@@ -191,7 +191,7 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<void> setUserActive(UserModel user, bool isActive) async {
-    _busyMessage = isActive ? 'Activating user...' : 'Deactivating user...';
+    _busyMessage = isActive ? 'Activating user ...' : 'Deactivating user ...';
     await updateUser(
       user.copyWith(
         isActive: isActive,

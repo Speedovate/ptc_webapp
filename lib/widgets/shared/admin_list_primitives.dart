@@ -640,7 +640,7 @@ class AdminListActionButton extends StatelessWidget {
       onTap: onTap,
       backgroundColor:
           backgroundColor ??
-          (isDanger ? Colors.red.shade700 : AppColors.primaryColor),
+          (isDanger ? AppColors.dangerStrong : AppColors.primaryColor),
       size: size,
       iconSize: iconSize,
       borderRadius: borderRadius,
@@ -701,17 +701,17 @@ AdminMetaPillPalette adminMetaPillPalette(
     backgroundColor: isSuccessVariant
         ? const Color(0xFFE9F8EF)
         : isDangerVariant
-        ? const Color(0xFFFCEBEC)
+        ? AppColors.dangerSurfaceAlt
         : AppColors.primarySurface,
     borderColor: isSuccessVariant
         ? const Color(0xFFB9E7C8)
         : isDangerVariant
-        ? const Color(0xFFF2C2C7)
+        ? AppColors.dangerBorderAlt
         : AppColors.primaryBorder,
     textColor: isSuccessVariant
         ? const Color(0xFF2EAD62)
         : isDangerVariant
-        ? const Color(0xFFD94B4B)
+        ? AppColors.danger
         : AppColors.primaryColor,
   );
 }

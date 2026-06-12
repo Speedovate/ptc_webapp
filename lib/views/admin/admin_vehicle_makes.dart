@@ -706,7 +706,7 @@ List<Widget> _vehicleMakeActions(BuildContext context, VehicleMake item) => [
   AdminListActionButton(
     icon: (item.isActive ?? false) ? Icons.close_rounded : Icons.check_rounded,
     backgroundColor: (item.isActive ?? false)
-        ? Colors.red.shade700
+        ? AppColors.dangerStrong
         : const Color(0xFF2EAD62),
     onTap: () {
       final state = context
@@ -832,7 +832,7 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
                         widget.onActiveChanged('All');
                       },
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFD94B4B),
+                        backgroundColor: AppColors.danger,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),

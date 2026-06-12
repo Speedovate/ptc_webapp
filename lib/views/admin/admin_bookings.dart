@@ -1544,7 +1544,7 @@ class _BookingsFiltersPanelState extends State<_BookingsFiltersPanel> {
                         widget.vm.clearFilters();
                       },
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFD94B4B),
+                        backgroundColor: AppColors.danger,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),

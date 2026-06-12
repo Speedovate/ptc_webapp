@@ -79,7 +79,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   ];
 
   Future<void> load() async {
-    _busyMessage = 'Loading bookings...';
+    _busyMessage = 'Loading bookings ...';
     setBusy(true);
     errorMessage = null;
     try {
@@ -303,7 +303,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   }
 
   Future<Booking> saveEditedBooking(Booking booking) async {
-    _busyMessage = 'Saving booking...';
+    _busyMessage = 'Saving booking ...';
     setBusy(true);
     try {
       final updatedBooking = booking.copyWith(updatedAt: DateTime.now());

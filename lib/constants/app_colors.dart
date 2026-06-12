@@ -11,4 +11,10 @@ class AppColors {
   static const Color primaryGradientEnd = Color(0xFF6C45E3);
   static const Color textPrimary = Color(0xFF221A3F);
   static const Color textSecondary = Color(0xFF7A7391);
+  static const Color danger = Color(0xFFD94B4B);
+  static const Color dangerStrong = Color(0xFFC93B3B);
+  static const Color dangerSurface = Color(0xFFFFF6F6);
+  static const Color dangerSurfaceAlt = Color(0xFFFCEBEC);
+  static const Color dangerBorder = Color(0xFFFFD2D2);
+  static const Color dangerBorderAlt = Color(0xFFF2C2C7);
 }

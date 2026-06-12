@@ -59,6 +59,41 @@ class _WorkflowHeaderPalette {
   final Color subtitleColor;
 }
 
+const BookingFormPalette _workflowDeliveredPalette = BookingFormPalette(
+  strip: Color(0xFF2EAD62),
+  accent: Color(0xFF2EAD62),
+  accentMuted: Color(0xFF4D7C5C),
+  surface: Color(0xFFF4FBF6),
+  surfaceAlt: Color(0xFFE7F5EB),
+  border: Color(0xFFBFE1C8),
+);
+
+BookingFormPalette _workflowResolvedPalette({
+  required String? title,
+  String? buttonText,
+  String? currentStatusKey,
+}) {
+  if (bookingFormUsesDangerTheme(title: title, buttonText: buttonText)) {
+    return bookingFormDangerPalette;
+  }
+  if (currentStatusKey?.trim() == 'delivered') {
+    return _workflowDeliveredPalette;
+  }
+  return bookingFormResolvedPalette(title: title, buttonText: buttonText);
+}
+
+Color _workflowResolvedActionColor({
+  required String? title,
+  String? buttonText,
+  String? currentStatusKey,
+}) {
+  return _workflowResolvedPalette(
+    title: title,
+    buttonText: buttonText,
+    currentStatusKey: currentStatusKey,
+  ).accent;
+}
+
 _WorkflowHeaderPalette? _terminalHeaderPaletteForStatus(String? statusKey) {
   switch (statusKey?.trim()) {
     case 'delivered':
@@ -70,8 +105,8 @@ _WorkflowHeaderPalette? _terminalHeaderPaletteForStatus(String? statusKey) {
       );
     case 'cancelled':
       return const _WorkflowHeaderPalette(
-        backgroundColor: Color(0xFFC93B3B),
-        borderColor: Color(0xFFC93B3B),
+        backgroundColor: AppColors.dangerStrong,
+        borderColor: AppColors.dangerStrong,
         titleColor: Colors.white,
         subtitleColor: Color(0xFFFFE0E0),
       );
@@ -318,10 +353,10 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
         final overlayVisible =
             vm.isBusyLoading || vm.isSubmitting || vm.isCancelSubmitting;
         final overlayMessage = vm.isCancelSubmitting
-            ? 'Submitting cancellation...'
+            ? 'Submitting cancellation ...'
             : vm.isSubmitting
-            ? 'Submitting update...'
-            : 'Loading booking...';
+            ? 'Submitting update ...'
+            : 'Loading booking ...';
 
         if (widget.embedded) {
           return AppPageLoadingOverlay(
@@ -380,6 +415,9 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
         ? (showTaskCard ? 16.0 : 14.0)
         : 0.0;
     final actionButtonTopSpacing = showTaskCard ? 16.0 : 0.0;
+    final primaryActionLabel = vm.form?.buttonText?.trim().isNotEmpty == true
+        ? vm.form!.buttonText!.trim()
+        : 'Save';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -387,8 +425,14 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
         BookingFormHeaderCard(
           title: currentStatusLabel,
           subtitle: statusDescription,
+          paletteOverride: currentBooking.clientStatus?.trim() == 'delivered'
+              ? _workflowDeliveredPalette
+              : null,
           backgroundColor: terminalPalette?.backgroundColor,
           borderColor: terminalPalette?.borderColor,
+          bodyColor: currentBooking.clientStatus?.trim() == 'delivered'
+              ? _workflowDeliveredPalette.surface
+              : null,
           titleColor: terminalPalette?.titleColor,
           subtitleColor: terminalPalette?.subtitleColor,
         ),
@@ -432,6 +476,8 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
               title: vm.form?.buttonText?.trim().isNotEmpty == true
                   ? vm.form!.buttonText!.trim()
                   : 'Complete Booking Step',
+              buttonText: vm.form?.buttonText?.trim(),
+              currentStatusKey: currentBooking.clientStatus,
               preferredScrollController: _preferredScrollController(),
               blockedMessage: vm.blockedMessage,
               fields: vm.fields,
@@ -474,9 +520,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                               return;
                             }
                             final actionLabel =
-                                vm.form?.buttonText?.trim().isNotEmpty == true
-                                ? vm.form!.buttonText!.trim()
-                                : 'Save';
+                                primaryActionLabel;
                             final confirmed = await showAdminActionConfirmation(
                               context,
                               title: 'Confirm Action',
@@ -511,7 +555,11 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                           },
                     style: FilledButton.styleFrom(
                       minimumSize: const Size(0, 52),
-                      backgroundColor: AppColors.primaryColor,
+                      backgroundColor: _workflowResolvedActionColor(
+                        title: vm.form?.statusText?.trim(),
+                        buttonText: primaryActionLabel,
+                        currentStatusKey: currentBooking.clientStatus,
+                      ),
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14),
@@ -519,10 +567,8 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                     ),
                     child: Text(
                       vm.isSubmitting
-                          ? 'Saving...'
-                          : (vm.form?.buttonText?.trim().isNotEmpty == true
-                                ? vm.form!.buttonText!.trim()
-                                : 'Save'),
+                          ? 'Saving ...'
+                          : primaryActionLabel,
                     ),
                   ),
                 ),
@@ -539,6 +585,13 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                             _unfocusWithoutScroll(context);
                             vm.clearForm();
                           },
+                    style: TextButton.styleFrom(
+                      foregroundColor: _workflowResolvedActionColor(
+                        title: vm.form?.statusText?.trim(),
+                        buttonText: primaryActionLabel,
+                        currentStatusKey: currentBooking.clientStatus,
+                      ),
+                    ),
                     child: const Text('Clear Form'),
                   ),
                 ),
@@ -641,6 +694,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                 : (vm.cancelForm?.buttonText?.trim().isNotEmpty == true
                       ? vm.cancelForm!.buttonText!.trim()
                       : 'Cancellation'),
+            buttonText: vm.cancelForm?.buttonText?.trim(),
             preferredScrollController: _preferredScrollController(),
             blockedMessage: null,
             fields: vm.cancelFields,
@@ -711,7 +765,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                           },
                     style: FilledButton.styleFrom(
                       minimumSize: const Size(0, 52),
-                      backgroundColor: const Color(0xFFC93B3B),
+                      backgroundColor: AppColors.dangerStrong,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14),
@@ -719,7 +773,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                     ),
                     child: Text(
                       vm.isCancelSubmitting
-                          ? 'Saving...'
+                          ? 'Saving ...'
                           : (vm.cancelForm?.buttonText?.trim().isNotEmpty ==
                                     true
                                 ? vm.cancelForm!.buttonText!.trim()
@@ -731,16 +785,19 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
               final clearButton = GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTapDown: (_) => _unfocusWithoutScroll(context),
-                child: TextButton(
-                  onPressed: vm.isCancelSubmitting
-                      ? null
-                      : () {
-                          _unfocusWithoutScroll(context);
-                          vm.clearCancelForm();
-                        },
-                  child: const Text('Clear Form'),
+              child: TextButton(
+                onPressed: vm.isCancelSubmitting
+                    ? null
+                    : () {
+                        _unfocusWithoutScroll(context);
+                        vm.clearCancelForm();
+                      },
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.dangerStrong,
                 ),
-              );
+                child: const Text('Clear Form'),
+              ),
+            );
               final useStackedLayout =
                   vm.cancelFields.isNotEmpty && constraints.maxWidth < 260;
 
@@ -952,22 +1009,33 @@ class _WorkflowInteractiveFormSectionState
           BookingFormHeaderCard(
             title: resolvedTitle,
             subtitle: resolvedSubtitle,
+            buttonText: form.buttonText,
+            paletteOverride: _workflowResolvedPalette(
+              title: resolvedTitle,
+              buttonText: form.buttonText,
+              currentStatusKey: form.currentStatusKey,
+            ),
             backgroundColor: terminalPalette?.backgroundColor,
             borderColor: terminalPalette?.borderColor,
+            bodyColor: form.currentStatusKey?.trim() == 'delivered'
+                ? _workflowDeliveredPalette.surface
+                : null,
             titleColor: terminalPalette?.titleColor,
             subtitleColor: terminalPalette?.subtitleColor,
             showRequiredLegend: fields.any((field) => field.required == true),
             message: blockedMessage,
-            messageBackgroundColor: const Color(0xFFFFF6F6),
-            messageBorderColor: const Color(0xFFFFD2D2),
+            messageBackgroundColor: AppColors.dangerSurface,
+            messageBorderColor: AppColors.dangerBorder,
             messageIcon: Icons.block_rounded,
-            messageIconColor: const Color(0xFFC93B3B),
+            messageIconColor: AppColors.dangerStrong,
             messageTextColor: AppColors.textPrimary,
           ),
         const SizedBox(height: 14),
         _WorkflowTaskCard(
           vm: vm,
           title: resolvedTitle,
+          buttonText: form.buttonText?.trim(),
+          currentStatusKey: form.currentStatusKey,
           preferredScrollController: widget.preferredScrollController,
           blockedMessage: blockedMessage,
           fields: fields,
@@ -1080,14 +1148,18 @@ class _WorkflowInteractiveFormSectionState
                   style: FilledButton.styleFrom(
                     minimumSize: const Size(0, 52),
                     backgroundColor: widget.isDanger
-                        ? const Color(0xFFC93B3B)
-                        : AppColors.primaryColor,
+                        ? AppColors.dangerStrong
+                        : _workflowResolvedActionColor(
+                            title: resolvedTitle,
+                            buttonText: actionLabel,
+                            currentStatusKey: form.currentStatusKey,
+                          ),
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  child: Text(_isSubmitting ? 'Saving...' : actionLabel),
+                  child: Text(_isSubmitting ? 'Saving ...' : actionLabel),
                 ),
               ),
             );
@@ -1105,6 +1177,15 @@ class _WorkflowInteractiveFormSectionState
                           _resetTick += 1;
                         });
                       },
+                style: TextButton.styleFrom(
+                  foregroundColor: widget.isDanger
+                      ? AppColors.dangerStrong
+                      : _workflowResolvedActionColor(
+                          title: resolvedTitle,
+                          buttonText: actionLabel,
+                          currentStatusKey: form.currentStatusKey,
+                        ),
+                ),
                 child: const Text('Clear Form'),
               ),
             );
@@ -1155,6 +1236,8 @@ class _WorkflowTaskCard extends StatelessWidget {
   const _WorkflowTaskCard({
     required this.vm,
     required this.title,
+    this.buttonText,
+    this.currentStatusKey,
     required this.preferredScrollController,
     required this.blockedMessage,
     required this.fields,
@@ -1167,6 +1250,8 @@ class _WorkflowTaskCard extends StatelessWidget {
 
   final BookingWorkflowViewModel vm;
   final String title;
+  final String? buttonText;
+  final String? currentStatusKey;
   final ScrollController? preferredScrollController;
   final String? blockedMessage;
   final List<StatusField> fields;
@@ -1178,6 +1263,11 @@ class _WorkflowTaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = _workflowResolvedPalette(
+      title: title,
+      buttonText: buttonText,
+      currentStatusKey: currentStatusKey,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1185,7 +1275,7 @@ class _WorkflowTaskCard extends StatelessWidget {
           Text(
             blockedMessage!,
             style: const TextStyle(
-              color: Color(0xFFC93B3B),
+              color: AppColors.dangerStrong,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -1199,6 +1289,10 @@ class _WorkflowTaskCard extends StatelessWidget {
             child: _WorkflowFieldCard(
               key: ValueKey('${field.key}:$resetTick'),
               vm: vm,
+              formTitle: title,
+              formButtonText: buttonText,
+              formStatusKey: currentStatusKey,
+              palette: palette,
               preferredScrollController: preferredScrollController,
               field: field,
               initialValue: answers[field.key],
@@ -1232,6 +1326,7 @@ class _WorkflowTaskCard extends StatelessWidget {
               ),
               _WorkflowAddFieldButton(
                 availableFields: vm.availableFieldsForSelection,
+                accentColor: palette.accent,
                 onSelected: vm.addExistingField,
                 onCreateNew: () => _openFieldEditor(
                   context,
@@ -1253,6 +1348,9 @@ class _WorkflowTaskCard extends StatelessWidget {
             return Padding(
               padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
               child: _WorkflowRemovableFieldCard(
+                formTitle: title,
+                formButtonText: buttonText,
+                formStatusKey: currentStatusKey,
                 preferredScrollController: preferredScrollController,
                 field: field,
                 errorText: errors[fieldKey],
@@ -1319,8 +1417,8 @@ class _WorkflowAlertHeaderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BookingFormTitleCardShell(
-      stripColor: AppColors.primaryColor,
-      borderColor: AppColors.primaryBorder,
+      stripColor: AppColors.dangerStrong,
+      borderColor: AppColors.dangerBorder,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1347,14 +1445,14 @@ class _WorkflowAlertHeaderCard extends StatelessWidget {
             Container(
               width: double.infinity,
               height: 1,
-              color: AppColors.primaryBorder,
+              color: AppColors.dangerBorder,
             ),
             const SizedBox(height: 14),
             const Text(
               '* indicates required input',
               style: TextStyle(
-                color: AppColors.primaryColor,
-                fontSize: 12,
+                color: AppColors.dangerStrong,
+                fontSize: 14,
                 fontWeight: FontWeight.w400,
                 height: 1.3,
               ),
@@ -1371,11 +1469,13 @@ class _WorkflowAddFieldButton extends StatelessWidget {
     required this.availableFields,
     required this.onSelected,
     required this.onCreateNew,
+    this.accentColor = AppColors.primaryColor,
   });
 
   final List<StatusField> availableFields;
   final ValueChanged<String> onSelected;
   final VoidCallback onCreateNew;
+  final Color accentColor;
 
   @override
   Widget build(BuildContext context) {
@@ -1404,25 +1504,29 @@ class _WorkflowAddFieldButton extends StatelessWidget {
         ),
         if (availableFields.isNotEmpty)
           const PopupMenuDivider(height: 1, thickness: 1),
-        const PopupMenuItem<String>(
+        PopupMenuItem<String>(
           value: '__create_new_field__',
           child: Text(
             'Create New Field',
             style: TextStyle(
-              color: AppColors.primaryColor,
+              color: accentColor,
               fontWeight: FontWeight.w700,
               height: 1.2,
             ),
           ),
         ),
       ],
-      child: const _WorkflowInlineAddButton(),
+      child: _WorkflowInlineAddButton(accentColor: accentColor),
     );
   }
 }
 
 class _WorkflowInlineAddButton extends StatelessWidget {
-  const _WorkflowInlineAddButton();
+  const _WorkflowInlineAddButton({
+    this.accentColor = AppColors.primaryColor,
+  });
+
+  final Color accentColor;
 
   @override
   Widget build(BuildContext context) {
@@ -1431,7 +1535,7 @@ class _WorkflowInlineAddButton extends StatelessWidget {
       height: 32,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: AppColors.primaryColor,
+          color: accentColor,
           borderRadius: const BorderRadius.all(Radius.circular(1000)),
         ),
         child: const Center(
@@ -1445,6 +1549,9 @@ class _WorkflowInlineAddButton extends StatelessWidget {
 class _WorkflowRemovableFieldCard extends StatelessWidget {
   const _WorkflowRemovableFieldCard({
     required this.vm,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
     required this.preferredScrollController,
     required this.field,
     required this.initialValue,
@@ -1455,6 +1562,9 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
   });
 
   final BookingWorkflowViewModel vm;
+  final String formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final ScrollController? preferredScrollController;
   final StatusField field;
   final dynamic initialValue;
@@ -1465,8 +1575,22 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = _workflowResolvedPalette(
+      title: formTitle,
+      buttonText: formButtonText,
+      currentStatusKey: formStatusKey,
+    );
+    final editColor = _workflowResolvedActionColor(
+      title: formTitle,
+      buttonText: formButtonText,
+      currentStatusKey: formStatusKey,
+    );
     return _WorkflowFieldCard(
       vm: vm,
+      formTitle: formTitle,
+      formButtonText: formButtonText,
+      formStatusKey: formStatusKey,
+      palette: palette,
       preferredScrollController: preferredScrollController,
       field: field,
       initialValue: initialValue,
@@ -1477,13 +1601,13 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
           IconButton(
             onPressed: onEdit,
             icon: const Icon(Icons.edit_rounded, size: 18),
-            color: AppColors.primaryColor,
+            color: editColor,
             splashRadius: 20,
           ),
           IconButton(
             onPressed: onRemove,
             icon: const Icon(Icons.close_rounded, size: 18),
-            color: const Color(0xFFC93B3B),
+            color: AppColors.dangerStrong,
             splashRadius: 20,
           ),
         ],
@@ -1497,6 +1621,10 @@ class _WorkflowFieldCard extends StatelessWidget {
   const _WorkflowFieldCard({
     super.key,
     required this.vm,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
+    required this.palette,
     required this.preferredScrollController,
     required this.field,
     required this.initialValue,
@@ -1507,6 +1635,10 @@ class _WorkflowFieldCard extends StatelessWidget {
   });
 
   final BookingWorkflowViewModel vm;
+  final String formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
+  final BookingFormPalette palette;
   final ScrollController? preferredScrollController;
   final StatusField field;
   final dynamic initialValue;
@@ -1533,12 +1665,20 @@ class _WorkflowFieldCard extends StatelessWidget {
         fieldKey == 'helper_id' ||
         optionSourceKey == statusFieldOptionSourceHelpers;
     final usesDropdownCard = type == 'dropdown' || usesRoleDropdown;
+    final editColor = _workflowResolvedActionColor(
+      title: formTitle,
+      buttonText: formButtonText,
+      currentStatusKey: formStatusKey,
+    );
 
     return BookingFormFieldCard(
       title: effectiveTitle,
+      buttonText: formButtonText,
+      paletteOverride: palette,
       required: field.required ?? false,
       subtitle: subtitle,
       instructions: instructions,
+      containerColor: palette.surface,
       containerPadding: usesDropdownCard
           ? const EdgeInsets.fromLTRB(18, 18, 18, 4)
           : const EdgeInsets.all(18),
@@ -1549,6 +1689,7 @@ class _WorkflowFieldCard extends StatelessWidget {
               : TextButton.icon(
                   onPressed: onEdit,
                   style: TextButton.styleFrom(
+                    foregroundColor: editColor,
                     padding: EdgeInsets.zero,
                     minimumSize: Size.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -1559,6 +1700,7 @@ class _WorkflowFieldCard extends StatelessWidget {
                 )),
       input: _buildFieldInput(
         context,
+        palette: palette,
         placeholder: placeholder,
         errorText: errorText,
       ),
@@ -1567,6 +1709,7 @@ class _WorkflowFieldCard extends StatelessWidget {
 
   Widget _buildFieldInput(
     BuildContext context, {
+    required BookingFormPalette palette,
     required String? placeholder,
     required String? errorText,
   }) {
@@ -1596,6 +1739,9 @@ class _WorkflowFieldCard extends StatelessWidget {
     switch (type) {
       case 'number':
         return _UnderlineTextField(
+          formTitle: formTitle,
+          formButtonText: formButtonText,
+          formStatusKey: formStatusKey,
           preferredScrollController: preferredScrollController,
           initialValue: initialValue?.toString(),
           keyboardType: TextInputType.number,
@@ -1605,6 +1751,9 @@ class _WorkflowFieldCard extends StatelessWidget {
         );
       case 'email':
         return _UnderlineTextField(
+          formTitle: formTitle,
+          formButtonText: formButtonText,
+          formStatusKey: formStatusKey,
           preferredScrollController: preferredScrollController,
           initialValue: initialValue?.toString(),
           keyboardType: TextInputType.emailAddress,
@@ -1614,6 +1763,9 @@ class _WorkflowFieldCard extends StatelessWidget {
         );
       case 'phone':
         return _UnderlineTextField(
+          formTitle: formTitle,
+          formButtonText: formButtonText,
+          formStatusKey: formStatusKey,
           preferredScrollController: preferredScrollController,
           initialValue: initialValue?.toString(),
           keyboardType: TextInputType.phone,
@@ -1624,6 +1776,9 @@ class _WorkflowFieldCard extends StatelessWidget {
         );
       case 'text':
         return _UnderlineTextField(
+          formTitle: formTitle,
+          formButtonText: formButtonText,
+          formStatusKey: formStatusKey,
           preferredScrollController: preferredScrollController,
           initialValue: initialValue?.toString(),
           hintText: placeholder,
@@ -1633,13 +1788,14 @@ class _WorkflowFieldCard extends StatelessWidget {
       case 'dropdown':
         return AdminDropdownFormField<String>(
           initialValue: initialValue?.toString(),
-          iconEnabledColor: AppColors.primaryColor,
+          iconEnabledColor: palette.accent,
           decoration: _bookingDropdownDecoration(
             placeholder?.trim().isNotEmpty == true
                 ? placeholder!
                 : (field.required ?? false)
                 ? 'Choose an option'
                 : 'Optional',
+            palette,
           ).copyWith(errorText: errorText),
           style: adminDropdownDisplayTextStyle,
           items: field.options
@@ -1678,6 +1834,9 @@ class _WorkflowFieldCard extends StatelessWidget {
         );
       case 'date':
         return _SelectButton(
+          formTitle: formTitle,
+          formButtonText: formButtonText,
+          formStatusKey: formStatusKey,
           label: initialValue?.toString() ?? (placeholder ?? 'Select Date'),
           isPlaceholder: initialValue == null,
           icon: Icons.calendar_today_rounded,
@@ -1696,6 +1855,9 @@ class _WorkflowFieldCard extends StatelessWidget {
         );
       case 'time':
         return _SelectButton(
+          formTitle: formTitle,
+          formButtonText: formButtonText,
+          formStatusKey: formStatusKey,
           label: initialValue?.toString() ?? (placeholder ?? 'Select Time'),
           isPlaceholder: initialValue == null,
           icon: Icons.schedule_rounded,
@@ -1712,12 +1874,18 @@ class _WorkflowFieldCard extends StatelessWidget {
         );
       case 'photo':
         return _PhotoField(
+          formTitle: formTitle,
+          formButtonText: formButtonText,
+          formStatusKey: formStatusKey,
           initialValue: initialValue,
           errorText: errorText,
           onChanged: onChanged,
         );
       default:
         return _UnderlineTextField(
+          formTitle: formTitle,
+          formButtonText: formButtonText,
+          formStatusKey: formStatusKey,
           preferredScrollController: preferredScrollController,
           initialValue: initialValue?.toString(),
           hintText: placeholder,
@@ -1732,6 +1900,10 @@ class _WorkflowFieldCard extends StatelessWidget {
     required String? placeholder,
     required String? errorText,
   }) {
+    final palette = bookingFormResolvedPalette(
+      title: formTitle,
+      buttonText: formButtonText,
+    );
     final users = vm.roleUsers(role);
     final selectedUserId = initialValue?.toString().trim();
     final items = <DropdownMenuItem<String>>[];
@@ -1771,11 +1943,12 @@ class _WorkflowFieldCard extends StatelessWidget {
 
     return AdminDropdownFormField<String>(
       initialValue: initialValue?.toString(),
-      iconEnabledColor: AppColors.primaryColor,
+      iconEnabledColor: palette.accent,
       decoration: _bookingDropdownDecoration(
         placeholder?.trim().isNotEmpty == true
             ? placeholder!.trim()
             : 'Select ${role == 'driver' ? 'Driver' : 'Helper'}',
+        palette,
       ).copyWith(errorText: errorText),
       style: adminDropdownDisplayTextStyle,
       items: items,
@@ -1786,8 +1959,28 @@ class _WorkflowFieldCard extends StatelessWidget {
     );
   }
 
-  InputDecoration _bookingDropdownDecoration(String hintText) {
+  InputDecoration _bookingDropdownDecoration(
+    String hintText,
+    BookingFormPalette palette,
+  ) {
     return adminPlainDropdownDecoration(hintText, radius: 16).copyWith(
+      fillColor: palette.surface,
+      hintStyle: TextStyle(
+        color: palette.accentMuted,
+        fontWeight: FontWeight.w400,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: palette.border),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: palette.accent),
+      ),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: palette.border),
+      ),
       constraints: const BoxConstraints(minHeight: 60),
       contentPadding: const EdgeInsets.fromLTRB(14, 18, 14, 12),
     );
@@ -1955,6 +2148,9 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
 class _UnderlineTextField extends StatefulWidget {
   const _UnderlineTextField({
     required this.onChanged,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
     this.preferredScrollController,
     this.initialValue,
     this.keyboardType,
@@ -1964,6 +2160,9 @@ class _UnderlineTextField extends StatefulWidget {
   });
 
   final String? initialValue;
+  final String formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final ScrollController? preferredScrollController;
   final TextInputType? keyboardType;
   final String? hintText;
@@ -2018,6 +2217,11 @@ class _UnderlineTextFieldState extends State<_UnderlineTextField> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = _workflowResolvedPalette(
+      title: widget.formTitle,
+      buttonText: widget.formButtonText,
+      currentStatusKey: widget.formStatusKey,
+    );
     return TextField(
       controller: _controller,
       keyboardType: widget.keyboardType,
@@ -2029,21 +2233,21 @@ class _UnderlineTextFieldState extends State<_UnderlineTextField> {
         hintText: widget.hintText,
         isDense: true,
         hintStyle: TextStyle(
-          color: AppColors.primaryColor.withValues(alpha: 0.72),
+          color: palette.accentMuted,
           fontWeight: FontWeight.w500,
         ),
         contentPadding: const EdgeInsets.only(top: 14, bottom: 10),
-        enabledBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: AppColors.primaryBorder),
+        enabledBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: palette.border),
         ),
-        focusedBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: AppColors.primaryColor, width: 2),
+        focusedBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: palette.accent, width: 2),
         ),
         errorBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Colors.red),
+          borderSide: BorderSide(color: AppColors.danger),
         ),
         focusedErrorBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Colors.red, width: 2),
+          borderSide: BorderSide(color: AppColors.danger, width: 2),
         ),
         errorText: widget.errorText,
       ),
@@ -2053,12 +2257,18 @@ class _UnderlineTextFieldState extends State<_UnderlineTextField> {
 
 class _SelectButton extends StatelessWidget {
   const _SelectButton({
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
     required this.label,
     required this.isPlaceholder,
     required this.icon,
     required this.onPressed,
   });
 
+  final String formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final String label;
   final bool isPlaceholder;
   final IconData icon;
@@ -2066,14 +2276,19 @@ class _SelectButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = _workflowResolvedPalette(
+      title: formTitle,
+      buttonText: formButtonText,
+      currentStatusKey: formStatusKey,
+    );
     return OutlinedButton.icon(
       onPressed: onPressed,
-      icon: Icon(icon, size: 18),
+      icon: Icon(icon, size: 18, color: palette.accent),
       label: Text(
         label,
         style: TextStyle(
           color: isPlaceholder
-              ? AppColors.primaryColor.withValues(alpha: 0.72)
+              ? palette.accentMuted
               : AppColors.textPrimary,
           fontWeight: FontWeight.w500,
         ),
@@ -2082,7 +2297,7 @@ class _SelectButton extends StatelessWidget {
         minimumSize: const Size(double.infinity, 52),
         alignment: Alignment.centerLeft,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        side: const BorderSide(color: AppColors.primaryBorder),
+        side: BorderSide(color: palette.border),
       ),
     );
   }
@@ -2090,11 +2305,17 @@ class _SelectButton extends StatelessWidget {
 
 class _PhotoField extends StatefulWidget {
   const _PhotoField({
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
     required this.initialValue,
     required this.onChanged,
     this.errorText,
   });
 
+  final String formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
   final String? errorText;
@@ -2109,6 +2330,11 @@ class _PhotoFieldState extends State<_PhotoField> {
     return BookingPhotoFieldInput(
       initialValue: widget.initialValue,
       errorText: widget.errorText,
+      palette: _workflowResolvedPalette(
+        title: widget.formTitle,
+        buttonText: widget.formButtonText,
+        currentStatusKey: widget.formStatusKey,
+      ),
       onChanged: widget.onChanged,
     );
   }

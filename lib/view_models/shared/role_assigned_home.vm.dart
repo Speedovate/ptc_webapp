@@ -54,7 +54,7 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   String busyMessage = 'Loading, please wait ...';
 
   Future<void> load(UserModel user) async {
-    busyMessage = 'Loading assigned bookings...';
+    busyMessage = 'Loading assigned bookings ...';
     setBusy(true);
     errorMessage = null;
     try {
@@ -140,8 +140,8 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       return null;
     }
     busyMessage = isOnline
-        ? 'Turning availability on...'
-        : 'Turning availability off...';
+        ? 'Turning availability on ...'
+        : 'Turning availability off ...';
     setBusy(true);
     try {
       final savedUser = await _authRepository.saveUser(

@@ -32,6 +32,7 @@ class _RegisterUploadResult {
 }
 
 class _AuthViewState extends State<AuthView> {
+  static const double _authFieldSpacing = 6;
   final _loginFormKey = GlobalKey<FormState>();
   final _registerFormKey = GlobalKey<FormState>();
 
@@ -250,7 +251,9 @@ class _AuthViewState extends State<AuthView> {
                                             height: 56,
                                             decoration: BoxDecoration(
                                               color: AppColors.primaryColor,
-                                              shape: BoxShape.circle,
+                                              borderRadius: BorderRadius.all(
+                                                Radius.circular(18),
+                                              ),
                                               boxShadow: const [
                                                 BoxShadow(
                                                   color: Color(0x1F5B34D6),
@@ -265,7 +268,7 @@ class _AuthViewState extends State<AuthView> {
                                               size: 28,
                                             ),
                                           ),
-                                          const SizedBox(width: 16),
+                                          const SizedBox(width: 12),
                                           Expanded(
                                             child: Column(
                                               mainAxisAlignment:
@@ -333,7 +336,9 @@ class _AuthViewState extends State<AuthView> {
                                                           TextInputType
                                                               .emailAddress,
                                                     ),
-                                                    const SizedBox(height: 14),
+                                                    const SizedBox(
+                                                      height: _authFieldSpacing,
+                                                    ),
                                                     _AuthTextField(
                                                       controller:
                                                           _loginPasswordController,
@@ -351,7 +356,7 @@ class _AuthViewState extends State<AuthView> {
                                                 height: 220,
                                                 child: AppPageLoading(
                                                   message:
-                                                      'Loading vehicle types...',
+                                                      'Loading vehicle types ...',
                                                   compact: true,
                                                   padding: EdgeInsets.zero,
                                                 ),
@@ -381,7 +386,7 @@ class _AuthViewState extends State<AuthView> {
                                                     if (_registerRole ==
                                                         'driver') ...[
                                                       const SizedBox(
-                                                        height: 14,
+                                                        height: _authFieldSpacing,
                                                       ),
                                                       _AuthDropdownField(
                                                         label: 'Vehicle Type',
@@ -434,7 +439,7 @@ class _AuthViewState extends State<AuthView> {
                                                         },
                                                       ),
                                                     ],
-                                                    const SizedBox(height: 14),
+                                                    const SizedBox(height: _authFieldSpacing),
                                                     _AuthTextField(
                                                       controller:
                                                           _registerEmailController,
@@ -443,7 +448,7 @@ class _AuthViewState extends State<AuthView> {
                                                           TextInputType
                                                               .emailAddress,
                                                     ),
-                                                    const SizedBox(height: 14),
+                                                    const SizedBox(height: _authFieldSpacing),
                                                     _AuthTextField(
                                                       controller:
                                                           _registerNameController,
@@ -455,7 +460,7 @@ class _AuthViewState extends State<AuthView> {
                                                         NameCaseTextInputFormatter(),
                                                       ],
                                                     ),
-                                                    const SizedBox(height: 14),
+                                                    const SizedBox(height: _authFieldSpacing),
                                                     _AuthTextField(
                                                       controller:
                                                           _registerPhoneController,
@@ -469,7 +474,7 @@ class _AuthViewState extends State<AuthView> {
                                                     if (_registerRole ==
                                                         'driver') ...[
                                                       const SizedBox(
-                                                        height: 14,
+                                                        height: _authFieldSpacing,
                                                       ),
                                                       _AuthActionField(
                                                         label: 'License',
@@ -480,7 +485,7 @@ class _AuthViewState extends State<AuthView> {
                                                             _pickRegisterLicensePhoto,
                                                       ),
                                                       const SizedBox(
-                                                        height: 14,
+                                                        height: _authFieldSpacing,
                                                       ),
                                                       _AuthTextField(
                                                         controller:
@@ -493,7 +498,7 @@ class _AuthViewState extends State<AuthView> {
                                                             ),
                                                       ),
                                                       const SizedBox(
-                                                        height: 14,
+                                                        height: _authFieldSpacing,
                                                       ),
                                                       _AuthTextField(
                                                         controller:
@@ -506,7 +511,7 @@ class _AuthViewState extends State<AuthView> {
                                                             ),
                                                       ),
                                                     ],
-                                                    const SizedBox(height: 14),
+                                                    const SizedBox(height: _authFieldSpacing),
                                                     _AuthTextField(
                                                       controller:
                                                           _registerPasswordController,
@@ -643,7 +648,7 @@ class _AuthViewState extends State<AuthView> {
         if (!mounted) {
           return;
         }
-        await _showAuthFlowStage('Signing you in...');
+        await _showAuthFlowStage('Signing you in ...');
         final user = await vm.login(
           identifier: _loginEmailController.text.trim(),
           password: _loginPasswordController.text,
@@ -684,7 +689,7 @@ class _AuthViewState extends State<AuthView> {
       final normalizedPhone =
           normalizePhilippinePhone(_registerPhoneController.text) ??
           _registerPhoneController.text.trim();
-      await _showAuthFlowStage('Creating your account...');
+      await _showAuthFlowStage('Creating your account ...');
       final user = await vm.register(
         _registerRole == 'driver'
             ? DriverModel(
@@ -714,7 +719,7 @@ class _AuthViewState extends State<AuthView> {
         debugPrint(
           '[AUTH][REGISTER] Firestore user created id=${user.id} role=${user.role} active=${user.isActive} photo=${user.photo}',
         );
-        await _showAuthFlowStage('Uploading your photo...');
+        await _showAuthFlowStage('Uploading your photo ...');
         final uploadResult = await _completeRegisterImageUploads(user);
         final uploadedUser = uploadResult.user;
         debugPrint(
@@ -734,13 +739,13 @@ class _AuthViewState extends State<AuthView> {
             debugPrint('[AUTH][REGISTER] Widget unmounted after upload error');
             return;
           }
-          await _showAuthFlowStage('Signing you in...');
+          await _showAuthFlowStage('Signing you in ...');
         }
         if (uploadedUser.isActive ?? false) {
           debugPrint(
             '[AUTH][REGISTER] Active account, attempting auto login for ${_registerEmailController.text.trim()}',
           );
-          await _showAuthFlowStage('Signing you in...');
+          await _showAuthFlowStage('Signing you in ...');
           final authenticatedUser = await vm.login(
             identifier: _registerEmailController.text.trim(),
             password: _registerPasswordController.text,

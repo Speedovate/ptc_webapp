@@ -54,7 +54,6 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
     super.initState();
     _ownsFocusNode = widget.focusNode == null;
     _focusNode = widget.focusNode ?? FocusNode();
-    _focusNode.canRequestFocus = false;
   }
 
   @override
@@ -98,37 +97,32 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
         ? Text(hintText!, overflow: TextOverflow.ellipsis, style: hintStyle)
         : null;
     final disabledTapMessage = _disabledTapMessage(decoration, hasItems);
-    final dropdown = Focus(
-      canRequestFocus: false,
-      skipTraversal: true,
-      descendantsAreFocusable: false,
-      child: DropdownButtonFormField<T>(
-        initialValue: widget.initialValue,
-        focusNode: _focusNode,
-        autofocus: false,
-        isDense: true,
-        iconEnabledColor: widget.iconEnabledColor,
-        style: widget.style,
-        decoration: decoration.copyWith(
-          fillColor: _isHovered || _isPressed
-              ? activeFillColor
-              : (decoration.fillColor ?? AppColors.primarySurface),
-          contentPadding: contentPadding,
-          focusedBorder: neutralBorder,
-          focusColor: Colors.transparent,
-          hoverColor: Colors.transparent,
-        ),
-        hint: hintWidget,
-        disabledHint: hintWidget,
-        items: widget.items,
-        isExpanded: widget.isExpanded,
-        onChanged: isDisabled
-            ? null
-            : (value) {
-                widget.onChanged?.call(value);
-                _focusNode.unfocus();
-              },
+    final dropdown = DropdownButtonFormField<T>(
+      initialValue: widget.initialValue,
+      focusNode: _focusNode,
+      autofocus: false,
+      isDense: true,
+      iconEnabledColor: widget.iconEnabledColor,
+      style: widget.style,
+      decoration: decoration.copyWith(
+        fillColor: _isHovered || _isPressed
+            ? activeFillColor
+            : (decoration.fillColor ?? AppColors.primarySurface),
+        contentPadding: contentPadding,
+        focusedBorder: neutralBorder,
+        focusColor: Colors.transparent,
+        hoverColor: Colors.transparent,
       ),
+      hint: hintWidget,
+      disabledHint: hintWidget,
+      items: widget.items,
+      isExpanded: widget.isExpanded,
+      onChanged: isDisabled
+          ? null
+          : (value) {
+              widget.onChanged?.call(value);
+              _focusNode.unfocus();
+            },
     );
 
     final interactiveDropdown = MouseRegion(

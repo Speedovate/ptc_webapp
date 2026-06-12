@@ -73,7 +73,7 @@ class MyApp extends StatelessWidget {
           onSecondary: Colors.white,
           surface: Colors.white,
           onSurface: AppColors.textPrimary,
-          error: const Color(0xFFD94B4B),
+          error: AppColors.danger,
           onError: Colors.white,
           outline: AppColors.primaryBorder,
         );

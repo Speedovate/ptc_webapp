@@ -47,7 +47,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   String get busyMessage => _busyMessage;
 
   Future<void> load() async {
-    _busyMessage = 'Loading vehicle makes...';
+    _busyMessage = 'Loading vehicle makes ...';
     setBusy(true);
     _errorMessage = null;
     try {
@@ -75,7 +75,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   }
 
   Future<VehicleMake> saveMake(VehicleMake make) async {
-    _busyMessage = 'Saving vehicle make...';
+    _busyMessage = 'Saving vehicle make ...';
     setBusy(true);
     try {
       final saved = await _repository.saveMake(make);
@@ -99,7 +99,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
     if (makeId == null || makeId.isEmpty) {
       return;
     }
-    _busyMessage = 'Deleting vehicle make...';
+    _busyMessage = 'Deleting vehicle make ...';
     setBusy(true);
     try {
       await _repository.deleteMake(makeId);
@@ -113,8 +113,8 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
 
   Future<VehicleMake> setMakeActive(VehicleMake make, bool isActive) {
     _busyMessage = isActive
-        ? 'Activating vehicle make...'
-        : 'Deactivating vehicle make...';
+        ? 'Activating vehicle make ...'
+        : 'Deactivating vehicle make ...';
     return saveMake(
       make.copyWith(isActive: isActive, updatedAt: DateTime.now()),
     );

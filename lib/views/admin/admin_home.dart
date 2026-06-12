@@ -122,7 +122,7 @@ class _AdminHomeState extends State<AdminHome> {
           sidebar: _buildSidebar(vm, isCompact: isCompact),
           body: AppPageLoadingOverlay(
             isVisible: overlayVisible,
-            message: 'Uploading profile photo...',
+            message: 'Uploading profile photo ...',
             child: KeyedSubtree(
               key: ValueKey(
                 '${vm.selectedSection}:${vm.selectedSettingsSection}',
