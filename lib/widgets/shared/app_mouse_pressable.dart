@@ -8,6 +8,7 @@ class AppMousePressable extends StatefulWidget {
     this.borderRadius,
     this.behavior = HitTestBehavior.deferToChild,
     this.cursor = SystemMouseCursors.click,
+    this.enableVisualState = true,
   });
 
   final Widget child;
@@ -15,6 +16,7 @@ class AppMousePressable extends StatefulWidget {
   final BorderRadius? borderRadius;
   final HitTestBehavior behavior;
   final MouseCursor cursor;
+  final bool enableVisualState;
 
   @override
   State<AppMousePressable> createState() => _AppMousePressableState();
@@ -27,10 +29,11 @@ class _AppMousePressableState extends State<AppMousePressable> {
   @override
   Widget build(BuildContext context) {
     final hasAction = widget.onTap != null;
+    final trackVisualState = hasAction && widget.enableVisualState;
     return MouseRegion(
       cursor: hasAction ? widget.cursor : MouseCursor.defer,
-      onEnter: hasAction ? (_) => setState(() => _isHovered = true) : null,
-      onExit: hasAction
+      onEnter: trackVisualState ? (_) => setState(() => _isHovered = true) : null,
+      onExit: trackVisualState
           ? (_) => setState(() {
               _isHovered = false;
               _isPressed = false;
@@ -38,9 +41,9 @@ class _AppMousePressableState extends State<AppMousePressable> {
           : null,
       child: GestureDetector(
         behavior: widget.behavior,
-        onTapDown: hasAction ? (_) => setState(() => _isPressed = true) : null,
-        onTapUp: hasAction ? (_) => setState(() => _isPressed = false) : null,
-        onTapCancel: hasAction
+        onTapDown: trackVisualState ? (_) => setState(() => _isPressed = true) : null,
+        onTapUp: trackVisualState ? (_) => setState(() => _isPressed = false) : null,
+        onTapCancel: trackVisualState
             ? () => setState(() => _isPressed = false)
             : null,
         onTap: widget.onTap,

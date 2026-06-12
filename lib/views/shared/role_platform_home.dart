@@ -247,6 +247,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
         },
       ),
       RolePlatformSection.profile => ProfileView(
+        key: profileViewRefreshKey(_shellUser),
         user: _shellUser,
         isCurrentUserView: true,
         onLogout: widget.onLogout,
@@ -368,7 +369,7 @@ class _RoleAssignedHomeSection extends StatelessWidget {
                   AdminListItemCard(
                     padding: const EdgeInsets.all(24),
                     child: Text(
-                      'No active assigned bookings yet.',
+                      'No active assigned bookings now.',
                       style: TextStyle(
                         color: AppColors.primaryColor.withValues(alpha: 0.72),
                         fontWeight: FontWeight.w600,
@@ -385,8 +386,8 @@ class _RoleAssignedHomeSection extends StatelessWidget {
                             padding: EdgeInsets.only(
                               bottom:
                                   entry.key == vm.assignedBookings.length - 1
-                                      ? 0
-                                      : 12,
+                                  ? 0
+                                  : 12,
                             ),
                             child: BookingRecordCard(
                               booking: entry.value,

@@ -247,15 +247,13 @@ class _AdminUsersViewState extends State<AdminUsersView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Transform.translate(
-                    offset: const Offset(-12, 0),
-                    child: _UserDetailHeader(
-                      user: viewedUser,
-                      onBack: vm.closeUserView,
-                    ),
+                  _UserDetailHeader(
+                    user: viewedUser,
+                    onBack: vm.closeUserView,
                   ),
                   const SizedBox(height: 16),
                   ProfileView(
+                    key: profileViewRefreshKey(viewedUser),
                     user: viewedUser,
                     scrollable: false,
                     padding: const EdgeInsets.fromLTRB(0, 0, 0, 24),
@@ -286,19 +284,13 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                             }
                           },
                     quickActionLabel: isViewingCurrentUser ? null : 'Sign In',
-                    onEditPressed: () {
-                      vm.closeUserView();
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (!mounted) {
-                          return;
-                        }
-                        AdminUsersView.showEditUserDialog(
-                          context,
-                          vm,
-                          viewedUser,
-                          widget.onCurrentUserUpdated,
-                        );
-                      });
+                    onEditPressed: () async {
+                      await AdminUsersView.showEditUserDialog(
+                        context,
+                        vm,
+                        viewedUser,
+                        widget.onCurrentUserUpdated,
+                      );
                     },
                   ),
                 ],
@@ -1581,6 +1573,10 @@ class _UsersWideRow extends StatelessWidget {
                 photo: user.photo,
                 fallbackText: AdminUsersView.initials(user.name),
                 radius: 22,
+                enablePreview: true,
+                previewTitle: user.name?.trim().isNotEmpty == true
+                    ? '${user.name} Photo'
+                    : 'User Photo',
               ),
             ),
           ),
@@ -1820,6 +1816,10 @@ class _UsersResponsiveCard extends StatelessWidget {
                       photo: user.photo,
                       fallbackText: AdminUsersView.initials(user.name),
                       radius: 24,
+                      enablePreview: true,
+                      previewTitle: user.name?.trim().isNotEmpty == true
+                          ? '${user.name} Photo'
+                          : 'User Photo',
                     ),
                   ],
                 )
@@ -1831,6 +1831,10 @@ class _UsersResponsiveCard extends StatelessWidget {
                       photo: user.photo,
                       fallbackText: AdminUsersView.initials(user.name),
                       radius: 24,
+                      enablePreview: true,
+                      previewTitle: user.name?.trim().isNotEmpty == true
+                          ? '${user.name} Photo'
+                          : 'User Photo',
                     ),
                     if (showTopActionsRow) ...[
                       const Spacer(),
@@ -2113,19 +2117,34 @@ class _UserDetailHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        IconButton(
-          onPressed: onBack,
-          icon: const Icon(Icons.arrow_back_rounded),
-          color: AppColors.primaryColor,
-          splashRadius: 22,
-        ),
-        const SizedBox(width: 8),
         Expanded(
-          child: Text(
-            'User ${user.id ?? '-'}',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: AppColors.textPrimary,
-              fontWeight: FontWeight.w800,
+          child: Transform.translate(
+            offset: const Offset(-8, 0),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: onBack,
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  color: AppColors.primaryColor,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 40,
+                    minHeight: 40,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  splashRadius: 22,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'User ${user.id ?? '-'}',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

@@ -5,6 +5,7 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/widgets/shared/app_image_viewer.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 
@@ -253,7 +254,7 @@ class BookingRecordCard extends StatelessWidget {
       return const [];
     }
 
-    return outputs.entries
+    final sections = outputs.entries
         .where((entry) => entry.value is Map)
         .map((entry) {
           final raw = Map<String, dynamic>.from(entry.value as Map);
@@ -268,8 +269,24 @@ class BookingRecordCard extends StatelessWidget {
             submittedBy: raw['submitted_by']?.toString(),
           );
         })
-        .where((section) => section.fields.isNotEmpty)
         .toList();
+
+    sections.sort((a, b) {
+      final aSubmittedAt = a.submittedAt;
+      final bSubmittedAt = b.submittedAt;
+      if (aSubmittedAt != null && bSubmittedAt != null) {
+        return bSubmittedAt.compareTo(aSubmittedAt);
+      }
+      if (aSubmittedAt != null) {
+        return 1;
+      }
+      if (bSubmittedAt != null) {
+        return -1;
+      }
+      return b.statusKey.compareTo(a.statusKey);
+    });
+
+    return sections;
   }
 
   static String outputFieldDisplayValue(
@@ -583,44 +600,46 @@ class BookingStatusSubmissionsSection extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final columns = constraints.maxWidth >= 860
-                        ? 3
-                        : constraints.maxWidth >= 560
-                        ? 2
-                        : 1;
-                    final spacing = 12.0;
-                    final itemWidth =
-                        (constraints.maxWidth - (spacing * (columns - 1))) /
-                        columns;
-                    final items = [
-                      ...section.fields.entries.map(
-                        (field) => _BookingFieldData(
-                          label: _titleCase(field.key.replaceAll('_', ' ')),
-                          value: field.value,
+                if (section.fields.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns = constraints.maxWidth >= 860
+                          ? 3
+                          : constraints.maxWidth >= 560
+                          ? 2
+                          : 1;
+                      final spacing = 12.0;
+                      final itemWidth =
+                          (constraints.maxWidth - (spacing * (columns - 1))) /
+                          columns;
+                      final items = [
+                        ...section.fields.entries.map(
+                          (field) => _BookingFieldData(
+                            label: _titleCase(field.key.replaceAll('_', ' ')),
+                            value: field.value,
+                          ),
                         ),
-                      ),
-                    ];
+                      ];
 
-                    return Wrap(
-                      spacing: spacing,
-                      runSpacing: 10,
-                      children: items
-                          .map(
-                            (item) => SizedBox(
-                              width: itemWidth,
-                              child: _BookingFieldItem(
-                                label: item.label,
-                                value: item.value,
+                      return Wrap(
+                        spacing: spacing,
+                        runSpacing: 10,
+                        children: items
+                            .map(
+                              (item) => SizedBox(
+                                width: itemWidth,
+                                child: _BookingFieldItem(
+                                  label: item.label,
+                                  value: item.value,
+                                ),
                               ),
-                            ),
-                          )
-                          .toList(),
-                    );
-                  },
-                ),
+                            )
+                            .toList(),
+                      );
+                    },
+                  ),
+                ],
               ],
             ),
           ),
@@ -824,50 +843,11 @@ class _BookingPhotoValue extends StatelessWidget {
           AppMousePressable(
             borderRadius: BorderRadius.circular(999),
             onTap: () {
-              showDialog<void>(
-                context: context,
-                builder: (dialogContext) => Dialog(
-                  insetPadding: const EdgeInsets.all(24),
-                  backgroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          fileName,
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 420),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(16),
-                            child: previewBytes != null
-                                ? Image.memory(
-                                    previewBytes!,
-                                    fit: BoxFit.fitHeight,
-                                  )
-                                : Image.network(
-                                    previewUrl!,
-                                    fit: BoxFit.fitHeight,
-                                    webHtmlElementStrategy:
-                                        WebHtmlElementStrategy.prefer,
-                                  ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+              showAppImageViewer(
+                context,
+                title: fileName,
+                memoryBytes: previewBytes,
+                imageUrl: previewUrl,
               );
             },
             child: Builder(

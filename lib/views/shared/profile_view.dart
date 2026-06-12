@@ -5,10 +5,16 @@ import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_make.dart';
+import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
+import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/widgets/admin_modal_shell.dart';
+import 'package:webapp/widgets/shared/app_cached_network_image.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
+import 'package:webapp/widgets/shared/app_image_viewer.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
+import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
@@ -36,6 +42,21 @@ class ProfilePendingProfileChanges {
   bool get hasChanges => photoUpload != null || licenseUpload != null;
 }
 
+ValueKey<String> profileViewRefreshKey(UserModel user) {
+  return ValueKey<String>(
+    [
+      user.id ?? '',
+      user.updatedAt?.toIso8601String() ?? '',
+      user.name ?? '',
+      user.email ?? '',
+      user.phone ?? '',
+      user.photo ?? '',
+      user.asDriver?.license ?? '',
+      user.role ?? '',
+    ].join('|'),
+  );
+}
+
 class ProfileView extends StatefulWidget {
   const ProfileView({
     super.key,
@@ -53,6 +74,7 @@ class ProfileView extends StatefulWidget {
     this.quickActionTextColor,
     this.quickActionBorderColor,
     this.vehicleCatalogRepository,
+    this.authRepository,
   });
 
   final UserModel user;
@@ -70,6 +92,7 @@ class ProfileView extends StatefulWidget {
   final Color? quickActionTextColor;
   final Color? quickActionBorderColor;
   final VehicleCatalogRepository? vehicleCatalogRepository;
+  final AuthRepository? authRepository;
 
   @override
   State<ProfileView> createState() => _ProfileViewState();
@@ -85,6 +108,8 @@ class _ProfileViewState extends State<ProfileView> {
 
   VehicleCatalogRepository get _vehicleCatalogRepository =>
       widget.vehicleCatalogRepository ?? VehicleRequest.instance;
+  AuthRepository get _authRepository =>
+      widget.authRepository ?? AuthRequest.instance;
 
   @override
   void initState() {
@@ -252,6 +277,43 @@ class _ProfileViewState extends State<ProfileView> {
     }
   }
 
+  Future<void> _showChangePasswordDialog() async {
+    final userId = widget.user.id?.trim();
+    if (userId == null || userId.isEmpty) {
+      AppSnackbar.showError(context, 'User ID is required.');
+      return;
+    }
+    final result = await showDialog<_ChangePasswordResult>(
+      context: context,
+      builder: (dialogContext) => const _ChangePasswordDialog(),
+    );
+    if (!mounted || result == null) {
+      return;
+    }
+
+    try {
+      await _authRepository.changePassword(
+        userId: userId,
+        oldPassword: result.oldPassword,
+        newPassword: result.newPassword,
+      );
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showSuccess(context, 'Password changed successfully.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        error is Exception
+            ? error.toString().replaceFirst('Exception: ', '')
+            : 'We could not change the password right now.',
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = widget.user;
@@ -362,7 +424,7 @@ class _ProfileViewState extends State<ProfileView> {
           const SizedBox(height: 18),
           const AdminSectionTitle(title: 'Security'),
           const SizedBox(height: 10),
-          const _SecuritySection(),
+          _SecuritySection(onChangePassword: _showChangePasswordDialog),
           if (widget.isCurrentUserView && _hasPendingChanges) ...[
             const SizedBox(height: 14),
             SizedBox(
@@ -540,6 +602,10 @@ class _ProfileIdentityHeader extends StatelessWidget {
                           memoryBytes: pendingPhotoBytes,
                           fallbackText: _ProfileViewState._initials(user.name),
                           radius: avatarRadius,
+                          enablePreview: true,
+                          previewTitle: user.name?.trim().isNotEmpty == true
+                              ? '${user.name} Photo'
+                              : 'Profile Photo',
                         ),
                         if (showChangePhoto)
                           Positioned(
@@ -878,12 +944,21 @@ class _LicensePreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (memoryBytes != null && memoryBytes!.isNotEmpty) {
-      return _LicenseImageFrame(
-        child: Image.memory(
-          memoryBytes!,
-          width: double.infinity,
-          height: 220,
-          fit: BoxFit.cover,
+      return _LicenseImageTapTarget(
+        onTap: () {
+          showAppImageViewer(
+            context,
+            title: 'License Photo',
+            memoryBytes: memoryBytes,
+          );
+        },
+        child: _LicenseImageFrame(
+          child: Image.memory(
+            memoryBytes!,
+            width: double.infinity,
+            height: 220,
+            fit: BoxFit.cover,
+          ),
         ),
       );
     }
@@ -895,22 +970,30 @@ class _LicensePreview extends StatelessWidget {
     final hasImageError = hasImageValue && !hasNetworkImage;
 
     if (hasNetworkImage) {
-      return _LicenseImageFrame(
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Image.network(
-            normalizedValue,
-            width: double.infinity,
-            height: 220,
-            fit: BoxFit.cover,
-            webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-            errorBuilder: (context, error, stackTrace) {
-              return const _LicenseImageFallback(
-                icon: Icons.broken_image_rounded,
-                label: 'Failed to load license image.',
-                isError: true,
-              );
-            },
+      return _LicenseImageTapTarget(
+        onTap: () {
+          showAppImageViewer(
+            context,
+            title: 'License Photo',
+            imageUrl: normalizedValue,
+          );
+        },
+        child: _LicenseImageFrame(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: AppCachedNetworkImage(
+              imageUrl: normalizedValue,
+              width: double.infinity,
+              height: 220,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error) {
+                return const _LicenseImageFallback(
+                  icon: Icons.broken_image_rounded,
+                  label: 'Failed to load license image.',
+                  isError: true,
+                );
+              },
+            ),
           ),
         ),
       );
@@ -930,6 +1013,22 @@ class _LicensePreview extends StatelessWidget {
   }
 }
 
+class _LicenseImageTapTarget extends StatelessWidget {
+  const _LicenseImageTapTarget({required this.onTap, required this.child});
+
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppMousePressable(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(22),
+      child: child,
+    );
+  }
+}
+
 class _LicenseActionButton extends StatelessWidget {
   const _LicenseActionButton({required this.hasImage, required this.onPressed});
 
@@ -940,7 +1039,7 @@ class _LicenseActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       height: 32,
-      child: FilledButton.icon(
+      child: FilledButton(
         onPressed: onPressed ?? () {},
         style: FilledButton.styleFrom(
           backgroundColor: AppColors.primaryColor,
@@ -952,8 +1051,7 @@ class _LicenseActionButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(1000),
           ),
         ),
-        icon: const Icon(Icons.upload_rounded, size: 18),
-        label: const Text(
+        child: const Text(
           'Upload',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
@@ -1028,7 +1126,9 @@ class _LicenseImageFrame extends StatelessWidget {
 }
 
 class _SecuritySection extends StatelessWidget {
-  const _SecuritySection();
+  const _SecuritySection({required this.onChangePassword});
+
+  final VoidCallback onChangePassword;
 
   @override
   Widget build(BuildContext context) {
@@ -1073,7 +1173,7 @@ class _SecuritySection extends StatelessWidget {
               SizedBox(
                 height: 32,
                 child: FilledButton(
-                  onPressed: () {},
+                  onPressed: onChangePassword,
                   style: FilledButton.styleFrom(
                     backgroundColor: AppColors.primaryColor,
                     foregroundColor: Colors.white,
@@ -1088,6 +1188,172 @@ class _SecuritySection extends StatelessWidget {
                     'Change',
                     style: TextStyle(fontWeight: FontWeight.w700),
                   ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChangePasswordResult {
+  const _ChangePasswordResult({
+    required this.oldPassword,
+    required this.newPassword,
+  });
+
+  final String oldPassword;
+  final String newPassword;
+}
+
+class _ChangePasswordDialog extends StatefulWidget {
+  const _ChangePasswordDialog();
+
+  @override
+  State<_ChangePasswordDialog> createState() => _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
+  final TextEditingController _oldPasswordController =
+      TextEditingController();
+  final TextEditingController _newPasswordController =
+      TextEditingController();
+  final TextEditingController _confirmPasswordController =
+      TextEditingController();
+  bool _isOldPasswordObscured = true;
+  bool _isNewPasswordObscured = true;
+  bool _isConfirmPasswordObscured = true;
+
+  @override
+  void dispose() {
+    _oldPasswordController.dispose();
+    _newPasswordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final oldPassword = _oldPasswordController.text.trim();
+    final newPassword = _newPasswordController.text.trim();
+    final confirmPassword = _confirmPasswordController.text.trim();
+
+    final validationMessage = _validate(
+      oldPassword: oldPassword,
+      newPassword: newPassword,
+      confirmPassword: confirmPassword,
+    );
+    if (validationMessage != null) {
+      AppSnackbar.showError(context, validationMessage);
+      return;
+    }
+
+    Navigator.of(context).pop(
+      _ChangePasswordResult(
+        oldPassword: oldPassword,
+        newPassword: newPassword,
+      ),
+    );
+  }
+
+  String? _validate({
+    required String oldPassword,
+    required String newPassword,
+    required String confirmPassword,
+  }) {
+    if (oldPassword.isEmpty) {
+      return 'Old password is required.';
+    }
+    if (newPassword.isEmpty) {
+      return 'New password is required.';
+    }
+    if (newPassword.length < 6) {
+      return 'New password must be at least 6 characters.';
+    }
+    if (newPassword == oldPassword) {
+      return 'New password must be different from the old password.';
+    }
+    if (confirmPassword.isEmpty) {
+      return 'Please confirm your new password.';
+    }
+    if (confirmPassword != newPassword) {
+      return 'Confirm password does not match the new password.';
+    }
+    return null;
+  }
+
+  Widget _passwordSuffix({
+    required bool obscured,
+    required VoidCallback onPressed,
+  }) {
+    return IconButton(
+      onPressed: onPressed,
+      icon: Icon(
+        obscured ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+      ),
+      color: AppColors.primaryColor.withValues(alpha: 0.72),
+      splashRadius: 18,
+      tooltip: obscured ? 'Show password' : 'Hide password',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AdminModalShell(
+      title: 'Change Password',
+      contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
+      actionsInset: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Save')),
+      ],
+      child: AdminModalFormBody(
+        children: [
+          AdminModalFieldsSection(
+            children: [
+              AdminModalTextField(
+                controller: _oldPasswordController,
+                label: 'Old Password',
+                obscureText: _isOldPasswordObscured,
+                suffixIcon: _passwordSuffix(
+                  obscured: _isOldPasswordObscured,
+                  onPressed: () {
+                    setState(() {
+                      _isOldPasswordObscured = !_isOldPasswordObscured;
+                    });
+                  },
+                ),
+              ),
+              AdminModalTextField(
+                controller: _newPasswordController,
+                label: 'New Password',
+                obscureText: _isNewPasswordObscured,
+                suffixIcon: _passwordSuffix(
+                  obscured: _isNewPasswordObscured,
+                  onPressed: () {
+                    setState(() {
+                      _isNewPasswordObscured = !_isNewPasswordObscured;
+                    });
+                  },
+                ),
+              ),
+              AdminModalTextField(
+                controller: _confirmPasswordController,
+                label: 'Confirm Password',
+                obscureText: _isConfirmPasswordObscured,
+                bottomPadding: 0,
+                suffixIcon: _passwordSuffix(
+                  obscured: _isConfirmPasswordObscured,
+                  onPressed: () {
+                    setState(() {
+                      _isConfirmPasswordObscured =
+                          !_isConfirmPasswordObscured;
+                    });
+                  },
                 ),
               ),
             ],

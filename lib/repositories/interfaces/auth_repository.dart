@@ -25,6 +25,11 @@ abstract class AuthRepository {
     String? mimeType,
     int? size,
   });
+  Future<UserModel> changePassword({
+    required String userId,
+    required String oldPassword,
+    required String newPassword,
+  });
   Future<void> deleteUser(String userId);
   Future<void> loginAsUser(String userId);
   Future<bool> hasQuickLoginSource();

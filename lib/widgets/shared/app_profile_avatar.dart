@@ -2,6 +2,9 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/widgets/shared/app_cached_network_image.dart';
+import 'package:webapp/widgets/shared/app_image_viewer.dart';
+import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 
 class AppProfileAvatar extends StatelessWidget {
   const AppProfileAvatar({
@@ -10,12 +13,16 @@ class AppProfileAvatar extends StatelessWidget {
     this.photo,
     this.memoryBytes,
     this.fallbackText,
+    this.enablePreview = false,
+    this.previewTitle,
   });
 
   final double radius;
   final String? photo;
   final Uint8List? memoryBytes;
   final String? fallbackText;
+  final bool enablePreview;
+  final String? previewTitle;
 
   static const double _borderRatio = 0.16;
 
@@ -34,7 +41,7 @@ class AppProfileAvatar extends StatelessWidget {
     final innerBorderWidth = radius * _borderRatio;
     final diameter = radius * 2;
 
-    return SizedBox(
+    final avatar = SizedBox(
       width: diameter,
       height: diameter,
       child: Stack(
@@ -65,6 +72,24 @@ class AppProfileAvatar extends StatelessWidget {
         ],
       ),
     );
+
+    final canPreview = enablePreview && (hasMemoryImage || hasNetworkImage);
+    if (!canPreview) {
+      return avatar;
+    }
+
+    return AppMousePressable(
+      onTap: () {
+        showAppImageViewer(
+          context,
+          title: previewTitle ?? fallbackText ?? 'Profile Photo',
+          memoryBytes: hasMemoryImage ? memoryBytes : null,
+          imageUrl: hasNetworkImage ? normalizedPhoto : null,
+        );
+      },
+      borderRadius: BorderRadius.circular(radius),
+      child: avatar,
+    );
   }
 
   Widget _buildAvatarContent({
@@ -78,11 +103,10 @@ class AppProfileAvatar extends StatelessWidget {
     }
 
     if (hasNetworkImage) {
-      return Image.network(
-        normalizedPhoto!,
+      return AppCachedNetworkImage(
+        imageUrl: normalizedPhoto!,
         fit: BoxFit.cover,
-        webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-        errorBuilder: (context, error, stackTrace) {
+        errorBuilder: (context, error) {
           return _FallbackAvatarContent(
             radius: radius,
             fallbackText: fallbackText,

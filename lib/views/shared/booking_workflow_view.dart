@@ -17,8 +17,11 @@ import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_cached_network_image.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
+import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
+import 'package:webapp/widgets/shared/app_image_viewer.dart';
 import 'package:webapp/widgets/shared/booking_form_primitives.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 import 'package:webapp/widgets/status_form/status_field_editor_card.dart';
@@ -930,28 +933,37 @@ class _WorkflowWaybillPhotoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
+    return AppMousePressable(
+      onTap: () {
+        showAppImageViewer(
+          context,
+          title: 'Waybill Photo',
+          imageUrl: imageUrl,
+        );
+      },
       borderRadius: BorderRadius.circular(18),
-      child: Image.network(
-        imageUrl,
-        width: double.infinity,
-        fit: BoxFit.fitWidth,
-        webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-        errorBuilder: (context, error, stackTrace) {
-          return Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            color: AppColors.primarySurface,
-            child: const Text(
-              'Failed to load photo.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: AppColors.textPrimary,
-                fontWeight: FontWeight.w600,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: AppCachedNetworkImage(
+          imageUrl: imageUrl,
+          width: double.infinity,
+          fit: BoxFit.fitWidth,
+          errorBuilder: (context, error) {
+            return Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              color: AppColors.primarySurface,
+              child: const Text(
+                'Failed to load photo.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

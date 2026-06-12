@@ -336,6 +336,58 @@ class AuthRequest implements AuthRepository {
   }
 
   @override
+  Future<UserModel> changePassword({
+    required String userId,
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    return _runAuthRequest(() async {
+      final normalizedUserId = normalizeId(userId);
+      if (normalizedUserId == null) {
+        throw const AuthFailure('User ID is required.');
+      }
+      final trimmedOldPassword = oldPassword.trim();
+      final trimmedNewPassword = newPassword.trim();
+      if (trimmedOldPassword.isEmpty) {
+        throw const AuthFailure('Old password is required.');
+      }
+      if (trimmedNewPassword.isEmpty) {
+        throw const AuthFailure('New password is required.');
+      }
+      if (trimmedNewPassword.length < 6) {
+        throw const AuthFailure(
+          'New password must be at least 6 characters.',
+        );
+      }
+
+      final currentUser = await _getFreshUserById(normalizedUserId);
+      if (currentUser == null) {
+        throw const AuthFailure('User not found.');
+      }
+      if ((currentUser.password ?? '') != trimmedOldPassword) {
+        throw const AuthFailure('Old password is incorrect.');
+      }
+      if (trimmedOldPassword == trimmedNewPassword) {
+        throw const AuthFailure(
+          'New password must be different from the old password.',
+        );
+      }
+
+      final updatedUser = await saveUser(
+        currentUser.copyWith(
+          password: trimmedNewPassword,
+          updatedAt: DateTime.now(),
+        ),
+      );
+      final currentUserId = normalizeId(await _storage.readString(_currentUserIdKey));
+      if (currentUserId == normalizedUserId) {
+        await _storage.writeString(_currentUserIdKey, normalizedUserId);
+      }
+      return updatedUser;
+    }, fallback: 'We could not change the password right now.');
+  }
+
+  @override
   Future<void> deleteUser(String userId) async {
     await _runAuthRequest(() async {
       final normalized = normalizeId(userId);

@@ -8,9 +8,9 @@ import 'package:webapp/services/dashboard_export_naming.dart';
 import 'package:webapp/services/dashboard_docx_export_service.dart';
 import 'package:webapp/services/export_file_service.dart';
 import 'package:webapp/view_models/admin/admin_dashboard.vm.dart';
+import 'package:webapp/views/shared/booking_workflow_view.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
-import 'package:webapp/widgets/shared/admin_icon_action_button.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
@@ -18,10 +18,29 @@ import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 
-class AdminDashboardView extends StatelessWidget {
+class AdminDashboardView extends StatefulWidget {
   const AdminDashboardView({super.key});
 
+  @override
+  State<AdminDashboardView> createState() => _AdminDashboardViewState();
+}
+
+class _AdminDashboardViewState extends State<AdminDashboardView> {
   static const double _toolbarSectionGap = 12;
+  Booking? _selectedBooking;
+  late final ScrollController _detailScrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _detailScrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _detailScrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,7 +48,54 @@ class AdminDashboardView extends StatelessWidget {
       viewModelBuilder: AdminDashboardViewModel.new,
       onViewModelReady: (vm) => vm.load(),
       builder: (context, vm, child) {
+        final selectedBooking = _selectedBooking == null
+            ? null
+            : vm.completedBookings
+                      .where((booking) => booking.id == _selectedBooking!.id)
+                      .firstOrNull ??
+                  _selectedBooking;
         final filteredBookings = vm.filteredCompletedBookings();
+        if (selectedBooking != null && vm.currentUser != null) {
+          return AppPageLoadingOverlay(
+            isVisible: vm.isBusy,
+            message: vm.busyMessage,
+            child: SingleChildScrollView(
+              key: PageStorageKey(
+                'admin-dashboard-booking-detail-${selectedBooking.id ?? ''}',
+              ),
+              controller: _detailScrollController,
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _AdminDashboardBookingDetailHeader(
+                    booking: selectedBooking,
+                    onBack: () {
+                      setState(() {
+                        _selectedBooking = null;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  BookingWorkflowView(
+                    key: ValueKey(
+                      'admin-dashboard-booking-workflow-${selectedBooking.id ?? ''}-${selectedBooking.updatedAt?.toIso8601String() ?? ''}',
+                    ),
+                    user: vm.currentUser!,
+                    booking: selectedBooking,
+                    embedded: true,
+                    embeddedScrollController: _detailScrollController,
+                    onBookingUpdated: (updatedBooking) {
+                      setState(() {
+                        _selectedBooking = updatedBooking;
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
         if (vm.errorMessage != null) {
           return AppPageLoadingOverlay(
             isVisible: vm.isBusy,
@@ -111,6 +177,11 @@ class AdminDashboardView extends StatelessWidget {
                   _AdminDashboardCompletedBookingsTable(
                     bookings: filteredBookings,
                     vm: vm,
+                    onView: (booking) {
+                      setState(() {
+                        _selectedBooking = booking;
+                      });
+                    },
                   ),
               ],
             ),
@@ -1134,6 +1205,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
   const _AdminDashboardCompletedBookingsTable({
     required this.bookings,
     required this.vm,
+    required this.onView,
   });
 
   static const double _sectionGap = 14;
@@ -1154,6 +1226,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
 
   final List<Booking> bookings;
   final AdminDashboardViewModel vm;
+  final ValueChanged<Booking> onView;
 
   @override
   Widget build(BuildContext context) {
@@ -1250,7 +1323,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
           ),
         );
         final actionsWidth = _maxValue(
-          88,
+          96,
           AdminListMeasurements.measureTextWidth(
             context,
             textScaler,
@@ -1287,6 +1360,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                       vm: vm,
                       clientName: vm.client(entry.value),
                       dateValue: entry.value.createdAt,
+                      onViewPressed: () => onView(entry.value),
                       onExportPressed: () => _exportBookings(
                         context,
                         vm,
@@ -1367,6 +1441,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                   resolvedClientWidth: resolvedClientWidth,
                   resolvedAmountWidth: resolvedAmountWidth,
                   resolvedActionWidth: resolvedActionWidth,
+                  onViewPressed: () => onView(entry.value),
                   onExportPressed: () => _exportBookings(context, vm, <Booking>[
                     entry.value,
                   ], singleItem: true),
@@ -1445,6 +1520,56 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
   }
 }
 
+class _AdminDashboardBookingDetailHeader extends StatelessWidget {
+  const _AdminDashboardBookingDetailHeader({
+    required this.booking,
+    required this.onBack,
+  });
+
+  final Booking booking;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Transform.translate(
+            offset: const Offset(-8, 0),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: onBack,
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  color: AppColors.primaryColor,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 40,
+                    minHeight: 40,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  splashRadius: 22,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Booking ${booking.id ?? '-'}',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        BookingSupportButton(onPressed: () => launchBookingSupport(context)),
+      ],
+    );
+  }
+}
+
 class _AdminDashboardWideRow extends StatelessWidget {
   const _AdminDashboardWideRow({
     required this.booking,
@@ -1459,6 +1584,7 @@ class _AdminDashboardWideRow extends StatelessWidget {
     required this.resolvedClientWidth,
     required this.resolvedAmountWidth,
     required this.resolvedActionWidth,
+    required this.onViewPressed,
     required this.onExportPressed,
   });
 
@@ -1474,6 +1600,7 @@ class _AdminDashboardWideRow extends StatelessWidget {
   final double resolvedClientWidth;
   final double resolvedAmountWidth;
   final double resolvedActionWidth;
+  final VoidCallback? onViewPressed;
   final VoidCallback? onExportPressed;
 
   @override
@@ -1564,16 +1691,22 @@ class _AdminDashboardWideRow extends StatelessWidget {
             child: _DashboardBodyCell(
               trailingPadding: 0,
               alignment: Alignment.centerRight,
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: AdminIconActionButton(
-                  icon: Icons.download_rounded,
-                  onTap: onExportPressed,
-                  backgroundColor: AppColors.primaryColor,
-                  size: 38,
-                  iconSize: 18,
-                  borderRadius: 12,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AdminListActionButton(
+                    icon: Icons.visibility_rounded,
+                    backgroundColor: Colors.yellow.shade900,
+                    onTap: onViewPressed,
+                    size: 38,
+                  ),
+                  const SizedBox(width: 8),
+                  AdminListActionButton(
+                    icon: Icons.download_rounded,
+                    onTap: onExportPressed,
+                    size: 38,
+                  ),
+                ],
               ),
             ),
           ),
@@ -1589,6 +1722,7 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
     required this.vm,
     required this.clientName,
     required this.dateValue,
+    required this.onViewPressed,
     required this.onExportPressed,
   });
 
@@ -1596,6 +1730,7 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
   final AdminDashboardViewModel vm;
   final String clientName;
   final DateTime? dateValue;
+  final VoidCallback? onViewPressed;
   final VoidCallback? onExportPressed;
 
   @override
@@ -1645,13 +1780,22 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerRight,
-                child: AdminIconActionButton(
-                  icon: Icons.download_rounded,
-                  onTap: onExportPressed,
-                  backgroundColor: AppColors.primaryColor,
-                  size: 38,
-                  iconSize: 18,
-                  borderRadius: 12,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AdminListActionButton(
+                      icon: Icons.visibility_rounded,
+                      backgroundColor: Colors.yellow.shade900,
+                      onTap: onViewPressed,
+                      size: 38,
+                    ),
+                    const SizedBox(width: 8),
+                    AdminListActionButton(
+                      icon: Icons.download_rounded,
+                      onTap: onExportPressed,
+                      size: 38,
+                    ),
+                  ],
                 ),
               ),
             ],

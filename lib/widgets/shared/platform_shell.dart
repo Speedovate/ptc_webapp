@@ -229,15 +229,14 @@ class PlatformSidebarBrandTile extends StatelessWidget {
     return AppMousePressable(
       borderRadius: BorderRadius.circular(20),
       onTap: onTap,
+      enableVisualState: false,
       child: Builder(
         builder: (context) => AnimatedContainer(
           duration: const Duration(milliseconds: 120),
           height: PlatformShell.sidebarHeaderHeight,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: appPressableActive(context)
-                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.32)
-                : Colors.white,
+            color: Colors.white,
             borderRadius: BorderRadius.circular(20),
           ),
           child: LayoutBuilder(

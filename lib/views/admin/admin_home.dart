@@ -342,6 +342,7 @@ class _AdminHomeState extends State<AdminHome> {
         onInitialEditHandled: _viewModel.clearPendingEditUser,
       ),
       AdminSection.profile => ProfileView(
+        key: profileViewRefreshKey(_shellUser),
         user: _shellUser,
         isCurrentUserView: true,
         onLogout: widget.onLogout,

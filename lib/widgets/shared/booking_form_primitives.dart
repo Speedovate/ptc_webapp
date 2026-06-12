@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/widgets/shared/app_cached_network_image.dart';
 
 const Color bookingFormDangerStripColor = AppColors.dangerStrong;
 const double bookingFormContentHorizontalPadding = 18;
@@ -621,13 +622,11 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                               fit: BoxFit.fitWidth,
                             )
                           else if (previewUrl?.isNotEmpty == true)
-                            Image.network(
-                              previewUrl!,
+                            AppCachedNetworkImage(
+                              imageUrl: previewUrl!,
                               width: double.infinity,
                               fit: BoxFit.fitWidth,
-                              webHtmlElementStrategy:
-                                  WebHtmlElementStrategy.prefer,
-                              errorBuilder: (context, error, stackTrace) {
+                              errorBuilder: (context, error) {
                                 return const _BookingPhotoPreviewFallback(
                                   height: 180,
                                   message: 'Failed to load photo preview.',

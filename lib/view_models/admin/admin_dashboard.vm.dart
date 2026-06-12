@@ -20,6 +20,7 @@ class AdminDashboardViewModel extends BaseViewModel {
       _bookingRepository = BookingRequest.instance {
     _completedBookings.addAll(_cachedCompletedBookings);
     _usersById.addAll(_cachedUsersById);
+    _currentUser = _cachedCurrentUser;
     errorMessage = _cachedErrorMessage;
   }
 
@@ -28,18 +29,22 @@ class AdminDashboardViewModel extends BaseViewModel {
   final BookingRepository _bookingRepository;
   static List<Booking> _cachedCompletedBookings = const [];
   static Map<String, UserModel> _cachedUsersById = const {};
+  static UserModel? _cachedCurrentUser;
   static String? _cachedErrorMessage;
 
   static void clearCachedState() {
     _cachedCompletedBookings = const [];
     _cachedUsersById = const {};
+    _cachedCurrentUser = null;
     _cachedErrorMessage = null;
   }
 
   final List<Booking> _completedBookings = [];
   final Map<String, UserModel> _usersById = {};
+  UserModel? _currentUser;
 
   List<Booking> get completedBookings => List.unmodifiable(_completedBookings);
+  UserModel? get currentUser => _currentUser;
   String? errorMessage;
   String busyMessage = 'Loading, please wait ...';
   String _searchQuery = '';
@@ -117,13 +122,16 @@ class AdminDashboardViewModel extends BaseViewModel {
     try {
       await _bookingRepository.initialize();
       final results = await Future.wait([
+        _authRepository.getCurrentUser(),
         _authRepository.getUsers(),
         _bookingRepository.getBookings(),
         _vehicleRepository.getSizes(),
       ]);
-      final users = results[0] as List<UserModel>;
-      final bookings = results[1] as List<Booking>;
-      final _ = results[2] as List;
+      final currentUser = results[0] as UserModel?;
+      final users = results[1] as List<UserModel>;
+      final bookings = results[2] as List<Booking>;
+      final _ = results[3] as List;
+      _currentUser = currentUser;
 
       _usersById
         ..clear()
@@ -158,6 +166,7 @@ class AdminDashboardViewModel extends BaseViewModel {
       });
       _cachedCompletedBookings = List<Booking>.from(_completedBookings);
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
+      _cachedCurrentUser = _currentUser;
       _cachedErrorMessage = null;
     } catch (error) {
       errorMessage = userFacingErrorMessage(
