@@ -188,16 +188,23 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: filteredBookings
+                        .asMap()
+                        .entries
                         .map(
-                          (booking) => Padding(
-                            padding: const EdgeInsets.only(bottom: 14),
+                          (entry) => Padding(
+                            padding: EdgeInsets.only(
+                              bottom:
+                                  entry.key == filteredBookings.length - 1
+                                      ? 0
+                                      : 12,
+                            ),
                             child: _BookingHistoryCard(
                               userRole: widget.user.role,
-                              booking: booking,
+                              booking: entry.value,
                               vm: vm,
                               onOpen: () {
                                 setState(() {
-                                  _selectedBooking = booking;
+                                  _selectedBooking = entry.value;
                                 });
                               },
                             ),
@@ -221,6 +228,8 @@ class _HistoryScaffold extends StatelessWidget {
     this.framed = true,
   });
 
+  static const double _toolbarBottomGap = 12;
+
   final Widget toolbar;
   final Widget child;
   final bool framed;
@@ -233,7 +242,7 @@ class _HistoryScaffold extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           toolbar,
-          const SizedBox(height: 14),
+          const SizedBox(height: _toolbarBottomGap),
           if (framed)
             Container(
               width: double.infinity,

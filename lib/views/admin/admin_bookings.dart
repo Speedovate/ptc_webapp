@@ -170,7 +170,7 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
                       _BookingsFiltersPanel(vm: vm, iconOnly: iconOnly),
                   onNewPressed: () => _openNewBookingDialog(vm),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 12),
                 if (vm.errorMessage != null)
                   _AdminBookingsStateCard(
                     child: AdminListStateText(message: vm.errorMessage!),
@@ -972,14 +972,18 @@ class _AdminBookingsTable extends StatelessWidget {
         if (useResponsiveCards) {
           return Column(
             children: bookings
+                .asMap()
+                .entries
                 .map(
-                  (booking) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
+                  (entry) => Padding(
+                    padding: EdgeInsets.only(
+                      bottom: entry.key == bookings.length - 1 ? 0 : 12,
+                    ),
                     child: _AdminBookingResponsiveCard(
-                      booking: booking,
-                      statusLabel: vm.clientStatusLabel(booking),
-                      onView: () => onView(booking),
-                      onEdit: () => onEdit(booking),
+                      booking: entry.value,
+                      statusLabel: vm.clientStatusLabel(entry.value),
+                      onView: () => onView(entry.value),
+                      onEdit: () => onEdit(entry.value),
                     ),
                   ),
                 )
@@ -1038,12 +1042,14 @@ class _AdminBookingsTable extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 14),
-            ...bookings.map(
-              (booking) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
+            ...bookings.asMap().entries.map(
+              (entry) => Padding(
+                padding: EdgeInsets.only(
+                  bottom: entry.key == bookings.length - 1 ? 0 : 12,
+                ),
                 child: _AdminBookingWideRow(
-                  booking: booking,
-                  statusLabel: vm.clientStatusLabel(booking),
+                  booking: entry.value,
+                  statusLabel: vm.clientStatusLabel(entry.value),
                   resolvedIdWidth: resolvedIdWidth,
                   resolvedDateWidth: resolvedDateWidth,
                   resolvedWaybillWidth: resolvedWaybillWidth,
@@ -1052,8 +1058,8 @@ class _AdminBookingsTable extends StatelessWidget {
                   resolvedAmountWidth: resolvedAmountWidth,
                   resolvedStatusWidth: resolvedStatusWidth,
                   resolvedActionsWidth: resolvedActionsWidth,
-                  onView: () => onView(booking),
-                  onEdit: () => onEdit(booking),
+                  onView: () => onView(entry.value),
+                  onEdit: () => onEdit(entry.value),
                 ),
               ),
             ),

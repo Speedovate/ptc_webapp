@@ -58,7 +58,8 @@ class AdminUsersView extends StatefulWidget {
     this.onInitialEditHandled,
   });
 
-  static const usersSectionGap = 14.0;
+  static const usersToolbarSectionGap = 12.0;
+  static const usersTableSectionGap = 14.0;
   static const usersHeaderControlHeight = 52.0;
   static const usersFilterControlHeight = adminFilterFieldMinHeight;
   static const usersSurfaceRadius = 16.0;
@@ -343,18 +344,25 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                   children: [
                     AppRefreshStrip(isVisible: vm.isBusy),
                     _UsersToolbar(vm: vm),
-                    const SizedBox(height: AdminUsersView.usersSectionGap),
+                    const SizedBox(height: AdminUsersView.usersToolbarSectionGap),
                     if (isNarrow)
                       if (filteredUsers.isNotEmpty)
                         Column(
                           children: filteredUsers
+                              .asMap()
+                              .entries
                               .map(
-                                (item) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 12),
+                                (entry) => Padding(
+                                  padding: EdgeInsets.only(
+                                    bottom:
+                                        entry.key == filteredUsers.length - 1
+                                            ? 0
+                                            : 12,
+                                  ),
                                   child: SizedBox(
                                     width: double.infinity,
                                     child: _UsersResponsiveCard(
-                                      user: item,
+                                      user: entry.value,
                                       vm: vm,
                                       onCurrentUserUpdated:
                                           widget.onCurrentUserUpdated,
@@ -1422,16 +1430,20 @@ class _UsersTable extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: AdminUsersView.usersSectionGap),
+            const SizedBox(height: AdminUsersView.usersTableSectionGap),
             if (users.isEmpty) _UsersEmptyState(message: emptyMessage),
             if (users.isNotEmpty)
               Column(
                 children: users
+                    .asMap()
+                    .entries
                     .map(
-                      (user) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
+                      (entry) => Padding(
+                        padding: EdgeInsets.only(
+                          bottom: entry.key == users.length - 1 ? 0 : 12,
+                        ),
                         child: _UsersWideRow(
-                          user: user,
+                          user: entry.value,
                           vm: vm,
                           onCurrentUserUpdated: onCurrentUserUpdated,
                           shouldFlexNameAndEmail: shouldFlexNameAndEmail,

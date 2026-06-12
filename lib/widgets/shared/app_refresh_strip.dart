@@ -4,7 +4,7 @@ class AppRefreshStrip extends StatelessWidget {
   const AppRefreshStrip({
     super.key,
     required this.isVisible,
-    this.padding = const EdgeInsets.only(bottom: 14),
+    this.padding = const EdgeInsets.only(bottom: 8),
     this.height = 3,
   });
 

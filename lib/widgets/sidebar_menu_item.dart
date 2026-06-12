@@ -103,7 +103,7 @@ class SidebarMenuItem extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
               decoration: BoxDecoration(
                 color: Colors.black.withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(24),
                 border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
               ),
               child: Column(

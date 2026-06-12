@@ -21,6 +21,8 @@ import 'package:webapp/widgets/shared/app_snackbar.dart';
 class AdminDashboardView extends StatelessWidget {
   const AdminDashboardView({super.key});
 
+  static const double _toolbarSectionGap = 12;
+
   @override
   Widget build(BuildContext context) {
     return ViewModelBuilder<AdminDashboardViewModel>.reactive(
@@ -43,7 +45,7 @@ class AdminDashboardView extends StatelessWidget {
                     onExportPressed: () =>
                         _exportBookings(context, vm, filteredBookings),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: _toolbarSectionGap),
                   AdminListItemCard(
                     padding: const EdgeInsets.all(24),
                     child: AdminListStateText(message: vm.errorMessage!),
@@ -69,7 +71,7 @@ class AdminDashboardView extends StatelessWidget {
                     onExportPressed: () =>
                         _exportBookings(context, vm, filteredBookings),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: _toolbarSectionGap),
                   AdminListItemCard(
                     padding: EdgeInsets.all(24),
                     child: AdminListStateText(
@@ -96,7 +98,7 @@ class AdminDashboardView extends StatelessWidget {
                   onExportPressed: () =>
                       _exportBookings(context, vm, filteredBookings),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: _toolbarSectionGap),
                 if (filteredBookings.isEmpty)
                   AdminListItemCard(
                     padding: const EdgeInsets.all(24),
@@ -122,8 +124,9 @@ class AdminDashboardView extends StatelessWidget {
 Future<void> _exportBookings(
   BuildContext context,
   AdminDashboardViewModel vm,
-  List<Booking> bookings,
-) async {
+  List<Booking> bookings, {
+  bool singleItem = false,
+}) async {
   if (bookings.isEmpty) {
     AppSnackbar.showError(
       context,
@@ -134,8 +137,11 @@ Future<void> _exportBookings(
 
   final exportConfig = await showDialog<_DashboardBatchExportConfig>(
     context: context,
-    builder: (dialogContext) =>
-        _DashboardExportDialog(bookings: bookings, vm: vm),
+    builder: (dialogContext) => _DashboardExportDialog(
+      bookings: bookings,
+      vm: vm,
+      singleItem: singleItem,
+    ),
   );
   if (!context.mounted || exportConfig == null) {
     return;
@@ -288,10 +294,15 @@ class _DashboardBatchExportConfig {
 }
 
 class _DashboardExportDialog extends StatefulWidget {
-  const _DashboardExportDialog({required this.bookings, required this.vm});
+  const _DashboardExportDialog({
+    required this.bookings,
+    required this.vm,
+    required this.singleItem,
+  });
 
   final List<Booking> bookings;
   final AdminDashboardViewModel vm;
+  final bool singleItem;
 
   @override
   State<_DashboardExportDialog> createState() => _DashboardExportDialogState();
@@ -370,7 +381,7 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
       _selectedTypes.any((type) => type.isBillingStatement);
   bool get _showsBankFields =>
       _selectedTypes.any((type) => type.isBillingStatement);
-  bool get _showsCoveredDateRange => widget.bookings.length > 1;
+  bool get _showsCoveredDateRange => !widget.singleItem;
 
   @override
   Widget build(BuildContext context) {
@@ -1125,6 +1136,8 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
     required this.vm,
   });
 
+  static const double _sectionGap = 14;
+
   static const _headerStyle = TextStyle(
     color: AppColors.textSecondary,
     fontSize: 12,
@@ -1177,14 +1190,17 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
         );
         final resolvedWaybillWidth = _resolvedColumnWidth(
           _maxTextWidth(
-            context,
-            textScaler,
-            'Waybill No.',
-            _longerText(
-              'Waybill No.',
-              _longestText(bookings.map(AdminDashboardViewModel.waybillNumber)),
-            ),
-          ) + 12,
+                context,
+                textScaler,
+                'Waybill No.',
+                _longerText(
+                  'Waybill No.',
+                  _longestText(
+                    bookings.map(AdminDashboardViewModel.waybillNumber),
+                  ),
+                ),
+              ) +
+              12,
         );
         final resolvedVanNumberWidth = _resolvedColumnWidth(
           _maxTextWidth(
@@ -1233,17 +1249,16 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
             ),
           ),
         );
-        const actionButtonWidth = 38.0;
-        final actionsTitleWidth = AdminListMeasurements.measureTextWidth(
-          context,
-          textScaler,
-          'Actions',
-          _headerStyle,
+        final actionsWidth = _maxValue(
+          88,
+          AdminListMeasurements.measureTextWidth(
+            context,
+            textScaler,
+            'Actions',
+            _headerStyle,
+          ),
         );
-        final actionsWidth = actionsTitleWidth > actionButtonWidth
-            ? actionsTitleWidth
-            : actionButtonWidth;
-        final resolvedActionWidth = actionsWidth + 8;
+        final resolvedActionWidth = actionsWidth + _extraWidthAllowance;
 
         final totalMeasuredWidth =
             resolvedDeliveryNumberWidth +
@@ -1260,16 +1275,24 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
         if (useResponsiveCards) {
           return Column(
             children: bookings
+                .asMap()
+                .entries
                 .map(
-                  (booking) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
+                  (entry) => Padding(
+                    padding: EdgeInsets.only(
+                      bottom: entry.key == bookings.length - 1 ? 0 : 12,
+                    ),
                     child: _AdminDashboardResponsiveCard(
-                      booking: booking,
+                      booking: entry.value,
                       vm: vm,
-                      clientName: vm.client(booking),
-                      dateValue: booking.createdAt,
-                      onExportPressed: () =>
-                          _exportBookings(context, vm, <Booking>[booking]),
+                      clientName: vm.client(entry.value),
+                      dateValue: entry.value.createdAt,
+                      onExportPressed: () => _exportBookings(
+                        context,
+                        vm,
+                        <Booking>[entry.value],
+                        singleItem: true,
+                      ),
                     ),
                   ),
                 )
@@ -1325,15 +1348,17 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 14),
-            ...bookings.map(
-              (booking) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
+            const SizedBox(height: _sectionGap),
+            ...bookings.asMap().entries.map(
+              (entry) => Padding(
+                padding: EdgeInsets.only(
+                  bottom: entry.key == bookings.length - 1 ? 0 : 12,
+                ),
                 child: _AdminDashboardWideRow(
-                  booking: booking,
+                  booking: entry.value,
                   vm: vm,
-                  clientName: vm.client(booking),
-                  dateValue: booking.createdAt,
+                  clientName: vm.client(entry.value),
+                  dateValue: entry.value.createdAt,
                   resolvedDeliveryNumberWidth: resolvedDeliveryNumberWidth,
                   resolvedDateWidth: resolvedDateWidth,
                   resolvedWaybillWidth: resolvedWaybillWidth,
@@ -1342,8 +1367,9 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                   resolvedClientWidth: resolvedClientWidth,
                   resolvedAmountWidth: resolvedAmountWidth,
                   resolvedActionWidth: resolvedActionWidth,
-                  onExportPressed: () =>
-                      _exportBookings(context, vm, <Booking>[booking]),
+                  onExportPressed: () => _exportBookings(context, vm, <Booking>[
+                    entry.value,
+                  ], singleItem: true),
                 ),
               ),
             ),
@@ -1361,6 +1387,10 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
       }
     }
     return longest;
+  }
+
+  static double _maxValue(double first, double second) {
+    return first > second ? first : second;
   }
 
   static String _longerText(String current, String candidate) {
@@ -1612,7 +1642,7 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
                     )
                     .toList(),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerRight,
                 child: AdminIconActionButton(
@@ -1633,10 +1663,7 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
 }
 
 class _DashboardFixedSlot extends StatelessWidget {
-  const _DashboardFixedSlot({
-    required this.width,
-    required this.child,
-  });
+  const _DashboardFixedSlot({required this.width, required this.child});
 
   final double width;
   final Widget child;

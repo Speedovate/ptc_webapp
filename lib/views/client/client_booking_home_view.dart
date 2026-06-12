@@ -289,10 +289,10 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
           messageIconColor: AppColors.dangerStrong,
           messageTextColor: AppColors.textPrimary,
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 8),
         ...fields.map(
           (field) => Padding(
-            padding: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.only(bottom: 8),
             child: StatusFormRuntimeFieldCard(
               key: ValueKey('${form.id}:${field.key}:$_resetTick'),
               field: field,

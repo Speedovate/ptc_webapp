@@ -68,7 +68,8 @@ class AdminFieldsView extends StatelessWidget {
     AppSnackbar.showSuccess(context, 'Field deleted.');
   }
 
-  static const sectionGap = 14.0;
+  static const toolbarSectionGap = 12.0;
+  static const tableSectionGap = 14.0;
   static const controlHeight = 52.0;
   static const surfaceRadius = 16.0;
 
@@ -316,17 +317,24 @@ class _FieldsContentState extends State<_FieldsContent> {
                   title: 'New Field',
                 ),
               ),
-              const SizedBox(height: AdminFieldsView.sectionGap),
+              const SizedBox(height: AdminFieldsView.toolbarSectionGap),
               if (isNarrow)
                 _filteredFields.isEmpty
                     ? _FieldsEmptyState(message: _emptyMessage)
                     : Column(
                         children: _filteredFields
+                            .asMap()
+                            .entries
                             .map(
-                              (field) => Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
+                            (entry) => Padding(
+                              padding: EdgeInsets.only(
+                                bottom:
+                                    entry.key == _filteredFields.length - 1
+                                        ? 0
+                                        : 12,
+                              ),
                                 child: _FieldResponsiveCard(
-                                  field: field,
+                                  field: entry.value,
                                   vm: widget.vm,
                                 ),
                               ),
@@ -783,15 +791,17 @@ class _FieldsTable extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: AdminFieldsView.sectionGap),
+            const SizedBox(height: AdminFieldsView.tableSectionGap),
             if (fields.isEmpty)
               _FieldsEmptyState(message: emptyMessage)
             else
-              ...fields.map(
-                (field) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+              ...fields.asMap().entries.map(
+                (entry) => Padding(
+                  padding: EdgeInsets.only(
+                    bottom: entry.key == fields.length - 1 ? 0 : 12,
+                  ),
                   child: _FieldTableRow(
-                    field: field,
+                    field: entry.value,
                     vm: vm,
                     resolvedIdWidth: resolvedIdWidth,
                     resolvedKeyWidth: effectiveKeyWidth,

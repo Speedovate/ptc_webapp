@@ -21,7 +21,8 @@ import 'package:webapp/widgets/status_form/status_form_preview.dart';
 class AdminFormsView extends StatelessWidget {
   const AdminFormsView({super.key});
 
-  static const sectionGap = 14.0;
+  static const toolbarSectionGap = 12.0;
+  static const tableSectionGap = 14.0;
   static const controlHeight = 52.0;
   static const surfaceRadius = 16.0;
 
@@ -490,7 +491,7 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
               onActiveChanged: (value) => setState(() => _activeFilter = value),
               onNewPressed: _openNewFormDialog,
             ),
-            const SizedBox(height: AdminFormsView.sectionGap),
+            const SizedBox(height: AdminFormsView.toolbarSectionGap),
             ListenableBuilder(
               listenable: widget.vm,
               builder: (context, _) {
@@ -501,19 +502,27 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
 
                   return Column(
                     children: _filteredForms
+                        .asMap()
+                        .entries
                         .map(
-                          (form) => Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
+                          (entry) => Padding(
+                            padding: EdgeInsets.only(
+                              bottom: entry.key == _filteredForms.length - 1
+                                  ? 0
+                                  : 12,
+                            ),
                             child: RepaintBoundary(
                               child: _StatusFormResponsiveCard(
-                                form: form,
+                                form: entry.value,
                                 vm: widget.vm,
                                 onViewPressed: () =>
-                                    _openPreviewFormDialog(form),
-                                onEditPressed: () => _openEditFormDialog(form),
+                                    _openPreviewFormDialog(entry.value),
+                                onEditPressed: () =>
+                                    _openEditFormDialog(entry.value),
                                 onDeactivatePressed: () =>
-                                    _confirmDeactivateForm(form),
-                                onDeletePressed: () => _confirmDeleteForm(form),
+                                    _confirmDeactivateForm(entry.value),
+                                onDeletePressed: () =>
+                                    _confirmDeleteForm(entry.value),
                               ),
                             ),
                           ),
@@ -983,7 +992,7 @@ class _StatusFormsTable extends StatelessWidget {
             children: forms
                 .map(
                   (form) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.only(bottom: 8),
                     child: _StatusFormResponsiveCard(
                       form: form,
                       vm: vm,
@@ -1069,20 +1078,22 @@ class _StatusFormsTable extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: AdminFormsView.sectionGap),
+            const SizedBox(height: AdminFormsView.tableSectionGap),
             if (forms.isEmpty)
               _StatusFormsEmptyState(message: emptyMessage)
             else
-              ...forms.map(
-                (form) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+              ...forms.asMap().entries.map(
+                (entry) => Padding(
+                  padding: EdgeInsets.only(
+                    bottom: entry.key == forms.length - 1 ? 0 : 12,
+                  ),
                   child: _StatusFormsTableRow(
-                    form: form,
+                    form: entry.value,
                     vm: vm,
-                    onViewPressed: () => onViewPressed(form),
-                    onEditPressed: () => onEditPressed(form),
-                    onDeactivatePressed: () => onDeactivatePressed(form),
-                    onDeletePressed: () => onDeletePressed(form),
+                    onViewPressed: () => onViewPressed(entry.value),
+                    onEditPressed: () => onEditPressed(entry.value),
+                    onDeactivatePressed: () => onDeactivatePressed(entry.value),
+                    onDeletePressed: () => onDeletePressed(entry.value),
                     shouldFlexRoles: shouldFlexRoles,
                     resolvedIdWidth: resolvedIdWidth,
                     resolvedRoleWidth: resolvedRoleWidth,
@@ -1638,7 +1649,7 @@ class _BasicInfoSection extends StatelessWidget {
                 );
               },
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 8),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

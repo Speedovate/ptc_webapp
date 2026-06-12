@@ -355,10 +355,10 @@ class _RoleAssignedHomeSection extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 8),
                 if (vm.errorMessage != null)
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.only(bottom: 8),
                     child: AdminListItemCard(
                       padding: const EdgeInsets.all(24),
                       child: AdminListStateText(message: vm.errorMessage!),
@@ -378,23 +378,30 @@ class _RoleAssignedHomeSection extends StatelessWidget {
                 else
                   Column(
                     children: vm.assignedBookings
+                        .asMap()
+                        .entries
                         .map(
-                          (booking) => Padding(
-                            padding: const EdgeInsets.only(bottom: 14),
+                          (entry) => Padding(
+                            padding: EdgeInsets.only(
+                              bottom:
+                                  entry.key == vm.assignedBookings.length - 1
+                                      ? 0
+                                      : 12,
+                            ),
                             child: BookingRecordCard(
-                              booking: booking,
-                              onTap: () => onOpenBooking(booking),
+                              booking: entry.value,
+                              onTap: () => onOpenBooking(entry.value),
                               headlineStatusLabel: vm.statusLabelForKey(
-                                booking.clientStatus,
+                                entry.value.clientStatus,
                               ),
                               statusLabelForKey: vm.statusLabelForKey,
                               showStatusSubmissions: false,
-                              clientName: vm.clientName(booking),
-                              clientPhone: vm.clientPhone(booking),
-                              driverName: vm.driverName(booking),
-                              driverPhone: vm.driverPhone(booking),
-                              helperName: vm.helperName(booking),
-                              helperPhone: vm.helperPhone(booking),
+                              clientName: vm.clientName(entry.value),
+                              clientPhone: vm.clientPhone(entry.value),
+                              driverName: vm.driverName(entry.value),
+                              driverPhone: vm.driverPhone(entry.value),
+                              helperName: vm.helperName(entry.value),
+                              helperPhone: vm.helperPhone(entry.value),
                             ),
                           ),
                         )

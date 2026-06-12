@@ -180,7 +180,7 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
                         _handleNew(vm);
                       },
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
                     if (vm.errorMessage != null)
                       AdminListStateText(message: vm.errorMessage!)
                     else if (vm.sizes.isEmpty)
@@ -201,23 +201,32 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
                           activeWidth: resolvedActiveWidth,
                           actionsWidth: resolvedActionsWidth,
                         ),
-                      if (useWideTable) const SizedBox(height: 12),
+                      if (useWideTable) const SizedBox(height: 14),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: filteredSizes
+                            .asMap()
+                            .entries
                             .map(
-                              (item) => Padding(
-                                padding: const EdgeInsets.only(bottom: 14),
+                              (entry) => Padding(
+                                padding: EdgeInsets.only(
+                                  bottom:
+                                      entry.key == filteredSizes.length - 1
+                                          ? 0
+                                          : 12,
+                                ),
                                 child: useWideTable
                                     ? _VehicleSizeDesktopRow(
-                                        item: item,
+                                        item: entry.value,
                                         idWidth: resolvedIdWidth,
                                         nameWidth: resolvedNameWidth,
                                         slugWidth: resolvedSlugWidth,
                                         activeWidth: resolvedActiveWidth,
                                         actionsWidth: resolvedActionsWidth,
                                       )
-                                    : _VehicleSizeResponsiveCard(item: item),
+                                    : _VehicleSizeResponsiveCard(
+                                        item: entry.value,
+                                      ),
                               ),
                             )
                             .toList(),

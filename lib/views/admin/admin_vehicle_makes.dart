@@ -217,7 +217,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                         _handleNew(vm);
                       },
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
                     if (vm.errorMessage != null)
                       AdminListStateText(message: vm.errorMessage!)
                     else if (vm.makes.isEmpty)
@@ -239,16 +239,23 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                           activeWidth: resolvedActiveWidth,
                           actionsWidth: resolvedActionsWidth,
                         ),
-                      if (useWideTable) const SizedBox(height: 12),
+                      if (useWideTable) const SizedBox(height: 14),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: filteredMakes
+                            .asMap()
+                            .entries
                             .map(
-                              (item) => Padding(
-                                padding: const EdgeInsets.only(bottom: 14),
+                              (entry) => Padding(
+                                padding: EdgeInsets.only(
+                                  bottom:
+                                      entry.key == filteredMakes.length - 1
+                                          ? 0
+                                          : 12,
+                                ),
                                 child: useWideTable
                                     ? _VehicleMakeDesktopRow(
-                                        item: item,
+                                        item: entry.value,
                                         idWidth: resolvedIdWidth,
                                         codeWidth: resolvedCodeWidth,
                                         typeWidth: resolvedTypeWidth,
@@ -256,7 +263,9 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                                         activeWidth: resolvedActiveWidth,
                                         actionsWidth: resolvedActionsWidth,
                                       )
-                                    : _VehicleMakeResponsiveCard(item: item),
+                                    : _VehicleMakeResponsiveCard(
+                                        item: entry.value,
+                                      ),
                               ),
                             )
                             .toList(),

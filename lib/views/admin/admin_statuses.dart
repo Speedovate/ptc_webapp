@@ -73,7 +73,8 @@ class AdminStatusesView extends StatelessWidget {
     AppSnackbar.showSuccess(context, 'Status deleted.');
   }
 
-  static const sectionGap = 14.0;
+  static const toolbarSectionGap = 12.0;
+  static const tableSectionGap = 14.0;
   static const controlHeight = 52.0;
   static const surfaceRadius = 16.0;
 
@@ -313,17 +314,24 @@ class _StatusesContentState extends State<_StatusesContent> {
                   title: 'New Status',
                 ),
               ),
-              const SizedBox(height: AdminStatusesView.sectionGap),
+              const SizedBox(height: AdminStatusesView.toolbarSectionGap),
               if (isNarrow)
                 _filteredStatuses.isEmpty
                     ? _StatusesEmptyState(message: _emptyMessage)
                     : Column(
                         children: _filteredStatuses
+                            .asMap()
+                            .entries
                             .map(
-                              (status) => Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
+                            (entry) => Padding(
+                              padding: EdgeInsets.only(
+                                bottom:
+                                    entry.key == _filteredStatuses.length - 1
+                                        ? 0
+                                        : 12,
+                              ),
                                 child: _StatusResponsiveCard(
-                                  status: status,
+                                  status: entry.value,
                                   vm: widget.vm,
                                 ),
                               ),
@@ -806,15 +814,17 @@ class _StatusesTable extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: AdminStatusesView.sectionGap),
+            const SizedBox(height: AdminStatusesView.tableSectionGap),
             if (statuses.isEmpty)
               _StatusesEmptyState(message: emptyMessage)
             else
-              ...statuses.map(
-                (status) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+              ...statuses.asMap().entries.map(
+                (entry) => Padding(
+                  padding: EdgeInsets.only(
+                    bottom: entry.key == statuses.length - 1 ? 0 : 12,
+                  ),
                   child: _StatusTableRow(
-                    status: status,
+                    status: entry.value,
                     vm: vm,
                     resolvedIdWidth: resolvedIdWidth,
                     resolvedKeyWidth: resolvedKeyWidth,

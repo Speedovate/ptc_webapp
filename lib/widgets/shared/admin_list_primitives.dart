@@ -96,6 +96,7 @@ class AdminListSearchField extends StatefulWidget {
 }
 
 class _AdminListSearchFieldState extends State<AdminListSearchField> {
+  static const double _toolbarVisualHeight = 48;
   late final TextEditingController _controller;
   bool _isHovered = false;
   bool _isPressed = false;
@@ -156,6 +157,10 @@ class _AdminListSearchFieldState extends State<AdminListSearchField> {
               textAlignVertical: TextAlignVertical.center,
               decoration: InputDecoration(
                 isDense: true,
+                constraints: const BoxConstraints(
+                  minHeight: _toolbarVisualHeight,
+                  maxHeight: _toolbarVisualHeight,
+                ),
                 hintText: 'Search',
                 hintStyle: adminFieldHintTextStyle.copyWith(
                   color: AppColors.primaryColor.withValues(alpha: 0.72),
@@ -166,7 +171,7 @@ class _AdminListSearchFieldState extends State<AdminListSearchField> {
                 ),
                 prefixIconConstraints: const BoxConstraints(
                   minWidth: 46,
-                  minHeight: 46,
+                  minHeight: _toolbarVisualHeight,
                 ),
                 filled: true,
                 fillColor: _isHovered || _isPressed
@@ -232,6 +237,7 @@ class AdminListNewButton extends StatelessWidget {
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primaryColor,
                 foregroundColor: Colors.white,
+                minimumSize: const Size(0, 44),
                 padding: EdgeInsets.symmetric(
                   horizontal: useIconOnlyLayout
                       ? 0
@@ -391,6 +397,7 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
             style: FilledButton.styleFrom(
               backgroundColor: AppColors.primaryColor,
               foregroundColor: Colors.white,
+              minimumSize: const Size(0, 44),
               padding: EdgeInsets.symmetric(
                 horizontal: widget.iconOnly ? 0 : 14,
               ),
