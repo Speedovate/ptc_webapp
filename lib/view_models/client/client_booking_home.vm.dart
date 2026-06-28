@@ -1,12 +1,15 @@
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/models/client_member.dart';
 import 'package:webapp/models/status.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/client_member.request.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
+import 'package:webapp/repositories/interfaces/client_member_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
@@ -16,13 +19,17 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   ClientBookingHomeViewModel({
     StatusFormRepository? statusRepository,
     BookingRepository? bookingRepository,
+    ClientMemberRepository? clientMemberRepository,
   }) : _statusRepository = statusRepository ?? StatusRequest.instance,
        _bookingRepository = bookingRepository ?? BookingRequest.instance,
+       _clientMemberRepository =
+           clientMemberRepository ?? ClientMemberRequest.instance,
        _engine = StatusFormEngine(statusRepository ?? StatusRequest.instance) {
     mainForms = List<StatusForm>.from(_cachedMainForms);
     form = _cachedForm;
     fields = List<StatusField>.from(_cachedFields);
     statuses = List<Status>.from(_cachedStatuses);
+    members = List<ClientMember>.from(_cachedMembers);
     _fieldsByFormId.addAll(
       _cachedFieldsByFormId.map(
         (key, value) => MapEntry(key, List<StatusField>.from(value)),
@@ -35,6 +42,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
   final StatusFormRepository _statusRepository;
   final BookingRepository _bookingRepository;
+  final ClientMemberRepository _clientMemberRepository;
   final StatusFormEngine _engine;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
   static List<StatusForm> _cachedMainForms = const [];
@@ -42,6 +50,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   static StatusForm? _cachedForm;
   static List<StatusField> _cachedFields = const [];
   static List<Status> _cachedStatuses = const [];
+  static List<ClientMember> _cachedMembers = const [];
   static String? _cachedLoadError;
   static String? _cachedBlockedMessage;
   static UserModel? _cachedActiveClientUser;
@@ -52,6 +61,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     _cachedForm = null;
     _cachedFields = const [];
     _cachedStatuses = const [];
+    _cachedMembers = const [];
     _cachedLoadError = null;
     _cachedBlockedMessage = null;
     _cachedActiveClientUser = null;
@@ -62,6 +72,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   StatusForm? form;
   List<StatusField> fields = [];
   List<Status> statuses = [];
+  List<ClientMember> members = [];
   Map<String, dynamic> answers = {};
   Map<String, String> errors = {};
   String? loadError;
@@ -70,6 +81,10 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   bool isSubmitting = false;
   int resetTick = 0;
   UserModel? _activeClientUser;
+  static const representativeNameKey = 'representative_name';
+  static const representativePhoneKey = 'representative_phone';
+  static const representativePositionKey = 'representative_position';
+  static const memberIdKey = 'member_id';
 
   Future<void> load(UserModel clientUser) async {
     if (isBusyLoading) {
@@ -83,8 +98,12 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
     try {
       await _bookingRepository.initialize();
+      await _clientMemberRepository.initialize();
 
       statuses = await _statusRepository.getStatuses();
+      members = await _clientMemberRepository.getMembersForClient(
+        clientUser.id ?? '',
+      );
       final bookForms = await _statusRepository.getStatusFormsByRoleAndStatus(
         'client',
         'book',
@@ -125,6 +144,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       _cachedForm = form;
       _cachedFields = List<StatusField>.from(fields);
       _cachedStatuses = List<Status>.from(statuses);
+      _cachedMembers = List<ClientMember>.from(members);
       _cachedLoadError = null;
       _cachedBlockedMessage = blockedMessage;
       _cachedActiveClientUser = _activeClientUser;
@@ -153,6 +173,33 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     notifyListeners();
   }
 
+  List<ClientMember> get activeMembers =>
+      members.where((member) => member.isActive ?? true).toList();
+
+  bool formUsesMemberSelection(StatusForm activeForm) {
+    return fieldsForForm(activeForm).any(_isMemberField);
+  }
+
+  Map<String, String> memberOptionLabelsForForm(StatusForm activeForm) {
+    if (!formUsesMemberSelection(activeForm)) {
+      return const {};
+    }
+    final labels = <String, String>{};
+    for (final member in activeMembers) {
+      final id = (member.id ?? '').trim();
+      if (id.isEmpty) {
+        continue;
+      }
+      final parts = <String>[
+        member.displayName,
+        if (member.normalizedPhone.isNotEmpty) member.normalizedPhone,
+        if ((member.position?.trim() ?? '').isNotEmpty) member.position!.trim(),
+      ];
+      labels[id] = parts.join(' | ');
+    }
+    return labels;
+  }
+
   void updateAnswer(String key, dynamic value) {
     final nextAnswers = Map<String, dynamic>.from(answers);
     if (_isEmptyValue(value)) {
@@ -172,15 +219,48 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     notifyListeners();
   }
 
-  List<StatusField> fieldsForForm(StatusForm activeForm) {
-    return _fieldsByFormId[activeForm.id ?? ''] ?? const [];
+  List<StatusField> fieldsForForm(
+    StatusForm activeForm, {
+    Map<String, dynamic>? answers,
+  }) {
+    final baseFields = _fieldsByFormId[activeForm.id ?? ''] ?? const [];
+    final resolvedFields = baseFields.map((field) {
+      final override = activeForm.fieldOverrides[field.id];
+      if (override == null) {
+        return field;
+      }
+      return field.copyWith(
+        required: override.required ?? field.required,
+        placeholder: override.placeholder ?? field.placeholder,
+      );
+    }).toList();
+
+    final hasMemberField = resolvedFields.any(_isMemberField);
+    if (!hasMemberField) {
+      return StatusFormEngine.visibleFields(
+        resolvedFields,
+        answers ?? this.answers,
+      );
+    }
+
+    final filteredFields = resolvedFields.where((field) {
+      final key = (field.key ?? '').trim();
+      return key != representativeNameKey &&
+          key != representativePhoneKey &&
+          key != representativePositionKey;
+    }).toList();
+
+    return StatusFormEngine.visibleFields(filteredFields, answers ?? this.answers);
   }
 
   Map<String, String> validateAnswersForForm(
     StatusForm activeForm,
     Map<String, dynamic> formAnswers,
   ) {
-    return _engine.validateFields(fieldsForForm(activeForm), formAnswers);
+    return _engine.validateFields(
+      fieldsForForm(activeForm, answers: formAnswers),
+      formAnswers,
+    );
   }
 
   Future<Booking?> submitForm({
@@ -200,6 +280,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
     try {
       final now = DateTime.now();
+      final normalizedAnswers = _answersWithMemberSnapshot(formAnswers);
       final baseBooking = Booking(
         client: clientUser,
         clientStatus: activeForm.currentStatusKey,
@@ -209,8 +290,8 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       final nextBooking = _engine.applyOutputToBooking(
         baseBooking,
         activeForm,
-        fieldsForForm(activeForm),
-        formAnswers,
+        fieldsForForm(activeForm, answers: normalizedAnswers),
+        normalizedAnswers,
         submittedByUserId,
       );
       return await _bookingRepository.saveBooking(nextBooking);
@@ -240,6 +321,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
     try {
       final now = DateTime.now();
+      final normalizedAnswers = _answersWithMemberSnapshot(answers);
       final baseBooking = Booking(
         client: clientUser,
         clientStatus: activeForm.currentStatusKey,
@@ -250,7 +332,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         baseBooking,
         activeForm,
         fields,
-        answers,
+        normalizedAnswers,
         submittedByUserId,
       );
       final savedBooking = await _bookingRepository.saveBooking(nextBooking);
@@ -366,5 +448,46 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       clientStatus: activeForm.currentStatusKey,
     );
     return _engine.getBlockedMessage(dependencyCheckBooking, activeForm);
+  }
+
+  bool _isMemberField(StatusField field) {
+    final key = (field.key ?? '').trim().toLowerCase();
+    final sourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(field);
+    return key == memberIdKey ||
+        sourceKey == statusFieldOptionSourceClientMembers;
+  }
+
+  Map<String, dynamic> _answersWithMemberSnapshot(Map<String, dynamic> answers) {
+    final memberId = normalizeId(answers[memberIdKey]?.toString());
+    if (memberId == null) {
+      return answers;
+    }
+    final matchedMember = activeMembers
+        .where((member) => member.id == memberId)
+        .firstOrNull;
+    if (matchedMember == null) {
+      return answers;
+    }
+
+    final nextAnswers = Map<String, dynamic>.from(answers);
+    nextAnswers[memberIdKey] = memberId;
+    final name = matchedMember.name?.trim() ?? '';
+    final phone = matchedMember.normalizedPhone;
+    final position = matchedMember.position?.trim() ?? '';
+
+    if (name.isNotEmpty) {
+      nextAnswers[representativeNameKey] = name;
+      nextAnswers['member_name'] = name;
+    }
+    if (phone.isNotEmpty) {
+      nextAnswers[representativePhoneKey] = phone;
+      nextAnswers['member_phone'] = phone;
+    }
+    if (position.isNotEmpty) {
+      nextAnswers[representativePositionKey] = position;
+      nextAnswers['member_position'] = position;
+    }
+
+    return nextAnswers;
   }
 }

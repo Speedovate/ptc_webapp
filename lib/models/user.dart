@@ -6,10 +6,12 @@ class UserModel {
   const UserModel({
     this.id,
     this.role,
+    this.parentClientId,
     this.email,
     this.name,
     this.photo,
     this.phone,
+    this.position,
     this.isActive = false,
     this.isOnline = false,
     this.password,
@@ -19,10 +21,12 @@ class UserModel {
 
   final String? id;
   final String? role;
+  final String? parentClientId;
   final String? email;
   final String? name;
   final String? photo;
   final String? phone;
+  final String? position;
   final bool? isActive;
   final bool? isOnline;
   final String? password;
@@ -34,10 +38,12 @@ class UserModel {
   UserModel copyWith({
     String? id,
     String? role,
+    String? parentClientId,
     String? email,
     String? name,
     String? photo,
     String? phone,
+    String? position,
     bool? isActive,
     bool? isOnline,
     String? password,
@@ -55,10 +61,12 @@ class UserModel {
       return DriverModel(
         id: id ?? this.id,
         role: nextRole,
+        parentClientId: parentClientId ?? this.parentClientId,
         email: email ?? this.email,
         name: name ?? this.name,
         photo: photo ?? this.photo,
         phone: phone ?? this.phone,
+        position: position ?? this.position,
         isActive: isActive ?? this.isActive,
         isOnline: isOnline ?? this.isOnline,
         password: password ?? this.password,
@@ -74,10 +82,12 @@ class UserModel {
     return UserModel(
       id: id ?? this.id,
       role: nextRole,
+      parentClientId: parentClientId ?? this.parentClientId,
       email: email ?? this.email,
       name: name ?? this.name,
       photo: photo ?? this.photo,
       phone: phone ?? this.phone,
+      position: position ?? this.position,
       isActive: isActive ?? this.isActive,
       isOnline: isOnline ?? this.isOnline,
       password: password ?? this.password,
@@ -90,10 +100,12 @@ class UserModel {
     return {
       'id': id,
       'role': role,
+      'parent_client_id': parentClientId,
       'email': email,
       'name': name,
       'photo': photo,
       'phone': phone,
+      'position': position,
       'is_active': isActive,
       'is_online': isOnline,
       'password': password,
@@ -110,10 +122,12 @@ class UserModel {
     return UserModel(
       id: map['id']?.toString(),
       role: map['role']?.toString(),
+      parentClientId: map['parent_client_id']?.toString(),
       email: map['email']?.toString(),
       name: map['name']?.toString(),
       photo: map['photo']?.toString(),
       phone: map['phone']?.toString(),
+      position: map['position']?.toString(),
       isActive: map['is_active'] as bool? ?? false,
       isOnline: map['is_online'] as bool? ?? false,
       password: map['password']?.toString(),
@@ -133,10 +147,12 @@ class DriverModel extends UserModel {
   const DriverModel({
     super.id,
     super.role = 'driver',
+    super.parentClientId,
     super.email,
     super.name,
     super.photo,
     super.phone,
+    super.position,
     super.isActive = false,
     super.isOnline = false,
     super.password,
@@ -168,10 +184,12 @@ class DriverModel extends UserModel {
     return DriverModel(
       id: map['id']?.toString(),
       role: map['role']?.toString() ?? 'driver',
+      parentClientId: map['parent_client_id']?.toString(),
       email: map['email']?.toString(),
       name: map['name']?.toString(),
       photo: map['photo']?.toString(),
       phone: map['phone']?.toString(),
+      position: map['position']?.toString(),
       isActive: map['is_active'] as bool? ?? false,
       isOnline: map['is_online'] as bool? ?? false,
       password: map['password']?.toString(),

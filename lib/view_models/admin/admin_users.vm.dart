@@ -2,6 +2,7 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
+import 'package:webapp/utils/functions.dart';
 
 class AdminUsersViewModel extends BaseViewModel {
   AdminUsersViewModel({AuthRepository? repository})
@@ -9,22 +10,26 @@ class AdminUsersViewModel extends BaseViewModel {
     _users.addAll(_cachedUsers);
     _currentUser = _cachedCurrentUser;
     _viewedUser = _cachedViewedUser;
+    _viewedUserStack.addAll(_cachedViewedUserStack);
   }
 
   final AuthRepository _repository;
   static List<UserModel> _cachedUsers = const [];
   static UserModel? _cachedCurrentUser;
   static UserModel? _cachedViewedUser;
+  static List<UserModel> _cachedViewedUserStack = const [];
 
   static void clearCachedState() {
     _cachedUsers = const [];
     _cachedCurrentUser = null;
     _cachedViewedUser = null;
+    _cachedViewedUserStack = const [];
   }
 
   final List<UserModel> _users = [];
   UserModel? _currentUser;
   UserModel? _viewedUser;
+  final List<UserModel> _viewedUserStack = [];
   UserModel? _draftNewUser;
   String _searchQuery = '';
   String _roleFilter = 'All';
@@ -59,6 +64,7 @@ class AdminUsersViewModel extends BaseViewModel {
       _cachedUsers = List<UserModel>.from(_users);
       _cachedCurrentUser = _currentUser;
       _cachedViewedUser = _viewedUser;
+      _cachedViewedUserStack = List<UserModel>.from(_viewedUserStack);
     } finally {
       setBusy(false);
       notifyListeners();
@@ -84,6 +90,7 @@ class AdminUsersViewModel extends BaseViewModel {
       _cachedUsers = List<UserModel>.from(_users);
       _cachedCurrentUser = _currentUser;
       _cachedViewedUser = _viewedUser;
+      _cachedViewedUserStack = List<UserModel>.from(_viewedUserStack);
       _searchQuery = '';
       notifyListeners();
       return saved;
@@ -109,6 +116,7 @@ class AdminUsersViewModel extends BaseViewModel {
       _draftNewUser = null;
       _cachedUsers = List<UserModel>.from(_users);
       _cachedCurrentUser = _currentUser;
+      _cachedViewedUserStack = List<UserModel>.from(_viewedUserStack);
       notifyListeners();
       return saved;
     } finally {
@@ -133,6 +141,7 @@ class AdminUsersViewModel extends BaseViewModel {
     _cachedUsers = List<UserModel>.from(_users);
     _cachedCurrentUser = _currentUser;
     _cachedViewedUser = _viewedUser;
+    _cachedViewedUserStack = List<UserModel>.from(_viewedUserStack);
     notifyListeners();
   }
 
@@ -158,6 +167,7 @@ class AdminUsersViewModel extends BaseViewModel {
       _cachedUsers = List<UserModel>.from(_users);
       _cachedCurrentUser = _currentUser;
       _cachedViewedUser = _viewedUser;
+      _cachedViewedUserStack = List<UserModel>.from(_viewedUserStack);
       notifyListeners();
     } finally {
       setBusy(false);
@@ -178,16 +188,36 @@ class AdminUsersViewModel extends BaseViewModel {
     }
   }
 
-  void openUserView(UserModel user) {
+  void openUserView(UserModel user, {bool preserveCurrent = false}) {
+    if (!preserveCurrent) {
+      _viewedUserStack.clear();
+    } else if (_viewedUser != null && _viewedUser!.id != user.id) {
+      _viewedUserStack.add(_viewedUser!);
+    }
     _viewedUser = user;
     _cachedViewedUser = _viewedUser;
+    _cachedViewedUserStack = List<UserModel>.from(_viewedUserStack);
     notifyListeners();
   }
 
   void closeUserView() {
-    _viewedUser = null;
-    _cachedViewedUser = null;
+    if (_viewedUserStack.isNotEmpty) {
+      _viewedUser = _viewedUserStack.removeLast();
+      _cachedViewedUser = _viewedUser;
+    } else {
+      _viewedUser = null;
+      _cachedViewedUser = null;
+    }
+    _cachedViewedUserStack = List<UserModel>.from(_viewedUserStack);
     notifyListeners();
+  }
+
+  UserModel? parentBusinessFor(UserModel user) {
+    final parentId = user.parentClientId?.trim();
+    if (parentId == null || parentId.isEmpty) {
+      return null;
+    }
+    return _users.where((item) => item.id == parentId).firstOrNull;
   }
 
   Future<void> setUserActive(UserModel user, bool isActive) async {
@@ -329,6 +359,19 @@ class AdminUsersViewModel extends BaseViewModel {
     return await _repository.getCurrentUser() ?? fallback ?? _currentUser;
   }
 
+  List<UserModel> clientUsers() {
+    return _users
+        .where(
+          (user) => (user.role ?? '').trim() == 'client' && (user.isActive ?? false),
+        )
+        .toList()
+      ..sort(
+        (a, b) => (a.name ?? '').toLowerCase().compareTo(
+          (b.name ?? '').toLowerCase(),
+        ),
+      );
+  }
+
   void _sortUsers() {
     _users.sort((a, b) {
       final createdComparison = _compareLatestFirst(a.createdAt, b.createdAt);
@@ -362,11 +405,6 @@ class AdminUsersViewModel extends BaseViewModel {
     if (role == null || role.isEmpty) {
       return '-';
     }
-
-    return role
-        .split('_')
-        .where((part) => part.isNotEmpty)
-        .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
-        .join(' ');
+    return humanizeDropdownValue(role);
   }
 }

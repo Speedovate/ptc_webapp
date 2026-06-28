@@ -18,8 +18,8 @@ class BookingRecordCard extends StatelessWidget {
     this.onTap,
     this.showStatusSubmissions = true,
     this.showAllDetails = false,
-    this.startValue = '-',
-    this.endValue = '-',
+    this.originValue = '-',
+    this.destinationValue = '-',
     this.clientName = '-',
     this.clientPhone = '-',
     this.driverName = '-',
@@ -35,8 +35,8 @@ class BookingRecordCard extends StatelessWidget {
   final VoidCallback? onTap;
   final bool showStatusSubmissions;
   final bool showAllDetails;
-  final String startValue;
-  final String endValue;
+  final String originValue;
+  final String destinationValue;
   final String clientName;
   final String clientPhone;
   final String driverName;
@@ -137,8 +137,11 @@ class BookingRecordCard extends StatelessWidget {
                   final items = [
                     ...compactItems,
                     if (showAllDetails) ...[
-                      _BookingMetaData(label: 'Start', value: startValue),
-                      _BookingMetaData(label: 'End', value: endValue),
+                      _BookingMetaData(label: 'Origin', value: originValue),
+                      _BookingMetaData(
+                        label: 'Destination',
+                        value: destinationValue,
+                      ),
                       _BookingMetaData(label: 'Client', value: clientName),
                       _BookingMetaData(label: 'Driver', value: driverName),
                       _BookingMetaData(label: 'Helper', value: helperName),
@@ -305,16 +308,18 @@ class BookingRecordCard extends StatelessWidget {
       return null;
     }
 
-    final preferredPendingSection = outputs['pending'];
-    if (preferredPendingSection is Map &&
-        preferredPendingSection['fields'] is Map) {
-      final fields = Map<String, dynamic>.from(
-        preferredPendingSection['fields'] as Map,
-      );
-      final value = fields[fieldKey];
-      final normalized = _simpleDisplayValue(value);
-      if (normalized != '-') {
-        return value;
+    for (final candidateKey in _candidateFieldKeys(fieldKey)) {
+      final preferredPendingSection = outputs['pending'];
+      if (preferredPendingSection is Map &&
+          preferredPendingSection['fields'] is Map) {
+        final fields = Map<String, dynamic>.from(
+          preferredPendingSection['fields'] as Map,
+        );
+        final value = fields[candidateKey];
+        final normalized = _simpleDisplayValue(value);
+        if (normalized != '-') {
+          return value;
+        }
       }
     }
 
@@ -327,14 +332,26 @@ class BookingRecordCard extends StatelessWidget {
         continue;
       }
       final fields = Map<String, dynamic>.from(raw['fields'] as Map);
-      final value = fields[fieldKey];
-      final normalized = _simpleDisplayValue(value);
-      if (normalized != '-') {
-        return value;
+      for (final candidateKey in _candidateFieldKeys(fieldKey)) {
+        final value = fields[candidateKey];
+        final normalized = _simpleDisplayValue(value);
+        if (normalized != '-') {
+          return value;
+        }
       }
     }
     return null;
   }
+}
+
+List<String> _candidateFieldKeys(String fieldKey) {
+  return switch (fieldKey.trim()) {
+    'origin' => const ['origin', 'start'],
+    'start' => const ['start', 'origin'],
+    'destination' => const ['destination', 'end'],
+    'end' => const ['end', 'destination'],
+    _ => [fieldKey],
+  };
 }
 
 class BookingRecordCardActions extends StatelessWidget {

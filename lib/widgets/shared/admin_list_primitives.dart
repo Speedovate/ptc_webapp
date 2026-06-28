@@ -304,6 +304,7 @@ class AdminListFiltersButton extends StatefulWidget {
 class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
   final OverlayPortalController _controller = OverlayPortalController();
   final GlobalKey _buttonKey = GlobalKey();
+  final Object _tapRegionGroupId = Object();
 
   @override
   Widget build(BuildContext context) {
@@ -326,51 +327,51 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
       overlayChildBuilder: (context) {
         return Stack(
           children: [
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onTap: () {
-                  FocusManager.instance.primaryFocus?.unfocus();
-                  _controller.hide();
-                },
-              ),
-            ),
             Positioned(
               top: popupTop,
               right: effectiveRightGap,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: popupContentMaxWidth),
-                child: Material(
-                  color: Colors.white,
-                  elevation: 0,
-                  shadowColor: Colors.transparent,
-                  surfaceTintColor: Colors.white,
-                  borderRadius: BorderRadius.circular(widget.surfaceRadius),
-                  clipBehavior: Clip.antiAlias,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(widget.surfaceRadius),
-                      border: Border.all(color: AppColors.primaryBorder),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x1A0F172A),
-                          blurRadius: 24,
-                          offset: Offset(0, 10),
+              child: TapRegion(
+                groupId: _tapRegionGroupId,
+                onTapOutside: (_) {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  _controller.hide();
+                },
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: popupContentMaxWidth),
+                  child: Material(
+                    color: Colors.white,
+                    elevation: 0,
+                    shadowColor: Colors.transparent,
+                    surfaceTintColor: Colors.white,
+                    borderRadius: BorderRadius.circular(widget.surfaceRadius),
+                    clipBehavior: Clip.antiAlias,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(
+                          widget.surfaceRadius,
                         ),
-                      ],
-                    ),
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onTap: () {
-                        FocusManager.instance.primaryFocus?.unfocus();
-                      },
-                      child: Padding(
-                        padding: widget.menuPadding,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: widget.menuChildren,
+                        border: Border.all(color: AppColors.primaryBorder),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x1A0F172A),
+                            blurRadius: 24,
+                            offset: Offset(0, 10),
+                          ),
+                        ],
+                      ),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTap: () {
+                          FocusManager.instance.primaryFocus?.unfocus();
+                        },
+                        child: Padding(
+                          padding: widget.menuPadding,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: widget.menuChildren,
+                          ),
                         ),
                       ),
                     ),
@@ -381,45 +382,48 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
           ],
         );
       },
-      child: SizedBox(
-        key: _buttonKey,
-        height: widget.controlHeight,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: FilledButton(
-            onPressed: () {
-              if (_controller.isShowing) {
-                _controller.hide();
-              } else {
-                _controller.show();
-              }
-            },
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.primaryColor,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(0, 44),
-              padding: EdgeInsets.symmetric(
-                horizontal: widget.iconOnly ? 0 : 14,
+      child: TapRegion(
+        groupId: _tapRegionGroupId,
+        child: SizedBox(
+          key: _buttonKey,
+          height: widget.controlHeight,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: FilledButton(
+              onPressed: () {
+                if (_controller.isShowing) {
+                  _controller.hide();
+                } else {
+                  _controller.show();
+                }
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primaryColor,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 44),
+                padding: EdgeInsets.symmetric(
+                  horizontal: widget.iconOnly ? 0 : 14,
+                ),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(widget.surfaceRadius),
+                ),
               ),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(widget.surfaceRadius),
-              ),
+              child: widget.iconOnly
+                  ? const Icon(Icons.filter_alt_rounded)
+                  : const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Filters',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        SizedBox(width: 12),
+                        Icon(Icons.filter_alt_rounded),
+                      ],
+                    ),
             ),
-            child: widget.iconOnly
-                ? const Icon(Icons.filter_alt_rounded)
-                : const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Filters',
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      SizedBox(width: 12),
-                      Icon(Icons.filter_alt_rounded),
-                    ],
-                  ),
           ),
         ),
       ),
@@ -509,7 +513,7 @@ class AdminListHeaderCell extends StatelessWidget {
   const AdminListHeaderCell({
     super.key,
     required this.label,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
     this.textAlign = TextAlign.left,
   });
@@ -542,7 +546,7 @@ class AdminListBodyCell extends StatelessWidget {
   const AdminListBodyCell({
     super.key,
     required this.child,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
   });
 
@@ -777,10 +781,13 @@ Widget adminMetaPill(String label, {bool isFilled = false}) {
 }
 
 class AdminListMeasurements {
+  static const defaultTrailingPadding = 12.0;
+  static const defaultExtraWidthAllowance = 8.0;
+
   static double resolvedColumnWidth(
     double measuredWidth, {
-    double trailingPadding = 20,
-    double extraWidthAllowance = 16,
+    double trailingPadding = defaultTrailingPadding,
+    double extraWidthAllowance = defaultExtraWidthAllowance,
   }) {
     return measuredWidth + trailingPadding + extraWidthAllowance;
   }

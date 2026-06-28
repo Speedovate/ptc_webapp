@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/view_models/shared/app_shell.vm.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/views/admin/admin_home.dart';
 import 'package:webapp/views/auth/auth_view.dart';
 import 'package:webapp/views/client/client_home.dart';
 import 'package:webapp/views/driver/driver_home.dart';
 import 'package:webapp/views/helper/helper_home.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
+import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/in_app_browser_guard.dart';
 
 class AppShell extends StatelessWidget {
@@ -19,6 +21,24 @@ class AppShell extends StatelessWidget {
       viewModelBuilder: AppShellViewModel.new,
       onViewModelReady: (vm) => vm.initialize(),
       builder: (context, vm, child) {
+        if (vm.isLoading) {
+          return const SelectionArea(
+            child: InAppBrowserGuard(
+              child: Scaffold(
+                backgroundColor: Color(0xFF5C33CF),
+                body: SafeArea(
+                  child: Center(
+                    child: AppPageLoading(
+                      message: 'Loading account ...',
+                      compact: true,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+
         final content = vm.currentUser == null
             ? AuthView(onAuthenticated: vm.completeAuthentication)
             : _buildRoleHome(
@@ -49,7 +69,7 @@ class AppShell extends StatelessWidget {
                 },
               );
 
-        return InAppBrowserGuard(child: content);
+        return SelectionArea(child: InAppBrowserGuard(child: content));
       },
     );
   }
@@ -60,7 +80,8 @@ class AppShell extends StatelessWidget {
     required Future<void> Function() onUserUpdated,
     required VoidCallback onLogout,
   }) {
-    switch (user.role) {
+    final normalizedRole = normalizeRoleKey(user.role);
+    switch (normalizedRole) {
       case 'admin':
         return AdminHome(
           user: user,
@@ -80,6 +101,7 @@ class AppShell extends StatelessWidget {
           onLogout: onLogout,
           isQuickLoggedIn: isQuickLoggedIn,
         );
+      case 'sub-client':
       case 'client':
       default:
         return ClientHome(

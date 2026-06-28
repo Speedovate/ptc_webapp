@@ -30,6 +30,23 @@ String humanizeDropdownValue(String? value) {
       .join(' ');
 }
 
+String normalizeRoleKey(String? value) {
+  final normalized = (value ?? '').trim().toLowerCase().replaceAll('_', '-');
+  return normalized;
+}
+
+bool isPrimaryClientRole(String? role) {
+  return normalizeRoleKey(role) == 'client';
+}
+
+bool isSubClientRole(String? role) {
+  return normalizeRoleKey(role) == 'sub-client';
+}
+
+bool isClientScopedRole(String? role) {
+  return isPrimaryClientRole(role) || isSubClientRole(role);
+}
+
 String toTitleCase(String value) {
   String capitalizeSegment(String segment) {
     if (segment.isEmpty) {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/constants/palawan_locations.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
@@ -14,19 +15,27 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
     this.formTitle,
     this.formButtonText,
     this.formStatusKey,
     this.errorText,
+    this.optionLabels = const {},
   });
 
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
   final String? formTitle;
   final String? formButtonText;
   final String? formStatusKey;
   final String? errorText;
+  final Map<String, String> optionLabels;
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +43,11 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
     final subtitle = field.subtitle?.trim();
     final instructions = field.instructions?.trim();
     final fieldType = (field.type ?? '').trim().toLowerCase();
-    final usesDropdownCard = fieldType == 'dropdown';
+    final fieldKey = (field.key ?? '').trim().toLowerCase();
+    final isSearchDropdownCard =
+        fieldType == 'search_dropdown' || isPalawanLocationFieldKey(fieldKey);
+    final isNormalDropdownCard = fieldType == 'dropdown';
+    final usesDropdownCard = isNormalDropdownCard || isSearchDropdownCard;
     final palette = bookingFormResolvedStatusPalette(
       title: formTitle,
       buttonText: formButtonText,
@@ -48,16 +61,23 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
       required: field.required == true,
       subtitle: subtitle,
       instructions: instructions,
-      containerPadding: usesDropdownCard
-          ? const EdgeInsets.fromLTRB(18, 18, 18, 12)
-          : const EdgeInsets.all(18),
+      inputTopSpacing: usesDropdownCard ? 10 : 14,
+      containerPadding: isSearchDropdownCard
+          ? const EdgeInsets.fromLTRB(18, 18, 18, 4)
+          : (isNormalDropdownCard
+                ? const EdgeInsets.fromLTRB(18, 18, 18, 8)
+                : const EdgeInsets.all(18)),
       input: StatusFormRuntimeFieldInput(
         field: field,
         initialValue: initialValue,
+        focusNode: focusNode,
+        nextFocusNode: nextFocusNode,
+        activateNextFocus: activateNextFocus,
         errorText: errorText,
         formTitle: formTitle,
         formButtonText: formButtonText,
         formStatusKey: formStatusKey,
+        optionLabels: optionLabels,
         onChanged: onChanged,
       ),
     );
@@ -70,27 +90,65 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
     this.formTitle,
     this.formButtonText,
     this.formStatusKey,
     this.errorText,
+    this.optionLabels = const {},
   });
 
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
   final String? formTitle;
   final String? formButtonText;
   final String? formStatusKey;
   final String? errorText;
+  final Map<String, String> optionLabels;
 
   @override
   Widget build(BuildContext context) {
+    final fieldKey = (field.key ?? '').trim().toLowerCase();
+    if (isPalawanLocationFieldKey(fieldKey)) {
+      return _PalawanLocationFieldInput(
+        field: field,
+        initialValue: initialValue,
+        errorText: errorText,
+        focusNode: focusNode,
+        nextFocusNode: nextFocusNode,
+        activateNextFocus: activateNextFocus,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
+        onChanged: onChanged,
+      );
+    }
     return switch (field.type) {
       'photo' => _PhotoFieldInput(
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        focusNode: focusNode,
+        nextFocusNode: nextFocusNode,
+        activateNextFocus: activateNextFocus,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
+        onChanged: onChanged,
+      ),
+      'search_dropdown' => _SearchDropdownFieldInput(
+        field: field,
+        initialValue: initialValue,
+        errorText: errorText,
+        focusNode: focusNode,
+        nextFocusNode: nextFocusNode,
+        activateNextFocus: activateNextFocus,
         formTitle: formTitle,
         formButtonText: formButtonText,
         formStatusKey: formStatusKey,
@@ -100,9 +158,13 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         field: field,
         initialValue: initialValue,
         errorText: errorText,
+        focusNode: focusNode,
+        nextFocusNode: nextFocusNode,
+        activateNextFocus: activateNextFocus,
         formTitle: formTitle,
         formButtonText: formButtonText,
         formStatusKey: formStatusKey,
+        optionLabels: optionLabels,
         onChanged: onChanged,
       ),
       'checkbox' => _CheckboxFieldInput(
@@ -135,6 +197,9 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
       'email' => _TextFieldInput(
         field: field,
         initialValue: initialValue,
+        focusNode: focusNode,
+        nextFocusNode: nextFocusNode,
+        activateNextFocus: activateNextFocus,
         errorText: errorText,
         formTitle: formTitle,
         formButtonText: formButtonText,
@@ -145,6 +210,9 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
       'phone' => _TextFieldInput(
         field: field,
         initialValue: initialValue,
+        focusNode: focusNode,
+        nextFocusNode: nextFocusNode,
+        activateNextFocus: activateNextFocus,
         errorText: errorText,
         formTitle: formTitle,
         formButtonText: formButtonText,
@@ -155,6 +223,9 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
       'number' => _TextFieldInput(
         field: field,
         initialValue: initialValue,
+        focusNode: focusNode,
+        nextFocusNode: nextFocusNode,
+        activateNextFocus: activateNextFocus,
         errorText: errorText,
         formTitle: formTitle,
         formButtonText: formButtonText,
@@ -165,6 +236,9 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
       _ => _TextFieldInput(
         field: field,
         initialValue: initialValue,
+        focusNode: focusNode,
+        nextFocusNode: nextFocusNode,
+        activateNextFocus: activateNextFocus,
         errorText: errorText,
         formTitle: formTitle,
         formButtonText: formButtonText,
@@ -176,12 +250,207 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
   }
 }
 
+class _SearchDropdownFieldInput extends StatelessWidget {
+  const _SearchDropdownFieldInput({
+    required this.field,
+    required this.initialValue,
+    required this.onChanged,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
+    this.errorText,
+  });
+
+  final StatusField field;
+  final dynamic initialValue;
+  final ValueChanged<dynamic> onChanged;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
+  final String? formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
+  final String? errorText;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = bookingFormResolvedStatusPalette(
+      title: formTitle,
+      buttonText: formButtonText,
+      currentStatusKey: formStatusKey,
+    );
+    final fieldLabel = field.title?.trim().isNotEmpty == true
+        ? field.title!.trim()
+        : 'Field';
+
+    return AdminSearchSelectFormField(
+      initialValue: initialValue?.toString(),
+      focusNode: focusNode,
+      autoActivateOnFocus: activateNextFocus,
+      decoration: adminPlainDropdownDecoration(
+        field.required == true
+            ? adminSelectPlaceholder(fieldLabel, override: field.placeholder)
+            : ((field.placeholder?.trim().isNotEmpty == true)
+                  ? field.placeholder!.trim()
+                  : 'Optional'),
+      ).copyWith(
+        fillColor: palette.surface,
+        hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: palette.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: palette.accent),
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: palette.border),
+        ),
+        errorText: errorText,
+      ),
+      options: field.options,
+      onChanged: (value) {
+        onChanged(value);
+        final resolvedNextFocusNode = nextFocusNode;
+        if (resolvedNextFocusNode != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!context.mounted) {
+              return;
+            }
+            FocusScope.of(context).requestFocus(resolvedNextFocusNode);
+            if (activateNextFocus) {
+              final primaryFocus = FocusManager.instance.primaryFocus;
+              final targetContext =
+                  primaryFocus?.context ?? resolvedNextFocusNode.context;
+              if (targetContext != null) {
+                Actions.maybeInvoke(targetContext, const ActivateIntent());
+              }
+            }
+          });
+        } else {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!context.mounted) {
+              return;
+            }
+            FocusScope.of(context).unfocus();
+          });
+        }
+      },
+    );
+  }
+}
+
+class _PalawanLocationFieldInput extends StatelessWidget {
+  const _PalawanLocationFieldInput({
+    required this.field,
+    required this.initialValue,
+    required this.onChanged,
+    required this.formTitle,
+    required this.formButtonText,
+    required this.formStatusKey,
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
+    this.errorText,
+  });
+
+  final StatusField field;
+  final dynamic initialValue;
+  final ValueChanged<dynamic> onChanged;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
+  final String? formTitle;
+  final String? formButtonText;
+  final String? formStatusKey;
+  final String? errorText;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = bookingFormResolvedStatusPalette(
+      title: formTitle,
+      buttonText: formButtonText,
+      currentStatusKey: formStatusKey,
+    );
+
+    return AdminSearchSelectFormField(
+      initialValue: initialValue?.toString(),
+      focusNode: focusNode,
+      autoActivateOnFocus: activateNextFocus,
+      decoration: adminPlainDropdownDecoration(
+        field.required == true
+            ? adminSelectPlaceholder(
+                field.title?.trim().isNotEmpty == true
+                    ? field.title!.trim()
+                    : 'Location',
+                override: field.placeholder,
+              )
+            : ((field.placeholder?.trim().isNotEmpty == true)
+                  ? field.placeholder!.trim()
+                  : 'Optional'),
+      ).copyWith(
+        fillColor: palette.surface,
+        hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: palette.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: palette.accent),
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: palette.border),
+        ),
+        errorText: errorText,
+      ),
+      options: palawanLocationOptions,
+      onChanged: (value) {
+        onChanged(value);
+        final resolvedNextFocusNode = nextFocusNode;
+        if (resolvedNextFocusNode != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!context.mounted) {
+              return;
+            }
+            FocusScope.of(context).requestFocus(resolvedNextFocusNode);
+            if (activateNextFocus) {
+              final primaryFocus = FocusManager.instance.primaryFocus;
+              final targetContext =
+                  primaryFocus?.context ?? resolvedNextFocusNode.context;
+              if (targetContext != null) {
+                Actions.maybeInvoke(targetContext, const ActivateIntent());
+              }
+            }
+          });
+        } else {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!context.mounted) {
+              return;
+            }
+            FocusScope.of(context).unfocus();
+          });
+        }
+      },
+    );
+  }
+}
+
 class _TextFieldInput extends StatefulWidget {
   const _TextFieldInput({
     required this.field,
     required this.initialValue,
     required this.onChanged,
     required this.keyboardType,
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
     required this.formTitle,
     required this.formButtonText,
     required this.formStatusKey,
@@ -192,6 +461,9 @@ class _TextFieldInput extends StatefulWidget {
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
   final TextInputType keyboardType;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
   final String? formTitle;
   final String? formButtonText;
   final String? formStatusKey;
@@ -203,6 +475,32 @@ class _TextFieldInput extends StatefulWidget {
 
 class _TextFieldInputState extends State<_TextFieldInput> {
   late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+  late final bool _ownsFocusNode;
+
+  void _focusAndMaybeActivateNext(FocusNode nextFocusNode) {
+    FocusScope.of(context).requestFocus(nextFocusNode);
+    if (!widget.activateNextFocus) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final primaryFocus = FocusManager.instance.primaryFocus;
+      final targetContext = primaryFocus?.context ?? nextFocusNode.context;
+      if (targetContext != null) {
+        Actions.maybeInvoke(targetContext, const ActivateIntent());
+      }
+    });
+  }
+
+  String get _debugFieldLabel {
+    final key = (widget.field.key ?? '').trim();
+    final title = (widget.field.title ?? '').trim();
+    final type = (widget.field.type ?? '').trim();
+    return 'key=${key.isEmpty ? '-' : key} title=${title.isEmpty ? '-' : title} type=${type.isEmpty ? '-' : type}';
+  }
 
   void _unfocusWithoutScroll(PointerDownEvent event) {
     final scrollPosition = Scrollable.maybeOf(context)?.position;
@@ -233,13 +531,36 @@ class _TextFieldInputState extends State<_TextFieldInput> {
     _controller = TextEditingController(
       text: widget.initialValue?.toString() ?? '',
     );
+    _ownsFocusNode = widget.focusNode == null;
+    _focusNode =
+        widget.focusNode ??
+        FocusNode(debugLabel: 'booking_field($_debugFieldLabel)');
     _controller.addListener(_handleChanged);
+    _focusNode.addListener(_handleFocusChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TextFieldInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextText = widget.initialValue?.toString() ?? '';
+    if (_controller.text == nextText) {
+      return;
+    }
+    _controller.value = _controller.value.copyWith(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+      composing: TextRange.empty,
+    );
   }
 
   @override
   void dispose() {
     _controller.removeListener(_handleChanged);
+    _focusNode.removeListener(_handleFocusChanged);
     _controller.dispose();
+    if (_ownsFocusNode) {
+      _focusNode.dispose();
+    }
     super.dispose();
   }
 
@@ -252,6 +573,9 @@ class _TextFieldInputState extends State<_TextFieldInput> {
     widget.onChanged(raw);
   }
 
+  void _handleFocusChanged() {
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = bookingFormResolvedStatusPalette(
@@ -260,21 +584,33 @@ class _TextFieldInputState extends State<_TextFieldInput> {
       currentStatusKey: widget.formStatusKey,
     );
     final placeholder = widget.field.placeholder?.trim();
+    final fieldLabel = widget.field.title?.trim().isNotEmpty == true
+        ? widget.field.title!.trim()
+        : 'Field';
     final hint = placeholder?.isNotEmpty == true
         ? placeholder!
-        : switch (widget.field.type) {
-            'number' => 'Enter a number',
-            'email' => 'Enter an email address',
-            'phone' => 'Enter a phone number',
-            _ => 'Your answer',
-          };
+        : widget.field.required == true
+        ? adminEnterPlaceholder(fieldLabel)
+        : 'Optional';
 
     return TextField(
       controller: _controller,
+      focusNode: _focusNode,
       keyboardType: widget.keyboardType,
+      textInputAction: widget.nextFocusNode != null
+          ? TextInputAction.next
+          : TextInputAction.done,
       inputFormatters: widget.field.type == 'phone'
           ? const [PhilippinesPhoneInputFormatter()]
           : null,
+      onSubmitted: (_) {
+        final nextFocusNode = widget.nextFocusNode;
+        if (nextFocusNode != null) {
+          _focusAndMaybeActivateNext(nextFocusNode);
+        } else {
+          FocusScope.of(context).unfocus();
+        }
+      },
       scrollPadding: EdgeInsets.zero,
       onTapOutside: _unfocusWithoutScroll,
       style: adminFieldValueTextStyle,
@@ -317,44 +653,85 @@ class _DropdownFieldInput extends StatelessWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
     required this.formTitle,
     required this.formButtonText,
     required this.formStatusKey,
     this.errorText,
+    this.optionLabels = const {},
   });
 
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
   final String? formTitle;
   final String? formButtonText;
   final String? formStatusKey;
   final String? errorText;
+  final Map<String, String> optionLabels;
 
   @override
   Widget build(BuildContext context) {
     final optionSourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
       field,
     );
+    final effectiveOptions = field.options.isNotEmpty
+        ? field.options
+        : optionLabels.keys.toList();
     final palette = bookingFormResolvedStatusPalette(
       title: formTitle,
       buttonText: formButtonText,
       currentStatusKey: formStatusKey,
     );
     final placeholder = field.placeholder?.trim();
+    final fieldLabel = field.title?.trim().isNotEmpty == true
+        ? field.title!.trim()
+        : 'Field';
     final hintText = placeholder?.isNotEmpty == true
         ? placeholder!
         : field.required == true
-        ? 'Choose an option'
+        ? adminSelectPlaceholder(fieldLabel)
         : 'Optional';
+    void moveToNextField() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) {
+          return;
+        }
+        final resolvedNextFocusNode = nextFocusNode;
+        if (resolvedNextFocusNode != null) {
+          FocusScope.of(context).requestFocus(resolvedNextFocusNode);
+          if (activateNextFocus) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!context.mounted) {
+                return;
+              }
+              final primaryFocus = FocusManager.instance.primaryFocus;
+              final targetContext =
+                  primaryFocus?.context ?? resolvedNextFocusNode.context;
+              if (targetContext != null) {
+                Actions.maybeInvoke(targetContext, const ActivateIntent());
+              }
+            });
+          }
+        } else {
+          FocusScope.of(context).unfocus();
+        }
+      });
+    }
+
     return AdminDropdownFormField<String>(
       initialValue: initialValue is String ? initialValue : null,
+      focusNode: focusNode,
+      onFocusChanged: (hasFocus) {},
       isExpanded: true,
       iconEnabledColor: palette.accent,
       style: adminDropdownDisplayTextStyle,
-      decoration: adminPlainDropdownDecoration(
-        hintText,
-      ).copyWith(
+      decoration: adminPlainDropdownDecoration(hintText).copyWith(
         fillColor: palette.surface,
         hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
         enabledBorder: OutlineInputBorder(
@@ -371,23 +748,25 @@ class _DropdownFieldInput extends StatelessWidget {
         ),
         errorText: errorText,
       ),
-      items: field.options
-          .map((option) {
-            final label =
-                optionSourceKey == statusFieldOptionSourceVehicleSizes
+      items: effectiveOptions.map((option) {
+        final label =
+            optionLabels[option] ??
+            (optionSourceKey == statusFieldOptionSourceVehicleSizes
                 ? VehicleRequest.instance.displayVehicleSizeLabel(option)
-                : option;
-            return DropdownMenuItem<String>(
-              value: option,
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                style: adminDropdownDisplayTextStyle,
-              ),
-            );
-          })
-          .toList(),
-      onChanged: onChanged,
+                : option);
+        return DropdownMenuItem<String>(
+          value: option,
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: adminDropdownDisplayTextStyle,
+          ),
+        );
+      }).toList(),
+      onChanged: (value) {
+        onChanged(value);
+        moveToNextField();
+      },
     );
   }
 }
@@ -424,6 +803,24 @@ class _CheckboxFieldInputState extends State<_CheckboxFieldInput> {
     _selected = widget.initialValue is List
         ? List<String>.from(widget.initialValue as List)
         : <String>[];
+  }
+
+  @override
+  void didUpdateWidget(covariant _CheckboxFieldInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextSelected = widget.initialValue is List
+        ? List<String>.from(widget.initialValue as List)
+        : <String>[];
+    if (_selected.length == nextSelected.length) {
+      final sameValues = _selected.toSet().containsAll(nextSelected) &&
+          nextSelected.toSet().containsAll(_selected);
+      if (sameValues) {
+        return;
+      }
+    }
+    setState(() {
+      _selected = nextSelected;
+    });
   }
 
   void _toggle(String option, bool selected) {
@@ -477,10 +874,7 @@ class _CheckboxFieldInputState extends State<_CheckboxFieldInput> {
                       ),
                       const SizedBox(width: 6),
                       Expanded(
-                        child: Text(
-                          option,
-                          style: adminFieldValueTextStyle,
-                        ),
+                        child: Text(option, style: adminFieldValueTextStyle),
                       ),
                     ],
                   ),
@@ -531,9 +925,22 @@ class _DateFieldInputState extends State<_DateFieldInput> {
   @override
   void initState() {
     super.initState();
-    _value = widget.initialValue is String
-        ? DateTime.tryParse(widget.initialValue as String)
-        : null;
+    _value = _parseDateValue(widget.initialValue);
+  }
+
+  @override
+  void didUpdateWidget(covariant _DateFieldInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialValue == widget.initialValue) {
+      return;
+    }
+    final nextValue = _parseDateValue(widget.initialValue);
+    if (_value == nextValue) {
+      return;
+    }
+    setState(() {
+      _value = nextValue;
+    });
   }
 
   Future<void> _pickDate() async {
@@ -553,9 +960,16 @@ class _DateFieldInputState extends State<_DateFieldInput> {
   @override
   Widget build(BuildContext context) {
     final display = _value == null
-        ? (widget.field.placeholder?.trim().isNotEmpty == true
-              ? widget.field.placeholder!.trim()
-              : 'Select a date')
+        ? (widget.field.required == true
+              ? adminSelectPlaceholder(
+                  widget.field.title?.trim().isNotEmpty == true
+                      ? widget.field.title!.trim()
+                      : 'Date',
+                  override: widget.field.placeholder,
+                )
+              : (widget.field.placeholder?.trim().isNotEmpty == true
+                    ? widget.field.placeholder!.trim()
+                    : 'Optional'))
         : _formatDateLabel(_value!);
 
     return _PickerFieldShell(
@@ -600,9 +1014,24 @@ class _TimeFieldInputState extends State<_TimeFieldInput> {
   @override
   void initState() {
     super.initState();
-    _value = widget.initialValue is String
-        ? _parseTime(widget.initialValue as String)
-        : null;
+    _value = _parseTimeValue(widget.initialValue);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TimeFieldInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialValue == widget.initialValue) {
+      return;
+    }
+    final nextValue = _parseTimeValue(widget.initialValue);
+    final hasSameValue =
+        _value?.hour == nextValue?.hour && _value?.minute == nextValue?.minute;
+    if (hasSameValue) {
+      return;
+    }
+    setState(() {
+      _value = nextValue;
+    });
   }
 
   Future<void> _pickTime() async {
@@ -620,9 +1049,16 @@ class _TimeFieldInputState extends State<_TimeFieldInput> {
   @override
   Widget build(BuildContext context) {
     final display = _value == null
-        ? (widget.field.placeholder?.trim().isNotEmpty == true
-              ? widget.field.placeholder!.trim()
-              : 'Select a time')
+        ? (widget.field.required == true
+              ? adminSelectPlaceholder(
+                  widget.field.title?.trim().isNotEmpty == true
+                      ? widget.field.title!.trim()
+                      : 'Time',
+                  override: widget.field.placeholder,
+                )
+              : (widget.field.placeholder?.trim().isNotEmpty == true
+                    ? widget.field.placeholder!.trim()
+                    : 'Optional'))
         : _value!.format(context);
 
     return _PickerFieldShell(
@@ -713,21 +1149,18 @@ class _PickerFieldShellState extends State<_PickerFieldShell> {
                       Expanded(
                         child: Text(
                           widget.text,
-                          style: (widget.isPlaceholder
-                                  ? adminFieldHintTextStyle
-                                  : adminFieldValueTextStyle)
-                              .copyWith(
-                                color: widget.isPlaceholder
-                                    ? palette.accentMuted
-                                    : AppColors.textPrimary,
-                              ),
+                          style:
+                              (widget.isPlaceholder
+                                      ? adminFieldHintTextStyle
+                                      : adminFieldValueTextStyle)
+                                  .copyWith(
+                                    color: widget.isPlaceholder
+                                        ? palette.accentMuted
+                                        : AppColors.textPrimary,
+                                  ),
                         ),
                       ),
-                      Icon(
-                        widget.icon,
-                        size: 18,
-                        color: palette.accent,
-                      ),
+                      Icon(widget.icon, size: 18, color: palette.accent),
                     ],
                   ),
                 ),
@@ -753,6 +1186,9 @@ class _PhotoFieldInput extends StatefulWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
     required this.formTitle,
     required this.formButtonText,
     required this.formStatusKey,
@@ -762,6 +1198,9 @@ class _PhotoFieldInput extends StatefulWidget {
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
   final String? formTitle;
   final String? formButtonText;
   final String? formStatusKey;
@@ -772,20 +1211,48 @@ class _PhotoFieldInput extends StatefulWidget {
 }
 
 class _PhotoFieldInputState extends State<_PhotoFieldInput> {
+  void _focusAndMaybeActivateNext(FocusNode nextFocusNode) {
+    FocusScope.of(context).requestFocus(nextFocusNode);
+    if (!widget.activateNextFocus) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final primaryFocus = FocusManager.instance.primaryFocus;
+      final targetContext = primaryFocus?.context ?? nextFocusNode.context;
+      if (targetContext != null) {
+        Actions.maybeInvoke(targetContext, const ActivateIntent());
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return BookingPhotoFieldInput(
       initialValue: widget.initialValue,
+      focusNode: widget.focusNode,
+      nextFocusNode: widget.nextFocusNode,
+      activateNextFocus: widget.activateNextFocus,
       errorText: widget.errorText,
       palette: bookingFormResolvedStatusPalette(
         title: widget.formTitle,
         buttonText: widget.formButtonText,
         currentStatusKey: widget.formStatusKey,
       ),
-      placeholder: ((widget.field.placeholder ?? '').trim().isNotEmpty
-          ? widget.field.placeholder!.trim()
-          : 'Upload a photo'),
+      placeholder: widget.field.required == true
+          ? adminUploadPlaceholder(
+              widget.field.title?.trim().isNotEmpty == true
+                  ? widget.field.title!.trim()
+                  : 'Photo',
+              override: widget.field.placeholder,
+            )
+          : (((widget.field.placeholder ?? '').trim().isNotEmpty)
+                ? widget.field.placeholder!.trim()
+                : 'Optional'),
       showRemoveAction: true,
+      onMoveToNextFocus: _focusAndMaybeActivateNext,
       onChanged: widget.onChanged,
     );
   }
@@ -829,6 +1296,13 @@ String _formatDateValue(DateTime value) {
   return '${value.year}-$month-$day';
 }
 
+DateTime? _parseDateValue(dynamic value) {
+  if (value is! String) {
+    return null;
+  }
+  return DateTime.tryParse(value);
+}
+
 TimeOfDay? _parseTime(String value) {
   final parts = value.split(':');
   if (parts.length < 2) {
@@ -840,6 +1314,13 @@ TimeOfDay? _parseTime(String value) {
     return null;
   }
   return TimeOfDay(hour: hour, minute: minute);
+}
+
+TimeOfDay? _parseTimeValue(dynamic value) {
+  if (value is! String) {
+    return null;
+  }
+  return _parseTime(value);
 }
 
 String _formatTimeValue(TimeOfDay value) {

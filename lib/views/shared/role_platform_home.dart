@@ -5,8 +5,10 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/views/client/client_booking_history_view.dart';
 import 'package:webapp/views/client/client_booking_home_view.dart';
+import 'package:webapp/views/client/client_members_view.dart';
 import 'package:webapp/view_models/shared/role_assigned_home.vm.dart';
 import 'package:webapp/view_models/shared/role_platform_home.vm.dart';
 import 'package:webapp/views/shared/profile_view.dart';
@@ -16,6 +18,7 @@ import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 import 'package:webapp/widgets/shared/platform_shell.dart';
+import 'package:webapp/widgets/shared/user_bookings_section.dart';
 import 'package:webapp/widgets/sidebar_menu_item.dart';
 
 class RolePlatformHome extends StatefulWidget {
@@ -175,6 +178,13 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
           icon: Icons.history_rounded,
           isCompact: isCompact,
         ),
+        if (isPrimaryClientRole(widget.user.role))
+          _sectionItem(
+            vm: vm,
+            section: RolePlatformSection.members,
+            icon: Icons.groups_rounded,
+            isCompact: isCompact,
+          ),
         _sectionItem(
           vm: vm,
           section: RolePlatformSection.profile,
@@ -212,7 +222,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
   Widget _buildSelectedSection(RolePlatformSection section) {
     return switch (section) {
       RolePlatformSection.home =>
-        widget.user.role == 'client'
+        isClientScopedRole(widget.user.role)
             ? ClientBookingHomeView(
                 user: _shellUser,
                 onBookingSubmitted: (booking) {
@@ -246,13 +256,26 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
           _viewModel.selectSection(RolePlatformSection.home);
         },
       ),
-      RolePlatformSection.profile => ProfileView(
-        key: profileViewRefreshKey(_shellUser),
-        user: _shellUser,
-        isCurrentUserView: true,
-        onLogout: widget.onLogout,
-        logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-        onSaveProfileChanges: _saveProfileChanges,
+      RolePlatformSection.members => ClientMembersView(clientUser: _shellUser),
+      RolePlatformSection.profile => SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ProfileView(
+              key: profileViewRefreshKey(_shellUser),
+              user: _shellUser,
+              scrollable: false,
+              padding: EdgeInsets.zero,
+              isCurrentUserView: true,
+              onLogout: widget.onLogout,
+              logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
+              onSaveProfileChanges: _saveProfileChanges,
+            ),
+            const SizedBox(height: 12),
+            UserBookingsSection(user: _shellUser),
+          ],
+        ),
       ),
     };
   }

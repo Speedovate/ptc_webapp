@@ -40,7 +40,7 @@ class BookingRequest implements BookingRepository {
 
   @override
   Stream<List<Booking>> watchBookings() {
-    return _bookingsCollection.snapshots().asyncMap((snapshot) {
+    return _bookingsCollection.snapshots().asyncMap((snapshot) async {
       return _inflateBookings(snapshot.docs.map(documentData).toList());
     });
   }

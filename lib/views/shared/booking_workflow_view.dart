@@ -3,12 +3,14 @@ import 'package:flutter/services.dart';
 import 'package:stacked/stacked.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/constants/palawan_locations.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
+import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/shared/booking_workflow.vm.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
@@ -128,6 +130,9 @@ class _WorkflowScrollSnapshot {
 
 class _BookingWorkflowViewState extends State<BookingWorkflowView> {
   late final ScrollController _pageScrollController;
+  final FocusNode _primaryActionFocusNode = FocusNode(
+    debugLabel: 'workflow_field(__cta__)',
+  );
   ScrollPosition? _embeddedScrollPosition;
   double? _embeddedScrollOffset;
   bool _pendingExplicitAttachRetry = false;
@@ -141,6 +146,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
   @override
   void dispose() {
     _detachEmbeddedScrollPosition();
+    _primaryActionFocusNode.dispose();
     _pageScrollController.dispose();
     super.dispose();
   }
@@ -245,6 +251,40 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
 
   void _restoreScrollSnapshot(_WorkflowScrollSnapshot snapshot) {
     _restoreScrollOffset(snapshot.position, snapshot.offset);
+  }
+
+  Future<void> _openManagedFieldEditor(
+    BuildContext context,
+    BookingWorkflowViewModel vm, {
+    required StatusField initialField,
+    bool addAfterSave = false,
+  }) async {
+    final savedField = await showDialog<StatusField>(
+      context: context,
+      builder: (dialogContext) => _BookingFieldEditorDialog(
+        title: initialField.id == vm.nextFieldId ? 'New Field' : 'Edit Field',
+        initialField: initialField,
+      ),
+    );
+
+    if (savedField == null || !context.mounted) {
+      return;
+    }
+
+    final persistedField = await vm.saveLibraryField(savedField);
+    if (addAfterSave) {
+      final persistedId = persistedField.id ?? '';
+      if (persistedId.isNotEmpty) {
+        await vm.addExistingField(persistedId);
+      }
+    }
+    if (!context.mounted) {
+      return;
+    }
+    AppSnackbar.showSuccess(
+      context,
+      addAfterSave ? 'Field added.' : 'Field updated.',
+    );
   }
 
   void _restoreScrollOffset(ScrollPosition? position, double? offset) {
@@ -403,22 +443,24 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
     String? statusDescription,
     String? guidanceMessage,
   ) {
+    final resolvedPrimaryFields = vm.form == null
+        ? vm.fields
+        : vm.fieldsForForm(vm.form!, answers: vm.answers);
     final hasGuidance = guidanceMessage?.trim().isNotEmpty == true;
     final hasMultipleMainForms = vm.mainForms.length > 1;
     final hasMultipleSecondaryForms = vm.secondaryForms.length > 1;
     final hasActionForm = vm.hasActionablePrimaryForm;
     final hasCancelForm = vm.cancelForm != null;
-    final hasFormFields = vm.fields.isNotEmpty;
+    final hasFormFields = resolvedPrimaryFields.isNotEmpty;
     final hasBlockedMessage = vm.blockedMessage?.trim().isNotEmpty == true;
-    final showTaskCard =
-        hasBlockedMessage || hasFormFields || vm.supportsAdditionalFields;
+    final showTaskCard = hasBlockedMessage || hasFormFields;
     final terminalPalette = _terminalHeaderPaletteForStatus(
       currentBooking.clientStatus,
     );
     final actionSectionTopSpacing = hasActionForm
         ? (showTaskCard ? 16.0 : 14.0)
         : 0.0;
-    final actionButtonTopSpacing = showTaskCard ? 16.0 : 0.0;
+    final actionButtonTopSpacing = showTaskCard ? 14.0 : 0.0;
     final primaryActionLabel = vm.form?.buttonText?.trim().isNotEmpty == true
         ? vm.form!.buttonText!.trim()
         : 'Save';
@@ -483,10 +525,11 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                   currentStatusKey: currentBooking.clientStatus,
                   preferredScrollController: _preferredScrollController(),
                   blockedMessage: vm.blockedMessage,
-                  fields: vm.fields,
+                  fields: resolvedPrimaryFields,
                   errors: vm.errors,
                   answers: vm.answers,
                   resetTick: vm.resetTick,
+                  submitFocusNode: _primaryActionFocusNode,
                   onChanged: (fieldKey, value) {
                     vm.updateAnswer(fieldKey, value);
                   },
@@ -498,84 +541,84 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTapDown: (_) => _unfocusWithoutScroll(context),
-                    child: _nonFocusable(
-                      FilledButton(
-                        onPressed: vm.isSubmitting || vm.blockedMessage != null
-                            ? null
-                            : () async {
-                                final scrollSnapshot = _captureScrollSnapshot(
-                                  context,
-                                );
-                                final isValid = vm.validateForSubmit();
-                                if (!isValid) {
-                                  if (vm.errors.isNotEmpty) {
-                                    AppSnackbar.showError(
-                                      context,
-                                      'Please complete the required booking fields.',
-                                    );
-                                  } else if (vm.blockedMessage != null) {
-                                    AppSnackbar.showError(
-                                      context,
-                                      vm.blockedMessage!,
-                                    );
-                                  }
-                                  _restoreScrollSnapshot(scrollSnapshot);
-                                  return;
+                    child: FilledButton(
+                      focusNode: _primaryActionFocusNode,
+                      onPressed: vm.isSubmitting || vm.blockedMessage != null
+                          ? null
+                          : () async {
+                              final scrollSnapshot = _captureScrollSnapshot(
+                                context,
+                              );
+                              final isValid = vm.validateForSubmit();
+                              if (!isValid) {
+                                if (vm.errors.isNotEmpty) {
+                                  AppSnackbar.showError(
+                                    context,
+                                    'Please complete the required booking fields.',
+                                  );
+                                } else if (vm.blockedMessage != null) {
+                                  AppSnackbar.showError(
+                                    context,
+                                    vm.blockedMessage!,
+                                  );
                                 }
-                                final actionLabel = primaryActionLabel;
-                                final confirmed =
-                                    await showAdminActionConfirmation(
-                                      context,
-                                      title: 'Confirm Action',
-                                      message:
-                                          'Are you sure you want to ${actionLabel.toLowerCase()}?',
-                                      confirmLabel: actionLabel,
-                                    );
-                                if (!confirmed || !context.mounted) {
-                                  _restoreScrollSnapshot(scrollSnapshot);
-                                  return;
+                                _restoreScrollSnapshot(scrollSnapshot);
+                                return;
+                              }
+                              final actionLabel = primaryActionLabel;
+                              final confirmed = await showAdminActionConfirmation(
+                                context,
+                                title: 'Confirm Action',
+                                message:
+                                    'Are you sure you want to ${actionLabel.toLowerCase()}?',
+                                confirmLabel: actionLabel,
+                              );
+                              if (!confirmed || !context.mounted) {
+                                _restoreScrollSnapshot(scrollSnapshot);
+                                return;
+                              }
+                              final savedBooking = await vm.submit();
+                              if (!context.mounted) {
+                                return;
+                              }
+                              if (savedBooking == null) {
+                                if (vm.blockedMessage != null) {
+                                  AppSnackbar.showError(
+                                    context,
+                                    vm.blockedMessage!,
+                                  );
                                 }
-                                final savedBooking = await vm.submit();
-                                if (!context.mounted) {
-                                  return;
-                                }
-                                if (savedBooking == null) {
-                                  if (vm.blockedMessage != null) {
-                                    AppSnackbar.showError(
-                                      context,
-                                      vm.blockedMessage!,
-                                    );
-                                  }
-                                  _restoreScrollSnapshot(scrollSnapshot);
-                                  return;
-                                }
-                                _unfocusWithoutScroll(context);
-                                widget.onBookingUpdated?.call(savedBooking);
-                                AppSnackbar.showSuccess(
-                                  context,
-                                  'Booking has been updated.',
-                                );
-                              },
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size(0, 52),
-                          backgroundColor: _workflowResolvedActionColor(
-                            title: vm.form?.statusText?.trim(),
-                            buttonText: primaryActionLabel,
-                            currentStatusKey: currentBooking.clientStatus,
-                          ),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
+                                _restoreScrollSnapshot(scrollSnapshot);
+                                return;
+                              }
+                              _unfocusWithoutScroll(context);
+                              widget.onBookingUpdated?.call(savedBooking);
+                              AppSnackbar.showSuccess(
+                                context,
+                                'Booking updated.',
+                              );
+                            },
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 52),
+                        backgroundColor: _workflowResolvedActionColor(
+                          title: vm.form?.statusText?.trim(),
+                          buttonText: primaryActionLabel,
+                          currentStatusKey: currentBooking.clientStatus,
                         ),
-                        child: Text(
-                          vm.isSubmitting ? 'Saving ...' : primaryActionLabel,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
                         ),
+                      ),
+                      child: Text(
+                        vm.isSubmitting ? 'Saving ...' : primaryActionLabel,
                       ),
                     ),
                   ),
-                  if (hasFormFields) ...[
+                  if (hasFormFields || vm.supportsAdditionalFields) ...[
                     const Spacer(),
+                  ],
+                  if (hasFormFields) ...[
                     GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTapDown: (_) => _unfocusWithoutScroll(context),
@@ -597,6 +640,24 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                       ),
                     ),
                   ],
+                  if (vm.supportsAdditionalFields) ...[
+                    if (hasFormFields) const SizedBox(width: 12),
+                    _WorkflowAddFieldButton(
+                      availableFields: vm.availableFieldsForSelection,
+                      onSelected: vm.addExistingField,
+                      onCreateNew: () => _openManagedFieldEditor(
+                        context,
+                        vm,
+                        initialField: vm.buildNewFieldDraft(),
+                        addAfterSave: true,
+                      ),
+                      textColor: _workflowResolvedActionColor(
+                        title: vm.form?.statusText?.trim(),
+                        buttonText: primaryActionLabel,
+                        currentStatusKey: currentBooking.clientStatus,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -611,13 +672,13 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
           statusLabelForKey: vm.statusLabelForKey,
           showStatusSubmissions: false,
           showAllDetails: widget.user.role == 'admin',
-          startValue: BookingRecordCard.outputFieldDisplayValue(
+          originValue: BookingRecordCard.outputFieldDisplayValue(
             currentBooking.statusOutputs,
-            'start',
+            'origin',
           ),
-          endValue: BookingRecordCard.outputFieldDisplayValue(
+          destinationValue: BookingRecordCard.outputFieldDisplayValue(
             currentBooking.statusOutputs,
-            'end',
+            'destination',
           ),
           clientName: vm.userName(currentBooking.client?.id, 'Unknown client'),
           clientPhone: vm.userPhone(currentBooking.client?.id),
@@ -688,8 +749,8 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                     : (vm.cancelForm?.buttonText?.trim().isNotEmpty == true
                           ? vm.cancelForm!.buttonText!.trim()
                           : 'Cancellation'),
-                subtitle: vm.cancelForm?.statusSubtext?.trim().isNotEmpty ==
-                        true
+                subtitle:
+                    vm.cancelForm?.statusSubtext?.trim().isNotEmpty == true
                     ? vm.cancelForm!.statusSubtext!.trim()
                     : 'This action will mark the booking as cancelled.',
               ),
@@ -717,120 +778,122 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
               LayoutBuilder(
                 builder: (context, constraints) {
                   final cancelButton = GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: (_) => _unfocusWithoutScroll(context),
-                child: _nonFocusable(
-                  FilledButton(
-                    onPressed: vm.isCancelSubmitting
-                        ? null
-                        : () async {
-                            final scrollSnapshot = _captureScrollSnapshot(
-                              context,
-                            );
-                            final isValid = vm.validateCancelForSubmit();
-                            if (!isValid) {
-                              if (vm.cancelErrors.isNotEmpty) {
-                                AppSnackbar.showError(
-                                  context,
-                                  'Please complete the required cancellation fields.',
-                                );
-                              }
-                              _restoreScrollSnapshot(scrollSnapshot);
-                              return;
-                            }
-                            final actionLabel =
-                                vm.cancelForm?.buttonText?.trim().isNotEmpty ==
-                                    true
-                                ? vm.cancelForm!.buttonText!.trim()
-                                : 'Cancel Booking';
-                            final confirmed = await showAdminActionConfirmation(
-                              context,
-                              title: 'Confirm Cancellation',
-                              message:
-                                  'Are you sure you want to ${actionLabel.toLowerCase()}?',
-                              confirmLabel: actionLabel,
-                              isDanger: true,
-                            );
-                            if (!confirmed || !context.mounted) {
-                              _restoreScrollSnapshot(scrollSnapshot);
-                              return;
-                            }
-                            final savedBooking = await vm.submitCancel();
-                            if (!context.mounted) {
-                              return;
-                            }
-                            if (savedBooking == null) {
-                              _restoreScrollSnapshot(scrollSnapshot);
-                              return;
-                            }
-                            _unfocusWithoutScroll(context);
-                            widget.onBookingUpdated?.call(savedBooking);
-                            AppSnackbar.showSuccess(
-                              context,
-                              'Booking has been cancelled.',
-                            );
-                          },
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 52),
-                      backgroundColor: AppColors.dangerStrong,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: Text(
-                      vm.isCancelSubmitting
-                          ? 'Saving ...'
-                          : (vm.cancelForm?.buttonText?.trim().isNotEmpty ==
-                                    true
-                                ? vm.cancelForm!.buttonText!.trim()
-                                : 'Cancel Booking'),
-                    ),
-                  ),
-                ),
-              );
-                    final clearButton = GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTapDown: (_) => _unfocusWithoutScroll(context),
-                      child: TextButton(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (_) => _unfocusWithoutScroll(context),
+                    child: _nonFocusable(
+                      FilledButton(
                         onPressed: vm.isCancelSubmitting
                             ? null
-                            : () {
+                            : () async {
+                                final scrollSnapshot = _captureScrollSnapshot(
+                                  context,
+                                );
+                                final isValid = vm.validateCancelForSubmit();
+                                if (!isValid) {
+                                  if (vm.cancelErrors.isNotEmpty) {
+                                    AppSnackbar.showError(
+                                      context,
+                                      'Please complete the required cancellation fields.',
+                                    );
+                                  }
+                                  _restoreScrollSnapshot(scrollSnapshot);
+                                  return;
+                                }
+                                final actionLabel =
+                                    vm.cancelForm?.buttonText
+                                            ?.trim()
+                                            .isNotEmpty ==
+                                        true
+                                    ? vm.cancelForm!.buttonText!.trim()
+                                    : 'Cancel Booking';
+                                final confirmed = await showAdminActionConfirmation(
+                                  context,
+                                  title: 'Confirm Cancellation',
+                                  message:
+                                      'Are you sure you want to ${actionLabel.toLowerCase()}?',
+                                  confirmLabel: actionLabel,
+                                  isDanger: true,
+                                );
+                                if (!confirmed || !context.mounted) {
+                                  _restoreScrollSnapshot(scrollSnapshot);
+                                  return;
+                                }
+                                final savedBooking = await vm.submitCancel();
+                                if (!context.mounted) {
+                                  return;
+                                }
+                                if (savedBooking == null) {
+                                  _restoreScrollSnapshot(scrollSnapshot);
+                                  return;
+                                }
                                 _unfocusWithoutScroll(context);
-                                vm.clearCancelForm();
+                                widget.onBookingUpdated?.call(savedBooking);
+                                AppSnackbar.showSuccess(
+                                  context,
+                                  'Booking cancelled.',
+                                );
                               },
-                        style: TextButton.styleFrom(
-                          foregroundColor: AppColors.dangerStrong,
-                        ),
-                        child: const Text('Clear Form'),
-                      ),
-                    );
-                    final useStackedLayout =
-                        vm.cancelFields.isNotEmpty && constraints.maxWidth < 260;
-
-                    if (useStackedLayout) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          cancelButton,
-                          const SizedBox(height: 8),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: clearButton,
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 52),
+                          backgroundColor: AppColors.dangerStrong,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
                           ),
-                        ],
-                      );
-                    }
+                        ),
+                        child: Text(
+                          vm.isCancelSubmitting
+                              ? 'Saving ...'
+                              : (vm.cancelForm?.buttonText?.trim().isNotEmpty ==
+                                        true
+                                    ? vm.cancelForm!.buttonText!.trim()
+                                    : 'Cancel Booking'),
+                        ),
+                      ),
+                    ),
+                  );
+                  final clearButton = GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (_) => _unfocusWithoutScroll(context),
+                    child: TextButton(
+                      onPressed: vm.isCancelSubmitting
+                          ? null
+                          : () {
+                              _unfocusWithoutScroll(context);
+                              vm.clearCancelForm();
+                            },
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.dangerStrong,
+                      ),
+                      child: const Text('Clear Form'),
+                    ),
+                  );
+                  final useStackedLayout =
+                      vm.cancelFields.isNotEmpty && constraints.maxWidth < 260;
 
-                    return Row(
+                  if (useStackedLayout) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         cancelButton,
-                        if (vm.cancelFields.isNotEmpty) ...[
-                          const Spacer(),
-                          clearButton,
-                        ],
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: clearButton,
+                        ),
                       ],
                     );
+                  }
+
+                  return Row(
+                    children: [
+                      cancelButton,
+                      if (vm.cancelFields.isNotEmpty) ...[
+                        const Spacer(),
+                        clearButton,
+                      ],
+                    ],
+                  );
                 },
               ),
             ],
@@ -935,11 +998,7 @@ class _WorkflowWaybillPhotoCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return AppMousePressable(
       onTap: () {
-        showAppImageViewer(
-          context,
-          title: 'Waybill Photo',
-          imageUrl: imageUrl,
-        );
+        showAppImageViewer(context, title: 'Waybill Photo', imageUrl: imageUrl);
       },
       borderRadius: BorderRadius.circular(18),
       child: ClipRRect(
@@ -1001,12 +1060,46 @@ class _WorkflowInteractiveFormSectionState
   Map<String, String> _errors = {};
   int _resetTick = 0;
   bool _isSubmitting = false;
+  final FocusNode _submitFocusNode = FocusNode(
+    debugLabel: 'workflow_field(__cta__)',
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _syncFromViewModel(resetLocalTick: false);
+  }
+
+  @override
+  void didUpdateWidget(covariant _WorkflowInteractiveFormSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.vm.answers, widget.vm.answers) ||
+        oldWidget.vm.resetTick != widget.vm.resetTick ||
+        oldWidget.form.id != widget.form.id ||
+        oldWidget.vm.booking?.id != widget.vm.booking?.id) {
+      _syncFromViewModel(resetLocalTick: true);
+    }
+  }
+
+  void _syncFromViewModel({required bool resetLocalTick}) {
+    _answers = Map<String, dynamic>.from(widget.vm.answers);
+    _errors = Map<String, String>.from(widget.vm.errors);
+    if (resetLocalTick) {
+      _resetTick += 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _submitFocusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final vm = widget.vm;
     final form = widget.form;
-    final fields = vm.fieldsForForm(form);
+    final fields = vm.fieldsForForm(form, answers: _answers);
     final blockedMessage = widget.isDanger
         ? null
         : vm.blockedMessageForForm(form);
@@ -1064,6 +1157,7 @@ class _WorkflowInteractiveFormSectionState
           errors: _errors,
           answers: _answers,
           resetTick: _resetTick,
+          submitFocusNode: _submitFocusNode,
           allowAdditionalFields: false,
           onChanged: (fieldKey, value) {
             setState(() {
@@ -1080,159 +1174,157 @@ class _WorkflowInteractiveFormSectionState
         ),
         SizedBox(height: widget.isDanger ? 8 : 2),
         LayoutBuilder(
-            builder: (context, constraints) {
-              final actionLabel = form.buttonText?.trim().isNotEmpty == true
-                  ? form.buttonText!.trim()
-                  : (widget.isDanger ? 'Cancel Booking' : 'Save');
-              final submitButton = GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: (_) => widget.onUnfocusWithoutScroll(),
-                child: ExcludeFocus(
-                excluding: true,
-                child: FilledButton(
-                  onPressed: _isSubmitting
-                      ? null
-                      : () async {
-                          final validationErrors = vm.validateAnswersForForm(
-                            fields,
-                            _answers,
-                          );
-                          final scrollSnapshot = widget.captureScrollSnapshot();
-                          if (validationErrors.isNotEmpty ||
-                              blockedMessage != null) {
-                            setState(() {
-                              _errors = validationErrors;
-                            });
-                            if (validationErrors.isNotEmpty) {
-                              AppSnackbar.showError(
-                                context,
-                                widget.isDanger
-                                    ? 'Please complete the required cancellation fields.'
-                                    : 'Please complete the required booking fields.',
-                              );
-                            } else if (blockedMessage != null) {
-                              AppSnackbar.showError(context, blockedMessage);
-                            }
-                            widget.restoreScrollSnapshot(scrollSnapshot);
-                            return;
-                          }
-                          final confirmed = await showAdminActionConfirmation(
-                            context,
-                            title: widget.isDanger
-                                ? 'Confirm Cancellation'
-                                : 'Confirm Action',
-                            message:
-                                'Are you sure you want to ${actionLabel.toLowerCase()}?',
-                            confirmLabel: actionLabel,
-                            isDanger: widget.isDanger,
-                          );
-                          if (!confirmed || !mounted) {
-                            widget.restoreScrollSnapshot(scrollSnapshot);
-                            return;
-                          }
+          builder: (context, constraints) {
+            final actionLabel = form.buttonText?.trim().isNotEmpty == true
+                ? form.buttonText!.trim()
+                : (widget.isDanger ? 'Cancel Booking' : 'Save');
+            final submitButton = GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (_) => widget.onUnfocusWithoutScroll(),
+              child: FilledButton(
+                focusNode: _submitFocusNode,
+                onPressed: _isSubmitting
+                    ? null
+                    : () async {
+                        final validationErrors = vm.validateAnswersForForm(
+                          fields,
+                          _answers,
+                        );
+                        final scrollSnapshot = widget.captureScrollSnapshot();
+                        if (validationErrors.isNotEmpty ||
+                            blockedMessage != null) {
                           setState(() {
-                            _isSubmitting = true;
+                            _errors = validationErrors;
                           });
-                          final savedBooking = await vm.submitSpecificForm(
-                            form,
-                            Map<String, dynamic>.from(_answers),
-                          );
-                          if (!mounted) {
-                            return;
+                          if (validationErrors.isNotEmpty) {
+                            AppSnackbar.showError(
+                              context,
+                              widget.isDanger
+                                  ? 'Please complete the required cancellation fields.'
+                                  : 'Please complete the required booking fields.',
+                            );
+                          } else if (blockedMessage != null) {
+                            AppSnackbar.showError(context, blockedMessage);
                           }
-                          setState(() {
-                            _isSubmitting = false;
-                          });
-                          if (savedBooking == null) {
-                            widget.restoreScrollSnapshot(scrollSnapshot);
-                            return;
-                          }
-                          widget.onUnfocusWithoutScroll();
-                          setState(() {
-                            _answers = {};
-                            _errors = {};
-                            _resetTick += 1;
-                          });
-                          widget.onBookingUpdated?.call(savedBooking);
-                          if (!mounted) {
-                            return;
-                          }
-                          if (!context.mounted) {
-                            return;
-                          }
-                          AppSnackbar.showSuccess(
-                            context,
-                            widget.isDanger
-                                ? 'Booking has been cancelled.'
-                                : 'Booking has been updated.',
-                          );
-                        },
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(0, 52),
-                    backgroundColor: widget.isDanger
-                        ? AppColors.dangerStrong
-                        : _workflowResolvedActionColor(
-                            title: resolvedTitle,
-                            buttonText: actionLabel,
-                            currentStatusKey: form.currentStatusKey,
-                          ),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
+                          widget.restoreScrollSnapshot(scrollSnapshot);
+                          return;
+                        }
+                        final confirmed = await showAdminActionConfirmation(
+                          context,
+                          title: widget.isDanger
+                              ? 'Confirm Cancellation'
+                              : 'Confirm Action',
+                          message:
+                              'Are you sure you want to ${actionLabel.toLowerCase()}?',
+                          confirmLabel: actionLabel,
+                          isDanger: widget.isDanger,
+                        );
+                        if (!confirmed || !mounted) {
+                          widget.restoreScrollSnapshot(scrollSnapshot);
+                          return;
+                        }
+                        setState(() {
+                          _isSubmitting = true;
+                        });
+                        final savedBooking = await vm.submitSpecificForm(
+                          form,
+                          Map<String, dynamic>.from(_answers),
+                        );
+                        if (!mounted) {
+                          return;
+                        }
+                        setState(() {
+                          _isSubmitting = false;
+                        });
+                        if (savedBooking == null) {
+                          widget.restoreScrollSnapshot(scrollSnapshot);
+                          return;
+                        }
+                        widget.onUnfocusWithoutScroll();
+                        setState(() {
+                          _answers = {};
+                          _errors = {};
+                          _resetTick += 1;
+                        });
+                        widget.onBookingUpdated?.call(savedBooking);
+                        if (!mounted) {
+                          return;
+                        }
+                        if (!context.mounted) {
+                          return;
+                        }
+                        AppSnackbar.showSuccess(
+                          context,
+                          widget.isDanger
+                              ? 'Booking cancelled.'
+                              : 'Booking updated.',
+                        );
+                      },
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 52),
+                  backgroundColor: widget.isDanger
+                      ? AppColors.dangerStrong
+                      : _workflowResolvedActionColor(
+                          title: resolvedTitle,
+                          buttonText: actionLabel,
+                          currentStatusKey: form.currentStatusKey,
+                        ),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Text(_isSubmitting ? 'Saving ...' : actionLabel),
                 ),
+                child: Text(_isSubmitting ? 'Saving ...' : actionLabel),
               ),
             );
-              final clearButton = GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: (_) => widget.onUnfocusWithoutScroll(),
-                child: TextButton(
-                  onPressed: _isSubmitting
-                      ? null
-                      : () {
-                          widget.onUnfocusWithoutScroll();
-                          setState(() {
-                            _answers = {};
-                            _errors = {};
-                            _resetTick += 1;
-                          });
-                        },
-                  style: TextButton.styleFrom(
-                    foregroundColor: widget.isDanger
-                        ? AppColors.dangerStrong
-                        : _workflowResolvedActionColor(
-                            title: resolvedTitle,
-                            buttonText: actionLabel,
-                            currentStatusKey: form.currentStatusKey,
-                          ),
-                  ),
-                  child: const Text('Clear Form'),
+            final clearButton = GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (_) => widget.onUnfocusWithoutScroll(),
+              child: TextButton(
+                onPressed: _isSubmitting
+                    ? null
+                    : () {
+                        widget.onUnfocusWithoutScroll();
+                        setState(() {
+                          _answers = {};
+                          _errors = {};
+                          _resetTick += 1;
+                        });
+                      },
+                style: TextButton.styleFrom(
+                  foregroundColor: widget.isDanger
+                      ? AppColors.dangerStrong
+                      : _workflowResolvedActionColor(
+                          title: resolvedTitle,
+                          buttonText: actionLabel,
+                          currentStatusKey: form.currentStatusKey,
+                        ),
                 ),
-              );
-              final useStackedLayout =
-                  fields.isNotEmpty && constraints.maxWidth < 260;
+                child: const Text('Clear Form'),
+              ),
+            );
+            final useStackedLayout =
+                fields.isNotEmpty && constraints.maxWidth < 260;
 
-              if (useStackedLayout) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    submitButton,
-                    const SizedBox(height: 8),
-                    Align(alignment: Alignment.centerRight, child: clearButton),
-                  ],
-                );
-              }
-
-              return Row(
+            if (useStackedLayout) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   submitButton,
-                  if (fields.isNotEmpty) ...[const Spacer(), clearButton],
+                  const SizedBox(height: 8),
+                  Align(alignment: Alignment.centerRight, child: clearButton),
                 ],
               );
-            },
-          ),
+            }
+
+            return Row(
+              children: [
+                submitButton,
+                if (fields.isNotEmpty) ...[const Spacer(), clearButton],
+              ],
+            );
+          },
+        ),
       ],
     );
   }
@@ -1254,7 +1346,7 @@ class _WorkflowInteractiveFormSectionState
   }
 }
 
-class _WorkflowTaskCard extends StatelessWidget {
+class _WorkflowTaskCard extends StatefulWidget {
   const _WorkflowTaskCard({
     required this.vm,
     required this.title,
@@ -1267,6 +1359,7 @@ class _WorkflowTaskCard extends StatelessWidget {
     required this.answers,
     required this.resetTick,
     required this.onChanged,
+    this.submitFocusNode,
     this.allowAdditionalFields = true,
   });
 
@@ -1281,21 +1374,96 @@ class _WorkflowTaskCard extends StatelessWidget {
   final Map<String, dynamic> answers;
   final int resetTick;
   final void Function(String fieldKey, dynamic value) onChanged;
+  final FocusNode? submitFocusNode;
   final bool allowAdditionalFields;
+
+  @override
+  State<_WorkflowTaskCard> createState() => _WorkflowTaskCardState();
+}
+
+class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
+  final Map<String, FocusNode> _fieldFocusNodes = {};
+
+  String _focusKeyForField(StatusField field, int index) {
+    final key = (field.key ?? '').trim();
+    if (key.isNotEmpty) {
+      return key;
+    }
+    return '__index_$index:${field.type}:${field.title}';
+  }
+
+  List<StatusField> get _orderedFields {
+    final ordered = <StatusField>[...widget.fields];
+    if (widget.allowAdditionalFields) {
+      ordered.addAll(
+        widget.vm.additionalFields.where((field) {
+          final key = field.key?.trim();
+          return key != null && key.isNotEmpty;
+        }),
+      );
+    }
+    return StatusFormEngine.visibleFields(ordered, widget.answers);
+  }
+
+  void _syncFocusNodes(List<StatusField> fields) {
+    final activeKeys = <String>{};
+    for (var index = 0; index < fields.length; index++) {
+      final focusKey = _focusKeyForField(fields[index], index);
+      activeKeys.add(focusKey);
+      _fieldFocusNodes.putIfAbsent(
+        focusKey,
+        () => FocusNode(debugLabel: 'workflow_field($focusKey)'),
+      );
+    }
+
+    final removedKeys = _fieldFocusNodes.keys
+        .where((key) => !activeKeys.contains(key))
+        .toList();
+    for (final key in removedKeys) {
+      _fieldFocusNodes.remove(key)?.dispose();
+    }
+  }
+
+  bool _shouldActivateNextField(StatusField? nextField, FocusNode? nextFocus) {
+    if (nextFocus == null) {
+      return false;
+    }
+    if (nextField == null) {
+      return true;
+    }
+    final type = (nextField.type ?? '').trim().toLowerCase();
+    return type == 'dropdown' ||
+        type == 'search_dropdown' ||
+        type == 'date' ||
+        type == 'time' ||
+        type == 'photo';
+  }
+
+  @override
+  void dispose() {
+    for (final node in _fieldFocusNodes.values) {
+      node.dispose();
+    }
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = _workflowResolvedPalette(
-      title: title,
-      buttonText: buttonText,
-      currentStatusKey: currentStatusKey,
+      title: widget.title,
+      buttonText: widget.buttonText,
+      currentStatusKey: widget.currentStatusKey,
     );
+    final orderedFields = _orderedFields;
+    _syncFocusNodes(orderedFields);
+    final canManageFields =
+        widget.vm.supportsAdditionalFields && widget.allowAdditionalFields;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (blockedMessage?.trim().isNotEmpty == true) ...[
+        if (widget.blockedMessage?.trim().isNotEmpty == true) ...[
           Text(
-            blockedMessage!,
+            widget.blockedMessage!,
             style: const TextStyle(
               color: AppColors.dangerStrong,
               fontWeight: FontWeight.w600,
@@ -1303,89 +1471,121 @@ class _WorkflowTaskCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
         ],
-        ...fields.asMap().entries.map((entry) {
-          final field = entry.value;
-          final isLastField = entry.key == fields.length - 1;
-          return Padding(
-            padding: EdgeInsets.only(bottom: isLastField ? 0 : 14),
-            child: _WorkflowFieldCard(
-              key: ValueKey('${field.key}:$resetTick'),
-              vm: vm,
-              formTitle: title,
-              formButtonText: buttonText,
-              formStatusKey: currentStatusKey,
-              palette: palette,
-              preferredScrollController: preferredScrollController,
-              field: field,
-              initialValue: answers[field.key],
-              errorText: errors[field.key],
-              onEdit: vm.supportsAdditionalFields
-                  ? () => _openFieldEditor(context, vm, initialField: field)
-                  : null,
-              onChanged: (value) {
-                final key = field.key;
-                if (key == null || key.isEmpty) {
-                  return;
-                }
-                onChanged(key, value);
-              },
-            ),
-          );
-        }),
-        if (vm.supportsAdditionalFields && allowAdditionalFields) ...[
-          SizedBox(height: vm.fields.isEmpty ? 0 : 16),
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Fields',
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
+        if (canManageFields)
+          ReorderableListView(
+            shrinkWrap: true,
+            buildDefaultDragHandles: false,
+            physics: const NeverScrollableScrollPhysics(),
+            onReorder: (oldIndex, newIndex) {
+              widget.vm.reorderManagedFields(
+                orderedFields,
+                oldIndex,
+                newIndex,
+                answers: widget.answers,
+              );
+            },
+            children: orderedFields.asMap().entries.map((entry) {
+              final field = entry.value;
+              final isLastField = entry.key == orderedFields.length - 1;
+              final orderedIndex = orderedFields.indexOf(field);
+              final focusKey = _focusKeyForField(field, orderedIndex);
+              final nextField = orderedIndex + 1 < orderedFields.length
+                  ? orderedFields[orderedIndex + 1]
+                  : null;
+              final nextFocusNode = nextField == null
+                  ? widget.submitFocusNode
+                  : _fieldFocusNodes[_focusKeyForField(
+                      nextField,
+                      orderedIndex + 1,
+                    )];
+              final fieldKey = field.key ?? '';
+              return Padding(
+                key: ValueKey(
+                  '${field.key}:${field.type}:${field.updatedAt?.millisecondsSinceEpoch ?? 0}:${widget.resetTick}',
+                ),
+                padding: EdgeInsets.only(bottom: isLastField ? 0 : 14),
+                child: _WorkflowRemovableFieldCard(
+                  vm: widget.vm,
+                  formTitle: widget.title,
+                  formButtonText: widget.buttonText,
+                  formStatusKey: widget.currentStatusKey,
+                  preferredScrollController: widget.preferredScrollController,
+                  field: field,
+                  focusNode: _fieldFocusNodes[focusKey],
+                  nextFocusNode: nextFocusNode,
+                  activateNextFocus: _shouldActivateNextField(
+                    nextField,
+                    nextFocusNode,
                   ),
+                  errorText: widget.errors[fieldKey],
+                  initialValue: widget.answers[fieldKey],
+                  onChanged: (value) => widget.onChanged(fieldKey, value),
+                  onRemove: () => widget.vm.removeManagedField(field),
+                  onEdit: () =>
+                      _openFieldEditor(context, widget.vm, initialField: field),
+                  dragHandle: widget.vm.isFormAssignedField(field)
+                      ? ReorderableDragStartListener(
+                          index: entry.key,
+                          child: SizedBox(
+                            width: 36,
+                            height: 36,
+                            child: Icon(
+                              Icons.drag_indicator_rounded,
+                              size: 20,
+                              color: palette.accent.withValues(alpha: 0.8),
+                            ),
+                          ),
+                        )
+                      : null,
                 ),
-              ),
-              _WorkflowAddFieldButton(
-                availableFields: vm.availableFieldsForSelection,
-                accentColor: palette.accent,
-                onSelected: vm.addExistingField,
-                onCreateNew: () => _openFieldEditor(
-                  context,
-                  vm,
-                  initialField: vm.buildNewFieldDraft(),
-                  addAfterSave: true,
-                ),
-              ),
-            ],
-          ),
-          if (vm.additionalFields.isNotEmpty) const SizedBox(height: 16),
-          ...vm.additionalFields.asMap().entries.map((entry) {
+              );
+            }).toList(),
+          )
+        else
+          ...orderedFields.asMap().entries.map((entry) {
             final field = entry.value;
-            final fieldKey = field.key ?? '';
-            final isLast = entry.key == vm.additionalFields.length - 1;
-            if (fieldKey.isEmpty) {
-              return const SizedBox.shrink();
-            }
+            final isLastField = entry.key == orderedFields.length - 1;
+            final orderedIndex = orderedFields.indexOf(field);
+            final focusKey = _focusKeyForField(field, orderedIndex);
+            final nextField = orderedIndex + 1 < orderedFields.length
+                ? orderedFields[orderedIndex + 1]
+                : null;
+            final nextFocusNode = nextField == null
+                ? widget.submitFocusNode
+                : _fieldFocusNodes[_focusKeyForField(
+                    nextField,
+                    orderedIndex + 1,
+                  )];
             return Padding(
-              padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
-              child: _WorkflowRemovableFieldCard(
-                formTitle: title,
-                formButtonText: buttonText,
-                formStatusKey: currentStatusKey,
-                preferredScrollController: preferredScrollController,
+              padding: EdgeInsets.only(bottom: isLastField ? 0 : 14),
+              child: _WorkflowFieldCard(
+                key: ValueKey('${field.key}:${widget.resetTick}'),
+                vm: widget.vm,
+                formTitle: widget.title,
+                formButtonText: widget.buttonText,
+                formStatusKey: widget.currentStatusKey,
+                palette: palette,
+                preferredScrollController: widget.preferredScrollController,
                 field: field,
-                errorText: errors[fieldKey],
-                initialValue: answers[fieldKey],
-                onChanged: (value) => onChanged(fieldKey, value),
-                onRemove: () => vm.removeAdditionalField(fieldKey),
-                vm: vm,
-                onEdit: () =>
-                    _openFieldEditor(context, vm, initialField: field),
+                focusNode: _fieldFocusNodes[focusKey],
+                nextFocusNode: nextFocusNode,
+                activateNextFocus: _shouldActivateNextField(
+                  nextField,
+                  nextFocusNode,
+                ),
+                initialValue: widget.answers[field.key],
+                errorText: widget.errors[field.key],
+                onEdit: null,
+                onChanged: (value) {
+                  final key = field.key;
+                  if (key == null || key.isEmpty) {
+                    return;
+                  }
+                  widget.onChanged(key, value);
+                },
               ),
             );
           }),
-        ],
       ],
     );
   }
@@ -1412,7 +1612,7 @@ class _WorkflowTaskCard extends StatelessWidget {
     if (addAfterSave) {
       final persistedId = persistedField.id ?? '';
       if (persistedId.isNotEmpty) {
-        vm.addExistingField(persistedId);
+        await vm.addExistingField(persistedId);
       }
     }
     if (!context.mounted) {
@@ -1420,7 +1620,83 @@ class _WorkflowTaskCard extends StatelessWidget {
     }
     AppSnackbar.showSuccess(
       context,
-      '${persistedField.title?.trim().isNotEmpty == true ? persistedField.title!.trim() : persistedField.key ?? 'Field'} field has been updated.',
+      addAfterSave ? 'Field added.' : 'Field updated.',
+    );
+  }
+}
+
+class _WorkflowAddFieldButton extends StatelessWidget {
+  const _WorkflowAddFieldButton({
+    required this.availableFields,
+    required this.onSelected,
+    required this.onCreateNew,
+    required this.textColor,
+  });
+
+  final List<StatusField> availableFields;
+  final Future<void> Function(String) onSelected;
+  final VoidCallback onCreateNew;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'Add field',
+      color: Colors.white,
+      surfaceTintColor: Colors.white,
+      onSelected: (value) async {
+        if (value == '__create_new_field__') {
+          onCreateNew();
+          return;
+        }
+        await onSelected(value);
+      },
+      itemBuilder: (context) => [
+        ...availableFields.map(
+          (field) => PopupMenuItem<String>(
+            value: field.id,
+            child: Text(
+              field.title?.trim().isNotEmpty == true
+                  ? field.title!
+                  : field.key ?? 'Untitled Field',
+              style: adminDropdownDisplayTextStyle,
+            ),
+          ),
+        ),
+        if (availableFields.isNotEmpty)
+          const PopupMenuDivider(height: 1, thickness: 1),
+        PopupMenuItem<String>(
+          value: '__create_new_field__',
+          child: Text(
+            'Create New Field',
+            style: TextStyle(
+              color: textColor,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
+            ),
+          ),
+        ),
+      ],
+      child: _WorkflowInlineAddButton(textColor: textColor),
+    );
+  }
+}
+
+class _WorkflowInlineAddButton extends StatelessWidget {
+  const _WorkflowInlineAddButton({required this.textColor});
+
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      child: Text(
+        'Add Field',
+        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+          color: textColor,
+        ),
+      ),
     );
   }
 }
@@ -1486,88 +1762,6 @@ class _WorkflowAlertHeaderCard extends StatelessWidget {
   }
 }
 
-class _WorkflowAddFieldButton extends StatelessWidget {
-  const _WorkflowAddFieldButton({
-    required this.availableFields,
-    required this.onSelected,
-    required this.onCreateNew,
-    this.accentColor = AppColors.primaryColor,
-  });
-
-  final List<StatusField> availableFields;
-  final ValueChanged<String> onSelected;
-  final VoidCallback onCreateNew;
-  final Color accentColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      tooltip: 'Add field',
-      color: Colors.white,
-      surfaceTintColor: Colors.white,
-      onSelected: (value) {
-        if (value == '__create_new_field__') {
-          onCreateNew();
-          return;
-        }
-        onSelected(value);
-      },
-      itemBuilder: (context) => [
-        ...availableFields.map(
-          (field) => PopupMenuItem<String>(
-            value: field.id,
-            child: Text(
-              field.title?.trim().isNotEmpty == true
-                  ? field.title!
-                  : field.key ?? 'Untitled Field',
-              style: adminDropdownDisplayTextStyle,
-            ),
-          ),
-        ),
-        if (availableFields.isNotEmpty)
-          const PopupMenuDivider(height: 1, thickness: 1),
-        PopupMenuItem<String>(
-          value: '__create_new_field__',
-          child: Text(
-            'Create New Field',
-            style: TextStyle(
-              color: accentColor,
-              fontWeight: FontWeight.w700,
-              height: 1.2,
-            ),
-          ),
-        ),
-      ],
-      child: _WorkflowInlineAddButton(accentColor: accentColor),
-    );
-  }
-}
-
-class _WorkflowInlineAddButton extends StatelessWidget {
-  const _WorkflowInlineAddButton({
-    this.accentColor = AppColors.primaryColor,
-  });
-
-  final Color accentColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 52,
-      height: 32,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: accentColor,
-          borderRadius: const BorderRadius.all(Radius.circular(1000)),
-        ),
-        child: const Center(
-          child: Icon(Icons.add_rounded, size: 18, color: Colors.white),
-        ),
-      ),
-    );
-  }
-}
-
 class _WorkflowRemovableFieldCard extends StatelessWidget {
   const _WorkflowRemovableFieldCard({
     required this.vm,
@@ -1580,7 +1774,11 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
     required this.onChanged,
     required this.onRemove,
     required this.onEdit,
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
     this.errorText,
+    this.dragHandle,
   });
 
   final BookingWorkflowViewModel vm;
@@ -1593,7 +1791,11 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
   final ValueChanged<dynamic> onChanged;
   final VoidCallback onRemove;
   final VoidCallback onEdit;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
   final String? errorText;
+  final Widget? dragHandle;
 
   @override
   Widget build(BuildContext context) {
@@ -1615,23 +1817,42 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
       palette: palette,
       preferredScrollController: preferredScrollController,
       field: field,
+      focusNode: focusNode,
+      nextFocusNode: nextFocusNode,
+      activateNextFocus: activateNextFocus,
       initialValue: initialValue,
       errorText: errorText,
       headerTrailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_rounded, size: 18),
-            color: editColor,
-            splashRadius: 20,
+          SizedBox(
+            width: 36,
+            height: 36,
+            child: IconButton(
+              onPressed: onEdit,
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.edit_rounded, size: 18),
+              color: editColor,
+              splashRadius: 18,
+            ),
           ),
-          IconButton(
-            onPressed: onRemove,
-            icon: const Icon(Icons.close_rounded, size: 18),
-            color: AppColors.dangerStrong,
-            splashRadius: 20,
+          SizedBox(
+            width: 36,
+            height: 36,
+            child: IconButton(
+              onPressed: onRemove,
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.delete_rounded, size: 18),
+              color: AppColors.dangerStrong,
+              splashRadius: 18,
+            ),
           ),
+          if (dragHandle != null) ...[
+            const SizedBox(width: 2),
+            SizedBox(width: 36, height: 36, child: Center(child: dragHandle!)),
+          ],
         ],
       ),
       onChanged: onChanged,
@@ -1651,6 +1872,9 @@ class _WorkflowFieldCard extends StatelessWidget {
     required this.field,
     required this.initialValue,
     required this.onChanged,
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
     this.headerTrailing,
     this.onEdit,
     this.errorText,
@@ -1665,6 +1889,9 @@ class _WorkflowFieldCard extends StatelessWidget {
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
   final Widget? headerTrailing;
   final VoidCallback? onEdit;
   final String? errorText;
@@ -1686,7 +1913,11 @@ class _WorkflowFieldCard extends StatelessWidget {
         optionSourceKey == statusFieldOptionSourceDrivers ||
         fieldKey == 'helper_id' ||
         optionSourceKey == statusFieldOptionSourceHelpers;
-    final usesDropdownCard = type == 'dropdown' || usesRoleDropdown;
+    final isSearchDropdownCard =
+        type == 'search_dropdown' || isPalawanLocationFieldKey(fieldKey);
+    final isNormalDropdownCard = type == 'dropdown' || usesRoleDropdown;
+    final usesCompactDropdownCard =
+        isNormalDropdownCard || isSearchDropdownCard;
     final editColor = _workflowResolvedActionColor(
       title: formTitle,
       buttonText: formButtonText,
@@ -1700,9 +1931,12 @@ class _WorkflowFieldCard extends StatelessWidget {
       required: field.required ?? false,
       subtitle: subtitle,
       instructions: instructions,
-      containerPadding: usesDropdownCard
-          ? const EdgeInsets.fromLTRB(18, 18, 18, 4)
-          : const EdgeInsets.all(18),
+      inputTopSpacing: usesCompactDropdownCard ? 10 : 14,
+      containerPadding: isSearchDropdownCard
+          ? const EdgeInsets.fromLTRB(18, 8, 18, 4)
+          : (isNormalDropdownCard
+                ? const EdgeInsets.fromLTRB(18, 8, 18, 8)
+                : const EdgeInsets.fromLTRB(18, 8, 18, 18)),
       headerTrailing:
           headerTrailing ??
           (onEdit == null
@@ -1736,6 +1970,9 @@ class _WorkflowFieldCard extends StatelessWidget {
   }) {
     final type = (field.type ?? 'text').trim().toLowerCase();
     final fieldKey = (field.key ?? '').trim().toLowerCase();
+    final fieldLabel = field.title?.trim().isNotEmpty == true
+        ? field.title!.trim()
+        : 'Field';
     final optionSourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
       field,
     );
@@ -1743,6 +1980,7 @@ class _WorkflowFieldCard extends StatelessWidget {
     if (fieldKey == 'driver_id' ||
         optionSourceKey == statusFieldOptionSourceDrivers) {
       return _roleUserDropdown(
+        context,
         role: 'driver',
         placeholder: placeholder,
         errorText: errorText,
@@ -1751,13 +1989,97 @@ class _WorkflowFieldCard extends StatelessWidget {
     if (fieldKey == 'helper_id' ||
         optionSourceKey == statusFieldOptionSourceHelpers) {
       return _roleUserDropdown(
+        context,
         role: 'helper',
         placeholder: placeholder,
         errorText: errorText,
       );
     }
+    if (isPalawanLocationFieldKey(fieldKey)) {
+      return AdminSearchSelectFormField(
+        initialValue: initialValue?.toString(),
+        focusNode: focusNode,
+        autoActivateOnFocus: activateNextFocus,
+        decoration: _bookingDropdownDecoration(
+          (field.required ?? false)
+              ? adminSelectPlaceholder(fieldLabel, override: placeholder)
+              : (placeholder?.trim().isNotEmpty == true ? placeholder! : 'Optional'),
+          palette,
+        ).copyWith(errorText: errorText),
+        options: palawanLocationOptions,
+        onChanged: (value) {
+          onChanged(value);
+          final resolvedNextFocusNode = nextFocusNode;
+          if (resolvedNextFocusNode != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!context.mounted) {
+                return;
+              }
+              FocusScope.of(context).requestFocus(resolvedNextFocusNode);
+              if (activateNextFocus) {
+                final primaryFocus = FocusManager.instance.primaryFocus;
+                final targetContext =
+                    primaryFocus?.context ?? resolvedNextFocusNode.context;
+                if (targetContext != null) {
+                  Actions.maybeInvoke(targetContext, const ActivateIntent());
+                }
+              }
+            });
+          } else {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!context.mounted) {
+                return;
+              }
+              FocusScope.of(context).unfocus();
+            });
+          }
+        },
+      );
+    }
 
     switch (type) {
+      case 'search_dropdown':
+        return AdminSearchSelectFormField(
+          initialValue: initialValue?.toString(),
+          focusNode: focusNode,
+          autoActivateOnFocus: activateNextFocus,
+          decoration: _bookingDropdownDecoration(
+            (field.required ?? false)
+                ? adminSelectPlaceholder(fieldLabel, override: placeholder)
+                : (placeholder?.trim().isNotEmpty == true
+                      ? placeholder!
+                      : 'Optional'),
+            palette,
+          ).copyWith(errorText: errorText),
+          options: field.options,
+          onChanged: (value) {
+            onChanged(value);
+            final resolvedNextFocusNode = nextFocusNode;
+            if (resolvedNextFocusNode != null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!context.mounted) {
+                  return;
+                }
+                FocusScope.of(context).requestFocus(resolvedNextFocusNode);
+                if (activateNextFocus) {
+                  final primaryFocus = FocusManager.instance.primaryFocus;
+                  final targetContext =
+                      primaryFocus?.context ?? resolvedNextFocusNode.context;
+                  if (targetContext != null) {
+                    Actions.maybeInvoke(targetContext, const ActivateIntent());
+                  }
+                }
+              });
+            } else {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!context.mounted) {
+                  return;
+                }
+                FocusScope.of(context).unfocus();
+              });
+            }
+          },
+        );
       case 'number':
         return _UnderlineTextField(
           formTitle: formTitle,
@@ -1765,8 +2087,13 @@ class _WorkflowFieldCard extends StatelessWidget {
           formStatusKey: formStatusKey,
           preferredScrollController: preferredScrollController,
           initialValue: initialValue?.toString(),
+          focusNode: focusNode,
+          nextFocusNode: nextFocusNode,
+          activateNextFocus: activateNextFocus,
           keyboardType: TextInputType.number,
-          hintText: placeholder,
+          hintText: (field.required ?? false)
+              ? adminEnterPlaceholder(fieldLabel, override: placeholder)
+              : (placeholder?.trim().isNotEmpty == true ? placeholder : 'Optional'),
           errorText: errorText,
           onChanged: (value) => onChanged(value.trim()),
         );
@@ -1777,8 +2104,13 @@ class _WorkflowFieldCard extends StatelessWidget {
           formStatusKey: formStatusKey,
           preferredScrollController: preferredScrollController,
           initialValue: initialValue?.toString(),
+          focusNode: focusNode,
+          nextFocusNode: nextFocusNode,
+          activateNextFocus: activateNextFocus,
           keyboardType: TextInputType.emailAddress,
-          hintText: placeholder,
+          hintText: (field.required ?? false)
+              ? adminEnterPlaceholder(fieldLabel, override: placeholder)
+              : (placeholder?.trim().isNotEmpty == true ? placeholder : 'Optional'),
           errorText: errorText,
           onChanged: (value) => onChanged(value.trim()),
         );
@@ -1789,9 +2121,14 @@ class _WorkflowFieldCard extends StatelessWidget {
           formStatusKey: formStatusKey,
           preferredScrollController: preferredScrollController,
           initialValue: initialValue?.toString(),
+          focusNode: focusNode,
+          nextFocusNode: nextFocusNode,
+          activateNextFocus: activateNextFocus,
           keyboardType: TextInputType.phone,
           inputFormatters: const [PhilippinesPhoneInputFormatter()],
-          hintText: placeholder,
+          hintText: (field.required ?? false)
+              ? adminEnterPlaceholder(fieldLabel, override: placeholder)
+              : (placeholder?.trim().isNotEmpty == true ? placeholder : 'Optional'),
           errorText: errorText,
           onChanged: (value) => onChanged(value.trim()),
         );
@@ -1802,43 +2139,79 @@ class _WorkflowFieldCard extends StatelessWidget {
           formStatusKey: formStatusKey,
           preferredScrollController: preferredScrollController,
           initialValue: initialValue?.toString(),
-          hintText: placeholder,
+          focusNode: focusNode,
+          nextFocusNode: nextFocusNode,
+          activateNextFocus: activateNextFocus,
+          hintText: (field.required ?? false)
+              ? adminEnterPlaceholder(fieldLabel, override: placeholder)
+              : (placeholder?.trim().isNotEmpty == true ? placeholder : 'Optional'),
           errorText: errorText,
           onChanged: (value) => onChanged(value.trim()),
         );
       case 'dropdown':
-        final optionSourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
-          field,
-        );
+        final optionSourceKey =
+            StatusFieldOptionResolver.resolvedOptionSourceKey(field);
+        final memberOptionLabels =
+            optionSourceKey == statusFieldOptionSourceClientMembers ||
+                fieldKey == 'member_id'
+            ? vm.memberOptionLabelsForCurrentBooking()
+            : const <String, String>{};
+        final effectiveOptions = field.options.isNotEmpty
+            ? field.options
+            : memberOptionLabels.keys.toList();
         return AdminDropdownFormField<String>(
           initialValue: initialValue?.toString(),
+          focusNode: focusNode,
           iconEnabledColor: palette.accent,
           decoration: _bookingDropdownDecoration(
-            placeholder?.trim().isNotEmpty == true
-                ? placeholder!
-                : (field.required ?? false)
-                ? 'Choose an option'
-                : 'Optional',
+            (field.required ?? false)
+                ? adminSelectPlaceholder(fieldLabel, override: placeholder)
+                : (placeholder?.trim().isNotEmpty == true ? placeholder! : 'Optional'),
             palette,
           ).copyWith(errorText: errorText),
           style: adminDropdownDisplayTextStyle,
-          items: field.options
-              .map((item) {
-                final label =
-                    optionSourceKey == statusFieldOptionSourceVehicleSizes
+          items: effectiveOptions.map((item) {
+            final label =
+                memberOptionLabels[item] ??
+                (optionSourceKey == statusFieldOptionSourceVehicleSizes
                     ? VehicleRequest.instance.displayVehicleSizeLabel(item)
-                    : item;
-                return DropdownMenuItem<String>(
-                  value: item,
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    style: adminDropdownDisplayTextStyle,
-                  ),
-                );
-              })
-              .toList(),
-          onChanged: (value) => onChanged(value),
+                    : item);
+            return DropdownMenuItem<String>(
+              value: item,
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: adminDropdownDisplayTextStyle,
+              ),
+            );
+          }).toList(),
+          onChanged: (value) {
+            onChanged(value);
+            final resolvedNextFocusNode = nextFocusNode;
+            if (resolvedNextFocusNode != null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!context.mounted) {
+                  return;
+                }
+                FocusScope.of(context).requestFocus(resolvedNextFocusNode);
+                if (activateNextFocus) {
+                  final primaryFocus = FocusManager.instance.primaryFocus;
+                  final targetContext =
+                      primaryFocus?.context ?? resolvedNextFocusNode.context;
+                  if (targetContext != null) {
+                    Actions.maybeInvoke(targetContext, const ActivateIntent());
+                  }
+                }
+              });
+            } else {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!context.mounted) {
+                  return;
+                }
+                FocusScope.of(context).unfocus();
+              });
+            }
+          },
         );
       case 'checkbox':
         final selectedValues =
@@ -1869,7 +2242,13 @@ class _WorkflowFieldCard extends StatelessWidget {
           formTitle: formTitle,
           formButtonText: formButtonText,
           formStatusKey: formStatusKey,
-          label: initialValue?.toString() ?? (placeholder ?? 'Select Date'),
+          focusNode: focusNode,
+          label: initialValue?.toString() ??
+              ((field.required ?? false)
+                  ? adminSelectPlaceholder(fieldLabel, override: placeholder)
+                  : (placeholder?.trim().isNotEmpty == true
+                        ? placeholder!
+                        : 'Optional')),
           isPlaceholder: initialValue == null,
           icon: Icons.calendar_today_rounded,
           onPressed: () async {
@@ -1890,7 +2269,13 @@ class _WorkflowFieldCard extends StatelessWidget {
           formTitle: formTitle,
           formButtonText: formButtonText,
           formStatusKey: formStatusKey,
-          label: initialValue?.toString() ?? (placeholder ?? 'Select Time'),
+          focusNode: focusNode,
+          label: initialValue?.toString() ??
+              ((field.required ?? false)
+                  ? adminSelectPlaceholder(fieldLabel, override: placeholder)
+                  : (placeholder?.trim().isNotEmpty == true
+                        ? placeholder!
+                        : 'Optional')),
           isPlaceholder: initialValue == null,
           icon: Icons.schedule_rounded,
           onPressed: () async {
@@ -1909,9 +2294,15 @@ class _WorkflowFieldCard extends StatelessWidget {
           formTitle: formTitle,
           formButtonText: formButtonText,
           formStatusKey: formStatusKey,
+          focusNode: focusNode,
+          nextFocusNode: nextFocusNode,
+          activateNextFocus: activateNextFocus,
           initialValue: initialValue,
           errorText: errorText,
           onChanged: onChanged,
+          placeholder: (field.required ?? false)
+              ? adminUploadPlaceholder(fieldLabel, override: placeholder)
+              : (placeholder?.trim().isNotEmpty == true ? placeholder! : 'Optional'),
         );
       default:
         return _UnderlineTextField(
@@ -1920,14 +2311,20 @@ class _WorkflowFieldCard extends StatelessWidget {
           formStatusKey: formStatusKey,
           preferredScrollController: preferredScrollController,
           initialValue: initialValue?.toString(),
-          hintText: placeholder,
+          focusNode: focusNode,
+          nextFocusNode: nextFocusNode,
+          activateNextFocus: activateNextFocus,
+          hintText: (field.required ?? false)
+              ? adminEnterPlaceholder(fieldLabel, override: placeholder)
+              : (placeholder?.trim().isNotEmpty == true ? placeholder : 'Optional'),
           errorText: errorText,
           onChanged: (value) => onChanged(value.trim()),
         );
     }
   }
 
-  Widget _roleUserDropdown({
+  Widget _roleUserDropdown(
+    BuildContext context, {
     required String role,
     required String? placeholder,
     required String? errorText,
@@ -1975,6 +2372,7 @@ class _WorkflowFieldCard extends StatelessWidget {
 
     return AdminDropdownFormField<String>(
       initialValue: initialValue?.toString(),
+      focusNode: focusNode,
       iconEnabledColor: palette.accent,
       decoration: _bookingDropdownDecoration(
         placeholder?.trim().isNotEmpty == true
@@ -1987,7 +2385,33 @@ class _WorkflowFieldCard extends StatelessWidget {
       disabledTapMessage: role == 'driver'
           ? 'No online drivers available.'
           : 'No online helpers available.',
-      onChanged: (value) => onChanged(value),
+      onChanged: (value) {
+        onChanged(value);
+        final resolvedNextFocusNode = nextFocusNode;
+        if (resolvedNextFocusNode != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!context.mounted) {
+              return;
+            }
+            FocusScope.of(context).requestFocus(resolvedNextFocusNode);
+            if (activateNextFocus) {
+              final primaryFocus = FocusManager.instance.primaryFocus;
+              final targetContext =
+                  primaryFocus?.context ?? resolvedNextFocusNode.context;
+              if (targetContext != null) {
+                Actions.maybeInvoke(targetContext, const ActivateIntent());
+              }
+            }
+          });
+        } else {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!context.mounted) {
+              return;
+            }
+            FocusScope.of(context).unfocus();
+          });
+        }
+      },
     );
   }
 
@@ -2060,13 +2484,35 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
     final usesDynamicSource = statusFieldDynamicOptionSources.contains(
       sourceKey,
     );
-    if (fieldType == 'dropdown' && !usesDynamicSource && options.isEmpty) {
+    if ((fieldType == 'dropdown' || fieldType == 'search_dropdown') &&
+        !usesDynamicSource &&
+        options.isEmpty) {
       return 'Add at least one static choice or pick a choices source.';
     }
     if (fieldType == 'checkbox' && options.isEmpty) {
       return 'Add at least one choice.';
     }
+    final visibilityControllerKey = (_field.visibilityControllerKey ?? '').trim();
+    final visibilityOptionValues = _field.visibilityOptionValues
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+    if (visibilityControllerKey.isNotEmpty && visibilityOptionValues.isEmpty) {
+      return 'Add at least one Show When option.';
+    }
+    if (visibilityControllerKey.isEmpty && visibilityOptionValues.isNotEmpty) {
+      return 'Show When Field Key is required.';
+    }
     return null;
+  }
+
+  void _submitForm() {
+    final validationMessage = _validationMessage();
+    if (validationMessage != null) {
+      AppSnackbar.showError(context, validationMessage);
+      return;
+    }
+    Navigator.of(context).pop(_normalizeFieldPlaceholder(_field));
   }
 
   StatusField _normalizeFieldPlaceholder(StatusField field) {
@@ -2078,7 +2524,7 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
       }
       return field;
     }
-    if (fieldType == 'dropdown') {
+    if (fieldType == 'dropdown' || fieldType == 'search_dropdown') {
       final isRequired = field.required ?? false;
       if (isRequired) {
         return field.copyWith(placeholder: null);
@@ -2087,6 +2533,18 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
       final currentPlaceholder = field.placeholder?.trim() ?? '';
       if (currentPlaceholder.isEmpty) {
         return field.copyWith(placeholder: 'Optional');
+      }
+    }
+
+    if (fieldType != 'photo' &&
+        fieldType != 'dropdown' &&
+        fieldType != 'search_dropdown') {
+      final isRequired = field.required ?? false;
+      if (!isRequired) {
+        final currentPlaceholder = field.placeholder?.trim() ?? '';
+        if (currentPlaceholder.isEmpty) {
+          return field.copyWith(placeholder: 'Optional');
+        }
       }
     }
 
@@ -2103,17 +2561,7 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        FilledButton(
-          onPressed: () {
-            final validationMessage = _validationMessage();
-            if (validationMessage != null) {
-              AppSnackbar.showError(context, validationMessage);
-              return;
-            }
-            Navigator.of(context).pop(_normalizeFieldPlaceholder(_field));
-          },
-          child: const Text('Save'),
-        ),
+        FilledButton(onPressed: _submitForm, child: const Text('Save')),
       ],
       child: AdminModalFormBody(
         children: [
@@ -2128,6 +2576,7 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
               headerBottomGap: 12,
               toggleTopGap: 0,
               toggleGap: 0,
+              onSubmit: _submitForm,
               onUpdate: (property, value) {
                 setState(() {
                   final updatedField = switch (property) {
@@ -2152,6 +2601,12 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
                           (value as String?) == statusFieldOptionSourceStatic
                           ? null
                           : value,
+                    ),
+                    'visibilityControllerKey' => _field.copyWith(
+                      visibilityControllerKey: value as String?,
+                    ),
+                    'visibilityOptionValues' => _field.copyWith(
+                      visibilityOptionValues: value as List<String>,
                     ),
                     'requiredError' => _field.copyWith(
                       requiredError: value as String?,
@@ -2182,6 +2637,9 @@ class _UnderlineTextField extends StatefulWidget {
     required this.formStatusKey,
     this.preferredScrollController,
     this.initialValue,
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
     this.keyboardType,
     this.hintText,
     this.errorText,
@@ -2193,6 +2651,9 @@ class _UnderlineTextField extends StatefulWidget {
   final String? formButtonText;
   final String? formStatusKey;
   final ScrollController? preferredScrollController;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
   final TextInputType? keyboardType;
   final String? hintText;
   final String? errorText;
@@ -2205,6 +2666,23 @@ class _UnderlineTextField extends StatefulWidget {
 
 class _UnderlineTextFieldState extends State<_UnderlineTextField> {
   late final TextEditingController _controller;
+
+  void _focusAndMaybeActivateNext(FocusNode nextFocusNode) {
+    FocusScope.of(context).requestFocus(nextFocusNode);
+    if (!widget.activateNextFocus) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final primaryFocus = FocusManager.instance.primaryFocus;
+      final targetContext = primaryFocus?.context ?? nextFocusNode.context;
+      if (targetContext != null) {
+        Actions.maybeInvoke(targetContext, const ActivateIntent());
+      }
+    });
+  }
 
   void _unfocusWithoutScroll(PointerDownEvent event) {
     final preferredController = widget.preferredScrollController;
@@ -2239,6 +2717,20 @@ class _UnderlineTextFieldState extends State<_UnderlineTextField> {
   }
 
   @override
+  void didUpdateWidget(covariant _UnderlineTextField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextText = widget.initialValue ?? '';
+    if (_controller.text == nextText) {
+      return;
+    }
+    _controller.value = _controller.value.copyWith(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+      composing: TextRange.empty,
+    );
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     super.dispose();
@@ -2253,8 +2745,20 @@ class _UnderlineTextFieldState extends State<_UnderlineTextField> {
     );
     return TextField(
       controller: _controller,
+      focusNode: widget.focusNode,
       keyboardType: widget.keyboardType,
       inputFormatters: widget.inputFormatters,
+      textInputAction: widget.nextFocusNode != null
+          ? TextInputAction.next
+          : TextInputAction.done,
+      onSubmitted: (_) {
+        final nextFocusNode = widget.nextFocusNode;
+        if (nextFocusNode != null) {
+          _focusAndMaybeActivateNext(nextFocusNode);
+        } else {
+          FocusScope.of(context).unfocus();
+        }
+      },
       scrollPadding: EdgeInsets.zero,
       onTapOutside: _unfocusWithoutScroll,
       onChanged: widget.onChanged,
@@ -2287,6 +2791,7 @@ class _SelectButton extends StatelessWidget {
     required this.formTitle,
     required this.formButtonText,
     required this.formStatusKey,
+    this.focusNode,
     required this.label,
     required this.isPlaceholder,
     required this.icon,
@@ -2296,6 +2801,7 @@ class _SelectButton extends StatelessWidget {
   final String formTitle;
   final String? formButtonText;
   final String? formStatusKey;
+  final FocusNode? focusNode;
   final String label;
   final bool isPlaceholder;
   final IconData icon;
@@ -2309,14 +2815,13 @@ class _SelectButton extends StatelessWidget {
       currentStatusKey: formStatusKey,
     );
     return OutlinedButton.icon(
+      focusNode: focusNode,
       onPressed: onPressed,
       icon: Icon(icon, size: 18, color: palette.accent),
       label: Text(
         label,
         style: TextStyle(
-          color: isPlaceholder
-              ? palette.accentMuted
-              : AppColors.textPrimary,
+          color: isPlaceholder ? palette.accentMuted : AppColors.textPrimary,
           fontWeight: FontWeight.w500,
         ),
       ),
@@ -2336,7 +2841,11 @@ class _PhotoField extends StatefulWidget {
     required this.formButtonText,
     required this.formStatusKey,
     required this.initialValue,
+    required this.placeholder,
     required this.onChanged,
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
     this.errorText,
   });
 
@@ -2344,7 +2853,11 @@ class _PhotoField extends StatefulWidget {
   final String? formButtonText;
   final String? formStatusKey;
   final dynamic initialValue;
+  final String placeholder;
   final ValueChanged<dynamic> onChanged;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
   final String? errorText;
 
   @override
@@ -2352,16 +2865,38 @@ class _PhotoField extends StatefulWidget {
 }
 
 class _PhotoFieldState extends State<_PhotoField> {
+  void _focusAndMaybeActivateNext(FocusNode nextFocusNode) {
+    FocusScope.of(context).requestFocus(nextFocusNode);
+    if (!widget.activateNextFocus) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final primaryFocus = FocusManager.instance.primaryFocus;
+      final targetContext = primaryFocus?.context ?? nextFocusNode.context;
+      if (targetContext != null) {
+        Actions.maybeInvoke(targetContext, const ActivateIntent());
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return BookingPhotoFieldInput(
       initialValue: widget.initialValue,
+      focusNode: widget.focusNode,
+      nextFocusNode: widget.nextFocusNode,
+      activateNextFocus: widget.activateNextFocus,
       errorText: widget.errorText,
       palette: _workflowResolvedPalette(
         title: widget.formTitle,
         buttonText: widget.formButtonText,
         currentStatusKey: widget.formStatusKey,
       ),
+      placeholder: widget.placeholder,
+      onMoveToNextFocus: _focusAndMaybeActivateNext,
       onChanged: widget.onChanged,
     );
   }

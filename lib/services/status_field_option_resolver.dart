@@ -1,3 +1,4 @@
+import 'package:webapp/constants/puerto_princesa_barangays.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/requests/auth.request.dart';
@@ -130,6 +131,9 @@ class StatusFieldOptionResolver {
     final bookingOptions = _uniqueSortedOptions(
       bookings.map((item) => _bookingDisplay(item.id)).whereType<String>(),
     );
+    final puertoPrincesaBarangayOptionsResolved = _uniqueSortedOptions(
+      puertoPrincesaBarangayOptions,
+    );
 
     return fields.map((field) {
       final sourceKey = _resolvedOptionSourceKey(field);
@@ -139,6 +143,7 @@ class StatusFieldOptionResolver {
         statusFieldOptionSourceAdmins => adminOptions,
         statusFieldOptionSourceDrivers => driverOptions,
         statusFieldOptionSourceHelpers => helperOptions,
+        statusFieldOptionSourceClientMembers => field.options,
         statusFieldOptionSourceVehicleMakes => makeOptions,
         statusFieldOptionSourceVehicleTypes => typeOptions,
         statusFieldOptionSourceVehicleSizes => sizeOptions,
@@ -146,6 +151,8 @@ class StatusFieldOptionResolver {
         statusFieldOptionSourceForms => formOptions,
         statusFieldOptionSourceFields => fieldOptions,
         statusFieldOptionSourceBookings => bookingOptions,
+        statusFieldOptionSourcePuertoPrincesaBarangays =>
+          puertoPrincesaBarangayOptionsResolved,
         _ => field.options,
       };
       return field.copyWith(options: resolvedOptions);
@@ -168,6 +175,7 @@ class StatusFieldOptionResolver {
       'admin_id' => statusFieldOptionSourceAdmins,
       'driver_id' => statusFieldOptionSourceDrivers,
       'helper_id' => statusFieldOptionSourceHelpers,
+      'member_id' => statusFieldOptionSourceClientMembers,
       'truck_id' => statusFieldOptionSourceVehicleMakes,
       'vehicle_make_id' => statusFieldOptionSourceVehicleMakes,
       'vehicle_type_id' => statusFieldOptionSourceVehicleTypes,
@@ -176,6 +184,8 @@ class StatusFieldOptionResolver {
       'form_id' => statusFieldOptionSourceForms,
       'field_id' => statusFieldOptionSourceFields,
       'booking_id' => statusFieldOptionSourceBookings,
+      'origin_barangay' => statusFieldOptionSourcePuertoPrincesaBarangays,
+      'destination_barangay' => statusFieldOptionSourcePuertoPrincesaBarangays,
       _ => null,
     };
   }

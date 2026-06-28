@@ -454,6 +454,13 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
       _selectedTypes.any((type) => type.isBillingStatement);
   bool get _showsCoveredDateRange => !widget.singleItem;
 
+  void _unfocusCurrentField() {
+    final currentFocus = FocusScope.of(context);
+    if (!currentFocus.hasPrimaryFocus) {
+      currentFocus.unfocus();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AdminModalShell(
@@ -467,141 +474,158 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
         ),
         FilledButton(onPressed: _submit, child: const Text('Download')),
       ],
-      child: AdminModalFormBody(
-        children: [
-          AdminModalFieldsSection(
-            children: [
-              AdminModalFieldSlot(
-                bottomPadding: _selectedTypes.isEmpty ? 0 : 20,
-                child: _ExportTypeChoiceField(
-                  values: _selectedTypes,
-                  onChanged: (value) {
-                    setState(() {
-                      if (_selectedTypes.contains(value)) {
-                        _selectedTypes.remove(value);
-                      } else {
-                        _selectedTypes.add(value);
-                      }
-                    });
-                  },
-                ),
-              ),
-              if (_selectedTypes.isNotEmpty) ...[
-                _DashboardExportDateField(
-                  label: 'Document Date',
-                  value: _documentDate,
-                  bottomPadding: _showsCoveredDateRange ? 4 : 0,
-                  onChanged: (value) {
-                    setState(() {
-                      _documentDate = value;
-                    });
-                  },
-                ),
-                if (_showsCoveredDateRange)
-                  _DashboardExportDateField(
-                    label: 'Covered Start Date',
-                    value: _coveredStartDate,
-                    bottomPadding: 4,
+      child: FocusTraversalGroup(
+        policy: WidgetOrderTraversalPolicy(),
+        child: AdminModalFormBody(
+          children: [
+            AdminModalFieldsSection(
+              children: [
+                AdminModalFieldSlot(
+                  bottomPadding: _selectedTypes.isEmpty ? 0 : 20,
+                  child: _ExportTypeChoiceField(
+                    values: _selectedTypes,
                     onChanged: (value) {
                       setState(() {
-                        _coveredStartDate = value;
-                        if (_coveredEndDate.isBefore(value)) {
-                          _coveredEndDate = value;
+                        if (_selectedTypes.contains(value)) {
+                          _selectedTypes.remove(value);
+                        } else {
+                          _selectedTypes.add(value);
                         }
                       });
                     },
                   ),
-                if (_showsCoveredDateRange)
+                ),
+                if (_selectedTypes.isNotEmpty) ...[
                   _DashboardExportDateField(
-                    label: 'Covered End Date',
-                    value: _coveredEndDate,
-                    bottomPadding: 4,
+                    label: 'Document Date',
+                    value: _documentDate,
+                    bottomPadding: _showsCoveredDateRange ? 4 : 0,
                     onChanged: (value) {
                       setState(() {
-                        _coveredEndDate = value;
-                        if (_coveredStartDate.isAfter(value)) {
+                        _documentDate = value;
+                      });
+                    },
+                  ),
+                  if (_showsCoveredDateRange)
+                    _DashboardExportDateField(
+                      label: 'Covered Start Date',
+                      value: _coveredStartDate,
+                      bottomPadding: 4,
+                      onChanged: (value) {
+                        setState(() {
                           _coveredStartDate = value;
-                        }
-                      });
-                    },
-                  ),
-                if (_requiresRegularStatementNumber)
+                          if (_coveredEndDate.isBefore(value)) {
+                            _coveredEndDate = value;
+                          }
+                        });
+                      },
+                    ),
+                  if (_showsCoveredDateRange)
+                    _DashboardExportDateField(
+                      label: 'Covered End Date',
+                      value: _coveredEndDate,
+                      bottomPadding: 4,
+                      onChanged: (value) {
+                        setState(() {
+                          _coveredEndDate = value;
+                          if (_coveredStartDate.isAfter(value)) {
+                            _coveredStartDate = value;
+                          }
+                        });
+                      },
+                    ),
+                  if (_requiresRegularStatementNumber)
+                    AdminModalTextField(
+                      controller: _regularStatementNumberController,
+                      label: 'Regular Statement Number',
+                      bottomPadding: 4,
+                    ),
+                  if (_requiresHustlingStatementNumber)
+                    AdminModalTextField(
+                      controller: _hustlingStatementNumberController,
+                      label: 'Hustling Statement Number',
+                      bottomPadding: 4,
+                    ),
                   AdminModalTextField(
-                    controller: _regularStatementNumberController,
-                    label: 'Regular Statement Number',
-                    bottomPadding: 4,
-                  ),
-                if (_requiresHustlingStatementNumber)
-                  AdminModalTextField(
-                    controller: _hustlingStatementNumberController,
-                    label: 'Hustling Statement Number',
-                    bottomPadding: 4,
-                  ),
-                AdminModalTextField(
-                  controller: _companyNameController,
-                  label: 'Company Name',
-                  textCapitalization: TextCapitalization.words,
-                  bottomPadding: 4,
-                ),
-                if (_showsRepresentativeFields)
-                  AdminModalTextField(
-                    controller: _representativeNameController,
-                    label: 'Representative Name',
+                    controller: _companyNameController,
+                    label: 'Company Name',
                     textCapitalization: TextCapitalization.words,
                     bottomPadding: 4,
                   ),
-                if (_showsRepresentativeFields)
+                  if (_showsRepresentativeFields)
+                    AdminModalTextField(
+                      controller: _representativeNameController,
+                      label: 'Representative Name',
+                      textCapitalization: TextCapitalization.words,
+                      bottomPadding: 4,
+                    ),
+                  if (_showsRepresentativeFields)
+                    AdminModalTextField(
+                      controller: _greetingLineController,
+                      label: 'Greeting Line',
+                      bottomPadding: 4,
+                    ),
                   AdminModalTextField(
-                    controller: _greetingLineController,
-                    label: 'Greeting Line',
+                    controller: _preparedByController,
+                    label: 'Prepared By',
+                    textCapitalization: TextCapitalization.words,
                     bottomPadding: 4,
                   ),
-                AdminModalTextField(
-                  controller: _preparedByController,
-                  label: 'Prepared By',
-                  textCapitalization: TextCapitalization.words,
-                  bottomPadding: 4,
-                ),
-                AdminModalTextField(
-                  controller: _preparedByTitleController,
-                  label: 'Prepared By Title',
-                  textCapitalization: TextCapitalization.words,
-                  bottomPadding: 4,
-                ),
-                AdminModalTextField(
-                  controller: _approvedByController,
-                  label: 'Approved By',
-                  textCapitalization: TextCapitalization.words,
-                  bottomPadding: 4,
-                ),
-                AdminModalTextField(
-                  controller: _approvedByTitleController,
-                  label: 'Approved By Title',
-                  textCapitalization: TextCapitalization.words,
-                  bottomPadding: _showsBankFields ? 4 : 0,
-                ),
-                if (_showsBankFields)
                   AdminModalTextField(
-                    controller: _bankNameController,
-                    label: 'Bank Name',
+                    controller: _preparedByTitleController,
+                    label: 'Prepared By Title',
+                    textCapitalization: TextCapitalization.words,
                     bottomPadding: 4,
                   ),
-                if (_showsBankFields)
                   AdminModalTextField(
-                    controller: _accountNameController,
-                    label: 'Account Name',
+                    controller: _approvedByController,
+                    label: 'Approved By',
+                    textCapitalization: TextCapitalization.words,
                     bottomPadding: 4,
                   ),
-                if (_showsBankFields)
                   AdminModalTextField(
-                    controller: _accountNumberController,
-                    label: 'Account Number',
-                    bottomPadding: 0,
+                    controller: _approvedByTitleController,
+                    label: 'Approved By Title',
+                    textCapitalization: TextCapitalization.words,
+                    bottomPadding: _showsBankFields ? 4 : 0,
+                    textInputAction: _showsBankFields
+                        ? TextInputAction.next
+                        : TextInputAction.done,
+                    onSubmitted: (_) {
+                      if (!_showsBankFields) {
+                        _unfocusCurrentField();
+                        _submit();
+                      }
+                    },
                   ),
+                  if (_showsBankFields)
+                    AdminModalTextField(
+                      controller: _bankNameController,
+                      label: 'Bank Name',
+                      bottomPadding: 4,
+                    ),
+                  if (_showsBankFields)
+                    AdminModalTextField(
+                      controller: _accountNameController,
+                      label: 'Account Name',
+                      bottomPadding: 4,
+                    ),
+                  if (_showsBankFields)
+                    AdminModalTextField(
+                      controller: _accountNumberController,
+                      label: 'Account Number',
+                      bottomPadding: 0,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) {
+                        _unfocusCurrentField();
+                        _submit();
+                      },
+                    ),
+                ],
               ],
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1209,6 +1233,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
   });
 
   static const double _sectionGap = 14;
+  static bool _didPrintDashboardTableMetrics = false;
 
   static const _headerStyle = TextStyle(
     color: AppColors.textSecondary,
@@ -1221,8 +1246,10 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
     fontWeight: FontWeight.w600,
     height: 1.35,
   );
-  static const _defaultTrailingPadding = 20.0;
-  static const _extraWidthAllowance = 16.0;
+  static const _defaultTrailingPadding =
+      AdminListMeasurements.defaultTrailingPadding;
+  static const _extraWidthAllowance = 18.0;
+  static const _maxClientBasisWidth = 260.0;
 
   final List<Booking> bookings;
   final AdminDashboardViewModel vm;
@@ -1263,17 +1290,16 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
         );
         final resolvedWaybillWidth = _resolvedColumnWidth(
           _maxTextWidth(
-                context,
-                textScaler,
-                'Waybill No.',
-                _longerText(
-                  'Waybill No.',
-                  _longestText(
-                    bookings.map(AdminDashboardViewModel.waybillNumber),
-                  ),
-                ),
-              ) +
-              12,
+            context,
+            textScaler,
+            'Waybill No.',
+            _longerText(
+              'Waybill No.',
+              _longestText(
+                bookings.map(AdminDashboardViewModel.waybillNumber),
+              ),
+            ),
+          ),
         );
         final resolvedVanNumberWidth = _resolvedColumnWidth(
           _maxTextWidth(
@@ -1295,20 +1321,23 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
           ),
         );
         final resolvedClientWidth = _resolvedColumnWidth(
-          _maxTextWidth(
-            context,
-            textScaler,
-            'Client',
-            _longerText(
+          _cappedBasisWidth(
+            _maxTextWidth(
+              context,
+              textScaler,
               'Client',
-              _longestText(
-                bookings.map(
-                  (booking) => _widestRenderedLine(
-                    _displayClientName(vm.client(booking)),
-                  ),
+              _longerText(
+                'Client',
+                _longestText(
+                    bookings.map(
+                      (booking) => _widestRenderedLine(
+                        _displayClientName(vm.client(booking)),
+                      ),
+                    ),
                 ),
               ),
             ),
+            _maxClientBasisWidth,
           ),
         );
         final resolvedAmountWidth = _resolvedColumnWidth(
@@ -1344,6 +1373,45 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
             resolvedActionWidth +
             40;
         final useResponsiveCards = totalMeasuredWidth > constraints.maxWidth;
+        if (!_didPrintDashboardTableMetrics && bookings.isNotEmpty) {
+          _didPrintDashboardTableMetrics = true;
+          final sampleBooking = bookings.first;
+          final sampleClientName = _displayClientName(vm.client(sampleBooking));
+          debugPrint(
+            '[ADMIN_DASHBOARD_TABLE_DEBUG][TABLE] '
+            'available=${constraints.maxWidth.toStringAsFixed(1)} '
+            'total=${totalMeasuredWidth.toStringAsFixed(1)} '
+            'responsive=$useResponsiveCards '
+            'drNo=${resolvedDeliveryNumberWidth.toStringAsFixed(0)} '
+            'date=${resolvedDateWidth.toStringAsFixed(0)} '
+            'waybill=${resolvedWaybillWidth.toStringAsFixed(0)} '
+            'vanNo=${resolvedVanNumberWidth.toStringAsFixed(0)} '
+            'vanSize=${resolvedVanSizeWidth.toStringAsFixed(0)} '
+            'client=${resolvedClientWidth.toStringAsFixed(0)} '
+            'amount=${resolvedAmountWidth.toStringAsFixed(0)} '
+            'actions=${resolvedActionWidth.toStringAsFixed(0)}',
+          );
+          debugPrint(
+            '[ADMIN_DASHBOARD_TABLE_DEBUG][LONGEST] '
+            'drNo="${_longestText(bookings.map(AdminDashboardViewModel.deliveryFormNumber))}" '
+            'date="${_longestText(bookings.map((booking) => _formatBookingDateTime(booking.createdAt)))}" '
+            'waybill="${_longestText(bookings.map(AdminDashboardViewModel.waybillNumber))}" '
+            'vanNo="${_longestText(bookings.map(AdminDashboardViewModel.vanNumber))}" '
+            'vanSize="${_longestText(bookings.map(vm.vanSize))}" '
+            'client="${_longestText(bookings.map((booking) => _widestRenderedLine(_displayClientName(vm.client(booking)))))}" '
+            'amount="${_longestText(bookings.map(AdminDashboardViewModel.amount))}"',
+          );
+          debugPrint(
+            '[ADMIN_DASHBOARD_TABLE_DEBUG][SAMPLE_ROW] '
+            'drNo="${AdminDashboardViewModel.deliveryFormNumber(sampleBooking)}" '
+            'date="${_formatBookingDateTime(sampleBooking.createdAt)}" '
+            'waybill="${AdminDashboardViewModel.waybillNumber(sampleBooking)}" '
+            'vanNo="${AdminDashboardViewModel.vanNumber(sampleBooking)}" '
+            'vanSize="${vm.vanSize(sampleBooking)}" '
+            'client="$sampleClientName" '
+            'amount="${AdminDashboardViewModel.amount(sampleBooking)}"',
+          );
+        }
 
         if (useResponsiveCards) {
           return Column(
@@ -1466,6 +1534,10 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
 
   static double _maxValue(double first, double second) {
     return first > second ? first : second;
+  }
+
+  static double _cappedBasisWidth(double measuredWidth, double maxWidth) {
+    return measuredWidth > maxWidth ? maxWidth : measuredWidth;
   }
 
   static String _longerText(String current, String candidate) {
@@ -1616,7 +1688,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
               child: Text(
                 AdminDashboardViewModel.deliveryFormNumber(booking),
                 style: _AdminDashboardCompletedBookingsTable._valueStyle,
-                softWrap: true,
+                maxLines: 1,
+                softWrap: false,
               ),
             ),
           ),
@@ -1628,7 +1701,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
                   dateValue,
                 ),
                 style: _AdminDashboardCompletedBookingsTable._valueStyle,
-                softWrap: true,
+                maxLines: 1,
+                softWrap: false,
               ),
             ),
           ),
@@ -1640,7 +1714,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
                   AdminDashboardViewModel.waybillNumber(booking),
                 ),
                 style: _AdminDashboardCompletedBookingsTable._valueStyle,
-                softWrap: true,
+                maxLines: 1,
+                softWrap: false,
               ),
             ),
           ),
@@ -1650,7 +1725,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
               child: Text(
                 AdminDashboardViewModel.vanNumber(booking),
                 style: _AdminDashboardCompletedBookingsTable._valueStyle,
-                softWrap: true,
+                maxLines: 1,
+                softWrap: false,
               ),
             ),
           ),
@@ -1660,7 +1736,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
               child: Text(
                 vm.vanSize(booking),
                 style: _AdminDashboardCompletedBookingsTable._valueStyle,
-                softWrap: true,
+                maxLines: 1,
+                softWrap: false,
               ),
             ),
           ),
@@ -1672,6 +1749,7 @@ class _AdminDashboardWideRow extends StatelessWidget {
                   clientName,
                 ),
                 style: _AdminDashboardCompletedBookingsTable._valueStyle,
+                maxLines: 2,
                 softWrap: true,
               ),
             ),
@@ -1682,7 +1760,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
               child: Text(
                 AdminDashboardViewModel.amount(booking),
                 style: _AdminDashboardCompletedBookingsTable._valueStyle,
-                softWrap: true,
+                maxLines: 1,
+                softWrap: false,
               ),
             ),
           ),
@@ -1821,7 +1900,7 @@ class _DashboardFixedSlot extends StatelessWidget {
 class _DashboardHeaderCell extends StatelessWidget {
   const _DashboardHeaderCell({
     required this.label,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
     this.textAlign = TextAlign.left,
   });
@@ -1845,7 +1924,7 @@ class _DashboardHeaderCell extends StatelessWidget {
 class _DashboardBodyCell extends StatelessWidget {
   const _DashboardBodyCell({
     required this.child,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
   });
 

@@ -13,6 +13,7 @@ class StatusFieldEditorCard extends StatelessWidget {
     required this.index,
     required this.fieldTypeOptions,
     required this.onUpdate,
+    this.onSubmit,
     this.onRemove,
     this.showContainer = true,
     this.sectionGap = 14,
@@ -25,6 +26,7 @@ class StatusFieldEditorCard extends StatelessWidget {
   final int index;
   final List<String> fieldTypeOptions;
   final void Function(String property, dynamic value) onUpdate;
+  final VoidCallback? onSubmit;
   final VoidCallback? onRemove;
   final bool showContainer;
   final double sectionGap;
@@ -40,10 +42,12 @@ class StatusFieldEditorCard extends StatelessWidget {
         StatusField.normalizedOptionSourceKey(field.optionSourceKey) ??
         statusFieldOptionSourceStatic;
     final usesDynamicOptions =
-        fieldType == 'dropdown' && _usesDynamicOptionSource(optionSourceKey);
+        (fieldType == 'dropdown' || fieldType == 'search_dropdown') &&
+        _usesDynamicOptionSource(optionSourceKey);
     final showStaticChoices =
         fieldType == 'checkbox' ||
-        (fieldType == 'dropdown' && !usesDynamicOptions);
+        ((fieldType == 'dropdown' || fieldType == 'search_dropdown') &&
+            !usesDynamicOptions);
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -102,7 +106,8 @@ class StatusFieldEditorCard extends StatelessWidget {
                       onChanged: (value) => onUpdate('type', value),
                     ),
                   ),
-                  if (fieldType == 'dropdown') ...[
+                  if (fieldType == 'dropdown' ||
+                      fieldType == 'search_dropdown') ...[
                     SizedBox(height: 6),
                     _fullWidthField(
                       child: _dropdownField(
@@ -119,6 +124,9 @@ class StatusFieldEditorCard extends StatelessWidget {
                         child: _valueField(
                           label: 'Options',
                           initialValue: field.options.join(', '),
+                          onSubmitted: onSubmit == null
+                              ? null
+                              : (_) => onSubmit!(),
                           onChanged: (value) => onUpdate(
                             'options',
                             value
@@ -136,6 +144,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                     child: _valueField(
                       label: 'Title',
                       initialValue: field.title,
+                      onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                       onChanged: (value) => onUpdate('title', value),
                     ),
                   ),
@@ -144,6 +153,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                     child: _valueField(
                       label: 'Subtitle',
                       initialValue: field.subtitle,
+                      onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                       onChanged: (value) => onUpdate('subtitle', value),
                     ),
                   ),
@@ -152,6 +162,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                     child: _valueField(
                       label: 'Field Key',
                       initialValue: field.key,
+                      onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                       onChanged: (value) => onUpdate('key', value),
                     ),
                   ),
@@ -161,6 +172,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                       key: ValueKey('placeholder-$fieldType-${field.required}'),
                       label: 'Placeholder',
                       initialValue: field.placeholder,
+                      onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                       onChanged: (value) => onUpdate('placeholder', value),
                     ),
                   ),
@@ -169,7 +181,34 @@ class StatusFieldEditorCard extends StatelessWidget {
                     child: _valueField(
                       label: 'Instructions',
                       initialValue: field.instructions,
+                      onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                       onChanged: (value) => onUpdate('instructions', value),
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  _fullWidthField(
+                    child: _valueField(
+                      label: 'Show When Field Key',
+                      initialValue: field.visibilityControllerKey,
+                      onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
+                      onChanged: (value) =>
+                          onUpdate('visibilityControllerKey', value.trim()),
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  _fullWidthField(
+                    child: _valueField(
+                      label: 'Show When Option(s)',
+                      initialValue: field.visibilityOptionValues.join(', '),
+                      onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
+                      onChanged: (value) => onUpdate(
+                        'visibilityOptionValues',
+                        value
+                            .split(',')
+                            .map((item) => item.trim())
+                            .where((item) => item.isNotEmpty)
+                            .toList(),
+                      ),
                     ),
                   ),
                   if (supportsRange) ...[
@@ -181,6 +220,9 @@ class StatusFieldEditorCard extends StatelessWidget {
                             label: _minLabel(fieldType),
                             initialValue: field.min?.toString(),
                             keyboardType: TextInputType.number,
+                            onSubmitted: onSubmit == null
+                                ? null
+                                : (_) => onSubmit!(),
                             onChanged: (value) =>
                                 onUpdate('min', int.tryParse(value)),
                           ),
@@ -191,6 +233,9 @@ class StatusFieldEditorCard extends StatelessWidget {
                             label: _maxLabel(fieldType),
                             initialValue: field.max?.toString(),
                             keyboardType: TextInputType.number,
+                            onSubmitted: onSubmit == null
+                                ? null
+                                : (_) => onSubmit!(),
                             onChanged: (value) =>
                                 onUpdate('max', int.tryParse(value)),
                           ),
@@ -203,6 +248,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                     child: _valueField(
                       label: 'Required Error',
                       initialValue: field.requiredError,
+                      onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                       onChanged: (value) => onUpdate('requiredError', value),
                     ),
                   ),
@@ -211,6 +257,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                     child: _valueField(
                       label: 'Validation Error',
                       initialValue: field.validationError,
+                      onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                       onChanged: (value) => onUpdate('validationError', value),
                     ),
                   ),
@@ -249,12 +296,16 @@ class StatusFieldEditorCard extends StatelessWidget {
                       child: _valueField(
                         label: 'Title',
                         initialValue: field.title,
+                        onSubmitted: onSubmit == null
+                            ? null
+                            : (_) => onSubmit!(),
                         onChanged: (value) => onUpdate('title', value),
                       ),
                     ),
                   ],
                 ),
-                if (fieldType == 'dropdown') ...[
+                if (fieldType == 'dropdown' ||
+                    fieldType == 'search_dropdown') ...[
                   SizedBox(height: 6),
                   _dropdownField(
                     label: 'Source',
@@ -267,6 +318,7 @@ class StatusFieldEditorCard extends StatelessWidget {
                     _valueField(
                       label: 'Options',
                       initialValue: field.options.join(', '),
+                      onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                       onChanged: (value) => onUpdate(
                         'options',
                         value
@@ -285,6 +337,9 @@ class StatusFieldEditorCard extends StatelessWidget {
                       child: _valueField(
                         label: 'Subtitle',
                         initialValue: field.subtitle,
+                        onSubmitted: onSubmit == null
+                            ? null
+                            : (_) => onSubmit!(),
                         onChanged: (value) => onUpdate('subtitle', value),
                       ),
                     ),
@@ -293,6 +348,9 @@ class StatusFieldEditorCard extends StatelessWidget {
                       child: _valueField(
                         label: 'Field Key',
                         initialValue: field.key,
+                        onSubmitted: onSubmit == null
+                            ? null
+                            : (_) => onSubmit!(),
                         onChanged: (value) => onUpdate('key', value),
                       ),
                     ),
@@ -304,6 +362,9 @@ class StatusFieldEditorCard extends StatelessWidget {
                         ),
                         label: 'Placeholder',
                         initialValue: field.placeholder,
+                        onSubmitted: onSubmit == null
+                            ? null
+                            : (_) => onSubmit!(),
                         onChanged: (value) => onUpdate('placeholder', value),
                       ),
                     ),
@@ -313,7 +374,46 @@ class StatusFieldEditorCard extends StatelessWidget {
                 _valueField(
                   label: 'Instructions',
                   initialValue: field.instructions,
+                  onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                   onChanged: (value) => onUpdate('instructions', value),
+                ),
+                SizedBox(height: 4),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _valueField(
+                        label: 'Show When Field Key',
+                        initialValue: field.visibilityControllerKey,
+                        onSubmitted: onSubmit == null
+                            ? null
+                            : (_) => onSubmit!(),
+                        onChanged: (value) => onUpdate(
+                          'visibilityControllerKey',
+                          value.trim(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      flex: 2,
+                      child: _valueField(
+                        label: 'Show When Option(s)',
+                        initialValue: field.visibilityOptionValues.join(', '),
+                        onSubmitted: onSubmit == null
+                            ? null
+                            : (_) => onSubmit!(),
+                        onChanged: (value) => onUpdate(
+                          'visibilityOptionValues',
+                          value
+                              .split(',')
+                              .map((item) => item.trim())
+                              .where((item) => item.isNotEmpty)
+                              .toList(),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 if (supportsRange) ...[
                   SizedBox(height: 4),
@@ -326,6 +426,9 @@ class StatusFieldEditorCard extends StatelessWidget {
                             label: _minLabel(fieldType),
                             initialValue: field.min?.toString(),
                             keyboardType: TextInputType.number,
+                            onSubmitted: onSubmit == null
+                                ? null
+                                : (_) => onSubmit!(),
                             onChanged: (value) =>
                                 onUpdate('min', int.tryParse(value)),
                           ),
@@ -336,6 +439,9 @@ class StatusFieldEditorCard extends StatelessWidget {
                             label: _maxLabel(fieldType),
                             initialValue: field.max?.toString(),
                             keyboardType: TextInputType.number,
+                            onSubmitted: onSubmit == null
+                                ? null
+                                : (_) => onSubmit!(),
                             onChanged: (value) =>
                                 onUpdate('max', int.tryParse(value)),
                           ),
@@ -348,12 +454,14 @@ class StatusFieldEditorCard extends StatelessWidget {
                 _valueField(
                   label: 'Required Error',
                   initialValue: field.requiredError,
+                  onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                   onChanged: (value) => onUpdate('requiredError', value),
                 ),
                 SizedBox(height: 4),
                 _valueField(
                   label: 'Validation Error',
                   initialValue: field.validationError,
+                  onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                   onChanged: (value) => onUpdate('validationError', value),
                 ),
               ],
@@ -404,6 +512,7 @@ class StatusFieldEditorCard extends StatelessWidget {
     required String label,
     String? initialValue,
     ValueChanged<String>? onChanged,
+    ValueChanged<String>? onSubmitted,
     TextInputType? keyboardType,
   }) {
     return AdminModalValueTextField(
@@ -413,6 +522,7 @@ class StatusFieldEditorCard extends StatelessWidget {
       bottomPadding: 0,
       keyboardType: keyboardType,
       onChanged: onChanged,
+      onSubmitted: onSubmitted,
     );
   }
 
@@ -458,6 +568,7 @@ class StatusFieldEditorCard extends StatelessWidget {
       statusFieldOptionSourceAdmins,
       statusFieldOptionSourceDrivers,
       statusFieldOptionSourceHelpers,
+      statusFieldOptionSourceClientMembers,
       statusFieldOptionSourceVehicleMakes,
       statusFieldOptionSourceVehicleTypes,
       statusFieldOptionSourceVehicleSizes,

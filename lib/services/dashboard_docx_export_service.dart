@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:archive/archive.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:xml/xml.dart';
 
@@ -592,7 +591,6 @@ String dashboardExportErrorMessage(Object error) {
       return message;
     }
   }
-  debugPrint('[DASHBOARD_EXPORT] $error');
   return 'We could not export the document right now.';
 }
 

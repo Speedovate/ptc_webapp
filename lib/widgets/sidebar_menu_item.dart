@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 
 class SidebarMenuItem extends StatelessWidget {
@@ -32,7 +33,17 @@ class SidebarMenuItem extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AppMousePressable(
-            onTap: onTap,
+            onTapDownAction: () {
+              final dismissedDropdown =
+                  AdminDropdownMenuCoordinator.dismissActiveMenu();
+              if (!dismissedDropdown) {
+                onTap?.call();
+                return;
+              }
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                onTap?.call();
+              });
+            },
             borderRadius: BorderRadius.circular(16),
             child: Builder(
               builder: (context) => AnimatedContainer(

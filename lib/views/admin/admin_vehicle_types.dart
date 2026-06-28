@@ -40,8 +40,10 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
     fontWeight: FontWeight.w700,
   );
 
-  static const _defaultTrailingPadding = 20.0;
-  static const _extraWidthAllowance = 16.0;
+  static const _defaultTrailingPadding =
+      AdminListMeasurements.defaultTrailingPadding;
+  static const _extraWidthAllowance =
+      AdminListMeasurements.defaultExtraWidthAllowance;
 
   @override
   Widget build(BuildContext context) {
@@ -210,10 +212,9 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
                             .map(
                               (entry) => Padding(
                                 padding: EdgeInsets.only(
-                                  bottom:
-                                      entry.key == filteredTypes.length - 1
-                                          ? 0
-                                          : 12,
+                                  bottom: entry.key == filteredTypes.length - 1
+                                      ? 0
+                                      : 12,
                                 ),
                                 child: useWideTable
                                     ? _VehicleTypeDesktopRow(
@@ -247,13 +248,13 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
     if (created == null || !mounted) {
       return;
     }
-    final saved = await vm.saveType(created);
+    await vm.saveType(created);
     if (!mounted) {
       return;
     }
     AppSnackbar.showSuccess(
       context,
-      '${saved.name ?? 'Vehicle type'} has been created.',
+      'Vehicle type added.',
     );
   }
 
@@ -278,13 +279,13 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
     if (edited == null || !mounted) {
       return;
     }
-    final saved = await vm.saveType(edited.copyWith(id: item.id));
+    await vm.saveType(edited.copyWith(id: item.id));
     if (!mounted) {
       return;
     }
     AppSnackbar.showSuccess(
       context,
-      '${saved.name ?? 'Vehicle type'} has been updated.',
+      'Vehicle type updated.',
     );
   }
 
@@ -310,7 +311,9 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
     }
     AppSnackbar.showSuccess(
       context,
-      '${saved.name ?? 'Vehicle type'} is now ${(saved.isActive ?? false) ? 'active' : 'inactive'}.',
+      (saved.isActive ?? false)
+          ? 'Vehicle type activated.'
+          : 'Vehicle type deactivated.',
     );
   }
 
@@ -335,7 +338,7 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
     }
     AppSnackbar.showSuccess(
       context,
-      '${item.name ?? 'Vehicle type'} has been deleted.',
+      'Vehicle type deleted.',
     );
   }
 }
@@ -840,76 +843,95 @@ Future<VehicleCatalogItem?> _showCatalogItemDialog(
 }) async {
   final nameController = TextEditingController(text: initialItem?.name ?? '');
   final slugController = TextEditingController(text: initialItem?.slug ?? '');
+  final nameFocusNode = FocusNode();
+  final slugFocusNode = FocusNode();
   var isActive = initialItem?.isActive ?? true;
+  final isEditing = initialItem != null;
 
-  return showDialog<VehicleCatalogItem>(
-    context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setState) => AdminModalShell(
-        title: title,
-        contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
-        actions: readOnly
-            ? [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Close'),
-                ),
-              ]
-            : [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    final name = nameController.text.trim();
-                    final slug = slugController.text.trim();
-                    if (name.isEmpty || slug.isEmpty) {
-                      AppSnackbar.showError(
-                        context,
-                        'Name and slug are required.',
-                      );
-                      return;
-                    }
-                    Navigator.of(context).pop(
-                      VehicleCatalogItem(
-                        id: initialItem?.id,
-                        name: name,
-                        slug: slug,
-                        isActive: isActive,
-                        createdAt: initialItem?.createdAt,
-                        updatedAt: DateTime.now(),
-                      ),
-                    );
-                  },
-                  child: const Text('Save'),
-                ),
-              ],
-        child: AdminModalFormBody(
-          readOnly: readOnly,
-          children: [
-            AdminModalFieldsSection(
-              children: [
-                AdminModalTextField(
-                  controller: nameController,
-                  label: 'Name',
-                  bottomPadding: 4,
-                ),
-                AdminModalTextField(
-                  controller: slugController,
-                  label: 'Slug',
-                  bottomPadding: 4,
-                ),
-              ],
-            ),
-            AdminModalToggleRow(
-              title: 'Active',
-              value: isActive,
-              onChanged: (value) => setState(() => isActive = value),
-            ),
-          ],
+  void submit() {
+    final name = nameController.text.trim();
+    final slug = slugController.text.trim();
+    if (name.isEmpty || slug.isEmpty) {
+      AppSnackbar.showError(context, 'Name and slug are required.');
+      return;
+    }
+    Navigator.of(context).pop(
+      VehicleCatalogItem(
+        id: initialItem?.id,
+        name: name,
+        slug: slug,
+        isActive: isActive,
+        createdAt: initialItem?.createdAt,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  try {
+    return await showDialog<VehicleCatalogItem>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AdminModalShell(
+          title: title,
+          contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
+          actions: readOnly
+              ? [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Close'),
+                  ),
+                ]
+              : [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(onPressed: submit, child: const Text('Save')),
+                ],
+          child: AdminModalFormBody(
+            readOnly: readOnly,
+            children: [
+              AdminModalFieldsSection(
+                children: [
+                  AdminModalTextField(
+                    controller: nameController,
+                    focusNode: nameFocusNode,
+                    label: 'Name',
+                    bottomPadding: 4,
+                    textInputAction: isEditing
+                        ? TextInputAction.done
+                        : TextInputAction.next,
+                    onSubmitted: (_) => isEditing
+                        ? submit()
+                        : FocusScope.of(context).requestFocus(slugFocusNode),
+                  ),
+                  AdminModalTextField(
+                    controller: slugController,
+                    focusNode: slugFocusNode,
+                    label: 'Slug',
+                    bottomPadding: 4,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) {
+                      FocusScope.of(context).unfocus();
+                      submit();
+                    },
+                  ),
+                ],
+              ),
+              AdminModalToggleRow(
+                title: 'Active',
+                value: isActive,
+                onChanged: (value) => setState(() => isActive = value),
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  } finally {
+    nameController.dispose();
+    slugController.dispose();
+    nameFocusNode.dispose();
+    slugFocusNode.dispose();
+  }
 }

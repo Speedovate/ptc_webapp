@@ -183,7 +183,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   String client(Booking booking) {
     final client = _usersById[booking.client?.id];
     final name = client?.name?.trim();
-    return "${name?.isNotEmpty == true ? name! : 'Unknown client'} (${start(booking)} - ${end(booking)})"
+    return "${name?.isNotEmpty == true ? name! : 'Unknown client'} (${origin(booking)} - ${destination(booking)})"
         .toUpperCase();
   }
 
@@ -216,8 +216,8 @@ class AdminDashboardViewModel extends BaseViewModel {
         vanSize(booking),
         amount(booking),
         client(booking),
-        start(booking),
-        end(booking),
+        origin(booking),
+        destination(booking),
         booking.clientStatus ?? '',
         booking.createdAt?.toIso8601String() ?? '',
         deliveredDate?.toIso8601String() ?? '',
@@ -279,16 +279,16 @@ class AdminDashboardViewModel extends BaseViewModel {
     return '$month/$day/${value.year}';
   }
 
-  static String start(Booking booking) =>
+  static String origin(Booking booking) =>
       BookingRecordCard.outputFieldDisplayValue(
         booking.statusOutputs,
-        'start',
+        'origin',
       ).toUpperCase();
 
-  static String end(Booking booking) =>
+  static String destination(Booking booking) =>
       BookingRecordCard.outputFieldDisplayValue(
         booking.statusOutputs,
-        'end',
+        'destination',
       ).toUpperCase();
 
   DateTime? deliveredAt(Booking booking) {

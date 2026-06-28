@@ -14,6 +14,7 @@ class StatusRequest implements StatusFormRepository {
   static const _statusFormsResourceKey = 'status_forms';
   static const _statusFieldsResourceKey = 'status_fields';
   static const _statusesResourceKey = 'statuses';
+  static bool _seededPuertoPrincesaBarangayFieldsThisSession = false;
 
   final FirebaseFirestore _firestore;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
@@ -26,6 +27,135 @@ class StatusRequest implements StatusFormRepository {
       _firestore.collection('status_fields');
   CollectionReference<Map<String, dynamic>> get _statusesCollection =>
       _firestore.collection('statuses');
+
+  Future<void> seedPuertoPrincesaBarangayConditionalFieldsOnce() async {
+    if (_seededPuertoPrincesaBarangayFieldsThisSession) {
+      return;
+    }
+    _seededPuertoPrincesaBarangayFieldsThisSession = true;
+    try {
+      await _runRequest(() async {
+        final fields = await getAllFields();
+        final forms = await getStatusForms();
+
+        final ensuredOriginBarangayField =
+            await _ensurePuertoPrincesaBarangayField(
+              fields: fields,
+              key: 'origin_barangay',
+              title: 'Origin Barangay',
+              visibilityControllerKey: 'origin',
+            );
+        final ensuredDestinationBarangayField =
+            await _ensurePuertoPrincesaBarangayField(
+              fields: fields,
+              key: 'destination_barangay',
+              title: 'Destination Barangay',
+              visibilityControllerKey: 'destination',
+            );
+
+        for (final form in forms) {
+          final fieldKeys = form.fields
+              .map((field) => (field.key ?? '').trim())
+              .where((key) => key.isNotEmpty)
+              .toList();
+          final hasOrigin = fieldKeys.contains('origin');
+          final hasDestination = fieldKeys.contains('destination');
+          final hasOriginBarangay = fieldKeys.contains('origin_barangay');
+          final hasDestinationBarangay = fieldKeys.contains(
+            'destination_barangay',
+          );
+
+          if ((!hasOrigin || hasOriginBarangay) &&
+              (!hasDestination || hasDestinationBarangay)) {
+            continue;
+          }
+
+          final nextFields = <StatusField>[];
+          final nextOverrides = Map<String, StatusFieldOverride>.from(
+            form.fieldOverrides,
+          );
+          final requiresBarangay = _formRequiresPuertoPrincesaBarangay(form);
+          for (final field in form.fields) {
+            nextFields.add(field.copyWith());
+            final key = (field.key ?? '').trim();
+            if (key == 'origin' && !hasOriginBarangay) {
+              final attachedField = ensuredOriginBarangayField.copyWith(
+                statusForm: form.toReferenceForm(),
+              );
+              nextFields.add(attachedField);
+              if ((attachedField.id ?? '').trim().isNotEmpty) {
+                nextOverrides[attachedField.id!.trim()] = StatusFieldOverride(
+                  required: requiresBarangay,
+                );
+              }
+            }
+            if (key == 'origin' && hasOriginBarangay) {
+              final attachedField = form.fields.cast<StatusField?>().firstWhere(
+                (item) => (item?.key ?? '').trim() == 'origin_barangay',
+                orElse: () => null,
+              );
+              final attachedFieldId = attachedField?.id?.trim();
+              if (attachedFieldId != null && attachedFieldId.isNotEmpty) {
+                nextOverrides[attachedFieldId] = StatusFieldOverride(
+                  required: requiresBarangay,
+                );
+              }
+            }
+            if (key == 'destination' && !hasDestinationBarangay) {
+              final attachedField = ensuredDestinationBarangayField.copyWith(
+                statusForm: form.toReferenceForm(),
+              );
+              nextFields.add(attachedField);
+              if ((attachedField.id ?? '').trim().isNotEmpty) {
+                nextOverrides[attachedField.id!.trim()] =
+                    StatusFieldOverride(required: requiresBarangay);
+              }
+            }
+            if (key == 'destination' && hasDestinationBarangay) {
+              final attachedField = form.fields.cast<StatusField?>().firstWhere(
+                (item) => (item?.key ?? '').trim() == 'destination_barangay',
+                orElse: () => null,
+              );
+              final attachedFieldId = attachedField?.id?.trim();
+              if (attachedFieldId != null && attachedFieldId.isNotEmpty) {
+                nextOverrides[attachedFieldId] = StatusFieldOverride(
+                  required: requiresBarangay,
+                );
+              }
+            }
+          }
+
+          final orderedFields = nextFields
+              .asMap()
+              .entries
+              .map(
+                (entry) => entry.value.copyWith(
+                  statusForm: form.toReferenceForm(),
+                  sortOrder: entry.key + 1,
+                ),
+              )
+              .toList();
+          final updatedFormDocument = _formToFirestoreMap(
+            form.copyWith(
+              fields: orderedFields,
+              fieldOverrides: nextOverrides,
+              updatedAt: DateTime.now(),
+            ),
+          );
+          await _formsCollection.doc(form.id).set(updatedFormDocument);
+          await _cache.upsertDocument(
+            resourceKey: _statusFormsResourceKey,
+            document: updatedFormDocument,
+          );
+        }
+
+        await _cache.touchMany([
+          _statusFormsResourceKey,
+          _statusFieldsResourceKey,
+        ]);
+      }, fallback: 'We could not seed the barangay fields right now.');
+    } catch (_) {}
+  }
 
   @override
   Future<List<StatusForm>> getStatusForms() async {
@@ -219,6 +349,82 @@ class StatusRequest implements StatusFormRepository {
         document: document,
       );
     }, fallback: 'We could not save the status right now.');
+  }
+
+  Future<StatusField> _ensurePuertoPrincesaBarangayField({
+    required List<StatusField> fields,
+    required String key,
+    required String title,
+    required String visibilityControllerKey,
+  }) async {
+    final existing = fields.firstWhere(
+      (field) => (field.key ?? '').trim() == key,
+      orElse: () => StatusField(key: key),
+    );
+    final now = DateTime.now();
+    final hasExistingId = (existing.id ?? '').trim().isNotEmpty;
+    final nextId = hasExistingId
+        ? existing.id!.trim()
+        : await _nextId(_fieldsCollection);
+    final seededField = existing.copyWith(
+      id: nextId,
+      key: key,
+      type: 'search_dropdown',
+      title: title,
+      placeholder: null,
+      required: false,
+      options: const [],
+      optionSourceKey: statusFieldOptionSourcePuertoPrincesaBarangays,
+      visibilityControllerKey: visibilityControllerKey,
+      visibilityOptionValues: const ['Puerto Princesa City'],
+      requiredError: '$title is required.',
+      validationError: 'Select a valid $title.',
+      isActive: existing.isActive ?? true,
+      createdAt: existing.createdAt ?? now,
+      updatedAt: now,
+    );
+    await saveField(seededField);
+    return seededField;
+  }
+
+  bool _formRequiresPuertoPrincesaBarangay(StatusForm form) {
+    final currentStatus = (form.currentStatusKey ?? '').trim().toLowerCase();
+    final nextStatus = (form.nextStatusKey ?? '').trim().toLowerCase();
+    final buttonText = (form.buttonText ?? '').trim().toLowerCase();
+    final statusText = (form.statusText ?? '').trim().toLowerCase();
+    final statusSubtext = (form.statusSubtext ?? '').trim().toLowerCase();
+
+    bool containsAny(String value, List<String> needles) {
+      for (final needle in needles) {
+        if (value.contains(needle)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    final isBookForm =
+        currentStatus == 'book' ||
+        containsAny(buttonText, const ['book']) ||
+        containsAny(statusText, const ['book']) ||
+        containsAny(statusSubtext, const ['book']);
+    if (isBookForm) {
+      return false;
+    }
+
+    final isAssignForm =
+        currentStatus == 'assign' ||
+        currentStatus == 'assigned' ||
+        nextStatus == 'assign' ||
+        nextStatus == 'assigned' ||
+        containsAny(buttonText, const ['assign', 'assigned']) ||
+        containsAny(statusText, const ['assign', 'assigned']) ||
+        containsAny(statusSubtext, const ['assign', 'assigned']);
+    if (isAssignForm) {
+      return true;
+    }
+
+    return false;
   }
 
   @override

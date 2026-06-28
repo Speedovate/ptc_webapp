@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/constants/palawan_locations.dart';
+import 'package:webapp/constants/puerto_princesa_barangays.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
+import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
+import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_bookings.vm.dart';
@@ -23,8 +27,173 @@ class AdminBookingsView extends StatefulWidget {
 
   final UserModel user;
 
+  static Future<void> showBookingDetailDialog(
+    BuildContext context, {
+    required UserModel user,
+    required Booking booking,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) =>
+          _AdminBookingWorkflowDialog(user: user, booking: booking),
+    );
+  }
+
+  static Future<Booking?> showEditBookingDialog(
+    BuildContext context, {
+    required Booking booking,
+  }) async {
+    final vm = AdminBookingsViewModel();
+    await vm.load();
+    if (vm.errorMessage != null) {
+      throw Exception(vm.errorMessage!);
+    }
+    if (!context.mounted) {
+      return null;
+    }
+    final bookForms = await StatusRequest.instance.getStatusFormsByRoleAndStatus(
+      'client',
+      'book',
+    );
+    final activeBookForm = bookForms
+        .where((form) => form.resolvedIsMainForm && form.isActive != false)
+        .firstOrNull;
+    final originBarangayField = activeBookForm?.fields.cast<StatusField?>()
+        .firstWhere(
+          (field) => (field?.key ?? '').trim() == 'origin_barangay',
+          orElse: () => null,
+        );
+    final destinationBarangayField = activeBookForm?.fields
+        .cast<StatusField?>()
+        .firstWhere(
+          (field) => (field?.key ?? '').trim() == 'destination_barangay',
+          orElse: () => null,
+        );
+    final originBarangayRequired =
+        (originBarangayField == null || activeBookForm == null)
+        ? false
+        : (activeBookForm.fieldOverrides[originBarangayField.id]?.required ??
+              originBarangayField.required ??
+              false);
+    final destinationBarangayRequired =
+        (destinationBarangayField == null || activeBookForm == null)
+        ? false
+        : (activeBookForm.fieldOverrides[destinationBarangayField.id]?.required ??
+              destinationBarangayField.required ??
+              false);
+    if (!context.mounted) {
+      return null;
+    }
+    final updatedBooking = await showDialog<Booking>(
+      context: context,
+      builder: (dialogContext) => _EditAdminBookingDialog(
+        booking: booking,
+        currentStatusLabel: vm.clientStatusLabel(booking),
+        statuses: vm.activeStatuses(),
+        drivers: vm.roleUsers('driver'),
+        helpers: vm.roleUsers('helper'),
+        vehicleSizes: vm.activeVehicleSizes(),
+        originBarangayRequired: originBarangayRequired,
+        destinationBarangayRequired: destinationBarangayRequired,
+      ),
+    );
+    if (updatedBooking == null) {
+      return null;
+    }
+    return vm.saveEditedBooking(updatedBooking);
+  }
+
+  static Future<Booking?> showNewBookingDialog(
+    BuildContext context, {
+    required UserModel currentUser,
+  }) async {
+    final vm = AdminBookingsViewModel();
+    await vm.load();
+    if (vm.errorMessage != null) {
+      throw Exception(vm.errorMessage!);
+    }
+    if (!context.mounted) {
+      return null;
+    }
+    return showDialog<Booking>(
+      context: context,
+      builder: (dialogContext) => _NewAdminBookingDialog(
+        currentUser: currentUser,
+        clientUsers: vm.clientUsers(),
+        onBookingSubmitted: (booking) {
+          Navigator.of(dialogContext).pop(booking);
+        },
+      ),
+    );
+  }
+
   @override
   State<AdminBookingsView> createState() => _AdminBookingsViewState();
+}
+
+class _AdminBookingWorkflowDialog extends StatefulWidget {
+  const _AdminBookingWorkflowDialog({
+    required this.user,
+    required this.booking,
+  });
+
+  final UserModel user;
+  final Booking booking;
+
+  @override
+  State<_AdminBookingWorkflowDialog> createState() =>
+      _AdminBookingWorkflowDialogState();
+}
+
+class _AdminBookingWorkflowDialogState extends State<_AdminBookingWorkflowDialog> {
+  late Booking _booking;
+
+  @override
+  void initState() {
+    super.initState();
+    _booking = widget.booking;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final dialogWidth = size.width > 1200 ? 1100.0 : size.width - 48;
+    final dialogHeight = size.height > 920 ? 860.0 : size.height - 48;
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: dialogWidth,
+        height: dialogHeight,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _AdminBookingDetailHeader(
+                booking: _booking,
+                onBack: () => Navigator.of(context).pop(),
+              ),
+              const SizedBox(height: 16),
+              BookingWorkflowView(
+                key: ValueKey(
+                  'admin-booking-dialog-${_booking.id ?? ''}-${_booking.updatedAt?.toIso8601String() ?? ''}',
+                ),
+                user: widget.user,
+                booking: _booking,
+                embedded: true,
+                onBookingUpdated: (updatedBooking) {
+                  setState(() {
+                    _booking = updatedBooking;
+                  });
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _AdminBookingsViewState extends State<AdminBookingsView> {
@@ -67,6 +236,39 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
     AdminBookingsViewModel vm,
     Booking booking,
   ) async {
+    final bookForms = await StatusRequest.instance.getStatusFormsByRoleAndStatus(
+      'client',
+      'book',
+    );
+    final activeBookForm = bookForms
+        .where((form) => form.resolvedIsMainForm && form.isActive != false)
+        .firstOrNull;
+    final originBarangayField = activeBookForm?.fields.cast<StatusField?>()
+        .firstWhere(
+          (field) => (field?.key ?? '').trim() == 'origin_barangay',
+          orElse: () => null,
+        );
+    final destinationBarangayField = activeBookForm?.fields
+        .cast<StatusField?>()
+        .firstWhere(
+          (field) => (field?.key ?? '').trim() == 'destination_barangay',
+          orElse: () => null,
+        );
+    final originBarangayRequired =
+        (originBarangayField == null || activeBookForm == null)
+        ? false
+        : (activeBookForm.fieldOverrides[originBarangayField.id]?.required ??
+              originBarangayField.required ??
+              false);
+    final destinationBarangayRequired =
+        (destinationBarangayField == null || activeBookForm == null)
+        ? false
+        : (activeBookForm.fieldOverrides[destinationBarangayField.id]?.required ??
+              destinationBarangayField.required ??
+              false);
+    if (!mounted) {
+      return;
+    }
     final updatedBooking = await showDialog<Booking>(
       context: context,
       builder: (dialogContext) => _EditAdminBookingDialog(
@@ -76,6 +278,8 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
         drivers: vm.roleUsers('driver'),
         helpers: vm.roleUsers('helper'),
         vehicleSizes: vm.activeVehicleSizes(),
+        originBarangayRequired: originBarangayRequired,
+        destinationBarangayRequired: destinationBarangayRequired,
       ),
     );
     if (updatedBooking == null) {
@@ -217,6 +421,8 @@ class _EditAdminBookingDialog extends StatefulWidget {
     required this.drivers,
     required this.helpers,
     required this.vehicleSizes,
+    required this.originBarangayRequired,
+    required this.destinationBarangayRequired,
   });
 
   final Booking booking;
@@ -225,6 +431,8 @@ class _EditAdminBookingDialog extends StatefulWidget {
   final List<UserModel> drivers;
   final List<UserModel> helpers;
   final List<VehicleCatalogItem> vehicleSizes;
+  final bool originBarangayRequired;
+  final bool destinationBarangayRequired;
 
   @override
   State<_EditAdminBookingDialog> createState() =>
@@ -235,12 +443,29 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
   late final TextEditingController _waybillNumberController;
   late final TextEditingController _vanNumberController;
   late final TextEditingController _amountController;
-  late final TextEditingController _startController;
-  late final TextEditingController _endController;
+  late final TextEditingController _originController;
+  late final TextEditingController _originBarangayController;
+  late final TextEditingController _destinationController;
+  late final TextEditingController _destinationBarangayController;
+  final FocusNode _waybillNumberFocusNode = FocusNode();
+  final FocusNode _vanNumberFocusNode = FocusNode();
+  final FocusNode _vanSizeFocusNode = FocusNode();
+  final FocusNode _amountFocusNode = FocusNode();
+  final FocusNode _originFocusNode = FocusNode();
+  final FocusNode _originBarangayFocusNode = FocusNode();
+  final FocusNode _destinationFocusNode = FocusNode();
+  final FocusNode _destinationBarangayFocusNode = FocusNode();
+  final FocusNode _statusFocusNode = FocusNode();
+  final FocusNode _driverFocusNode = FocusNode();
+  final FocusNode _helperFocusNode = FocusNode();
   late String _statusKey;
   String? _driverId;
   String? _helperId;
   String? _vanSize;
+  String? _originErrorText;
+  String? _originBarangayErrorText;
+  String? _destinationErrorText;
+  String? _destinationBarangayErrorText;
 
   @override
   void initState() {
@@ -248,15 +473,27 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     final initialWaybill = _existingFieldValue('waybill_number');
     final initialVanNumber = _existingFieldValue('van_number');
     final initialAmount = _existingFieldValue('amount');
-    final initialStart = _existingFieldValue('start');
-    final initialEnd = _existingFieldValue('end');
+    final initialOrigin = _existingFieldValue('origin');
+    final initialOriginBarangay = _existingFieldValue('origin_barangay');
+    final initialDestination = _existingFieldValue('destination');
+    final initialDestinationBarangay = _existingFieldValue(
+      'destination_barangay',
+    );
     _waybillNumberController = TextEditingController(
       text: initialWaybill ?? '',
     );
     _vanNumberController = TextEditingController(text: initialVanNumber ?? '');
     _amountController = TextEditingController(text: initialAmount ?? '');
-    _startController = TextEditingController(text: initialStart ?? '');
-    _endController = TextEditingController(text: initialEnd ?? '');
+    _originController = TextEditingController(text: initialOrigin ?? '');
+    _originBarangayController = TextEditingController(
+      text: initialOriginBarangay ?? '',
+    );
+    _destinationController = TextEditingController(
+      text: initialDestination ?? '',
+    );
+    _destinationBarangayController = TextEditingController(
+      text: initialDestinationBarangay ?? '',
+    );
     _statusKey = widget.booking.clientStatus ?? '';
     _driverId = widget.booking.driver?.id;
     _helperId = widget.booking.helper?.id;
@@ -269,9 +506,36 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     _waybillNumberController.dispose();
     _vanNumberController.dispose();
     _amountController.dispose();
-    _startController.dispose();
-    _endController.dispose();
+    _originController.dispose();
+    _originBarangayController.dispose();
+    _destinationController.dispose();
+    _destinationBarangayController.dispose();
+    _waybillNumberFocusNode.dispose();
+    _vanNumberFocusNode.dispose();
+    _vanSizeFocusNode.dispose();
+    _amountFocusNode.dispose();
+    _originFocusNode.dispose();
+    _originBarangayFocusNode.dispose();
+    _destinationFocusNode.dispose();
+    _destinationBarangayFocusNode.dispose();
+    _statusFocusNode.dispose();
+    _driverFocusNode.dispose();
+    _helperFocusNode.dispose();
     super.dispose();
+  }
+
+  void _focusNext(FocusNode focusNode) {
+    if (!mounted) {
+      return;
+    }
+    FocusScope.of(context).requestFocus(focusNode);
+  }
+
+  void _unfocusCurrentField() {
+    final currentFocus = FocusScope.of(context);
+    if (!currentFocus.hasPrimaryFocus) {
+      currentFocus.unfocus();
+    }
   }
 
   String? _pendingFieldValue(String key) {
@@ -306,6 +570,12 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     }
     return normalized;
   }
+
+  bool get _showsOriginBarangayField =>
+      _originController.text.trim().toLowerCase() == 'puerto princesa city';
+
+  bool get _showsDestinationBarangayField =>
+      _destinationController.text.trim().toLowerCase() == 'puerto princesa city';
 
   List<DropdownMenuItem<String>> _buildVanSizeItems() {
     final items = <DropdownMenuItem<String>>[];
@@ -397,7 +667,8 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
       }
     }
 
-    if (_statusKey.trim().isNotEmpty && !seenValues.contains(_statusKey.trim())) {
+    if (_statusKey.trim().isNotEmpty &&
+        !seenValues.contains(_statusKey.trim())) {
       addItem(_statusKey, labelForStatusValue(_statusKey));
     }
 
@@ -489,15 +760,22 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                 children: [
                   AdminModalTextField(
                     controller: _waybillNumberController,
+                    focusNode: _waybillNumberFocusNode,
                     label: 'Waybill Number',
                     bottomPadding: 6,
+                    textInputAction: TextInputAction.next,
+                    onSubmitted: (_) => _focusNext(_vanNumberFocusNode),
                   ),
                   AdminModalTextField(
                     controller: _vanNumberController,
+                    focusNode: _vanNumberFocusNode,
                     label: 'Van Number',
                     bottomPadding: 6,
+                    textInputAction: TextInputAction.next,
+                    onSubmitted: (_) => _focusNext(_vanSizeFocusNode),
                   ),
                   AdminModalDropdownField<String>(
+                    focusNode: _vanSizeFocusNode,
                     label: 'Van Size',
                     initialValue: _vanSize,
                     bottomPadding: 8,
@@ -508,25 +786,144 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                       setState(() {
                         _vanSize = value;
                       });
+                      _focusNext(_amountFocusNode);
                     },
                   ),
                   AdminModalTextField(
                     controller: _amountController,
+                    focusNode: _amountFocusNode,
                     label: 'Amount',
                     keyboardType: TextInputType.number,
                     bottomPadding: 6,
+                    textInputAction: TextInputAction.next,
+                    onSubmitted: (_) => _focusNext(_originFocusNode),
                   ),
-                  AdminModalTextField(
-                    controller: _startController,
-                    label: 'Start',
-                    bottomPadding: 6,
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: AdminSearchSelectFormField(
+                      initialValue: _originController.text.trim().isEmpty
+                          ? null
+                          : _originController.text.trim(),
+                      focusNode: _originFocusNode,
+                      autoActivateOnFocus: true,
+                      decoration: adminFormInputDecoration(
+                        'Origin',
+                        hintText: adminSelectPlaceholder('Origin'),
+                      ).copyWith(
+                        errorText: _originErrorText,
+                      ),
+                      options: palawanLocationOptions,
+                      onChanged: (value) {
+                        setState(() {
+                          _originController.text = value ?? '';
+                          _originErrorText = null;
+                          if (!_showsOriginBarangayField) {
+                            _originBarangayController.clear();
+                            _originBarangayErrorText = null;
+                          }
+                        });
+                        _focusNext(
+                          _showsOriginBarangayField
+                              ? _originBarangayFocusNode
+                              : _destinationFocusNode,
+                        );
+                      },
+                    ),
                   ),
-                  AdminModalTextField(
-                    controller: _endController,
-                    label: 'End',
-                    bottomPadding: 6,
+                  if (_showsOriginBarangayField)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: AdminSearchSelectFormField(
+                        initialValue:
+                            _originBarangayController.text.trim().isEmpty
+                            ? null
+                            : _originBarangayController.text.trim(),
+                        focusNode: _originBarangayFocusNode,
+                        autoActivateOnFocus: true,
+                        decoration: adminFormInputDecoration(
+                          widget.originBarangayRequired
+                              ? 'Origin Barangay *'
+                              : 'Origin Barangay',
+                          hintText: adminSelectPlaceholder(
+                            'Origin Barangay',
+                          ),
+                        ).copyWith(
+                          errorText: _originBarangayErrorText,
+                        ),
+                        options: puertoPrincesaBarangayOptions,
+                        onChanged: (value) {
+                          setState(() {
+                            _originBarangayController.text = value ?? '';
+                            _originBarangayErrorText = null;
+                          });
+                          _focusNext(_destinationFocusNode);
+                        },
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: AdminSearchSelectFormField(
+                      initialValue: _destinationController.text.trim().isEmpty
+                          ? null
+                          : _destinationController.text.trim(),
+                      focusNode: _destinationFocusNode,
+                      autoActivateOnFocus: true,
+                      decoration: adminFormInputDecoration(
+                        'Destination',
+                        hintText: adminSelectPlaceholder('Destination'),
+                      ).copyWith(
+                        errorText: _destinationErrorText,
+                      ),
+                      options: palawanLocationOptions,
+                      onChanged: (value) {
+                        setState(() {
+                          _destinationController.text = value ?? '';
+                          _destinationErrorText = null;
+                          if (!_showsDestinationBarangayField) {
+                            _destinationBarangayController.clear();
+                            _destinationBarangayErrorText = null;
+                          }
+                        });
+                        _focusNext(
+                          _showsDestinationBarangayField
+                              ? _destinationBarangayFocusNode
+                              : _statusFocusNode,
+                        );
+                      },
+                    ),
                   ),
+                  if (_showsDestinationBarangayField)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: AdminSearchSelectFormField(
+                        initialValue:
+                            _destinationBarangayController.text.trim().isEmpty
+                            ? null
+                            : _destinationBarangayController.text.trim(),
+                        focusNode: _destinationBarangayFocusNode,
+                        autoActivateOnFocus: true,
+                        decoration: adminFormInputDecoration(
+                          widget.destinationBarangayRequired
+                              ? 'Destination Barangay *'
+                              : 'Destination Barangay',
+                          hintText: adminSelectPlaceholder(
+                            'Destination Barangay',
+                          ),
+                        ).copyWith(
+                          errorText: _destinationBarangayErrorText,
+                        ),
+                        options: puertoPrincesaBarangayOptions,
+                        onChanged: (value) {
+                          setState(() {
+                            _destinationBarangayController.text = value ?? '';
+                            _destinationBarangayErrorText = null;
+                          });
+                          _focusNext(_statusFocusNode);
+                        },
+                      ),
+                    ),
                   AdminModalDropdownField<String>(
+                    focusNode: _statusFocusNode,
                     label: 'Status',
                     initialValue: _statusKey.isEmpty ? null : _statusKey,
                     isExpanded: true,
@@ -537,9 +934,11 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                       setState(() {
                         _statusKey = value ?? '';
                       });
+                      _focusNext(_driverFocusNode);
                     },
                   ),
                   AdminModalDropdownField<String>(
+                    focusNode: _driverFocusNode,
                     label: 'Driver',
                     initialValue: _driverId,
                     isExpanded: true,
@@ -554,9 +953,11 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                       setState(() {
                         _driverId = value;
                       });
+                      _focusNext(_helperFocusNode);
                     },
                   ),
                   AdminModalDropdownField<String>(
+                    focusNode: _helperFocusNode,
                     label: 'Helper',
                     initialValue: _helperId,
                     isExpanded: true,
@@ -571,6 +972,8 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                       setState(() {
                         _helperId = value;
                       });
+                      _unfocusCurrentField();
+                      _handleSave();
                     },
                   ),
                 ],
@@ -583,6 +986,56 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
   }
 
   void _handleSave() {
+    final origin = _originController.text.trim();
+    final originBarangay = _originBarangayController.text.trim();
+    final destination = _destinationController.text.trim();
+    final destinationBarangay = _destinationBarangayController.text.trim();
+    final originIsValid =
+        origin.isEmpty || isValidPalawanLocationOption(origin);
+    final originBarangayIsValid =
+        !_showsOriginBarangayField ||
+        ((widget.originBarangayRequired ? originBarangay.isNotEmpty : true) &&
+            (originBarangay.isEmpty ||
+                puertoPrincesaBarangayOptions.any(
+                  (item) => item.toLowerCase() == originBarangay.toLowerCase(),
+                )));
+    final destinationIsValid =
+        destination.isEmpty || isValidPalawanLocationOption(destination);
+    final destinationBarangayIsValid =
+        !_showsDestinationBarangayField ||
+        ((widget.destinationBarangayRequired
+                ? destinationBarangay.isNotEmpty
+                : true) &&
+            (destinationBarangay.isEmpty ||
+                puertoPrincesaBarangayOptions.any(
+                  (item) =>
+                      item.toLowerCase() == destinationBarangay.toLowerCase(),
+                )));
+
+    if (!originIsValid ||
+        !originBarangayIsValid ||
+        !destinationIsValid ||
+        !destinationBarangayIsValid) {
+      setState(() {
+        _originErrorText = originIsValid ? null : 'Select a valid Origin.';
+        _originBarangayErrorText = originBarangayIsValid
+            ? null
+            : (originBarangay.isEmpty && widget.originBarangayRequired)
+                  ? 'Origin Barangay is required.'
+                  : 'Select a valid Origin Barangay.';
+        _destinationErrorText = destinationIsValid
+            ? null
+            : 'Select a valid Destination.';
+        _destinationBarangayErrorText = destinationBarangayIsValid
+            ? null
+            : (destinationBarangay.isEmpty &&
+                    widget.destinationBarangayRequired)
+                  ? 'Destination Barangay is required.'
+                  : 'Select a valid Destination Barangay.';
+      });
+      return;
+    }
+
     final currentOutputs = Map<String, dynamic>.from(
       widget.booking.statusOutputs ?? const <String, dynamic>{},
     );
@@ -609,8 +1062,24 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     );
     _setOrRemoveField(pendingFields, 'van_size', _vanSize?.trim() ?? '');
     _setOrRemoveField(pendingFields, 'amount', _amountController.text.trim());
-    _setOrRemoveField(pendingFields, 'start', _startController.text.trim());
-    _setOrRemoveField(pendingFields, 'end', _endController.text.trim());
+    _setOrRemoveField(pendingFields, 'origin', _originController.text.trim());
+    _setOrRemoveField(
+      pendingFields,
+      'origin_barangay',
+      _originBarangayController.text.trim(),
+    );
+    _setOrRemoveField(
+      pendingFields,
+      'destination',
+      _destinationController.text.trim(),
+    );
+    _setOrRemoveField(
+      pendingFields,
+      'destination_barangay',
+      _destinationBarangayController.text.trim(),
+    );
+    pendingFields.remove('start');
+    pendingFields.remove('end');
 
     if (pendingFields.isEmpty) {
       currentOutputs.remove('pending');
@@ -689,7 +1158,9 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     if (normalized == null || normalized.isEmpty) {
       return null;
     }
-    final matchesKnownSize = widget.vehicleSizes.any((size) => size.id == normalized);
+    final matchesKnownSize = widget.vehicleSizes.any(
+      (size) => size.id == normalized,
+    );
     return matchesKnownSize ? normalized : null;
   }
 }
@@ -711,11 +1182,13 @@ class _NewAdminBookingDialog extends StatefulWidget {
 
 class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
   late String _selectedBookerId;
+  String? _bookerErrorText;
+  static const _placeholderClientUser = UserModel(role: 'client');
 
   @override
   void initState() {
     super.initState();
-    _selectedBookerId = widget.currentUser.id ?? '';
+    _selectedBookerId = '';
   }
 
   @override
@@ -749,39 +1222,29 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
                           padding: const EdgeInsets.only(top: 4),
                           child: AdminModalDropdownField<String>(
                             label: 'Booked By',
+                            hintText: 'Select Client',
+                            errorText: _bookerErrorText,
                             initialValue: _selectedBookerId.isEmpty
                                 ? null
                                 : _selectedBookerId,
                             bottomPadding: 0,
                             isExpanded: true,
-                            items: [
-                              DropdownMenuItem<String>(
-                                value: widget.currentUser.id,
+                            disabledTapMessage:
+                                'No client accounts available yet.',
+                            items: widget.clientUsers.map(
+                              (user) => DropdownMenuItem<String>(
+                                value: user.id,
                                 child: Text(
-                                  _bookerLabel(
-                                    widget.currentUser,
-                                    isCurrentUser: true,
-                                  ),
+                                  _bookerLabel(user),
                                   overflow: TextOverflow.ellipsis,
-                                  style: adminDropdownDisplayTextStyle.copyWith(
-                                    color: AppColors.primaryColor,
-                                  ),
+                                  style: adminDropdownDisplayTextStyle,
                                 ),
                               ),
-                              ...widget.clientUsers.map(
-                                (user) => DropdownMenuItem<String>(
-                                  value: user.id,
-                                  child: Text(
-                                    _bookerLabel(user),
-                                    overflow: TextOverflow.ellipsis,
-                                    style: adminDropdownDisplayTextStyle,
-                                  ),
-                                ),
-                              ),
-                            ],
+                            ).toList(),
                             onChanged: (value) {
                               setState(() {
                                 _selectedBookerId = value ?? '';
+                                _bookerErrorText = null;
                               });
                             },
                           ),
@@ -792,12 +1255,31 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
                 ),
                 const SizedBox(height: 6),
                 ClientBookingHomeView(
-                  user: selectedUser,
-                  bookingClientUser: selectedUser,
+                  user: selectedUser ?? _placeholderClientUser,
+                  bookingClientUser: selectedUser ?? _placeholderClientUser,
                   submittedByUserId: widget.currentUser.id,
                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
                   scrollable: false,
-                  onBookingSubmitted: widget.onBookingSubmitted,
+                  loadingPlaceholderMinHeight: 520,
+                  submitBlockMessage: () {
+                    if (selectedUser == null) {
+                      if (mounted) {
+                        setState(() {
+                          _bookerErrorText = 'Client is required.';
+                        });
+                      }
+                      return 'Select a client first before creating a booking.';
+                    }
+                    if (_bookerErrorText != null && mounted) {
+                      setState(() {
+                        _bookerErrorText = null;
+                      });
+                    }
+                    return null;
+                  },
+                  onBookingSubmitted: selectedUser == null
+                      ? null
+                      : widget.onBookingSubmitted,
                 ),
               ],
             ),
@@ -807,18 +1289,17 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
     );
   }
 
-  UserModel get _selectedUser {
-    if ((_selectedBookerId).isEmpty ||
-        _selectedBookerId == widget.currentUser.id) {
-      return widget.currentUser;
+  UserModel? get _selectedUser {
+    if (_selectedBookerId.isEmpty) {
+      return null;
     }
-    return widget.clientUsers.firstWhere(
-      (user) => user.id == _selectedBookerId,
-      orElse: () => widget.currentUser,
+    return widget.clientUsers.cast<UserModel?>().firstWhere(
+      (user) => user?.id == _selectedBookerId,
+      orElse: () => widget.clientUsers.firstOrNull,
     );
   }
 
-  String _bookerLabel(UserModel user, {bool isCurrentUser = false}) {
+  String _bookerLabel(UserModel user) {
     final name = (user.name ?? '').trim();
     final role = (user.role ?? '').trim();
     final roleLabel = role.isEmpty
@@ -833,7 +1314,7 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
     if (roleLabel.isNotEmpty) {
       return roleLabel;
     }
-    return isCurrentUser ? 'User' : 'Client';
+    return 'Client';
   }
 }
 
@@ -860,8 +1341,10 @@ class _AdminBookingsTable extends StatelessWidget {
     fontWeight: FontWeight.w600,
   );
 
-  static const _defaultTrailingPadding = 20.0;
-  static const _extraWidthAllowance = 16.0;
+  static const _defaultTrailingPadding =
+      AdminListMeasurements.defaultTrailingPadding;
+  static const _extraWidthAllowance =
+      AdminListMeasurements.defaultExtraWidthAllowance;
 
   @override
   Widget build(BuildContext context) {
@@ -1382,7 +1865,7 @@ class _AdminBookingsFixedSlot extends StatelessWidget {
 class _AdminBookingsHeaderCell extends StatelessWidget {
   const _AdminBookingsHeaderCell({
     required this.label,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
     this.textAlign = TextAlign.left,
   });
@@ -1406,7 +1889,7 @@ class _AdminBookingsHeaderCell extends StatelessWidget {
 class _AdminBookingsBodyCell extends StatelessWidget {
   const _AdminBookingsBodyCell({
     required this.child,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
   });
 
@@ -1447,7 +1930,10 @@ class _AdminBookingDetailHeader extends StatelessWidget {
                   icon: const Icon(Icons.arrow_back_rounded),
                   color: AppColors.primaryColor,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                  constraints: const BoxConstraints(
+                    minWidth: 40,
+                    minHeight: 40,
+                  ),
                   visualDensity: VisualDensity.compact,
                   splashRadius: 22,
                 ),

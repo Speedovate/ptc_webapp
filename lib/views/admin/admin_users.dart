@@ -10,6 +10,8 @@ import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_users.vm.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
+import 'package:webapp/views/admin/admin_bookings.dart';
+import 'package:webapp/views/client/client_members_view.dart';
 import 'package:webapp/views/shared/profile_view.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
@@ -20,6 +22,7 @@ import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
+import 'package:webapp/widgets/shared/user_bookings_section.dart';
 
 class _PendingImageUpload {
   const _PendingImageUpload({
@@ -232,6 +235,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
 
         if (viewedUser != null) {
           final isViewingCurrentUser = viewedUser.id == widget.user.id;
+          final viewedBusinessUser = vm.parentBusinessFor(viewedUser);
           return AppPageLoadingOverlay(
             isVisible:
                 vm.isBusy ||
@@ -247,16 +251,21 @@ class _AdminUsersViewState extends State<AdminUsersView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _UserDetailHeader(
-                    user: viewedUser,
-                    onBack: vm.closeUserView,
-                  ),
-                  const SizedBox(height: 16),
+                  _UserDetailHeader(user: viewedUser, onBack: vm.closeUserView),
+                  const SizedBox(height: 12),
                   ProfileView(
                     key: profileViewRefreshKey(viewedUser),
                     user: viewedUser,
                     scrollable: false,
-                    padding: const EdgeInsets.fromLTRB(0, 0, 0, 24),
+                    padding: EdgeInsets.zero,
+                    businessUser: viewedBusinessUser,
+                    onBusinessDetailsPressed:
+                        viewedBusinessUser == null
+                            ? null
+                            : () => vm.openUserView(
+                                viewedBusinessUser,
+                                preserveCurrent: true,
+                              ),
                     isCurrentUserView: isViewingCurrentUser,
                     onLogout: widget.onLogout,
                     logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
@@ -291,6 +300,119 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                         viewedUser,
                         widget.onCurrentUserUpdated,
                       );
+                    },
+                  ),
+                  if ((viewedUser.role ?? '').trim() == 'client') ...[
+                    const SizedBox(height: 18),
+                    ClientMembersView(
+                      clientUser: viewedUser,
+                      scrollable: false,
+                      padding: EdgeInsets.zero,
+                      forceWideLayout: false,
+                      onViewUser: (memberUser) => vm.openUserView(
+                        memberUser,
+                        preserveCurrent: true,
+                      ),
+                      onViewBooking: (booking) async {
+                        await AdminBookingsView.showBookingDetailDialog(
+                          context,
+                          user: widget.user,
+                          booking: booking,
+                        );
+                      },
+                      onEditBooking: (booking) async {
+                        try {
+                          await AdminBookingsView.showEditBookingDialog(
+                            context,
+                            booking: booking,
+                          );
+                        } catch (error) {
+                          if (!context.mounted) {
+                            return;
+                          }
+                          AppSnackbar.showError(
+                            context,
+                            userFacingErrorMessage(
+                              error,
+                              fallback:
+                                  'We could not open the booking editor right now.',
+                            ),
+                          );
+                        }
+                      },
+                      onNewBooking: () async {
+                        try {
+                          await AdminBookingsView.showNewBookingDialog(
+                            context,
+                            currentUser: widget.user,
+                          );
+                        } catch (error) {
+                          if (!context.mounted) {
+                            return;
+                          }
+                          AppSnackbar.showError(
+                            context,
+                            userFacingErrorMessage(
+                              error,
+                              fallback:
+                                  'We could not open the new booking dialog right now.',
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  UserBookingsSection(
+                    user: viewedUser,
+                    padding: const EdgeInsets.only(bottom: 24),
+                    useAdminListStyle: true,
+                    forceWideLayout: false,
+                    onViewBooking: (booking) async {
+                      await AdminBookingsView.showBookingDetailDialog(
+                        context,
+                        user: widget.user,
+                        booking: booking,
+                      );
+                    },
+                    onEditBooking: (booking) async {
+                      try {
+                        await AdminBookingsView.showEditBookingDialog(
+                          context,
+                          booking: booking,
+                        );
+                      } catch (error) {
+                        if (!context.mounted) {
+                          return;
+                        }
+                        AppSnackbar.showError(
+                          context,
+                          userFacingErrorMessage(
+                            error,
+                            fallback: 'We could not open the booking editor right now.',
+                          ),
+                        );
+                      }
+                    },
+                    onNewBooking: () async {
+                      try {
+                        await AdminBookingsView.showNewBookingDialog(
+                          context,
+                          currentUser: widget.user,
+                        );
+                      } catch (error) {
+                        if (!context.mounted) {
+                          return;
+                        }
+                        AppSnackbar.showError(
+                          context,
+                          userFacingErrorMessage(
+                            error,
+                            fallback:
+                                'We could not open the new booking dialog right now.',
+                          ),
+                        );
+                      }
                     },
                   ),
                 ],
@@ -336,7 +458,9 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                   children: [
                     AppRefreshStrip(isVisible: vm.isBusy),
                     _UsersToolbar(vm: vm),
-                    const SizedBox(height: AdminUsersView.usersToolbarSectionGap),
+                    const SizedBox(
+                      height: AdminUsersView.usersToolbarSectionGap,
+                    ),
                     if (isNarrow)
                       if (filteredUsers.isNotEmpty)
                         Column(
@@ -348,8 +472,8 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                                   padding: EdgeInsets.only(
                                     bottom:
                                         entry.key == filteredUsers.length - 1
-                                            ? 0
-                                            : 12,
+                                        ? 0
+                                        : 12,
                                   ),
                                   child: SizedBox(
                                     width: double.infinity,
@@ -390,12 +514,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     if (role == null || role.isEmpty) {
       return '-';
     }
-
-    return role
-        .split('_')
-        .where((part) => part.isNotEmpty)
-        .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
-        .join(' ');
+    return humanizeDropdownValue(role);
   }
 
   static String initials(String? value) {
@@ -512,6 +631,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
         title: _userDialogTitle('Edit', user),
         initialUser: user,
         isEditing: true,
+        clientOptions: vm.clientUsers(),
       ),
     );
 
@@ -533,7 +653,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
       }
       AppSnackbar.showSuccess(
         context,
-        _buildUserSaveMessage(savedUser, isEditing: true, originalUser: user),
+        _buildUserSaveMessage(isEditing: true),
       );
     }
   }
@@ -550,6 +670,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
         initialUser: vm.draftNewUser,
         generatedId: vm.nextUserId,
         onDraftChanged: vm.updateDraftNewUser,
+        clientOptions: vm.clientUsers(),
       ),
     );
 
@@ -562,7 +683,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
       }
       AppSnackbar.showSuccess(
         context,
-        _buildUserSaveMessage(savedUser, isEditing: false),
+        _buildUserSaveMessage(isEditing: false),
       );
     }
   }
@@ -602,119 +723,8 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     return updatedUser;
   }
 
-  static String _buildUserSaveMessage(
-    UserModel user, {
-    required bool isEditing,
-    UserModel? originalUser,
-  }) {
-    final roleLabel = formatRole(user.role);
-    final nameLabel = (user.name ?? '').trim();
-    final subject = [
-      if (roleLabel != '-') roleLabel,
-      if (nameLabel.isNotEmpty) nameLabel,
-    ].join(' ');
-
-    if (isEditing && originalUser != null) {
-      final changedFields = _userChangedFields(originalUser, user);
-      final detailedMessage = _buildDetailedUpdateMessage(
-        subject: subject,
-        changes: changedFields,
-      );
-      if (detailedMessage != null) {
-        return detailedMessage;
-      }
-    }
-
-    if (subject.isNotEmpty) {
-      return isEditing
-          ? '$subject has been updated.'
-          : "$subject's account has been created.";
-    }
-
-    return isEditing
-        ? 'User has been updated.'
-        : 'User account has been created.';
-  }
-
-  static Map<String, String> _userChangedFields(
-    UserModel before,
-    UserModel after,
-  ) {
-    final changed = <String, String>{};
-
-    if (before.role != after.role) {
-      changed['role'] = formatRole(after.role);
-    }
-    if ((before.email ?? '').trim() != (after.email ?? '').trim()) {
-      changed['email'] = after.email?.trim() ?? '-';
-    }
-    if ((before.name ?? '').trim() != (after.name ?? '').trim()) {
-      changed['name'] = after.name?.trim() ?? '-';
-    }
-    if ((before.photo ?? '').trim() != (after.photo ?? '').trim()) {
-      changed['photo'] = after.photo?.trim() ?? '-';
-    }
-    if ((before.phone ?? '').trim() != (after.phone ?? '').trim()) {
-      changed['phone number'] = after.phone?.trim() ?? '-';
-    }
-    final beforeDriver = before.asDriver;
-    final afterDriver = after.asDriver;
-    if ((beforeDriver?.license ?? '').trim() !=
-        (afterDriver?.license ?? '').trim()) {
-      changed['license'] = afterDriver?.license?.trim() ?? '-';
-    }
-    if (beforeDriver?.lat != afterDriver?.lat) {
-      changed['latitude'] = '${afterDriver?.lat ?? 'Not set'}';
-    }
-    if (beforeDriver?.lng != afterDriver?.lng) {
-      changed['longitude'] = '${afterDriver?.lng ?? 'Not set'}';
-    }
-    if ((beforeDriver?.vehicleType?.name ?? '').trim() !=
-        (afterDriver?.vehicleType?.name ?? '').trim()) {
-      changed['vehicle type'] = afterDriver?.vehicleType?.name?.trim() ?? '-';
-    }
-    if ((before.password ?? '') != (after.password ?? '')) {
-      changed['password'] = 'updated';
-    }
-    if ((before.isActive ?? false) != (after.isActive ?? false)) {
-      changed['active status'] = '${after.isActive ?? false}';
-    }
-    if ((before.isOnline ?? false) != (after.isOnline ?? false)) {
-      changed['online status'] = '${after.isOnline ?? false}';
-    }
-
-    return changed;
-  }
-
-  static String? _buildDetailedUpdateMessage({
-    required String subject,
-    required Map<String, String> changes,
-  }) {
-    if (changes.isEmpty) {
-      return null;
-    }
-    if (changes.length == 1) {
-      final entry = changes.entries.first;
-      if (subject.isNotEmpty) {
-        return "$subject's ${entry.key} has been updated to ${entry.value}.";
-      }
-      return '${_capitalize(entry.key)} has been updated to ${entry.value}.';
-    }
-
-    final summary = changes.entries
-        .map((entry) => '${entry.key} = ${entry.value}')
-        .join('; ');
-    if (subject.isNotEmpty) {
-      return '$subject has been updated: $summary.';
-    }
-    return 'Updated fields: $summary.';
-  }
-
-  static String _capitalize(String value) {
-    if (value.isEmpty) {
-      return value;
-    }
-    return '${value[0].toUpperCase()}${value.substring(1)}';
+  static String _buildUserSaveMessage({required bool isEditing}) {
+    return isEditing ? 'User updated.' : 'User added.';
   }
 
   static void handleDeleteUser(
@@ -778,7 +788,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     }
     AppSnackbar.showSuccess(
       context,
-      willBeActive ? '$subjectLabel activated.' : '$subjectLabel deactivated.',
+      willBeActive ? 'User activated.' : 'User deactivated.',
     );
   }
 
@@ -1059,6 +1069,7 @@ class _UsersFilterDropdown extends StatelessWidget {
       child: AdminDropdownFormField<String>(
         initialValue: value == 'All' ? null : value,
         focusNode: focusNode,
+        unfocusOnDismissWithoutSelection: true,
         iconEnabledColor: AppColors.primaryColor,
         style: _subtlePrimaryTextStyle,
         decoration: adminFormInputDecoration(
@@ -1244,8 +1255,12 @@ class _UsersTable extends StatelessWidget {
   );
   static const _onlineNameColor = Color(0xFF2EAD62);
 
-  static const _defaultTrailingPadding = 20.0;
-  static const _extraWidthAllowance = 16.0;
+  static const _defaultTrailingPadding =
+      AdminListMeasurements.defaultTrailingPadding;
+  static const _extraWidthAllowance =
+      AdminListMeasurements.defaultExtraWidthAllowance;
+  static const _maxNameEmailBasisWidth = 170.0;
+  static const _maxCreatedBasisWidth = 150.0;
 
   @override
   Widget build(BuildContext context) {
@@ -1281,13 +1296,16 @@ class _UsersTable extends StatelessWidget {
           44,
           _measureTextWidth(context, textScaler, 'Photo', _headerStyle),
         );
-        final nameWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Name',
-          _headerStyle,
-          longestNameValue,
-          _nameStyle,
+        final nameWidth = _cappedBasisWidth(
+          _maxTextWidth(
+            context,
+            textScaler,
+            'Name',
+            _headerStyle,
+            longestNameValue,
+            _nameStyle,
+          ),
+          _maxNameEmailBasisWidth,
         );
         final phoneWidth = _maxTextWidth(
           context,
@@ -1305,21 +1323,27 @@ class _UsersTable extends StatelessWidget {
           longestRoleValue,
           _valueStyle,
         );
-        final emailWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Email',
-          _headerStyle,
-          longestEmailValue,
-          _valueStyle,
+        final emailWidth = _cappedBasisWidth(
+          _maxTextWidth(
+            context,
+            textScaler,
+            'Email',
+            _headerStyle,
+            longestEmailValue,
+            _valueStyle,
+          ),
+          _maxNameEmailBasisWidth,
         );
-        final createdAtWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Created',
-          _headerStyle,
-          longestCreatedAtValue,
-          _valueStyle,
+        final createdAtWidth = _cappedBasisWidth(
+          _maxTextWidth(
+            context,
+            textScaler,
+            'Created',
+            _headerStyle,
+            longestCreatedAtValue,
+            _valueStyle,
+          ),
+          _maxCreatedBasisWidth,
         );
         final actionsWidth = _maxValue(
           176,
@@ -1343,8 +1367,35 @@ class _UsersTable extends StatelessWidget {
             resolvedCreatedAtWidth +
             resolvedActionsWidth +
             40;
-        final shouldFlexNameAndEmail =
-            totalMeasuredWidth > constraints.maxWidth;
+        final useResponsiveCards = totalMeasuredWidth > constraints.maxWidth;
+        if (useResponsiveCards) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: AdminUsersView.usersTableSectionGap),
+              if (users.isEmpty) _UsersEmptyState(message: emptyMessage),
+              if (users.isNotEmpty)
+                Column(
+                  children: users
+                      .asMap()
+                      .entries
+                      .map(
+                        (entry) => Padding(
+                          padding: EdgeInsets.only(
+                            bottom: entry.key == users.length - 1 ? 0 : 12,
+                          ),
+                          child: _UsersResponsiveCard(
+                            user: entry.value,
+                            vm: vm,
+                            onCurrentUserUpdated: onCurrentUserUpdated,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+            ],
+          );
+        }
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1356,61 +1407,54 @@ class _UsersTable extends StatelessWidget {
                 children: [
                   _UsersFixedSlot(
                     width: resolvedIdWidth,
-                    child: const _UsersHeader(label: 'ID', trailingPadding: 20),
+                    child: const _UsersHeader(
+                      label: 'ID',
+                      trailingPadding: _defaultTrailingPadding,
+                    ),
                   ),
                   _UsersFixedSlot(
                     width: resolvedPhotoWidth,
                     child: const _UsersHeader(
                       label: 'Photo',
-                      trailingPadding: 20,
+                      trailingPadding: _defaultTrailingPadding,
                     ),
                   ),
-                  if (shouldFlexNameAndEmail)
-                    const Expanded(
-                      child: _UsersHeader(label: 'Name', trailingPadding: 20),
-                    )
-                  else
-                    _UsersFixedSlot(
-                      width: resolvedNameWidth,
-                      child: const _UsersHeader(
-                        label: 'Name',
-                        trailingPadding: 20,
-                      ),
+                  _UsersFixedSlot(
+                    width: resolvedNameWidth,
+                    child: const _UsersHeader(
+                      label: 'Name',
+                      trailingPadding: _defaultTrailingPadding,
                     ),
+                  ),
                   _UsersFixedSlot(
                     width: resolvedPhoneWidth,
                     child: const _UsersHeader(
                       label: 'Phone',
-                      trailingPadding: 20,
+                      trailingPadding: _defaultTrailingPadding,
                     ),
                   ),
-                  if (shouldFlexNameAndEmail)
-                    const Expanded(
-                      child: _UsersHeader(label: 'Email', trailingPadding: 20),
-                    )
-                  else
-                    _UsersFixedSlot(
-                      width: resolvedEmailWidth,
-                      child: const _UsersHeader(
-                        label: 'Email',
-                        trailingPadding: 20,
-                      ),
+                  _UsersFixedSlot(
+                    width: resolvedEmailWidth,
+                    child: const _UsersHeader(
+                      label: 'Email',
+                      trailingPadding: _defaultTrailingPadding,
                     ),
+                  ),
                   _UsersFixedSlot(
                     width: resolvedRoleWidth,
                     child: const _UsersHeader(
                       label: 'Role',
-                      trailingPadding: 20,
+                      trailingPadding: _defaultTrailingPadding,
                     ),
                   ),
                   _UsersFixedSlot(
                     width: resolvedCreatedAtWidth,
                     child: const _UsersHeader(
                       label: 'Created',
-                      trailingPadding: 20,
+                      trailingPadding: _defaultTrailingPadding,
                     ),
                   ),
-                  AdminListTrailingActionsLane(
+                  _UsersFixedSlot(
                     width: resolvedActionsWidth,
                     child: const _UsersHeader(
                       label: 'Actions',
@@ -1438,7 +1482,6 @@ class _UsersTable extends StatelessWidget {
                           user: entry.value,
                           vm: vm,
                           onCurrentUserUpdated: onCurrentUserUpdated,
-                          shouldFlexNameAndEmail: shouldFlexNameAndEmail,
                           resolvedIdWidth: resolvedIdWidth,
                           resolvedPhotoWidth: resolvedPhotoWidth,
                           resolvedNameWidth: resolvedNameWidth,
@@ -1460,6 +1503,10 @@ class _UsersTable extends StatelessWidget {
 
   static double _maxValue(double first, double second) {
     return first > second ? first : second;
+  }
+
+  static double _cappedBasisWidth(double measuredWidth, double maxWidth) {
+    return measuredWidth > maxWidth ? maxWidth : measuredWidth;
   }
 
   static String _longestText(Iterable<String> values) {
@@ -1518,7 +1565,6 @@ class _UsersWideRow extends StatelessWidget {
     required this.user,
     required this.vm,
     required this.onCurrentUserUpdated,
-    required this.shouldFlexNameAndEmail,
     required this.resolvedIdWidth,
     required this.resolvedPhotoWidth,
     required this.resolvedNameWidth,
@@ -1532,7 +1578,6 @@ class _UsersWideRow extends StatelessWidget {
   final UserModel user;
   final AdminUsersViewModel vm;
   final Future<void> Function() onCurrentUserUpdated;
-  final bool shouldFlexNameAndEmail;
   final double resolvedIdWidth;
   final double resolvedPhotoWidth;
   final double resolvedNameWidth;
@@ -1550,7 +1595,6 @@ class _UsersWideRow extends StatelessWidget {
     final emailValue = user.email ?? '-';
     final roleValue = AdminUsersView.formatRole(user.role);
     final createdAtValue = AdminUsersView.formatCreatedAt(user.createdAt);
-
     return AdminListItemCard(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
       child: Row(
@@ -1580,35 +1624,20 @@ class _UsersWideRow extends StatelessWidget {
               ),
             ),
           ),
-          if (shouldFlexNameAndEmail)
-            Expanded(
-              child: _UsersCell(
-                child: Text(
-                  nameValue,
-                  style: _UsersTable._nameStyle.copyWith(
-                    color: (user.isOnline ?? false)
-                        ? _UsersTable._onlineNameColor
-                        : AppColors.textPrimary,
-                  ),
-                  softWrap: true,
+          _UsersFixedSlot(
+            width: resolvedNameWidth,
+            child: _UsersCell(
+              child: Text(
+                nameValue,
+                style: _UsersTable._nameStyle.copyWith(
+                  color: (user.isOnline ?? false)
+                      ? _UsersTable._onlineNameColor
+                      : AppColors.textPrimary,
                 ),
-              ),
-            )
-          else
-            _UsersFixedSlot(
-              width: resolvedNameWidth,
-              child: _UsersCell(
-                child: Text(
-                  nameValue,
-                  style: _UsersTable._nameStyle.copyWith(
-                    color: (user.isOnline ?? false)
-                        ? _UsersTable._onlineNameColor
-                        : AppColors.textPrimary,
-                  ),
-                  softWrap: true,
-                ),
+                softWrap: true,
               ),
             ),
+          ),
           _UsersFixedSlot(
             width: resolvedPhoneWidth,
             child: _UsersCell(
@@ -1619,27 +1648,16 @@ class _UsersWideRow extends StatelessWidget {
               ),
             ),
           ),
-          if (shouldFlexNameAndEmail)
-            Expanded(
-              child: _UsersCell(
-                child: Text(
-                  emailValue,
-                  style: _UsersTable._valueStyle,
-                  softWrap: true,
-                ),
-              ),
-            )
-          else
-            _UsersFixedSlot(
-              width: resolvedEmailWidth,
-              child: _UsersCell(
-                child: Text(
-                  emailValue,
-                  style: _UsersTable._valueStyle,
-                  softWrap: true,
-                ),
+          _UsersFixedSlot(
+            width: resolvedEmailWidth,
+            child: _UsersCell(
+              child: Text(
+                emailValue,
+                style: _UsersTable._valueStyle,
+                softWrap: true,
               ),
             ),
+          ),
           _UsersFixedSlot(
             width: resolvedRoleWidth,
             child: _UsersCell(
@@ -1660,7 +1678,7 @@ class _UsersWideRow extends StatelessWidget {
               ),
             ),
           ),
-          AdminListTrailingActionsLane(
+          _UsersFixedSlot(
             width: resolvedActionsWidth,
             child: _UsersCell(
               trailingPadding: 0,
@@ -1731,7 +1749,7 @@ class _UsersFixedSlot extends StatelessWidget {
 class _UsersHeader extends StatelessWidget {
   const _UsersHeader({
     required this.label,
-    this.trailingPadding = 24,
+    this.trailingPadding = _UsersTable._defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
     this.textAlign = TextAlign.left,
   });
@@ -2069,7 +2087,7 @@ class _UsersResponsiveField extends StatelessWidget {
 class _UsersCell extends StatelessWidget {
   const _UsersCell({
     required this.child,
-    this.trailingPadding = 24,
+    this.trailingPadding = _UsersTable._defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
   });
 
@@ -2157,6 +2175,7 @@ class _UserFormDialog extends StatefulWidget {
   const _UserFormDialog({
     required this.title,
     required this.isEditing,
+    required this.clientOptions,
     this.initialUser,
     this.generatedId,
     this.onDraftChanged,
@@ -2164,6 +2183,7 @@ class _UserFormDialog extends StatefulWidget {
 
   final String title;
   final bool isEditing;
+  final List<UserModel> clientOptions;
   final UserModel? initialUser;
   final String? generatedId;
   final ValueChanged<UserModel>? onDraftChanged;
@@ -2173,7 +2193,7 @@ class _UserFormDialog extends StatefulWidget {
 }
 
 class _UserFormDialogState extends State<_UserFormDialog> {
-  static const _roleOptions = ['client', 'driver', 'admin', 'helper'];
+  static const _roleOptions = ['client', 'driver', 'admin', 'helper', 'sub-client'];
 
   late final TextEditingController _latController;
   late final TextEditingController _lngController;
@@ -2181,10 +2201,20 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   late final TextEditingController _nameController;
   late final TextEditingController _photoController;
   late final TextEditingController _phoneController;
+  late final TextEditingController _positionController;
   late final TextEditingController _licenseController;
   late final TextEditingController _passwordController;
+  final FocusNode _emailFocusNode = FocusNode();
+  final FocusNode _nameFocusNode = FocusNode();
+  final FocusNode _phoneFocusNode = FocusNode();
+  final FocusNode _positionFocusNode = FocusNode();
+  final FocusNode _latFocusNode = FocusNode();
+  final FocusNode _lngFocusNode = FocusNode();
+  final FocusNode _passwordFocusNode = FocusNode();
+  final FocusNode _clientFocusNode = FocusNode();
 
   late String? _roleValue;
+  late String? _parentClientId;
   late bool _isActive;
   late bool _isOnline;
   String? _vehicleTypeId;
@@ -2197,6 +2227,25 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   _PendingImageUpload? _pendingLicenseUpload;
 
   bool get _isDriverRole => _roleValue == 'driver';
+  bool get _isSubClientRole => _roleValue == 'sub-client';
+
+  List<DropdownMenuItem<String>> _clientDropdownItems() {
+    return widget.clientOptions
+        .where((user) => (user.id?.trim().isNotEmpty ?? false))
+        .map(
+          (user) => DropdownMenuItem<String>(
+            value: user.id!.trim(),
+            child: Text(
+              [
+                if ((user.name ?? '').trim().isNotEmpty) user.name!.trim(),
+                if ((user.id ?? '').trim().isNotEmpty) '(ID ${user.id!.trim()})',
+              ].join(' '),
+              style: adminDropdownDisplayTextStyle,
+            ),
+          ),
+        )
+        .toList();
+  }
 
   List<DropdownMenuItem<String>> _vehicleTypeDropdownItems() {
     final items = <DropdownMenuItem<String>>[];
@@ -2239,9 +2288,11 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     _nameController = TextEditingController(text: user.name ?? '');
     _photoController = TextEditingController(text: user.photo ?? '');
     _phoneController = TextEditingController(text: user.phone ?? '');
+    _positionController = TextEditingController(text: user.position ?? '');
     _licenseController = TextEditingController(text: driver?.license ?? '');
     _passwordController = TextEditingController(text: user.password ?? '');
     _roleValue = _roleOptions.contains(user.role) ? user.role : null;
+    _parentClientId = user.parentClientId;
     _vehicleTypeId = driver?.vehicleType?.id;
     _isActive = widget.isEditing ? (user.isActive ?? false) : true;
     _isOnline = user.isOnline ?? false;
@@ -2251,6 +2302,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     _nameController.addListener(_handleDraftChanged);
     _photoController.addListener(_handleDraftChanged);
     _phoneController.addListener(_handleDraftChanged);
+    _positionController.addListener(_handleDraftChanged);
     _licenseController.addListener(_handleDraftChanged);
     _latController.addListener(_handleDraftChanged);
     _lngController.addListener(_handleDraftChanged);
@@ -2283,6 +2335,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     _nameController.removeListener(_handleDraftChanged);
     _photoController.removeListener(_handleDraftChanged);
     _phoneController.removeListener(_handleDraftChanged);
+    _positionController.removeListener(_handleDraftChanged);
     _licenseController.removeListener(_handleDraftChanged);
     _latController.removeListener(_handleDraftChanged);
     _lngController.removeListener(_handleDraftChanged);
@@ -2293,9 +2346,77 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     _nameController.dispose();
     _photoController.dispose();
     _phoneController.dispose();
+    _positionController.dispose();
     _licenseController.dispose();
     _passwordController.dispose();
+    _clientFocusNode.dispose();
+    _emailFocusNode.dispose();
+    _nameFocusNode.dispose();
+    _phoneFocusNode.dispose();
+    _positionFocusNode.dispose();
+    _latFocusNode.dispose();
+    _lngFocusNode.dispose();
+    _passwordFocusNode.dispose();
     super.dispose();
+  }
+
+  void _focusNext(FocusNode focusNode) {
+    if (!mounted) {
+      return;
+    }
+    FocusScope.of(context).requestFocus(focusNode);
+  }
+
+  void _unfocusCurrentField() {
+    final currentFocus = FocusScope.of(context);
+    if (!currentFocus.hasPrimaryFocus) {
+      currentFocus.unfocus();
+    }
+  }
+
+  void _submitForm() {
+    final validationMessage = _validationMessage();
+    if (validationMessage != null) {
+      AppSnackbar.showError(context, validationMessage);
+      return;
+    }
+    final baseUser = widget.initialUser ?? const UserModel();
+    final now = DateTime.now();
+    final selectedVehicleType = _vehicleTypes.where(
+      (item) => item.id == _vehicleTypeId,
+    );
+    final fallbackVehicleType = widget.initialUser?.asDriver?.vehicleType;
+    Navigator.of(context).pop(
+      _UserFormDialogResult(
+        user: baseUser.copyWith(
+          id: widget.isEditing ? baseUser.id : widget.generatedId,
+          role: _roleValue,
+          parentClientId: _isSubClientRole ? _parentClientId : null,
+          email: _nullIfEmpty(_emailController.text),
+          name: _nullIfEmpty(_nameController.text),
+          photo: _photoValue,
+          phone: normalizePhilippinePhone(_phoneController.text),
+          position: _isSubClientRole ? _nullIfEmpty(_positionController.text) : null,
+          isActive: _isActive,
+          isOnline: _isOnline,
+          password: _nullIfEmpty(_passwordController.text),
+          createdAt: widget.isEditing ? baseUser.createdAt : now,
+          updatedAt: now,
+          lat: _isDriverRole ? _tryParseDouble(_latController.text) : null,
+          lng: _isDriverRole ? _tryParseDouble(_lngController.text) : null,
+          license: _isDriverRole ? _licenseValue : null,
+          vehicleType: _isDriverRole
+              ? (selectedVehicleType.isNotEmpty
+                    ? selectedVehicleType.first
+                    : (fallbackVehicleType?.id == _vehicleTypeId
+                          ? fallbackVehicleType
+                          : null))
+              : null,
+        ),
+        pendingPhotoUpload: _pendingPhotoUpload,
+        pendingLicenseUpload: _pendingLicenseUpload,
+      ),
+    );
   }
 
   @override
@@ -2308,56 +2429,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        FilledButton(
-          onPressed: () {
-            final validationMessage = _validationMessage();
-            if (validationMessage != null) {
-              AppSnackbar.showError(context, validationMessage);
-              return;
-            }
-            final baseUser = widget.initialUser ?? const UserModel();
-            final now = DateTime.now();
-            final selectedVehicleType = _vehicleTypes.where(
-              (item) => item.id == _vehicleTypeId,
-            );
-            final fallbackVehicleType =
-                widget.initialUser?.asDriver?.vehicleType;
-            Navigator.of(context).pop(
-              _UserFormDialogResult(
-                user: baseUser.copyWith(
-                  id: widget.isEditing ? baseUser.id : widget.generatedId,
-                  role: _roleValue,
-                  email: _nullIfEmpty(_emailController.text),
-                  name: _nullIfEmpty(_nameController.text),
-                  photo: _photoValue,
-                  phone: normalizePhilippinePhone(_phoneController.text),
-                  isActive: _isActive,
-                  isOnline: _isOnline,
-                  password: _nullIfEmpty(_passwordController.text),
-                  createdAt: widget.isEditing ? baseUser.createdAt : now,
-                  updatedAt: now,
-                  lat: _isDriverRole
-                      ? _tryParseDouble(_latController.text)
-                      : null,
-                  lng: _isDriverRole
-                      ? _tryParseDouble(_lngController.text)
-                      : null,
-                  license: _isDriverRole ? _licenseValue : null,
-                  vehicleType: _isDriverRole
-                      ? (selectedVehicleType.isNotEmpty
-                            ? selectedVehicleType.first
-                            : (fallbackVehicleType?.id == _vehicleTypeId
-                                  ? fallbackVehicleType
-                                  : null))
-                      : null,
-                ),
-                pendingPhotoUpload: _pendingPhotoUpload,
-                pendingLicenseUpload: _pendingLicenseUpload,
-              ),
-            );
-          },
-          child: const Text('Save'),
-        ),
+        FilledButton(onPressed: _submitForm, child: const Text('Save')),
       ],
       child: AdminModalFormBody(
         children: _isDriverRole && _isLoadingVehicleTypes
@@ -2396,9 +2468,27 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                           _vehicleTypeId = null;
                           _pendingLicenseUpload = null;
                         }
+                        if (_roleValue != 'sub-client') {
+                          _parentClientId = null;
+                        }
                         _handleDraftChanged();
                       }),
                     ),
+                    if (_isSubClientRole)
+                      AdminModalDropdownField<String>(
+                        label: 'Client',
+                        initialValue: _parentClientId,
+                        focusNode: _clientFocusNode,
+                        iconEnabledColor: AppColors.primaryColor,
+                        bottomPadding: 6,
+                        disabledTapMessage:
+                            'No active client accounts available.',
+                        items: _clientDropdownItems(),
+                        onChanged: (value) => setState(() {
+                          _parentClientId = value;
+                          _handleDraftChanged();
+                        }),
+                      ),
                     if (_isDriverRole)
                       AdminModalDropdownField<String>(
                         label: 'Vehicle Type',
@@ -2413,27 +2503,102 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                           _handleDraftChanged();
                         }),
                       ),
-                    _buildField(_emailController, 'Email', bottomPadding: 4),
-                    _buildField(_nameController, 'Name'),
+                    _buildField(
+                      _emailController,
+                      'Email',
+                      bottomPadding: 4,
+                      focusNode: _emailFocusNode,
+                      textInputAction: widget.isEditing
+                          ? TextInputAction.done
+                          : TextInputAction.next,
+                      onSubmitted: (_) => widget.isEditing
+                          ? _submitForm()
+                          : _focusNext(_nameFocusNode),
+                    ),
+                    _buildField(
+                      _nameController,
+                      'Name',
+                      focusNode: _nameFocusNode,
+                      textInputAction: widget.isEditing
+                          ? TextInputAction.done
+                          : TextInputAction.next,
+                      onSubmitted: (_) => widget.isEditing
+                          ? _submitForm()
+                          : _focusNext(_phoneFocusNode),
+                    ),
                     _buildUploadField(
                       label: 'Photo',
                       controller: _photoController,
                       onTap: _pickPhotoFieldImage,
                     ),
-                    _buildField(_phoneController, 'Phone'),
+                    _buildField(
+                      _phoneController,
+                      'Phone',
+                      focusNode: _phoneFocusNode,
+                      textInputAction: widget.isEditing
+                          ? TextInputAction.done
+                          : TextInputAction.next,
+                      onSubmitted: (_) => widget.isEditing
+                          ? _submitForm()
+                          : _focusNext(
+                              _isSubClientRole
+                                  ? _positionFocusNode
+                                  : _isDriverRole
+                                  ? _latFocusNode
+                                  : _passwordFocusNode,
+                            ),
+                    ),
+                    if (_isSubClientRole)
+                      _buildField(
+                        _positionController,
+                        'Position',
+                        focusNode: _positionFocusNode,
+                        textInputAction: TextInputAction.next,
+                        onSubmitted: (_) => widget.isEditing
+                            ? _submitForm()
+                            : _focusNext(_passwordFocusNode),
+                      ),
                     if (_isDriverRole)
                       _buildUploadField(
                         label: 'License',
                         controller: _licenseController,
                         onTap: _pickLicenseFieldImage,
                       ),
-                    if (_isDriverRole) _buildField(_latController, 'Latitude'),
-                    if (_isDriverRole) _buildField(_lngController, 'Longitude'),
+                    if (_isDriverRole)
+                      _buildField(
+                        _latController,
+                        'Latitude',
+                        focusNode: _latFocusNode,
+                        textInputAction: widget.isEditing
+                            ? TextInputAction.done
+                            : TextInputAction.next,
+                        onSubmitted: (_) => widget.isEditing
+                            ? _submitForm()
+                            : _focusNext(_lngFocusNode),
+                      ),
+                    if (_isDriverRole)
+                      _buildField(
+                        _lngController,
+                        'Longitude',
+                        focusNode: _lngFocusNode,
+                        textInputAction: widget.isEditing
+                            ? TextInputAction.done
+                            : TextInputAction.next,
+                        onSubmitted: (_) => widget.isEditing
+                            ? _submitForm()
+                            : _focusNext(_passwordFocusNode),
+                      ),
                     _buildField(
                       _passwordController,
                       'Password',
                       obscureText: true,
                       bottomPadding: 0,
+                      focusNode: _passwordFocusNode,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) {
+                        _unfocusCurrentField();
+                        _submitForm();
+                      },
                     ),
                   ],
                 ),
@@ -2477,10 +2642,12 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     return baseUser.copyWith(
       id: widget.isEditing ? baseUser.id : widget.generatedId,
       role: _roleValue,
+      parentClientId: _isSubClientRole ? _parentClientId : null,
       email: _nullIfEmpty(_emailController.text),
       name: _nullIfEmpty(_nameController.text),
       photo: _photoValue,
       phone: normalizePhilippinePhone(_phoneController.text),
+      position: _isSubClientRole ? _nullIfEmpty(_positionController.text) : null,
       isActive: _isActive,
       isOnline: _isOnline,
       password: _nullIfEmpty(_passwordController.text),
@@ -2563,14 +2730,20 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     double bottomPadding = 4,
     bool readOnly = false,
     VoidCallback? onTap,
+    FocusNode? focusNode,
+    TextInputAction? textInputAction,
+    ValueChanged<String>? onSubmitted,
   }) {
     return AdminModalTextField(
       controller: controller,
       label: label,
+      focusNode: focusNode,
       hintText: hintText,
       obscureText: obscureText ? _isPasswordObscured : false,
       readOnly: readOnly,
       onTap: onTap,
+      textInputAction: textInputAction,
+      onSubmitted: onSubmitted,
       textCapitalization: label == 'Name'
           ? TextCapitalization.words
           : TextCapitalization.none,
@@ -2634,6 +2807,9 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         ? 'Role is required.'
         : null;
     return roleMessage ??
+        (_isSubClientRole && (_parentClientId?.trim().isNotEmpty != true)
+            ? 'Client is required.'
+            : null) ??
         (_isDriverRole && (_vehicleTypeId?.trim().isNotEmpty != true)
             ? 'Vehicle type is required.'
             : null) ??
@@ -2643,6 +2819,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         _validateName(_nameController.text) ??
         (_pendingPhotoUpload != null ? null : _validatePhoto(_photoValue)) ??
         _validatePhone(_phoneController.text) ??
+        (_isSubClientRole ? _validatePosition(_positionController.text) : null) ??
         (_isDriverRole
             ? (_pendingLicenseUpload != null
                   ? null
@@ -2702,6 +2879,17 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     }
     if (!isValidPhilippinePhone(trimmed)) {
       return 'Enter a valid PH mobile number.';
+    }
+    return null;
+  }
+
+  static String? _validatePosition(String? value) {
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      return 'Position is required.';
+    }
+    if (trimmed.length < 2) {
+      return 'Position must be at least 2 characters.';
     }
     return null;
   }

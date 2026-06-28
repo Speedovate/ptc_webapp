@@ -17,6 +17,7 @@ import 'package:webapp/views/shared/profile_view.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/admin_shell_layout_scope.dart';
 import 'package:webapp/widgets/shared/platform_shell.dart';
+import 'package:webapp/widgets/shared/user_bookings_section.dart';
 import 'package:webapp/widgets/sidebar_menu_item.dart';
 
 class AdminHome extends StatefulWidget {
@@ -341,16 +342,28 @@ class _AdminHomeState extends State<AdminHome> {
         initialEditUserId: _viewModel.pendingEditUserId,
         onInitialEditHandled: _viewModel.clearPendingEditUser,
       ),
-      AdminSection.profile => ProfileView(
-        key: profileViewRefreshKey(_shellUser),
-        user: _shellUser,
-        isCurrentUserView: true,
-        onLogout: widget.onLogout,
-        logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-        onSaveProfileChanges: _saveProfileChanges,
-        onEditPressed: () {
-          _viewModel.openUsersForEdit(_shellUser.id);
-        },
+      AdminSection.profile => SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ProfileView(
+              key: profileViewRefreshKey(_shellUser),
+              user: _shellUser,
+              scrollable: false,
+              padding: EdgeInsets.zero,
+              isCurrentUserView: true,
+              onLogout: widget.onLogout,
+              logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
+              onSaveProfileChanges: _saveProfileChanges,
+              onEditPressed: () {
+                _viewModel.openUsersForEdit(_shellUser.id);
+              },
+            ),
+            const SizedBox(height: 12),
+            UserBookingsSection(user: _shellUser),
+          ],
+        ),
       ),
     };
   }

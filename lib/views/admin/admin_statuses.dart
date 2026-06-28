@@ -85,79 +85,8 @@ class AdminStatusesView extends StatelessWidget {
     return roles.map(humanizeDropdownValue).join(', ');
   }
 
-  static String _statusSaveMessage(
-    Status status, {
-    required bool isEditing,
-    Status? originalStatus,
-  }) {
-    final subject = (status.label ?? status.key ?? '').trim();
-    if (isEditing && originalStatus != null) {
-      final changedFields = _changedStatusLabels(originalStatus, status);
-      final detailedMessage = _buildDetailedUpdateMessage(
-        subject: subject.isNotEmpty ? '$subject status' : 'Status',
-        changes: changedFields,
-      );
-      if (detailedMessage != null) {
-        return detailedMessage;
-      }
-    }
-
-    if (subject.isNotEmpty) {
-      return isEditing
-          ? '$subject status has been updated.'
-          : '$subject status has been created.';
-    }
-
-    return isEditing ? 'Status has been updated.' : 'Status has been created.';
-  }
-
-  static Map<String, String> _changedStatusLabels(Status before, Status after) {
-    final changed = <String, String>{};
-
-    if ((before.key ?? '').trim() != (after.key ?? '').trim()) {
-      changed['key'] = after.key?.trim() ?? '-';
-    }
-    if ((before.label ?? '').trim() != (after.label ?? '').trim()) {
-      changed['label'] = after.label?.trim() ?? '-';
-    }
-    if ((before.description ?? '').trim() != (after.description ?? '').trim()) {
-      changed['description'] = after.description?.trim() ?? '-';
-    }
-    if (before.applicableRoles.join('|') != after.applicableRoles.join('|')) {
-      changed['applicable roles'] = formatApplicableRoles(
-        after.applicableRoles,
-      );
-    }
-    for (final role in AdminFlowViewModel.roleOptions) {
-      final beforeMessage = (before.roleMessages[role] ?? '').trim();
-      final afterMessage = (after.roleMessages[role] ?? '').trim();
-      if (beforeMessage != afterMessage) {
-        changed['${humanizeDropdownValue(role).toLowerCase()} message'] =
-            afterMessage.isEmpty ? '-' : afterMessage;
-      }
-    }
-    if ((before.isActive ?? false) != (after.isActive ?? false)) {
-      changed['active status'] = '${after.isActive ?? false}';
-    }
-
-    return changed;
-  }
-
-  static String? _buildDetailedUpdateMessage({
-    required String subject,
-    required Map<String, String> changes,
-  }) {
-    if (changes.isEmpty) {
-      return null;
-    }
-    if (changes.length == 1) {
-      final entry = changes.entries.first;
-      return "$subject's ${entry.key} has been updated to ${entry.value}.";
-    }
-    final summary = changes.entries
-        .map((entry) => '${entry.key} = ${entry.value}')
-        .join('; ');
-    return '$subject has been updated: $summary.';
+  static String _statusSaveMessage({required bool isEditing}) {
+    return isEditing ? 'Status updated.' : 'Status added.';
   }
 
   @override
@@ -212,11 +141,7 @@ class AdminStatusesView extends StatelessWidget {
         }
         AppSnackbar.showSuccess(
           context,
-          _statusSaveMessage(
-            savedStatus,
-            isEditing: initialStatus != null,
-            originalStatus: initialStatus,
-          ),
+          _statusSaveMessage(isEditing: initialStatus != null),
         );
       } catch (error) {
         if (!context.mounted) {
@@ -323,13 +248,13 @@ class _StatusesContentState extends State<_StatusesContent> {
                             .asMap()
                             .entries
                             .map(
-                            (entry) => Padding(
-                              padding: EdgeInsets.only(
-                                bottom:
-                                    entry.key == _filteredStatuses.length - 1
-                                        ? 0
-                                        : 12,
-                              ),
+                              (entry) => Padding(
+                                padding: EdgeInsets.only(
+                                  bottom:
+                                      entry.key == _filteredStatuses.length - 1
+                                      ? 0
+                                      : 12,
+                                ),
                                 child: _StatusResponsiveCard(
                                   status: entry.value,
                                   vm: widget.vm,
@@ -645,8 +570,10 @@ class _StatusesTable extends StatelessWidget {
     fontWeight: FontWeight.w700,
   );
 
-  static const _defaultTrailingPadding = 20.0;
-  static const _extraWidthAllowance = 16.0;
+  static const _defaultTrailingPadding =
+      AdminListMeasurements.defaultTrailingPadding;
+  static const _extraWidthAllowance =
+      AdminListMeasurements.defaultExtraWidthAllowance;
 
   @override
   Widget build(BuildContext context) {
@@ -1282,6 +1209,18 @@ class _StatusEditorDialogState extends State<_StatusEditorDialog> {
     return null;
   }
 
+  bool get _isEditing => widget.initialStatus != null;
+
+  void _submitForm() {
+    final validationMessage = _validationMessage();
+    if (validationMessage != null) {
+      AppSnackbar.showError(context, validationMessage);
+      return;
+    }
+    final base = widget.initialStatus ?? const Status(applicableRoles: []);
+    Navigator.of(context).pop(_buildStatus(base));
+  }
+
   @override
   Widget build(BuildContext context) {
     return AdminModalShell(
@@ -1299,19 +1238,7 @@ class _StatusEditorDialogState extends State<_StatusEditorDialog> {
                 onPressed: () => Navigator.of(context).pop(),
                 child: const Text('Cancel'),
               ),
-              FilledButton(
-                onPressed: () {
-                  final validationMessage = _validationMessage();
-                  if (validationMessage != null) {
-                    AppSnackbar.showError(context, validationMessage);
-                    return;
-                  }
-                  final base =
-                      widget.initialStatus ?? const Status(applicableRoles: []);
-                  Navigator.of(context).pop(_buildStatus(base));
-                },
-                child: const Text('Save'),
-              ),
+              FilledButton(onPressed: _submitForm, child: const Text('Save')),
             ],
       child: AdminModalFormBody(
         readOnly: widget.readOnly,
@@ -1322,16 +1249,34 @@ class _StatusEditorDialogState extends State<_StatusEditorDialog> {
                 controller: _keyController,
                 label: 'Key',
                 bottomPadding: 4,
+                textInputAction: _isEditing
+                    ? TextInputAction.done
+                    : TextInputAction.next,
+                onSubmitted: (_) => _isEditing
+                    ? _submitForm()
+                    : FocusScope.of(context).nextFocus(),
               ),
               AdminModalTextField(
                 controller: _labelController,
                 label: 'Label',
                 bottomPadding: 4,
+                textInputAction: _isEditing
+                    ? TextInputAction.done
+                    : TextInputAction.next,
+                onSubmitted: (_) => _isEditing
+                    ? _submitForm()
+                    : FocusScope.of(context).nextFocus(),
               ),
               AdminModalTextField(
                 controller: _descriptionController,
                 label: 'Description',
                 bottomPadding: 4,
+                textInputAction: _isEditing
+                    ? TextInputAction.done
+                    : TextInputAction.next,
+                onSubmitted: (_) => _isEditing
+                    ? _submitForm()
+                    : FocusScope.of(context).nextFocus(),
               ),
               AdminModalFieldSlot(
                 bottomPadding: 0,
@@ -1496,7 +1441,7 @@ class _StatusesStyles {
 class _StatusesHeaderCell extends StatelessWidget {
   const _StatusesHeaderCell({
     required this.label,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
     this.textAlign = TextAlign.left,
   });
@@ -1520,7 +1465,7 @@ class _StatusesHeaderCell extends StatelessWidget {
 class _StatusesBodyCell extends StatelessWidget {
   const _StatusesBodyCell({
     required this.child,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
   });
 

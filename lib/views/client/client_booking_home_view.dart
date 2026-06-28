@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/models/client_member.dart';
+import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/client/client_booking_home.vm.dart';
+import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
@@ -52,18 +56,22 @@ class ClientBookingHomeView extends StatefulWidget {
     super.key,
     required this.user,
     this.onBookingSubmitted,
+    this.submitBlockMessage,
     this.bookingClientUser,
     this.submittedByUserId,
     this.padding = const EdgeInsets.fromLTRB(24, 24, 24, 24),
     this.scrollable = true,
+    this.loadingPlaceholderMinHeight,
   });
 
   final UserModel user;
   final ValueChanged<Booking>? onBookingSubmitted;
+  final String? Function()? submitBlockMessage;
   final UserModel? bookingClientUser;
   final String? submittedByUserId;
   final EdgeInsets padding;
   final bool scrollable;
+  final double? loadingPlaceholderMinHeight;
 
   @override
   State<ClientBookingHomeView> createState() => _ClientBookingHomeViewState();
@@ -71,11 +79,31 @@ class ClientBookingHomeView extends StatefulWidget {
 
 class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
   ClientBookingHomeViewModel? _viewModel;
+  String? _selectedMemberId;
 
-  UserModel get _effectiveClientUser => widget.bookingClientUser ?? widget.user;
+  UserModel get _effectiveClientUser {
+    final bookingClientUser = widget.bookingClientUser;
+    if (bookingClientUser != null) {
+      return bookingClientUser;
+    }
+    final parentClientId = widget.user.parentClientId?.trim();
+    if (isSubClientRole(widget.user.role) &&
+        parentClientId != null &&
+        parentClientId.isNotEmpty) {
+      return widget.user.copyWith(
+        id: parentClientId,
+        role: 'client',
+        parentClientId: null,
+      );
+    }
+    return widget.user;
+  }
 
   String get _effectiveSubmittedByUserId =>
       widget.submittedByUserId ?? widget.user.id ?? '';
+
+  double get _loadingPlaceholderMinHeight =>
+      widget.loadingPlaceholderMinHeight ?? 220;
 
   void _restoreScrollOffset(ScrollPosition? position, double? offset) {
     if (position == null || offset == null) {
@@ -118,6 +146,7 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
     if (oldClientUser.id != _effectiveClientUser.id ||
         oldClientUser.updatedAt != _effectiveClientUser.updatedAt) {
       _viewModel?.syncClient(_effectiveClientUser);
+      _viewModel?.load(_effectiveClientUser);
     }
   }
 
@@ -168,20 +197,22 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
             child: _ClientBookingStateCard(
               scrollable: widget.scrollable,
               padding: widget.padding,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AppRefreshStrip(isVisible: vm.isBusyLoading),
-                  Text(
-                    vm.isBusyLoading
-                        ? 'Preparing booking form ...'
-                        : 'No client booking form available yet.',
-                    style: TextStyle(
-                      color: AppColors.primaryColor.withValues(alpha: 0.72),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+              child: SizedBox(
+                width: double.infinity,
+                height: _loadingPlaceholderMinHeight,
+                child: vm.isBusyLoading
+                    ? const SizedBox.shrink()
+                    : Center(
+                        child: Text(
+                          'No client booking form available yet.',
+                          style: TextStyle(
+                            color: AppColors.primaryColor.withValues(
+                              alpha: 0.72,
+                            ),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
               ),
             ),
           );
@@ -192,6 +223,20 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
           children: [
             ...vm.mainForms.asMap().entries.map((entry) {
               final activeForm = entry.value;
+              final selectedMember = isSubClientRole(widget.user.role)
+                  ? ClientMember(
+                      id: widget.user.id,
+                      clientId: widget.user.parentClientId,
+                      userId: widget.user.id,
+                      email: widget.user.email,
+                      name: widget.user.name,
+                      phone: widget.user.phone,
+                      position: widget.user.position,
+                      isActive: widget.user.isActive,
+                    )
+                  : vm.activeMembers
+                        .where((member) => member.id == _selectedMemberId)
+                        .firstOrNull;
               return Padding(
                 padding: EdgeInsets.only(
                   bottom: entry.key == vm.mainForms.length - 1 ? 0 : 18,
@@ -202,6 +247,17 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
                   form: activeForm,
                   clientUser: _effectiveClientUser,
                   submittedByUserId: _effectiveSubmittedByUserId,
+                  selectedMember: selectedMember,
+                  showRepresentativePreset:
+                      !isSubClientRole(widget.user.role) &&
+                      vm.activeMembers.isNotEmpty &&
+                      !vm.formUsesMemberSelection(activeForm),
+                  onSelectedMemberChanged: (value) {
+                    setState(() {
+                      _selectedMemberId = value;
+                    });
+                  },
+                  submitBlockMessage: widget.submitBlockMessage,
                   onBookingSubmitted: widget.onBookingSubmitted,
                   onUnfocusWithoutScroll: () => _unfocusWithoutScroll(context),
                 ),
@@ -232,7 +288,11 @@ class _ClientBookingFormSection extends StatefulWidget {
     required this.form,
     required this.clientUser,
     required this.submittedByUserId,
+    required this.selectedMember,
+    required this.showRepresentativePreset,
+    required this.onSelectedMemberChanged,
     required this.onUnfocusWithoutScroll,
+    this.submitBlockMessage,
     this.onBookingSubmitted,
   });
 
@@ -240,7 +300,11 @@ class _ClientBookingFormSection extends StatefulWidget {
   final StatusForm form;
   final UserModel clientUser;
   final String submittedByUserId;
+  final ClientMember? selectedMember;
+  final bool showRepresentativePreset;
+  final ValueChanged<String?> onSelectedMemberChanged;
   final VoidCallback onUnfocusWithoutScroll;
+  final String? Function()? submitBlockMessage;
   final ValueChanged<Booking>? onBookingSubmitted;
 
   @override
@@ -253,12 +317,128 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
   Map<String, String> _errors = {};
   int _resetTick = 0;
   bool _isSubmitting = false;
+  final Map<String, FocusNode> _fieldFocusNodes = {};
+  final FocusNode _submitFocusNode = FocusNode(
+    debugLabel: 'booking_field(__cta__)',
+  );
+  static const _memberIdKey = 'member_id';
+  static const _representativeNameKey = 'representative_name';
+  static const _representativePhoneKey = 'representative_phone';
+  static const _representativePositionKey = 'representative_position';
+
+  String _focusKeyForField(StatusField field, int index) {
+    final key = (field.key ?? '').trim();
+    if (key.isNotEmpty) {
+      return key;
+    }
+    final title = (field.title ?? '').trim();
+    final type = (field.type ?? '').trim();
+    return '__index_$index:${title.isEmpty ? '-' : title}|${type.isEmpty ? '-' : type}';
+  }
+
+  void _syncFocusNodes(List<StatusField> fields) {
+    final activeKeys = <String>{};
+    for (var index = 0; index < fields.length; index++) {
+      final field = fields[index];
+      final focusKey = _focusKeyForField(field, index);
+      activeKeys.add(focusKey);
+      _fieldFocusNodes.putIfAbsent(
+        focusKey,
+        () => FocusNode(debugLabel: 'booking_field($focusKey)'),
+      );
+    }
+
+    final removedKeys = _fieldFocusNodes.keys
+        .where((key) => !activeKeys.contains(key))
+        .toList();
+    for (final key in removedKeys) {
+      _fieldFocusNodes.remove(key)?.dispose();
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final node in _fieldFocusNodes.values) {
+      node.dispose();
+    }
+    _submitFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _applySelectedMemberAutofill(overwriteExisting: false);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ClientBookingFormSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldMember = oldWidget.selectedMember;
+    final nextMember = widget.selectedMember;
+    final memberChanged =
+        oldMember?.id != nextMember?.id ||
+        oldMember?.name != nextMember?.name ||
+        oldMember?.phone != nextMember?.phone ||
+        oldMember?.position != nextMember?.position;
+    if (memberChanged && nextMember != null) {
+      _applySelectedMemberAutofill(overwriteExisting: true);
+    }
+  }
+
+  void _applySelectedMemberAutofill({required bool overwriteExisting}) {
+    final selectedMember = widget.selectedMember;
+    if (selectedMember == null) {
+      return;
+    }
+    final fields = widget.vm.fieldsForForm(widget.form, answers: _answers);
+    final fieldKeys = fields
+        .map((field) => (field.key ?? '').trim())
+        .where((key) => key.isNotEmpty)
+        .toSet();
+    final nextAnswers = Map<String, dynamic>.from(_answers);
+
+    void applyValue(String key, String? value) {
+      if (!fieldKeys.contains(key)) {
+        return;
+      }
+      final trimmedValue = value?.trim() ?? '';
+      if (trimmedValue.isEmpty) {
+        return;
+      }
+      final currentValue = nextAnswers[key]?.toString().trim() ?? '';
+      if (!overwriteExisting && currentValue.isNotEmpty) {
+        return;
+      }
+      nextAnswers[key] = trimmedValue;
+    }
+
+    applyValue(_memberIdKey, selectedMember.id);
+    applyValue(_representativeNameKey, selectedMember.name);
+    applyValue(_representativePhoneKey, selectedMember.normalizedPhone);
+    applyValue(_representativePositionKey, selectedMember.position);
+
+    if (mounted) {
+      setState(() {
+        _answers = nextAnswers;
+        _errors = Map<String, String>.from(_errors)
+          ..remove(_memberIdKey)
+          ..remove(_representativeNameKey)
+          ..remove(_representativePhoneKey)
+          ..remove(_representativePositionKey);
+      });
+    } else {
+      _answers = nextAnswers;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final vm = widget.vm;
     final form = widget.form;
-    final fields = vm.fieldsForForm(form);
+    final fields = vm.fieldsForForm(form, answers: _answers);
+    final memberOptionLabels = vm.memberOptionLabelsForForm(form);
+    _syncFocusNodes(fields);
     final blockedMessage = vm.blockedMessageForForm(form, widget.clientUser);
     final terminalPalette = form.nextStatusKey == null
         ? _terminalClientHeaderPalette(form.currentStatusKey)
@@ -272,6 +452,14 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (widget.showRepresentativePreset) ...[
+          _ClientBookingRepresentativeSelector(
+            members: vm.activeMembers,
+            selectedMemberId: widget.selectedMember?.id,
+            onChanged: widget.onSelectedMemberChanged,
+          ),
+          const SizedBox(height: 18),
+        ],
         BookingFormHeaderCard(
           title: vm.resolvedTitleForForm(form),
           subtitle: vm.resolvedSubtitleForForm(form),
@@ -290,34 +478,68 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
           messageTextColor: AppColors.textPrimary,
         ),
         const SizedBox(height: 8),
-        ...fields.map(
-          (field) => Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: StatusFormRuntimeFieldCard(
-              key: ValueKey('${form.id}:${field.key}:$_resetTick'),
-              field: field,
-              errorText: _errors[field.key],
-              initialValue: _answers[field.key],
-              formTitle: vm.resolvedTitleForForm(form),
-              formButtonText: form.buttonText,
-              formStatusKey: form.currentStatusKey,
-              onChanged: (value) {
-                final key = field.key;
-                if (key == null || key.isEmpty) {
-                  return;
-                }
-                setState(() {
-                  final nextAnswers = Map<String, dynamic>.from(_answers);
-                  if (_isEmptyValue(value)) {
-                    nextAnswers.remove(key);
-                  } else {
-                    nextAnswers[key] = value;
-                  }
-                  _answers = nextAnswers;
-                  _errors = Map<String, String>.from(_errors)..remove(key);
-                });
-              },
-            ),
+        FocusTraversalGroup(
+          policy: WidgetOrderTraversalPolicy(),
+          child: Column(
+            children: fields.asMap().entries.map((entry) {
+              final index = entry.key;
+              final field = entry.value;
+              final focusKey = _focusKeyForField(field, index);
+              final isLastField = index == fields.length - 1;
+              final nextField = isLastField ? null : fields[index + 1];
+              final nextFocusKey = nextField == null
+                  ? null
+                  : _focusKeyForField(nextField, index + 1);
+              final focusNode = _fieldFocusNodes[focusKey];
+              final nextFocusNode = isLastField
+                  ? _submitFocusNode
+                  : (nextFocusKey == null
+                        ? null
+                        : _fieldFocusNodes[nextFocusKey]);
+              final nextFieldType = (nextField?.type ?? '').trim().toLowerCase();
+              final activateNextFocus =
+                  isLastField ||
+                  nextFieldType == 'dropdown' ||
+                  nextFieldType == 'search_dropdown' ||
+                  nextFieldType == 'date' ||
+                  nextFieldType == 'time' ||
+                  nextFieldType == 'photo';
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: StatusFormRuntimeFieldCard(
+                  key: ValueKey('${form.id}:${field.key}:$_resetTick'),
+                  field: field,
+                  focusNode: focusNode,
+                  nextFocusNode: nextFocusNode,
+                  activateNextFocus: activateNextFocus,
+                  errorText: _errors[field.key],
+                  initialValue: _answers[field.key],
+                  formTitle: vm.resolvedTitleForForm(form),
+                  formButtonText: form.buttonText,
+                  formStatusKey: form.currentStatusKey,
+                  optionLabels: (field.key ?? '').trim() == _memberIdKey
+                      ? memberOptionLabels
+                      : const {},
+                  onChanged: (value) {
+                    final key = field.key;
+                    if (key == null || key.isEmpty) {
+                      return;
+                    }
+                    setState(() {
+                      final nextAnswers = Map<String, dynamic>.from(_answers);
+                      if (_isEmptyValue(value)) {
+                        nextAnswers.remove(key);
+                      } else {
+                        nextAnswers[key] = value;
+                      }
+                      _answers = nextAnswers;
+                      _errors = Map<String, String>.from(_errors)..remove(key);
+                    });
+                  },
+                ),
+              );
+            }).toList(),
           ),
         ),
         const SizedBox(height: 2),
@@ -325,16 +547,22 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
           isSubmitting: _isSubmitting,
           isBlocked: blockedMessage != null,
           title: vm.resolvedTitleForForm(form),
+          focusNode: _submitFocusNode,
           submitLabel: _isSubmitting
               ? 'Submitting ...'
               : vm.submitLabelForForm(form),
           onSubmit: () async {
+            final externalBlockMessage = widget.submitBlockMessage?.call();
             final validationErrors = vm.validateAnswersForForm(form, _answers);
-            if (validationErrors.isNotEmpty || blockedMessage != null) {
+            if (validationErrors.isNotEmpty ||
+                blockedMessage != null ||
+                externalBlockMessage != null) {
               setState(() {
                 _errors = validationErrors;
               });
-              if (validationErrors.isNotEmpty) {
+              if (externalBlockMessage != null) {
+                AppSnackbar.showError(context, externalBlockMessage);
+              } else if (validationErrors.isNotEmpty) {
                 AppSnackbar.showError(
                   context,
                   'Please complete the required booking fields.',
@@ -383,6 +611,15 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                   return;
                 }
                 AppSnackbar.showError(context, latestBlockedMessage);
+              } else {
+                final latestExternalBlockMessage =
+                    widget.submitBlockMessage?.call();
+                if (latestExternalBlockMessage != null) {
+                  if (!mounted || !context.mounted) {
+                    return;
+                  }
+                  AppSnackbar.showError(context, latestExternalBlockMessage);
+                }
               }
               return;
             }
@@ -391,22 +628,24 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
               _errors = {};
               _resetTick += 1;
             });
+            _applySelectedMemberAutofill(overwriteExisting: true);
             if (!mounted) {
               return;
             }
             if (!context.mounted) {
               return;
             }
-            AppSnackbar.showSuccess(context, 'Booking has been created.');
+            AppSnackbar.showSuccess(context, 'Booking created.');
             widget.onBookingSubmitted?.call(booking);
-            },
-            onClear: () {
-              widget.onUnfocusWithoutScroll();
-              setState(() {
-                _answers = {};
-                _errors = {};
-                _resetTick += 1;
-              });
+          },
+          onClear: () {
+            widget.onUnfocusWithoutScroll();
+            setState(() {
+              _answers = {};
+              _errors = {};
+              _resetTick += 1;
+            });
+            _applySelectedMemberAutofill(overwriteExisting: true);
           },
         ),
       ],
@@ -430,11 +669,111 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
   }
 }
 
+class _ClientBookingRepresentativeSelector extends StatelessWidget {
+  const _ClientBookingRepresentativeSelector({
+    required this.members,
+    required this.selectedMemberId,
+    required this.onChanged,
+  });
+
+  final List<ClientMember> members;
+  final String? selectedMemberId;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    if (members.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.primaryBorder),
+        ),
+        child: const Text(
+          'Create members from the Members menu to auto-fill representative name, phone, and position while booking.',
+          style: TextStyle(
+            color: AppColors.textSecondary,
+            fontWeight: FontWeight.w600,
+            height: 1.4,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.primaryBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Representative Preset',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Select a saved member to auto-fill the representative details on this booking.',
+            style: TextStyle(
+              color: AppColors.textSecondary,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 14),
+          AdminDropdownFormField<String>(
+            initialValue: selectedMemberId,
+            isExpanded: true,
+            decoration: adminFormInputDecoration(
+              'Saved Member',
+              hintText: 'Manual entry',
+            ),
+            items: [
+              const DropdownMenuItem<String>(
+                value: null,
+                child: Text('Manual entry'),
+              ),
+              ...members.map((member) {
+                final phone = member.normalizedPhone;
+                final position = member.position?.trim() ?? '';
+                final labelParts = <String>[
+                  member.displayName,
+                  if (phone.isNotEmpty) phone,
+                  if (position.isNotEmpty) position,
+                ];
+                return DropdownMenuItem<String>(
+                  value: member.id,
+                  child: Text(
+                    labelParts.join(' | '),
+                    overflow: TextOverflow.ellipsis,
+                    style: adminDropdownDisplayTextStyle,
+                  ),
+                );
+              }),
+            ],
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ClientBookingActions extends StatelessWidget {
   const _ClientBookingActions({
     required this.isSubmitting,
     required this.isBlocked,
     required this.title,
+    required this.focusNode,
     required this.submitLabel,
     required this.onSubmit,
     required this.onClear,
@@ -443,6 +782,7 @@ class _ClientBookingActions extends StatelessWidget {
   final bool isSubmitting;
   final bool isBlocked;
   final String title;
+  final FocusNode focusNode;
   final String submitLabel;
   final Future<void> Function() onSubmit;
   final VoidCallback onClear;
@@ -450,6 +790,7 @@ class _ClientBookingActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final submitButton = FilledButton(
+      focusNode: focusNode,
       onPressed: isSubmitting || isBlocked ? null : onSubmit,
       style: FilledButton.styleFrom(
         backgroundColor: bookingFormResolvedActionColor(
@@ -468,10 +809,12 @@ class _ClientBookingActions extends StatelessWidget {
       title: title,
       buttonText: submitLabel,
     );
-    final clearButton = TextButton(
-      onPressed: isSubmitting ? null : onClear,
-      style: TextButton.styleFrom(foregroundColor: clearColor),
-      child: const Text('Clear Form'),
+    final clearButton = ExcludeFocus(
+      child: TextButton(
+        onPressed: isSubmitting ? null : onClear,
+        style: TextButton.styleFrom(foregroundColor: clearColor),
+        child: const Text('Clear Form'),
+      ),
     );
 
     return LayoutBuilder(

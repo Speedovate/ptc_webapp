@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
+import 'package:webapp/requests/client_member.request.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
@@ -21,6 +22,7 @@ class AuthRequest implements AuthRepository {
   static const _quickLoginSourceUserIdKey =
       'paltranco_quick_login_source_user_id';
   static const _usersResourceKey = 'users';
+  static bool _didRunSubClientMigration = false;
 
   final FirebaseFirestore _firestore;
   final VehicleRequest _vehicleRequest;
@@ -33,9 +35,25 @@ class AuthRequest implements AuthRepository {
   CollectionReference<Map<String, dynamic>> get _usersCollection =>
       _firestore.collection('users');
 
+  CollectionReference<Map<String, dynamic>> get _clientMembersCollection =>
+      _firestore.collection('client_members');
+
   @override
   Future<void> initialize() async {
     await _storage.initialize();
+  }
+
+  Future<void> migrateSubClientDataOnce() async {
+    if (_didRunSubClientMigration) {
+      return;
+    }
+    _didRunSubClientMigration = true;
+    try {
+      await _migrateLegacyMemberUsers();
+      await _migrateClientMemberDocumentIds();
+      await _cache.clearResource(_usersResourceKey);
+    } catch (_) {
+    }
   }
 
   @override
@@ -101,7 +119,6 @@ class AuthRequest implements AuthRepository {
     required String password,
   }) async {
     return _runAuthRequest(() async {
-      debugPrint('[AUTH_REQUEST][LOGIN] Start identifier=$identifier');
       await initialize();
       await _cache.clearResource(_usersResourceKey);
       AppSessionReset.clearUserScopedState();
@@ -118,23 +135,15 @@ class AuthRequest implements AuthRepository {
                 .limit(1)
                 .get();
       if (matches.docs.isEmpty) {
-        debugPrint('[AUTH_REQUEST][LOGIN] No matching user found');
         throw const AuthFailure(
           'No account found for that email or mobile number.',
         );
       }
       final user = await _inflateUser(matches.docs.first);
-      debugPrint(
-        '[AUTH_REQUEST][LOGIN] Found user id=${user.id} role=${user.role} active=${user.isActive} photo=${user.photo}',
-      );
       if ((user.password ?? '') != password) {
-        debugPrint(
-          '[AUTH_REQUEST][LOGIN] Password mismatch for userId=${user.id}',
-        );
         throw const AuthFailure('Incorrect password.');
       }
       if (user.isActive == false) {
-        debugPrint('[AUTH_REQUEST][LOGIN] User inactive userId=${user.id}');
         throw const AuthFailure(
           'This account is not active yet. Please contact your admin to activate your account.',
         );
@@ -148,9 +157,6 @@ class AuthRequest implements AuthRepository {
       await _storage.writeString(_currentUserIdKey, loggedInUser.id ?? '');
       await _cache.clearResource(_usersResourceKey);
       AppSessionReset.clearUserScopedState();
-      debugPrint(
-        '[AUTH_REQUEST][LOGIN] Success storedCurrentUserId=${loggedInUser.id}',
-      );
       return loggedInUser;
     }, fallback: 'We could not sign you in right now. Please try again.');
   }
@@ -158,9 +164,6 @@ class AuthRequest implements AuthRepository {
   @override
   Future<UserModel> register(UserModel user) async {
     return _runAuthRequest(() async {
-      debugPrint(
-        '[AUTH_REQUEST][REGISTER] Start role=${user.role} email=${user.email} phone=${user.phone}',
-      );
       await initialize();
       await _cache.clearResource(_usersResourceKey);
       AppSessionReset.clearUserScopedState();
@@ -174,9 +177,6 @@ class AuthRequest implements AuthRepository {
         (item) => (item.email ?? '').trim().toLowerCase() == normalizedEmail,
       );
       if (emailTaken) {
-        debugPrint(
-          '[AUTH_REQUEST][REGISTER] Email already taken: $normalizedEmail',
-        );
         throw const AuthFailure('That email is already registered.');
       }
       final nextId =
@@ -189,9 +189,11 @@ class AuthRequest implements AuthRepository {
       final savedUser = user.copyWith(
         id: '$nextId',
         role: normalizedRole,
+        parentClientId: normalizeId(user.parentClientId),
         email: normalizedEmail,
         name: normalizedName,
         phone: normalizePhilippinePhone(user.phone) ?? user.phone?.trim(),
+        position: _normalizeFlexibleText(user.position),
         isActive: isPendingApprovalRole ? false : true,
         isOnline: false,
         createdAt: user.createdAt ?? now,
@@ -201,9 +203,6 @@ class AuthRequest implements AuthRepository {
       await _storage.writeString(_currentUserIdKey, savedUser.id ?? '');
       await _cache.clearResource(_usersResourceKey);
       AppSessionReset.clearUserScopedState();
-      debugPrint(
-        '[AUTH_REQUEST][REGISTER] Saved user id=${savedUser.id} active=${savedUser.isActive} photo=${savedUser.photo}',
-      );
       return savedUser;
     }, fallback: 'We could not create your account right now. Please try again.');
   }
@@ -227,9 +226,11 @@ class AuthRequest implements AuthRepository {
       final existing = users.where((item) => item.id == nextId).firstOrNull;
       final saved = user.copyWith(
         id: nextId,
+        parentClientId: normalizeId(user.parentClientId),
         email: normalizedEmail,
         name: normalizedName,
         phone: normalizePhilippinePhone(user.phone) ?? user.phone?.trim(),
+        position: _normalizeFlexibleText(user.position),
         isOnline: (user.isActive ?? false) && _supportsOnline(user.role)
             ? (user.isOnline ?? false)
             : false,
@@ -258,9 +259,6 @@ class AuthRequest implements AuthRepository {
     int? size,
   }) async {
     return _runAuthRequest(() async {
-      debugPrint(
-        '[AUTH_REQUEST][PHOTO] Start upload userId=$userId fileName=$fileName size=$size mimeType=$mimeType',
-      );
       final normalizedUserId = normalizeId(userId);
       if (normalizedUserId == null) {
         throw const AuthFailure('User ID is required.');
@@ -276,9 +274,6 @@ class AuthRequest implements AuthRepository {
         fileName: fileName,
         mimeType: mimeType,
         size: size,
-      );
-      debugPrint(
-        '[AUTH_REQUEST][PHOTO] Storage upload success userId=$normalizedUserId downloadUrl=${upload['download_url']}',
       );
       return saveUser(
         currentUser.copyWith(
@@ -298,9 +293,6 @@ class AuthRequest implements AuthRepository {
     int? size,
   }) async {
     return _runAuthRequest(() async {
-      debugPrint(
-        '[AUTH_REQUEST][LICENSE] Start upload userId=$userId fileName=$fileName size=$size mimeType=$mimeType',
-      );
       final normalizedUserId = normalizeId(userId);
       if (normalizedUserId == null) {
         throw const AuthFailure('User ID is required.');
@@ -322,9 +314,6 @@ class AuthRequest implements AuthRepository {
         fileName: fileName,
         mimeType: mimeType,
         size: size,
-      );
-      debugPrint(
-        '[AUTH_REQUEST][LICENSE] Storage upload success userId=$normalizedUserId downloadUrl=${upload['download_url']}',
       );
       return saveUser(
         driver.copyWith(
@@ -394,9 +383,17 @@ class AuthRequest implements AuthRepository {
       if (normalized == null) {
         return;
       }
+      final deletedUser = await _getFreshUserById(normalized);
+      await _deleteLinkedClientMemberRecords(normalized);
       await _photoStorageService.deleteUserAssets(normalized);
       await _usersCollection.doc(normalized).delete();
       await _cache.clearResource(_usersResourceKey);
+      final parentClientId = normalizeId(deletedUser?.parentClientId);
+      if (parentClientId != null) {
+        await FirestoreCacheStore.instance.clearResource(
+          '${ClientMemberRequest.resourceKeyPrefix}:$parentClientId',
+        );
+      }
       if (await _storage.readString(_currentUserIdKey) == normalized) {
         await _storage.remove(_currentUserIdKey);
         AppSessionReset.clearUserScopedState();
@@ -598,12 +595,90 @@ class AuthRequest implements AuthRepository {
     return normalizedRole == 'driver' || normalizedRole == 'helper';
   }
 
+  Future<void> _migrateLegacyMemberUsers() async {
+    final snapshot = await _usersCollection.where('role', isEqualTo: 'member').get();
+    for (final doc in snapshot.docs) {
+      final data = documentData(doc);
+      await _usersCollection.doc(doc.id).set({
+        ...data,
+        'role': 'sub-client',
+      });
+    }
+  }
+
+  Future<void> _migrateClientMemberDocumentIds() async {
+    final snapshot = await _clientMembersCollection.get();
+    for (final doc in snapshot.docs) {
+      final data = documentData(doc);
+      final userId = normalizeId(data['user_id']?.toString());
+      if (userId == null || userId == doc.id) {
+        continue;
+      }
+      final clientId = normalizeId(data['client_id']?.toString());
+      final migratedData = <String, dynamic>{
+        ...data,
+        'id': userId,
+        'user_id': userId,
+        'client_id': clientId,
+      };
+      await _clientMembersCollection.doc(userId).set(migratedData);
+      await _clientMembersCollection.doc(doc.id).delete();
+      if (clientId != null) {
+        await FirestoreCollectionCache(firestore: _firestore).removeDocument(
+          resourceKey: '${ClientMemberRequest.resourceKeyPrefix}:$clientId',
+          documentId: doc.id,
+        );
+        await FirestoreCollectionCache(firestore: _firestore).upsertDocument(
+          resourceKey: '${ClientMemberRequest.resourceKeyPrefix}:$clientId',
+          document: migratedData,
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteLinkedClientMemberRecords(String userId) async {
+    final matches = await _clientMembersCollection
+        .where('user_id', isEqualTo: userId)
+        .get();
+    for (final doc in matches.docs) {
+      final data = documentData(doc);
+      final clientId = normalizeId(data['client_id']?.toString());
+      await _clientMembersCollection.doc(doc.id).delete();
+      if (clientId != null) {
+        await FirestoreCollectionCache(firestore: _firestore).removeDocument(
+          resourceKey: '${ClientMemberRequest.resourceKeyPrefix}:$clientId',
+          documentId: doc.id,
+        );
+      }
+    }
+    final directDoc = await _clientMembersCollection.doc(userId).get();
+    if (directDoc.exists) {
+      final data = documentData(directDoc);
+      final clientId = normalizeId(data['client_id']?.toString());
+      await _clientMembersCollection.doc(userId).delete();
+      if (clientId != null) {
+        await FirestoreCollectionCache(firestore: _firestore).removeDocument(
+          resourceKey: '${ClientMemberRequest.resourceKeyPrefix}:$clientId',
+          documentId: userId,
+        );
+      }
+    }
+  }
+
   String? _normalizeTitleCase(String? value) {
     final trimmed = value?.trim();
     if (trimmed == null || trimmed.isEmpty) {
       return value;
     }
     return toTitleCase(trimmed);
+  }
+
+  String? _normalizeFlexibleText(String? value) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return value;
+    }
+    return trimmed;
   }
 
   DateTime? _toDateTime(dynamic value) {
@@ -632,12 +707,8 @@ class AuthRequest implements AuthRepository {
     } on AuthFailure {
       rethrow;
     } on FirebaseException catch (error) {
-      debugPrint(
-        '[AUTH_REQUEST][ERROR] FirebaseException code=${error.code} message=${error.message}',
-      );
       throw AuthFailure(userFacingErrorMessage(error, fallback: fallback));
     } catch (error) {
-      debugPrint('[AUTH_REQUEST][ERROR] $error');
       throw AuthFailure(userFacingErrorMessage(error, fallback: fallback));
     }
   }

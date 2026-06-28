@@ -9,6 +9,7 @@ import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/app_cached_network_image.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
@@ -73,6 +74,8 @@ class ProfileView extends StatefulWidget {
     this.quickActionLabel,
     this.quickActionTextColor,
     this.quickActionBorderColor,
+    this.businessUser,
+    this.onBusinessDetailsPressed,
     this.vehicleCatalogRepository,
     this.authRepository,
   });
@@ -91,6 +94,8 @@ class ProfileView extends StatefulWidget {
   final String? quickActionLabel;
   final Color? quickActionTextColor;
   final Color? quickActionBorderColor;
+  final UserModel? businessUser;
+  final VoidCallback? onBusinessDetailsPressed;
   final VehicleCatalogRepository? vehicleCatalogRepository;
   final AuthRepository? authRepository;
 
@@ -257,7 +262,7 @@ class _ProfileViewState extends State<ProfileView> {
         _pendingPhotoUpload = null;
         _pendingLicenseUpload = null;
       });
-      AppSnackbar.showSuccess(context, 'Profile changes saved.');
+      AppSnackbar.showSuccess(context, 'Profile updated.');
     } catch (error) {
       if (!mounted) {
         return;
@@ -300,7 +305,7 @@ class _ProfileViewState extends State<ProfileView> {
       if (!mounted) {
         return;
       }
-      AppSnackbar.showSuccess(context, 'Password changed successfully.');
+      AppSnackbar.showSuccess(context, 'Password updated.');
     } catch (error) {
       if (!mounted) {
         return;
@@ -324,8 +329,10 @@ class _ProfileViewState extends State<ProfileView> {
         _pendingLicenseUpload != null ||
         _hasLicensePreviewValue(driver?.license);
     final showOnlineField = user.role == 'driver' || user.role == 'helper';
+    final showBusinessSection = isSubClientRole(user.role);
     final joinedLabel = _formatDateTime(user.createdAt);
     final updatedLabel = _formatDateTime(user.updatedAt);
+    final businessUser = widget.businessUser;
     final content = Padding(
       padding: widget.padding,
       child: Column(
@@ -351,6 +358,41 @@ class _ProfileViewState extends State<ProfileView> {
             quickActionTextColor: widget.quickActionTextColor,
             quickActionBorderColor: widget.quickActionBorderColor,
           ),
+          if (showBusinessSection) ...[
+            const SizedBox(height: 18),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const AdminSectionTitle(title: 'Business'),
+                if (widget.onBusinessDetailsPressed != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: _SectionIconButton(
+                      icon: Icons.arrow_forward_rounded,
+                      onTap: widget.onBusinessDetailsPressed!,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _InfoGroupContent(
+              rows: [
+                _InfoRow(
+                  label: 'Name',
+                  value: _valueOrNotSet(businessUser?.name),
+                ),
+                _InfoRow(
+                  label: 'Position',
+                  value: _valueOrNotSet(user.position),
+                ),
+                _InfoRow(
+                  label: 'ID',
+                  value: _valueOrDash(businessUser?.id ?? user.parentClientId),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 18),
           const AdminSectionTitle(title: 'Personal'),
           const SizedBox(height: 10),
@@ -457,12 +499,7 @@ class _ProfileViewState extends State<ProfileView> {
     if (role == null || role.isEmpty) {
       return '';
     }
-
-    return role
-        .split('_')
-        .where((part) => part.isNotEmpty)
-        .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
-        .join(' ');
+    return humanizeDropdownValue(role);
   }
 
   static String _valueOrDash(String? value) {
@@ -850,6 +887,40 @@ class _HeaderPill extends StatelessWidget {
   }
 }
 
+class _SectionIconButton extends StatelessWidget {
+  const _SectionIconButton({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppMousePressable(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Builder(
+        builder: (context) => AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          width: 24,
+          height: 24,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: appPressableActive(context)
+                ? AppColors.primarySurfaceAlt.withValues(alpha: 0.28)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            icon,
+            size: 18,
+            color: AppColors.primaryColor,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _InfoGroupContent extends StatelessWidget {
   const _InfoGroupContent({required this.rows});
 
@@ -1216,12 +1287,13 @@ class _ChangePasswordDialog extends StatefulWidget {
 }
 
 class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
-  final TextEditingController _oldPasswordController =
-      TextEditingController();
-  final TextEditingController _newPasswordController =
-      TextEditingController();
+  final TextEditingController _oldPasswordController = TextEditingController();
+  final TextEditingController _newPasswordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
+  final FocusNode _oldPasswordFocusNode = FocusNode();
+  final FocusNode _newPasswordFocusNode = FocusNode();
+  final FocusNode _confirmPasswordFocusNode = FocusNode();
   bool _isOldPasswordObscured = true;
   bool _isNewPasswordObscured = true;
   bool _isConfirmPasswordObscured = true;
@@ -1231,7 +1303,24 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
     _oldPasswordController.dispose();
     _newPasswordController.dispose();
     _confirmPasswordController.dispose();
+    _oldPasswordFocusNode.dispose();
+    _newPasswordFocusNode.dispose();
+    _confirmPasswordFocusNode.dispose();
     super.dispose();
+  }
+
+  void _focusNext(FocusNode focusNode) {
+    if (!mounted) {
+      return;
+    }
+    FocusScope.of(context).requestFocus(focusNode);
+  }
+
+  void _unfocusCurrentField() {
+    final currentFocus = FocusScope.of(context);
+    if (!currentFocus.hasPrimaryFocus) {
+      currentFocus.unfocus();
+    }
   }
 
   void _submit() {
@@ -1250,10 +1339,7 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
     }
 
     Navigator.of(context).pop(
-      _ChangePasswordResult(
-        oldPassword: oldPassword,
-        newPassword: newPassword,
-      ),
+      _ChangePasswordResult(oldPassword: oldPassword, newPassword: newPassword),
     );
   }
 
@@ -1317,8 +1403,11 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
             children: [
               AdminModalTextField(
                 controller: _oldPasswordController,
+                focusNode: _oldPasswordFocusNode,
                 label: 'Old Password',
                 obscureText: _isOldPasswordObscured,
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => _focusNext(_newPasswordFocusNode),
                 suffixIcon: _passwordSuffix(
                   obscured: _isOldPasswordObscured,
                   onPressed: () {
@@ -1330,8 +1419,11 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
               ),
               AdminModalTextField(
                 controller: _newPasswordController,
+                focusNode: _newPasswordFocusNode,
                 label: 'New Password',
                 obscureText: _isNewPasswordObscured,
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => _focusNext(_confirmPasswordFocusNode),
                 suffixIcon: _passwordSuffix(
                   obscured: _isNewPasswordObscured,
                   onPressed: () {
@@ -1343,15 +1435,20 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
               ),
               AdminModalTextField(
                 controller: _confirmPasswordController,
+                focusNode: _confirmPasswordFocusNode,
                 label: 'Confirm Password',
                 obscureText: _isConfirmPasswordObscured,
                 bottomPadding: 0,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) {
+                  _unfocusCurrentField();
+                  _submit();
+                },
                 suffixIcon: _passwordSuffix(
                   obscured: _isConfirmPasswordObscured,
                   onPressed: () {
                     setState(() {
-                      _isConfirmPasswordObscured =
-                          !_isConfirmPasswordObscured;
+                      _isConfirmPasswordObscured = !_isConfirmPasswordObscured;
                     });
                   },
                 ),

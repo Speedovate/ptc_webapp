@@ -66,139 +66,12 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
   String _roleFilter = 'All';
   String _activeFilter = 'All';
 
-  String _formSaveMessage(StatusForm form, {required bool isEditing}) {
-    final roleLabel = _resolvedFormRolesText(form);
-    final statusLabel = _resolvedFormStatusLabel(widget.vm, form);
-    final subject = [
-      if (roleLabel.isNotEmpty && roleLabel != '-') roleLabel,
-      if (statusLabel.isNotEmpty) statusLabel,
-    ].join(' ');
-
-    if (subject.isNotEmpty) {
-      return isEditing
-          ? '$subject form has been updated.'
-          : '$subject form has been created.';
-    }
-
-    return isEditing ? 'Form has been updated.' : 'Form has been created.';
+  String _formSaveMessage({required bool isEditing}) {
+    return isEditing ? 'Form updated.' : 'Form added.';
   }
 
-  String _formEditMessage(StatusForm before, StatusForm after) {
-    final roleLabel = _resolvedFormRolesText(after);
-    final statusLabel = _resolvedFormStatusLabel(widget.vm, after);
-    final subject = [
-      if (roleLabel.isNotEmpty && roleLabel != '-') roleLabel,
-      if (statusLabel.isNotEmpty) statusLabel,
-    ].join(' ');
-    final changedFields = _changedFormFields(before, after);
-    final detailedMessage = _buildDetailedUpdateMessage(
-      subject: subject.isNotEmpty ? '$subject form' : 'Form',
-      changes: changedFields,
-    );
-    if (detailedMessage != null) {
-      return detailedMessage;
-    }
-    return _formSaveMessage(after, isEditing: true);
-  }
-
-  Map<String, String> _changedFormFields(StatusForm before, StatusForm after) {
-    final changed = <String, String>{};
-
-    if (before.resolvedRoles.join('|') != after.resolvedRoles.join('|')) {
-      changed['roles'] = _resolvedFormRolesText(after);
-    }
-    if (before.currentStatusKey != after.currentStatusKey) {
-      changed['current status'] = after.currentStatusKey ?? '-';
-    }
-    if (before.nextStatusKey != after.nextStatusKey) {
-      changed['next status'] = after.nextStatusKey ?? '-';
-    }
-    if (_resolvedFormStatusLabel(widget.vm, before) !=
-        _resolvedFormStatusLabel(widget.vm, after)) {
-      final label = _resolvedFormStatusLabel(widget.vm, after);
-      changed['status label'] = label.isEmpty ? '-' : label;
-    }
-    if (_resolvedFormStatusDescription(widget.vm, before) !=
-        _resolvedFormStatusDescription(widget.vm, after)) {
-      final description = _resolvedFormStatusDescription(widget.vm, after);
-      changed['status description'] = description.isEmpty ? '-' : description;
-    }
-    if ((before.buttonText ?? '').trim() != (after.buttonText ?? '').trim()) {
-      changed['button text'] = after.buttonText?.trim() ?? '-';
-    }
-    if (before.resolvedIsMainForm != after.resolvedIsMainForm) {
-      changed['main form'] = after.resolvedIsMainForm ? 'Main' : 'Not Main';
-    }
-    final beforeFieldIds = before.fields
-        .map((field) => field.id ?? '')
-        .join('|');
-    final afterFieldIds = after.fields.map((field) => field.id ?? '').join('|');
-    if (beforeFieldIds != afterFieldIds) {
-      changed['fields'] = after.fields.isEmpty
-          ? '-'
-          : after.fields.map((field) => field.id ?? '-').join(', ');
-    }
-    if (_fieldOverrideSignature(before) != _fieldOverrideSignature(after)) {
-      changed['field rules'] = after.fieldOverrides.isEmpty
-          ? '-'
-          : after.fieldOverrides.entries
-                .map(
-                  (entry) =>
-                      '${entry.key}: required=${entry.value.required ?? 'default'}, placeholder=${entry.value.placeholder ?? 'default'}',
-                )
-                .join(', ');
-    }
-    if (_dependencySignature(before) != _dependencySignature(after)) {
-      changed['dependencies'] = after.dependencies.isEmpty
-          ? '-'
-          : after.dependencies
-                .map(
-                  (item) =>
-                      '${item.statusType ?? '-'}:${item.statusKey ?? '-'}',
-                )
-                .join(', ');
-    }
-    if ((before.blockedMessage ?? '').trim() !=
-        (after.blockedMessage ?? '').trim()) {
-      changed['blocked message'] = after.blockedMessage?.trim() ?? '-';
-    }
-    if ((before.isActive ?? false) != (after.isActive ?? false)) {
-      changed['active status'] = '${after.isActive ?? false}';
-    }
-
-    return changed;
-  }
-
-  String _dependencySignature(StatusForm form) {
-    return form.dependencies
-        .map((item) => '${item.statusType ?? ''}:${item.statusKey ?? ''}')
-        .join('|');
-  }
-
-  String _fieldOverrideSignature(StatusForm form) {
-    return form.fieldOverrides.entries
-        .map(
-          (entry) =>
-              '${entry.key}:${entry.value.required?.toString() ?? ''}:${entry.value.placeholder ?? ''}',
-        )
-        .join('|');
-  }
-
-  String? _buildDetailedUpdateMessage({
-    required String subject,
-    required Map<String, String> changes,
-  }) {
-    if (changes.isEmpty) {
-      return null;
-    }
-    if (changes.length == 1) {
-      final entry = changes.entries.first;
-      return "$subject's ${entry.key} has been updated to ${entry.value}.";
-    }
-    final summary = changes.entries
-        .map((entry) => '${entry.key} = ${entry.value}')
-        .join('; ');
-    return '$subject has been updated: $summary.';
+  String _formEditMessage() {
+    return _formSaveMessage(isEditing: true);
   }
 
   String get _emptyMessage {
@@ -279,7 +152,6 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
                 ),
                 FilledButton(
                   onPressed: () async {
-                    final savingForm = form;
                     await widget.vm.saveForm();
                     final errorMessage = widget.vm.errorMessage;
                     if (!dialogContext.mounted) {
@@ -288,7 +160,7 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
                     if (errorMessage == null) {
                       AppSnackbar.showSuccess(
                         dialogContext,
-                        _formSaveMessage(savingForm, isEditing: false),
+                        _formSaveMessage(isEditing: false),
                       );
                       widget.vm.clearSelection();
                       Navigator.of(dialogContext).pop();
@@ -347,7 +219,6 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
                 ),
                 FilledButton(
                   onPressed: () async {
-                    final savingForm = selected;
                     await widget.vm.saveForm();
                     final errorMessage = widget.vm.errorMessage;
                     if (!dialogContext.mounted) {
@@ -356,7 +227,7 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
                     if (errorMessage == null) {
                       AppSnackbar.showSuccess(
                         dialogContext,
-                        _formEditMessage(form, savingForm),
+                        _formEditMessage(),
                       );
                       widget.vm.clearSelection();
                       Navigator.of(dialogContext).pop();
@@ -367,12 +238,35 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
                   child: const Text('Save'),
                 ),
               ],
-              child: _InlineEditorContent(
-                vm: widget.vm,
-                form: selected,
-                onClose: () {
-                  widget.vm.clearSelection();
-                  Navigator.of(dialogContext).pop();
+              child: Builder(
+                builder: (context) {
+                  Future<void> submitEditForm() async {
+                    await widget.vm.saveForm();
+                    final errorMessage = widget.vm.errorMessage;
+                    if (!dialogContext.mounted) {
+                      return;
+                    }
+                    if (errorMessage == null) {
+                      AppSnackbar.showSuccess(
+                        dialogContext,
+                        _formEditMessage(),
+                      );
+                      widget.vm.clearSelection();
+                      Navigator.of(dialogContext).pop();
+                    } else {
+                      AppSnackbar.showError(dialogContext, errorMessage);
+                    }
+                  }
+
+                  return _InlineEditorContent(
+                    vm: widget.vm,
+                    form: selected,
+                    onSubmit: submitEditForm,
+                    onClose: () {
+                      widget.vm.clearSelection();
+                      Navigator.of(dialogContext).pop();
+                    },
+                  );
                 },
               ),
             );
@@ -860,8 +754,10 @@ class _StatusFormsTable extends StatelessWidget {
     fontWeight: FontWeight.w700,
   );
 
-  static const _defaultTrailingPadding = 20.0;
-  static const _extraWidthAllowance = 16.0;
+  static const _defaultTrailingPadding =
+      AdminListMeasurements.defaultTrailingPadding;
+  static const _extraWidthAllowance =
+      AdminListMeasurements.defaultExtraWidthAllowance;
   static const _minFlexibleRolesWidth = 140.0;
 
   @override
@@ -1529,11 +1425,13 @@ class _InlineEditorContent extends StatelessWidget {
   const _InlineEditorContent({
     required this.vm,
     required this.form,
+    this.onSubmit,
     this.onClose,
   });
 
   final AdminFlowViewModel vm;
   final StatusForm form;
+  final VoidCallback? onSubmit;
   final VoidCallback? onClose;
 
   @override
@@ -1543,12 +1441,17 @@ class _InlineEditorContent extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: _BasicInfoSection(vm: vm, form: form),
+          child: _BasicInfoSection(vm: vm, form: form, onSubmit: onSubmit),
         ),
         const SizedBox(height: 6),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: _fullWidthRolesField(context: context, vm: vm, form: form),
+          child: _fullWidthRolesField(
+            context: context,
+            vm: vm,
+            form: form,
+            onSubmit: onSubmit,
+          ),
         ),
         const SizedBox(height: 16),
         Padding(
@@ -1558,7 +1461,7 @@ class _InlineEditorContent extends StatelessWidget {
         const SizedBox(height: 16),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: _DependenciesSection(vm: vm, form: form),
+          child: _DependenciesSection(vm: vm, form: form, onSubmit: onSubmit),
         ),
         Padding(
           padding: const EdgeInsets.only(top: 16),
@@ -1574,10 +1477,15 @@ class _InlineEditorContent extends StatelessWidget {
 }
 
 class _BasicInfoSection extends StatelessWidget {
-  const _BasicInfoSection({required this.vm, required this.form});
+  const _BasicInfoSection({
+    required this.vm,
+    required this.form,
+    this.onSubmit,
+  });
 
   final AdminFlowViewModel vm;
   final StatusForm form;
+  final VoidCallback? onSubmit;
 
   @override
   Widget build(BuildContext context) {
@@ -1594,6 +1502,7 @@ class _BasicInfoSection extends StatelessWidget {
                 statuses: roleStatuses,
                 value: form.currentStatusKey,
                 label: 'Status',
+                onSubmit: onSubmit,
                 onChanged: (value) =>
                     vm.updateFormField('currentStatusKey', value),
               ),
@@ -1602,6 +1511,7 @@ class _BasicInfoSection extends StatelessWidget {
                 statuses: roleStatuses,
                 value: form.nextStatusKey,
                 label: 'Next Status',
+                onSubmit: onSubmit,
                 onChanged: (value) =>
                     vm.updateFormField('nextStatusKey', value),
               ),
@@ -1609,6 +1519,7 @@ class _BasicInfoSection extends StatelessWidget {
               _fullWidthTextField(
                 initialValue: form.buttonText,
                 label: 'Text On Button',
+                onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                 onChanged: (value) => vm.updateFormField('buttonText', value),
               ),
             ],
@@ -1630,6 +1541,7 @@ class _BasicInfoSection extends StatelessWidget {
                         statuses: roleStatuses,
                         value: form.currentStatusKey,
                         label: 'Status',
+                        onSubmit: onSubmit,
                         onChanged: (value) =>
                             vm.updateFormField('currentStatusKey', value),
                       ),
@@ -1641,6 +1553,7 @@ class _BasicInfoSection extends StatelessWidget {
                         statuses: roleStatuses,
                         value: form.nextStatusKey,
                         label: 'Next Status',
+                        onSubmit: onSubmit,
                         onChanged: (value) =>
                             vm.updateFormField('nextStatusKey', value),
                       ),
@@ -1657,6 +1570,7 @@ class _BasicInfoSection extends StatelessWidget {
                   child: _fullWidthTextField(
                     initialValue: form.buttonText,
                     label: 'Text On Button',
+                    onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                     onChanged: (value) =>
                         vm.updateFormField('buttonText', value),
                   ),
@@ -1671,10 +1585,15 @@ class _BasicInfoSection extends StatelessWidget {
 }
 
 class _DependenciesSection extends StatelessWidget {
-  const _DependenciesSection({required this.vm, required this.form});
+  const _DependenciesSection({
+    required this.vm,
+    required this.form,
+    this.onSubmit,
+  });
 
   final AdminFlowViewModel vm;
   final StatusForm form;
+  final VoidCallback? onSubmit;
 
   @override
   Widget build(BuildContext context) {
@@ -1735,6 +1654,7 @@ class _DependenciesSection extends StatelessWidget {
                 onRemove: () => vm.removeDependency(entry.key),
                 onBlockedMessageChanged: (value) =>
                     vm.updateFormField('blockedMessage', value),
+                onSubmit: onSubmit,
               ),
             ),
           ),
@@ -1756,6 +1676,7 @@ class _DependencyCard extends StatelessWidget {
     required this.onStatusChanged,
     required this.onRemove,
     required this.onBlockedMessageChanged,
+    this.onSubmit,
   });
 
   final int index;
@@ -1769,6 +1690,7 @@ class _DependencyCard extends StatelessWidget {
   final ValueChanged<String?> onStatusChanged;
   final VoidCallback onRemove;
   final ValueChanged<String> onBlockedMessageChanged;
+  final VoidCallback? onSubmit;
 
   @override
   Widget build(BuildContext context) {
@@ -1854,6 +1776,7 @@ class _DependencyCard extends StatelessWidget {
                 )
                 .toList(),
             onChanged: onStatusChanged,
+            onSelectionCompleted: onSubmit,
           ),
           if (showBlockedMessage) ...[
             const SizedBox(height: 8),
@@ -1861,6 +1784,7 @@ class _DependencyCard extends StatelessWidget {
               label: 'Blocked Message',
               initialValue: blockedMessage,
               bottomPadding: 0,
+              onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
               onChanged: onBlockedMessageChanged,
             ),
           ],
@@ -2249,7 +2173,7 @@ class _FixedSlot extends StatelessWidget {
 class _HeaderCell extends StatelessWidget {
   const _HeaderCell({
     required this.label,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
     this.textAlign = TextAlign.left,
   });
@@ -2273,7 +2197,7 @@ class _HeaderCell extends StatelessWidget {
 class _BodyCell extends StatelessWidget {
   const _BodyCell({
     required this.child,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
   });
 
@@ -2338,6 +2262,7 @@ Widget _fullWidthRolesField({
   required BuildContext context,
   required AdminFlowViewModel vm,
   required StatusForm form,
+  VoidCallback? onSubmit,
 }) {
   final selectedRoles = form.resolvedRoles.toSet();
   return Column(
@@ -2366,6 +2291,7 @@ Widget _fullWidthRolesField({
                 nextRoles.add(role);
               }
               vm.updateFormRoles(nextRoles.toList());
+              onSubmit?.call();
             },
           );
         }).toList(),
@@ -2378,12 +2304,14 @@ Widget _fullWidthTextField({
   required String? initialValue,
   required String label,
   required ValueChanged<String> onChanged,
+  ValueChanged<String>? onSubmitted,
 }) {
   return AdminModalValueTextField(
     initialValue: initialValue,
     label: label,
     bottomPadding: 0,
     onChanged: onChanged,
+    onSubmitted: onSubmitted,
   );
 }
 
@@ -2392,6 +2320,7 @@ Widget _fullWidthStatusField({
   required String? value,
   required String label,
   required ValueChanged<String?> onChanged,
+  VoidCallback? onSubmit,
 }) {
   return AdminModalDropdownField<String>(
     label: label,
@@ -2407,6 +2336,7 @@ Widget _fullWidthStatusField({
         )
         .toList(),
     onChanged: onChanged,
+    onSelectionCompleted: onSubmit,
   );
 }
 

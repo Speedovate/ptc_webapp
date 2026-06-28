@@ -77,6 +77,7 @@ class AdminModalTextField extends StatefulWidget {
     super.key,
     required this.controller,
     required this.label,
+    this.focusNode,
     this.hintText,
     this.obscureText = false,
     this.suffixIcon,
@@ -88,10 +89,13 @@ class AdminModalTextField extends StatefulWidget {
     this.keyboardType,
     this.readOnly = false,
     this.onTap,
+    this.textInputAction,
+    this.onSubmitted,
   });
 
   final TextEditingController controller;
   final String label;
+  final FocusNode? focusNode;
   final String? hintText;
   final bool obscureText;
   final Widget? suffixIcon;
@@ -103,6 +107,8 @@ class AdminModalTextField extends StatefulWidget {
   final TextInputType? keyboardType;
   final bool readOnly;
   final VoidCallback? onTap;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
 
   @override
   State<AdminModalTextField> createState() => _AdminModalTextFieldState();
@@ -111,6 +117,33 @@ class AdminModalTextField extends StatefulWidget {
 class _AdminModalTextFieldState extends State<AdminModalTextField> {
   bool _isHovered = false;
   bool _isPressed = false;
+
+  bool get _isSingleLineField =>
+      (widget.minLines ?? 1) == 1 && (widget.maxLines ?? 1) == 1;
+
+  TextInputAction? get _resolvedTextInputAction {
+    if (widget.textInputAction != null) {
+      return widget.textInputAction;
+    }
+    if (!_isSingleLineField || widget.readOnly) {
+      return null;
+    }
+    return TextInputAction.next;
+  }
+
+  void _handleSubmitted(String value) {
+    if (widget.onSubmitted case final onSubmitted?) {
+      onSubmitted(value);
+      return;
+    }
+    if (!_isSingleLineField || widget.readOnly) {
+      return;
+    }
+    final focusScope = FocusScope.of(context);
+    if (!focusScope.nextFocus()) {
+      focusScope.unfocus();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -140,6 +173,7 @@ class _AdminModalTextFieldState extends State<AdminModalTextField> {
           },
           child: TextFormField(
             controller: widget.controller,
+            focusNode: widget.focusNode,
             obscureText: widget.obscureText,
             readOnly: widget.readOnly,
             textCapitalization: widget.textCapitalization,
@@ -148,16 +182,22 @@ class _AdminModalTextFieldState extends State<AdminModalTextField> {
             maxLines: widget.maxLines,
             keyboardType: widget.keyboardType,
             onTap: widget.onTap,
+            textInputAction: _resolvedTextInputAction,
+            onFieldSubmitted: _handleSubmitted,
             style: adminFieldValueTextStyle,
-            decoration: adminFormInputDecoration(
-              widget.label,
-              hintText: widget.hintText,
-            ).copyWith(
-              suffixIcon: widget.suffixIcon,
-              fillColor: _isPressed || _isHovered
-                  ? activeFillColor
-                  : AppColors.primarySurface,
-            ),
+            decoration:
+                adminFormInputDecoration(
+                  widget.label,
+                  hintText: adminEnterPlaceholder(
+                    widget.label,
+                    override: widget.hintText,
+                  ),
+                ).copyWith(
+                  suffixIcon: widget.suffixIcon,
+                  fillColor: _isPressed || _isHovered
+                      ? activeFillColor
+                      : AppColors.primarySurface,
+                ),
           ),
         ),
       ),
@@ -173,6 +213,9 @@ class AdminModalActionField extends StatefulWidget {
     this.valueText,
     this.hintText,
     this.suffixIcon,
+    this.focusNode,
+    this.activateOnFocus = false,
+    this.onSubmitted,
     this.bottomPadding = 6,
   });
 
@@ -181,6 +224,9 @@ class AdminModalActionField extends StatefulWidget {
   final String? valueText;
   final String? hintText;
   final Widget? suffixIcon;
+  final FocusNode? focusNode;
+  final bool activateOnFocus;
+  final VoidCallback? onSubmitted;
   final double bottomPadding;
 
   @override
@@ -189,12 +235,18 @@ class AdminModalActionField extends StatefulWidget {
 
 class _AdminModalActionFieldState extends State<AdminModalActionField> {
   late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+  late final bool _ownsFocusNode;
   bool _isHovered = false;
   bool _isPressed = false;
+  bool _suppressFocusActivationOnce = false;
+  bool _skipNextFocusActivation = false;
 
   @override
   void initState() {
     super.initState();
+    _ownsFocusNode = widget.focusNode == null;
+    _focusNode = widget.focusNode ?? FocusNode();
     _controller = TextEditingController(text: widget.valueText ?? '');
   }
 
@@ -214,7 +266,41 @@ class _AdminModalActionFieldState extends State<AdminModalActionField> {
   @override
   void dispose() {
     _controller.dispose();
+    if (_ownsFocusNode) {
+      _focusNode.dispose();
+    }
     super.dispose();
+  }
+
+  void _handleActivate() {
+    _skipNextFocusActivation = true;
+    if (widget.onSubmitted case final onSubmitted?) {
+      onSubmitted();
+      return;
+    }
+    widget.onTap();
+  }
+
+  void _handleFocusChanged() {
+    if (!_focusNode.hasFocus) {
+      _suppressFocusActivationOnce = false;
+      return;
+    }
+    if (_skipNextFocusActivation) {
+      _skipNextFocusActivation = false;
+      _suppressFocusActivationOnce = false;
+      return;
+    }
+    if (!widget.activateOnFocus || _suppressFocusActivationOnce) {
+      _suppressFocusActivationOnce = false;
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_focusNode.hasFocus) {
+        return;
+      }
+      _handleActivate();
+    });
   }
 
   @override
@@ -223,7 +309,10 @@ class _AdminModalActionFieldState extends State<AdminModalActionField> {
     final decoration =
         adminFormInputDecoration(
           widget.label,
-          hintText: widget.hintText,
+          hintText: adminSelectPlaceholder(
+            widget.label,
+            override: widget.hintText,
+          ),
         ).copyWith(
           suffixIcon: widget.suffixIcon,
           fillColor: _isPressed || _isHovered
@@ -240,20 +329,40 @@ class _AdminModalActionFieldState extends State<AdminModalActionField> {
           _isHovered = false;
           _isPressed = false;
         }),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapDown: (_) => setState(() => _isPressed = true),
-          onTapCancel: () => setState(() => _isPressed = false),
-          onTapUp: (_) => setState(() => _isPressed = false),
-          onTap: widget.onTap,
-          child: IgnorePointer(
-            child: TextFormField(
-              controller: _controller,
-              readOnly: true,
-              showCursor: false,
-              enableInteractiveSelection: false,
-              style: adminFieldValueTextStyle,
-              decoration: decoration,
+        child: FocusableActionDetector(
+          focusNode: _focusNode,
+          onFocusChange: (_) => _handleFocusChanged(),
+          shortcuts: const <ShortcutActivator, Intent>{
+            SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+            SingleActivator(LogicalKeyboardKey.numpadEnter): ActivateIntent(),
+            SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+          },
+          actions: <Type, Action<Intent>>{
+            ActivateIntent: CallbackAction<ActivateIntent>(
+              onInvoke: (intent) {
+                _handleActivate();
+                return null;
+              },
+            ),
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (_) {
+              _suppressFocusActivationOnce = true;
+              setState(() => _isPressed = true);
+            },
+            onTapCancel: () => setState(() => _isPressed = false),
+            onTapUp: (_) => setState(() => _isPressed = false),
+            onTap: widget.onTap,
+            child: IgnorePointer(
+              child: TextFormField(
+                controller: _controller,
+                readOnly: true,
+                showCursor: false,
+                enableInteractiveSelection: false,
+                style: adminFieldValueTextStyle,
+                decoration: decoration,
+              ),
             ),
           ),
         ),
@@ -269,6 +378,8 @@ class AdminModalValueTextField extends StatefulWidget {
     this.initialValue,
     this.hintText,
     this.onChanged,
+    this.textInputAction,
+    this.onSubmitted,
     this.bottomPadding = 6,
     this.minLines = 1,
     this.maxLines = 1,
@@ -279,6 +390,8 @@ class AdminModalValueTextField extends StatefulWidget {
   final String? initialValue;
   final String? hintText;
   final ValueChanged<String>? onChanged;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
   final double bottomPadding;
   final int? minLines;
   final int? maxLines;
@@ -292,6 +405,33 @@ class AdminModalValueTextField extends StatefulWidget {
 class _AdminModalValueTextFieldState extends State<AdminModalValueTextField> {
   bool _isHovered = false;
   bool _isPressed = false;
+
+  bool get _isSingleLineField =>
+      (widget.minLines ?? 1) == 1 && (widget.maxLines ?? 1) == 1;
+
+  TextInputAction? get _resolvedTextInputAction {
+    if (widget.textInputAction != null) {
+      return widget.textInputAction;
+    }
+    if (!_isSingleLineField) {
+      return null;
+    }
+    return TextInputAction.next;
+  }
+
+  void _handleSubmitted(String value) {
+    if (widget.onSubmitted case final onSubmitted?) {
+      onSubmitted(value);
+      return;
+    }
+    if (!_isSingleLineField) {
+      return;
+    }
+    final focusScope = FocusScope.of(context);
+    if (!focusScope.nextFocus()) {
+      focusScope.unfocus();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -322,15 +462,21 @@ class _AdminModalValueTextFieldState extends State<AdminModalValueTextField> {
             minLines: widget.minLines,
             maxLines: widget.maxLines,
             keyboardType: widget.keyboardType,
+            textInputAction: _resolvedTextInputAction,
             style: adminFieldValueTextStyle,
-            decoration: adminFormInputDecoration(
-              widget.label,
-              hintText: widget.hintText,
-            ).copyWith(
-              fillColor: _isPressed || _isHovered
-                  ? activeFillColor
-                  : AppColors.primarySurface,
-            ),
+            onFieldSubmitted: _handleSubmitted,
+            decoration:
+                adminFormInputDecoration(
+                  widget.label,
+                  hintText: adminEnterPlaceholder(
+                    widget.label,
+                    override: widget.hintText,
+                  ),
+                ).copyWith(
+                  fillColor: _isPressed || _isHovered
+                      ? activeFillColor
+                      : AppColors.primarySurface,
+                ),
             onChanged: widget.onChanged,
           ),
         ),
@@ -344,8 +490,12 @@ class AdminModalDropdownField<T> extends StatelessWidget {
     super.key,
     required this.label,
     this.initialValue,
+    this.hintText,
+    this.errorText,
+    this.focusNode,
     this.items,
     this.onChanged,
+    this.onSelectionCompleted,
     this.bottomPadding = 6,
     this.iconEnabledColor,
     this.style,
@@ -355,8 +505,12 @@ class AdminModalDropdownField<T> extends StatelessWidget {
 
   final String label;
   final T? initialValue;
+  final String? hintText;
+  final String? errorText;
+  final FocusNode? focusNode;
   final List<DropdownMenuItem<T>>? items;
   final ValueChanged<T?>? onChanged;
+  final VoidCallback? onSelectionCompleted;
   final double bottomPadding;
   final Color? iconEnabledColor;
   final TextStyle? style;
@@ -369,12 +523,20 @@ class AdminModalDropdownField<T> extends StatelessWidget {
       bottomPadding: bottomPadding,
       child: AdminDropdownFormField<T>(
         initialValue: initialValue,
+        focusNode: focusNode,
+        autoActivateOnFocus: true,
         iconEnabledColor: iconEnabledColor ?? AppColors.primaryColor,
         style: style ?? adminDropdownDisplayTextStyle,
         isExpanded: isExpanded,
-        decoration: adminFormInputDecoration(label),
+        decoration: adminFormInputDecoration(
+          label,
+          hintText: adminSelectPlaceholder(label, override: hintText),
+        ).copyWith(errorText: errorText),
         items: items,
-        onChanged: onChanged,
+        onChanged: (value) {
+          onChanged?.call(value);
+          onSelectionCompleted?.call();
+        },
         disabledTapMessage: disabledTapMessage,
       ),
     );

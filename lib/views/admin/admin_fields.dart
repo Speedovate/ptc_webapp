@@ -73,97 +73,8 @@ class AdminFieldsView extends StatelessWidget {
   static const controlHeight = 52.0;
   static const surfaceRadius = 16.0;
 
-  static String _fieldSaveMessage(
-    StatusField field, {
-    required bool isEditing,
-    StatusField? originalField,
-  }) {
-    final subject = (field.title ?? field.key ?? '').trim();
-    if (isEditing && originalField != null) {
-      final changedFields = _changedFieldLabels(originalField, field);
-      final detailedMessage = _buildDetailedUpdateMessage(
-        subject: subject.isNotEmpty ? '$subject field' : 'Field',
-        changes: changedFields,
-      );
-      if (detailedMessage != null) {
-        return detailedMessage;
-      }
-    }
-
-    if (subject.isNotEmpty) {
-      return isEditing
-          ? '$subject field has been updated.'
-          : '$subject field has been created.';
-    }
-
-    return isEditing ? 'Field has been updated.' : 'Field has been created.';
-  }
-
-  static Map<String, String> _changedFieldLabels(
-    StatusField before,
-    StatusField after,
-  ) {
-    final changed = <String, String>{};
-
-    if ((before.key ?? '').trim() != (after.key ?? '').trim()) {
-      changed['key'] = after.key?.trim() ?? '-';
-    }
-    if ((before.type ?? '').trim() != (after.type ?? '').trim()) {
-      changed['type'] = after.type?.trim() ?? '-';
-    }
-    if ((before.title ?? '').trim() != (after.title ?? '').trim()) {
-      changed['title'] = after.title?.trim() ?? '-';
-    }
-    if ((before.subtitle ?? '').trim() != (after.subtitle ?? '').trim()) {
-      changed['subtitle'] = after.subtitle?.trim() ?? '-';
-    }
-    if ((before.instructions ?? '').trim() !=
-        (after.instructions ?? '').trim()) {
-      changed['instructions'] = after.instructions?.trim() ?? '-';
-    }
-    if ((before.placeholder ?? '').trim() != (after.placeholder ?? '').trim()) {
-      changed['placeholder'] = after.placeholder?.trim() ?? '-';
-    }
-    if ((before.required ?? false) != (after.required ?? false)) {
-      changed['required'] = '${after.required ?? false}';
-    }
-    if (before.min != after.min) changed['min'] = '${after.min ?? 'Not set'}';
-    if (before.max != after.max) changed['max'] = '${after.max ?? 'Not set'}';
-    if (before.options.join('|') != after.options.join('|')) {
-      changed['options'] = after.options.isEmpty
-          ? '-'
-          : after.options.join(', ');
-    }
-    if ((before.requiredError ?? '').trim() !=
-        (after.requiredError ?? '').trim()) {
-      changed['required error'] = after.requiredError?.trim() ?? '-';
-    }
-    if ((before.validationError ?? '').trim() !=
-        (after.validationError ?? '').trim()) {
-      changed['validation error'] = after.validationError?.trim() ?? '-';
-    }
-    if ((before.isActive ?? false) != (after.isActive ?? false)) {
-      changed['active status'] = '${after.isActive ?? false}';
-    }
-
-    return changed;
-  }
-
-  static String? _buildDetailedUpdateMessage({
-    required String subject,
-    required Map<String, String> changes,
-  }) {
-    if (changes.isEmpty) {
-      return null;
-    }
-    if (changes.length == 1) {
-      final entry = changes.entries.first;
-      return "$subject's ${entry.key} has been updated to ${entry.value}.";
-    }
-    final summary = changes.entries
-        .map((entry) => '${entry.key} = ${entry.value}')
-        .join('; ');
-    return '$subject has been updated: $summary.';
+  static String _fieldSaveMessage({required bool isEditing}) {
+    return isEditing ? 'Field updated.' : 'Field added.';
   }
 
   @override
@@ -218,11 +129,7 @@ class AdminFieldsView extends StatelessWidget {
         }
         AppSnackbar.showSuccess(
           context,
-          _fieldSaveMessage(
-            savedField,
-            isEditing: initialField != null,
-            originalField: initialField,
-          ),
+          _fieldSaveMessage(isEditing: initialField != null),
         );
       } catch (error) {
         if (!context.mounted) {
@@ -326,13 +233,13 @@ class _FieldsContentState extends State<_FieldsContent> {
                             .asMap()
                             .entries
                             .map(
-                            (entry) => Padding(
-                              padding: EdgeInsets.only(
-                                bottom:
-                                    entry.key == _filteredFields.length - 1
-                                        ? 0
-                                        : 12,
-                              ),
+                              (entry) => Padding(
+                                padding: EdgeInsets.only(
+                                  bottom:
+                                      entry.key == _filteredFields.length - 1
+                                      ? 0
+                                      : 12,
+                                ),
                                 child: _FieldResponsiveCard(
                                   field: entry.value,
                                   vm: widget.vm,
@@ -651,8 +558,10 @@ class _FieldsTable extends StatelessWidget {
     fontWeight: FontWeight.w700,
   );
 
-  static const _defaultTrailingPadding = 20.0;
-  static const _extraWidthAllowance = 16.0;
+  static const _defaultTrailingPadding =
+      AdminListMeasurements.defaultTrailingPadding;
+  static const _extraWidthAllowance =
+      AdminListMeasurements.defaultExtraWidthAllowance;
 
   @override
   Widget build(BuildContext context) {
@@ -1231,13 +1140,37 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
     final usesDynamicSource = statusFieldDynamicOptionSources.contains(
       sourceKey,
     );
-    if (fieldType == 'dropdown' && !usesDynamicSource && options.isEmpty) {
+    if ((fieldType == 'dropdown' || fieldType == 'search_dropdown') &&
+        !usesDynamicSource &&
+        options.isEmpty) {
       return 'Add at least one static choice or pick a choices source.';
     }
     if (fieldType == 'checkbox' && options.isEmpty) {
       return 'Add at least one choice.';
     }
+    final visibilityControllerKey = (_field.visibilityControllerKey ?? '').trim();
+    final visibilityOptionValues = _field.visibilityOptionValues
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+    if (visibilityControllerKey.isNotEmpty && visibilityOptionValues.isEmpty) {
+      return 'Add at least one Show When option.';
+    }
+    if (visibilityControllerKey.isEmpty && visibilityOptionValues.isNotEmpty) {
+      return 'Show When Field Key is required.';
+    }
     return null;
+  }
+
+  bool get _isEditing => widget.initialField != null;
+
+  void _submitForm() {
+    final validationMessage = _validationMessage();
+    if (validationMessage != null) {
+      AppSnackbar.showError(context, validationMessage);
+      return;
+    }
+    Navigator.of(context).pop(_normalizeFieldPlaceholder(_field));
   }
 
   StatusField _normalizeFieldPlaceholder(StatusField field) {
@@ -1249,7 +1182,7 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
       }
       return field;
     }
-    if (fieldType == 'dropdown') {
+    if (fieldType == 'dropdown' || fieldType == 'search_dropdown') {
       final isRequired = field.required ?? false;
       if (isRequired) {
         return field.copyWith(placeholder: null);
@@ -1258,6 +1191,18 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
       final currentPlaceholder = field.placeholder?.trim() ?? '';
       if (currentPlaceholder.isEmpty) {
         return field.copyWith(placeholder: 'Optional');
+      }
+    }
+
+    if (fieldType != 'photo' &&
+        fieldType != 'dropdown' &&
+        fieldType != 'search_dropdown') {
+      final isRequired = field.required ?? false;
+      if (!isRequired) {
+        final currentPlaceholder = field.placeholder?.trim() ?? '';
+        if (currentPlaceholder.isEmpty) {
+          return field.copyWith(placeholder: 'Optional');
+        }
       }
     }
 
@@ -1281,17 +1226,7 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
                 onPressed: () => Navigator.of(context).pop(),
                 child: const Text('Cancel'),
               ),
-              FilledButton(
-                onPressed: () {
-                  final validationMessage = _validationMessage();
-                  if (validationMessage != null) {
-                    AppSnackbar.showError(context, validationMessage);
-                    return;
-                  }
-                  Navigator.of(context).pop(_normalizeFieldPlaceholder(_field));
-                },
-                child: const Text('Save'),
-              ),
+              FilledButton(onPressed: _submitForm, child: const Text('Save')),
             ],
       child: AdminModalFormBody(
         readOnly: widget.readOnly,
@@ -1307,6 +1242,7 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
               headerBottomGap: 12,
               toggleTopGap: 0,
               toggleGap: 0,
+              onSubmit: _isEditing ? _submitForm : null,
               onUpdate: (property, value) {
                 setState(() {
                   final updatedField = switch (property) {
@@ -1331,6 +1267,12 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
                           (value as String?) == statusFieldOptionSourceStatic
                           ? null
                           : value,
+                    ),
+                    'visibilityControllerKey' => _field.copyWith(
+                      visibilityControllerKey: value as String?,
+                    ),
+                    'visibilityOptionValues' => _field.copyWith(
+                      visibilityOptionValues: value as List<String>,
                     ),
                     'requiredError' => _field.copyWith(
                       requiredError: value as String?,
@@ -1373,7 +1315,7 @@ class _FieldsStyles {
 class _FieldsHeaderCell extends StatelessWidget {
   const _FieldsHeaderCell({
     required this.label,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
     this.textAlign = TextAlign.left,
   });
@@ -1409,7 +1351,7 @@ class _FieldsFixedSlot extends StatelessWidget {
 class _FieldsBodyCell extends StatelessWidget {
   const _FieldsBodyCell({
     required this.child,
-    this.trailingPadding = 20,
+    this.trailingPadding = AdminListMeasurements.defaultTrailingPadding,
     this.alignment = Alignment.centerLeft,
   });
 

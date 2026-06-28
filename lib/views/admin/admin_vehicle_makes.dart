@@ -42,8 +42,10 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
     fontWeight: FontWeight.w700,
   );
 
-  static const _defaultTrailingPadding = 20.0;
-  static const _extraWidthAllowance = 16.0;
+  static const _defaultTrailingPadding =
+      AdminListMeasurements.defaultTrailingPadding;
+  static const _extraWidthAllowance =
+      AdminListMeasurements.defaultExtraWidthAllowance;
 
   @override
   Widget build(BuildContext context) {
@@ -248,10 +250,9 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                             .map(
                               (entry) => Padding(
                                 padding: EdgeInsets.only(
-                                  bottom:
-                                      entry.key == filteredMakes.length - 1
-                                          ? 0
-                                          : 12,
+                                  bottom: entry.key == filteredMakes.length - 1
+                                      ? 0
+                                      : 12,
                                 ),
                                 child: useWideTable
                                     ? _VehicleMakeDesktopRow(
@@ -291,13 +292,13 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
     if (created == null || !mounted) {
       return;
     }
-    final saved = await vm.saveMake(created);
+    await vm.saveMake(created);
     if (!mounted) {
       return;
     }
     AppSnackbar.showSuccess(
       context,
-      'Vehicle make ${saved.id ?? '-'} has been created.',
+      'Vehicle make added.',
     );
   }
 
@@ -326,13 +327,13 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
     if (edited == null || !mounted) {
       return;
     }
-    final saved = await vm.saveMake(edited.copyWith(id: item.id));
+    await vm.saveMake(edited.copyWith(id: item.id));
     if (!mounted) {
       return;
     }
     AppSnackbar.showSuccess(
       context,
-      'Vehicle make ${saved.id ?? '-'} has been updated.',
+      'Vehicle make updated.',
     );
   }
 
@@ -358,7 +359,9 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
     }
     AppSnackbar.showSuccess(
       context,
-      'Vehicle make ${saved.id ?? '-'} is now ${(saved.isActive ?? false) ? 'active' : 'inactive'}.',
+      (saved.isActive ?? false)
+          ? 'Vehicle make activated.'
+          : 'Vehicle make deactivated.',
     );
   }
 
@@ -383,7 +386,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
     }
     AppSnackbar.showSuccess(
       context,
-      'Vehicle make ${item.id ?? '-'} has been deleted.',
+      'Vehicle make deleted.',
     );
   }
 }
@@ -921,6 +924,7 @@ Future<VehicleMake?> _showMakeDialog(
   bool readOnly = false,
 }) async {
   final codeController = TextEditingController(text: initialItem?.code ?? '');
+  final codeFocusNode = FocusNode();
   String? typeId = initialItem?.type?.id;
   String? driverId = initialItem?.driver?.id;
   var isActive = initialItem?.isActive ?? true;
@@ -981,111 +985,115 @@ Future<VehicleMake?> _showMakeDialog(
     return items;
   }
 
-  return showDialog<VehicleMake>(
-    context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setState) => AdminModalShell(
-        title: title,
-        contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 16),
-        actions: readOnly
-            ? [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Close'),
-                ),
-              ]
-            : [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    final selectedType = types
-                        .where((item) => item.id == typeId)
-                        .cast<VehicleCatalogItem?>()
-                        .firstWhere(
-                          (_) => true,
-                          orElse: () => initialItem?.type,
-                        );
-                    final selectedDriver = drivers
-                        .where((item) => item.id == driverId)
-                        .cast<UserModel?>()
-                        .firstWhere(
-                          (_) => true,
-                          orElse: () => initialItem?.driver,
-                        );
-                    if (selectedType == null || selectedDriver == null) {
-                      AppSnackbar.showError(
-                        context,
-                        'Code, assigned type, and driver are required.',
-                      );
-                      return;
-                    }
-                    final code = codeController.text.trim();
-                    if (code.isEmpty) {
-                      AppSnackbar.showError(
-                        context,
-                        'Code, assigned type, and driver are required.',
-                      );
-                      return;
-                    }
-                    Navigator.of(context).pop(
-                      VehicleMake(
-                        id: initialItem?.id,
-                        code: code,
-                        type: selectedType,
-                        driver: selectedDriver,
-                        isActive: isActive,
-                        createdAt: initialItem?.createdAt,
-                        updatedAt: DateTime.now(),
-                      ),
-                    );
-                  },
-                  child: const Text('Save'),
-                ),
-              ],
-        child: AdminModalFormBody(
-          readOnly: readOnly,
-          children: [
-            AdminModalFieldsSection(
-              children: [
-                AdminModalTextField(
-                  controller: codeController,
-                  label: 'Code',
-                  bottomPadding: 4,
-                ),
-                AdminModalDropdownField<String>(
-                  label: 'Type',
-                  initialValue: typeId,
-                  bottomPadding: 6,
-                  iconEnabledColor: AppColors.primaryColor,
-                  disabledTapMessage: 'No active vehicle types available.',
-                  items: buildTypeItems(),
-                  onChanged: (value) => setState(() => typeId = value),
-                ),
-                AdminModalDropdownField<String>(
-                  label: 'Driver',
-                  initialValue: driverId,
-                  bottomPadding: 0,
-                  iconEnabledColor: AppColors.primaryColor,
-                  disabledTapMessage: 'No online drivers available.',
-                  items: buildDriverItems(),
-                  onChanged: (value) => setState(() => driverId = value),
-                ),
-              ],
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: AdminModalToggleRow(
-                title: 'Active',
-                value: isActive,
-                onChanged: (value) => setState(() => isActive = value),
+  void submit() {
+    final selectedType = types
+        .where((item) => item.id == typeId)
+        .cast<VehicleCatalogItem?>()
+        .firstWhere((_) => true, orElse: () => initialItem?.type);
+    final selectedDriver = drivers
+        .where((item) => item.id == driverId)
+        .cast<UserModel?>()
+        .firstWhere((_) => true, orElse: () => initialItem?.driver);
+    if (selectedType == null || selectedDriver == null) {
+      AppSnackbar.showError(
+        context,
+        'Code, assigned type, and driver are required.',
+      );
+      return;
+    }
+    final code = codeController.text.trim();
+    if (code.isEmpty) {
+      AppSnackbar.showError(
+        context,
+        'Code, assigned type, and driver are required.',
+      );
+      return;
+    }
+    Navigator.of(context).pop(
+      VehicleMake(
+        id: initialItem?.id,
+        code: code,
+        type: selectedType,
+        driver: selectedDriver,
+        isActive: isActive,
+        createdAt: initialItem?.createdAt,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  try {
+    return await showDialog<VehicleMake>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AdminModalShell(
+          title: title,
+          contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 16),
+          actions: readOnly
+              ? [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Close'),
+                  ),
+                ]
+              : [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(onPressed: submit, child: const Text('Save')),
+                ],
+          child: AdminModalFormBody(
+            readOnly: readOnly,
+            children: [
+              AdminModalFieldsSection(
+                children: [
+                  AdminModalTextField(
+                    controller: codeController,
+                    focusNode: codeFocusNode,
+                    label: 'Code',
+                    bottomPadding: 4,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) {
+                      FocusScope.of(context).unfocus();
+                      submit();
+                    },
+                  ),
+                  AdminModalDropdownField<String>(
+                    label: 'Type',
+                    initialValue: typeId,
+                    bottomPadding: 6,
+                    iconEnabledColor: AppColors.primaryColor,
+                    disabledTapMessage: 'No active vehicle types available.',
+                    items: buildTypeItems(),
+                    onChanged: (value) => setState(() => typeId = value),
+                  ),
+                  AdminModalDropdownField<String>(
+                    label: 'Driver',
+                    initialValue: driverId,
+                    bottomPadding: 0,
+                    iconEnabledColor: AppColors.primaryColor,
+                    disabledTapMessage: 'No online drivers available.',
+                    items: buildDriverItems(),
+                    onChanged: (value) => setState(() => driverId = value),
+                  ),
+                ],
               ),
-            ),
-          ],
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: AdminModalToggleRow(
+                  title: 'Active',
+                  value: isActive,
+                  onChanged: (value) => setState(() => isActive = value),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  } finally {
+    codeController.dispose();
+    codeFocusNode.dispose();
+  }
 }

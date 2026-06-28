@@ -9,6 +9,7 @@ const statusFieldOptionSourceClients = 'clients';
 const statusFieldOptionSourceAdmins = 'admins';
 const statusFieldOptionSourceDrivers = 'drivers';
 const statusFieldOptionSourceHelpers = 'helpers';
+const statusFieldOptionSourceClientMembers = 'client_members';
 const statusFieldOptionSourceVehicleMakes = 'vehicle_makes';
 const statusFieldOptionSourceVehicleTypes = 'vehicle_types';
 const statusFieldOptionSourceVehicleSizes = 'vehicle_sizes';
@@ -16,12 +17,15 @@ const statusFieldOptionSourceStatuses = 'statuses';
 const statusFieldOptionSourceForms = 'forms';
 const statusFieldOptionSourceFields = 'fields';
 const statusFieldOptionSourceBookings = 'bookings';
+const statusFieldOptionSourcePuertoPrincesaBarangays =
+    'puerto_princesa_barangays';
 const statusFieldDynamicOptionSources = <String>[
   statusFieldOptionSourceUsers,
   statusFieldOptionSourceClients,
   statusFieldOptionSourceAdmins,
   statusFieldOptionSourceDrivers,
   statusFieldOptionSourceHelpers,
+  statusFieldOptionSourceClientMembers,
   statusFieldOptionSourceVehicleMakes,
   statusFieldOptionSourceVehicleTypes,
   statusFieldOptionSourceVehicleSizes,
@@ -29,6 +33,7 @@ const statusFieldDynamicOptionSources = <String>[
   statusFieldOptionSourceForms,
   statusFieldOptionSourceFields,
   statusFieldOptionSourceBookings,
+  statusFieldOptionSourcePuertoPrincesaBarangays,
 ];
 const statusFieldOptionSourceLabels = <String, String>{
   statusFieldOptionSourceStatic: 'Static',
@@ -37,6 +42,7 @@ const statusFieldOptionSourceLabels = <String, String>{
   statusFieldOptionSourceAdmins: 'Admins',
   statusFieldOptionSourceDrivers: 'Drivers',
   statusFieldOptionSourceHelpers: 'Helpers',
+  statusFieldOptionSourceClientMembers: 'Client Members',
   statusFieldOptionSourceVehicleMakes: 'Vehicle Makes',
   statusFieldOptionSourceVehicleTypes: 'Vehicle Types',
   statusFieldOptionSourceVehicleSizes: 'Vehicle Sizes',
@@ -44,6 +50,8 @@ const statusFieldOptionSourceLabels = <String, String>{
   statusFieldOptionSourceForms: 'Forms',
   statusFieldOptionSourceFields: 'Fields',
   statusFieldOptionSourceBookings: 'Bookings',
+  statusFieldOptionSourcePuertoPrincesaBarangays:
+      'Puerto Princesa Barangays',
 };
 
 class StatusField {
@@ -61,6 +69,8 @@ class StatusField {
     this.max,
     this.options = const [],
     this.optionSourceKey,
+    this.visibilityControllerKey,
+    this.visibilityOptionValues = const [],
     this.requiredError,
     this.validationError,
     this.sortOrder,
@@ -82,6 +92,8 @@ class StatusField {
   final int? max;
   final List<String> options;
   final String? optionSourceKey;
+  final String? visibilityControllerKey;
+  final List<String> visibilityOptionValues;
   final String? requiredError;
   final String? validationError;
   final int? sortOrder;
@@ -103,6 +115,8 @@ class StatusField {
     Object? max = _statusFieldUndefined,
     List<String>? options,
     Object? optionSourceKey = _statusFieldUndefined,
+    Object? visibilityControllerKey = _statusFieldUndefined,
+    List<String>? visibilityOptionValues,
     Object? requiredError = _statusFieldUndefined,
     Object? validationError = _statusFieldUndefined,
     Object? sortOrder = _statusFieldUndefined,
@@ -140,6 +154,14 @@ class StatusField {
       optionSourceKey: identical(optionSourceKey, _statusFieldUndefined)
           ? this.optionSourceKey
           : optionSourceKey as String?,
+      visibilityControllerKey: identical(
+        visibilityControllerKey,
+        _statusFieldUndefined,
+      )
+          ? this.visibilityControllerKey
+          : visibilityControllerKey as String?,
+      visibilityOptionValues:
+          visibilityOptionValues ?? this.visibilityOptionValues,
       requiredError: identical(requiredError, _statusFieldUndefined)
           ? this.requiredError
           : requiredError as String?,
@@ -176,6 +198,8 @@ class StatusField {
       'max': max,
       'options': options,
       'option_source_key': optionSourceKey,
+      'visibility_controller_key': visibilityControllerKey,
+      'visibility_option_values': visibilityOptionValues,
       'required_error': requiredError,
       'validation_error': validationError,
       'sort_order': sortOrder,
@@ -214,6 +238,11 @@ class StatusField {
           .map((item) => item.toString())
           .toList(),
       optionSourceKey: map['option_source_key']?.toString(),
+      visibilityControllerKey: map['visibility_controller_key']?.toString(),
+      visibilityOptionValues:
+          (map['visibility_option_values'] as List<dynamic>? ?? const [])
+              .map((item) => item.toString())
+              .toList(),
       requiredError: map['required_error']?.toString(),
       validationError: map['validation_error']?.toString(),
       sortOrder: _toInt(map['sort_order']),
@@ -255,6 +284,8 @@ class StatusField {
         other.max == max &&
         _listEquals(other.options, options) &&
         other.optionSourceKey == optionSourceKey &&
+        other.visibilityControllerKey == visibilityControllerKey &&
+        _listEquals(other.visibilityOptionValues, visibilityOptionValues) &&
         other.requiredError == requiredError &&
         other.validationError == validationError &&
         other.sortOrder == sortOrder &&
@@ -264,7 +295,7 @@ class StatusField {
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     statusForm?.id,
     key,
@@ -278,13 +309,15 @@ class StatusField {
     max,
     Object.hashAll(options),
     optionSourceKey,
+    visibilityControllerKey,
+    Object.hashAll(visibilityOptionValues),
     requiredError,
     validationError,
     sortOrder,
     isActive,
     createdAt,
     updatedAt,
-  );
+  ]);
 
   static int? _toInt(dynamic value) {
     if (value == null) {

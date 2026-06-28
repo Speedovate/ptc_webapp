@@ -71,6 +71,7 @@ class AdminFlowViewModel extends BaseViewModel {
     'date',
     'time',
     'dropdown',
+    'search_dropdown',
     'checkbox',
   ];
   static const fieldOptionSourceOptions = [
@@ -80,6 +81,7 @@ class AdminFlowViewModel extends BaseViewModel {
     statusFieldOptionSourceAdmins,
     statusFieldOptionSourceDrivers,
     statusFieldOptionSourceHelpers,
+    statusFieldOptionSourceClientMembers,
     statusFieldOptionSourceVehicleMakes,
     statusFieldOptionSourceVehicleTypes,
     statusFieldOptionSourceVehicleSizes,
@@ -87,6 +89,7 @@ class AdminFlowViewModel extends BaseViewModel {
     statusFieldOptionSourceForms,
     statusFieldOptionSourceFields,
     statusFieldOptionSourceBookings,
+    statusFieldOptionSourcePuertoPrincesaBarangays,
   ];
 
   List<StatusForm> forms = [];
@@ -500,6 +503,12 @@ class AdminFlowViewModel extends BaseViewModel {
             ? null
             : value,
       ),
+      'visibilityControllerKey' => field.copyWith(
+        visibilityControllerKey: value as String?,
+      ),
+      'visibilityOptionValues' => field.copyWith(
+        visibilityOptionValues: value as List<String>,
+      ),
       'requiredError' => field.copyWith(requiredError: value as String?),
       'validationError' => field.copyWith(validationError: value as String?),
       'sortOrder' => field.copyWith(sortOrder: value as int?),
@@ -519,7 +528,7 @@ class AdminFlowViewModel extends BaseViewModel {
       }
       return field;
     }
-    if (fieldType == 'dropdown') {
+    if (fieldType == 'dropdown' || fieldType == 'search_dropdown') {
       final isRequired = field.required ?? false;
       if (isRequired) {
         return field.copyWith(placeholder: null);
@@ -528,6 +537,18 @@ class AdminFlowViewModel extends BaseViewModel {
       final currentPlaceholder = field.placeholder?.trim() ?? '';
       if (currentPlaceholder.isEmpty) {
         return field.copyWith(placeholder: 'Optional');
+      }
+    }
+
+    if (fieldType != 'photo' &&
+        fieldType != 'dropdown' &&
+        fieldType != 'search_dropdown') {
+      final isRequired = field.required ?? false;
+      if (!isRequired) {
+        final currentPlaceholder = field.placeholder?.trim() ?? '';
+        if (currentPlaceholder.isEmpty) {
+          return field.copyWith(placeholder: 'Optional');
+        }
       }
     }
 
@@ -641,7 +662,9 @@ class AdminFlowViewModel extends BaseViewModel {
     if (statusId.isEmpty) {
       return;
     }
-    busyMessage = isActive ? 'Activating status ...' : 'Deactivating status ...';
+    busyMessage = isActive
+        ? 'Activating status ...'
+        : 'Deactivating status ...';
     isLoading = true;
     notifyListeners();
     try {
@@ -759,7 +782,8 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   bool effectiveRequiredForField(StatusField field) {
-    return field.required ?? false;
+    final override = fieldOverrideFor(field.id);
+    return override?.required ?? field.required ?? false;
   }
 
   void updateAssignedFieldRequired(String fieldId, bool required) {
@@ -786,12 +810,6 @@ class AdminFlowViewModel extends BaseViewModel {
     }
 
     selectedForm = form.copyWith(fieldOverrides: nextOverrides);
-    fields = fields.map((field) {
-      if (field.id != fieldId) {
-        return field;
-      }
-      return field.copyWith(required: required);
-    }).toList();
     notifyListeners();
   }
 
@@ -943,7 +961,7 @@ class AdminFlowViewModel extends BaseViewModel {
       fields = normalizedFields;
       forms = await _repository.getStatusForms();
       _sortFormsLatestFirst();
-      successMessage = 'Status form saved successfully.';
+      successMessage = 'Form saved.';
       errorMessage = null;
     } catch (error) {
       errorMessage = userFacingErrorMessage(
@@ -970,7 +988,7 @@ class AdminFlowViewModel extends BaseViewModel {
       } else {
         await selectForm(forms.first, notify: false, notifyWhenLoaded: false);
       }
-      successMessage = 'Status form deleted.';
+      successMessage = 'Form deleted.';
       errorMessage = null;
     } catch (error) {
       errorMessage = userFacingErrorMessage(
@@ -998,7 +1016,7 @@ class AdminFlowViewModel extends BaseViewModel {
           await selectForm(fresh, notify: false, notifyWhenLoaded: false);
         }
       }
-      successMessage = 'Status form deactivated.';
+      successMessage = 'Form deactivated.';
       errorMessage = null;
     } catch (error) {
       errorMessage = userFacingErrorMessage(

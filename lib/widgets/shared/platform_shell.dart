@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/services/app_version_service.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/collapsible_sidebar.dart';
@@ -626,12 +627,7 @@ String formatPlatformRole(String? role) {
   if (role == null || role.isEmpty) {
     return '';
   }
-
-  return role
-      .split('_')
-      .where((part) => part.isNotEmpty)
-      .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
-      .join(' ');
+  return humanizeDropdownValue(role);
 }
 
 String platformInitials(String? value) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
@@ -73,6 +75,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
     'date',
     'time',
     'dropdown',
+    'search_dropdown',
     'checkbox',
   ];
 
@@ -271,15 +274,22 @@ class BookingWorkflowViewModel extends BaseViewModel {
                 await _statusRepository.getFields(formId),
               );
       }
-      fields = loadedForm == null ? const [] : fieldsForForm(loadedForm);
+      answers = loadedForm == null
+          ? {}
+          : _initialAnswersForBooking(
+              booking,
+              fieldLibrary: fieldLibrary,
+            );
+      fields = loadedForm == null
+          ? const []
+          : fieldsForForm(loadedForm, answers: answers);
+      cancelAnswers = {};
       cancelFields = loadedCancelForm == null
           ? const []
-          : fieldsForForm(loadedCancelForm);
+          : fieldsForForm(loadedCancelForm, answers: cancelAnswers);
       blockedMessage = loadedForm == null
           ? null
           : _engine.getBlockedMessage(booking, loadedForm);
-      answers = loadedForm == null ? {} : _initialAnswersForBooking(booking);
-      cancelAnswers = {};
       additionalFields = loadedForm == null
           ? const []
           : _initialAdditionalFieldsForBooking(
@@ -386,7 +396,6 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   void updateAnswer(String key, dynamic value) {
-    final shouldNotify = errors.containsKey(key);
     final nextAnswers = Map<String, dynamic>.from(answers);
     if (_isEmptyValue(value)) {
       nextAnswers.remove(key);
@@ -395,9 +404,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
     }
     answers = nextAnswers;
     errors = Map<String, String>.from(errors)..remove(key);
-    if (shouldNotify) {
-      notifyListeners();
-    }
+    notifyListeners();
   }
 
   void clearForm() {
@@ -443,8 +450,22 @@ class BookingWorkflowViewModel extends BaseViewModel {
   bool get supportsAdditionalFields =>
       (user?.role ?? '') == 'admin' && hasActionablePrimaryForm;
 
-  List<StatusField> fieldsForForm(StatusForm activeForm) {
-    return _fieldsByFormId[activeForm.id ?? ''] ?? const [];
+  List<StatusField> fieldsForForm(
+    StatusForm activeForm, {
+    Map<String, dynamic>? answers,
+  }) {
+    final baseFields = _fieldsByFormId[activeForm.id ?? ''] ?? const [];
+    final resolvedFields = baseFields.map((field) {
+      final override = activeForm.fieldOverrides[field.id];
+      if (override == null) {
+        return field;
+      }
+      return field.copyWith(
+        required: override.required ?? field.required,
+        placeholder: override.placeholder ?? field.placeholder,
+      );
+    }).toList();
+    return StatusFormEngine.visibleFields(resolvedFields, answers ?? this.answers);
   }
 
   String? blockedMessageForForm(StatusForm activeForm) {
@@ -500,8 +521,12 @@ class BookingWorkflowViewModel extends BaseViewModel {
     );
   }
 
-  void addExistingField(String fieldId) {
+  Future<void> addExistingField(String fieldId) async {
     if (!supportsAdditionalFields) {
+      return;
+    }
+    final activeForm = form;
+    if (activeForm == null) {
       return;
     }
     final matches = fieldLibrary.where((item) => item.id == fieldId);
@@ -517,8 +542,27 @@ class BookingWorkflowViewModel extends BaseViewModel {
         additionalFields.any((item) => item.key == fieldKey)) {
       return;
     }
-    additionalFields = [...additionalFields, field.copyWith()];
+    final assignedField = field.copyWith(
+      sortOrder: fields.length + 1,
+      updatedAt: DateTime.now(),
+    );
+    final updatedForm = activeForm.copyWith(
+      fields: [
+        ...activeForm.fields.map((item) => item.copyWith()),
+        assignedField,
+      ],
+      updatedAt: DateTime.now(),
+    );
+    form = updatedForm;
+    fields = [...fields, assignedField];
+    final formId = updatedForm.id ?? '';
+    if (formId.isNotEmpty) {
+      _fieldsByFormId[formId] = fields.map((item) => item.copyWith()).toList();
+    }
+    _replaceFormInCollections(updatedForm);
+    _cacheCurrentState();
     notifyListeners();
+    unawaited(_statusRepository.saveStatusForm(updatedForm));
   }
 
   Future<StatusField> saveLibraryField(StatusField field) async {
@@ -534,6 +578,157 @@ class BookingWorkflowViewModel extends BaseViewModel {
     _replaceFieldInCollections(savedField);
     notifyListeners();
     return savedField;
+  }
+
+  bool isAdditionalField(StatusField field) {
+    final fieldId = field.id ?? '';
+    final fieldKey = field.key ?? '';
+    return additionalFields.any((item) => _sameField(item, fieldId, fieldKey));
+  }
+
+  bool isFormAssignedField(StatusField field) {
+    final activeForm = form;
+    if (activeForm == null) {
+      return false;
+    }
+    final fieldId = field.id ?? '';
+    final fieldKey = field.key ?? '';
+    final baseFields = _fieldsByFormId[activeForm.id ?? ''] ?? const [];
+    return baseFields.any((item) => _sameField(item, fieldId, fieldKey));
+  }
+
+  void removeManagedField(StatusField field) {
+    final fieldKey = (field.key ?? '').trim();
+    if (fieldKey.isEmpty) {
+      return;
+    }
+
+    if (!isFormAssignedField(field)) {
+      removeAdditionalField(fieldKey);
+      return;
+    }
+
+    final activeForm = form;
+    if (activeForm == null) {
+      return;
+    }
+
+    final formId = activeForm.id ?? '';
+    final fieldId = field.id ?? '';
+    final baseFields = _fieldsByFormId[formId] ?? const [];
+    final nextBaseFields = baseFields
+        .where((item) => !_sameField(item, fieldId, fieldKey))
+        .toList()
+        .asMap()
+        .entries
+        .map((entry) => entry.value.copyWith(sortOrder: entry.key + 1))
+        .toList();
+    final nextFieldOverrides = Map<String, StatusFieldOverride>.from(
+      activeForm.fieldOverrides,
+    );
+    if (fieldId.isNotEmpty) {
+      nextFieldOverrides.remove(fieldId);
+    }
+
+    final updatedForm = activeForm.copyWith(
+      fields: nextBaseFields.map((item) => item.copyWith()).toList(),
+      fieldOverrides: nextFieldOverrides,
+      updatedAt: DateTime.now(),
+    );
+
+    form = updatedForm;
+    _fieldsByFormId[formId] = nextBaseFields.map((item) => item.copyWith()).toList();
+    fields = fieldsForForm(updatedForm, answers: answers);
+    additionalFields = additionalFields
+        .where((item) => !_sameField(item, fieldId, fieldKey))
+        .toList();
+    answers = Map<String, dynamic>.from(answers)..remove(fieldKey);
+    errors = Map<String, String>.from(errors)..remove(fieldKey);
+    _replaceFormInCollections(updatedForm);
+    _cacheCurrentState();
+    notifyListeners();
+    unawaited(_statusRepository.saveStatusForm(updatedForm));
+  }
+
+  void reorderManagedFields(
+    List<StatusField> visibleOrderedFields,
+    int oldIndex,
+    int newIndex, {
+    Map<String, dynamic>? answers,
+  }) {
+    final activeForm = form;
+    if (activeForm == null ||
+        oldIndex < 0 ||
+        oldIndex >= visibleOrderedFields.length) {
+      return;
+    }
+
+    var targetIndex = newIndex;
+    if (targetIndex > oldIndex) {
+      targetIndex -= 1;
+    }
+    if (targetIndex < 0 || targetIndex >= visibleOrderedFields.length) {
+      return;
+    }
+
+    final movedField = visibleOrderedFields[oldIndex];
+    if (!isFormAssignedField(movedField)) {
+      return;
+    }
+
+    final reorderedVisibleFields = [...visibleOrderedFields];
+    final movedVisibleField = reorderedVisibleFields.removeAt(oldIndex);
+    reorderedVisibleFields.insert(targetIndex, movedVisibleField);
+
+    final formId = activeForm.id ?? '';
+    final baseFields = _fieldsByFormId[formId] ?? const [];
+    final visibleAssignedFields = reorderedVisibleFields
+        .where(isFormAssignedField)
+        .toList();
+    final visibleAssignedIds = {
+      for (final field in visibleAssignedFields)
+        if ((field.id ?? '').trim().isNotEmpty) field.id!.trim(),
+    };
+    final visibleAssignedKeys = {
+      for (final field in visibleAssignedFields)
+        if ((field.key ?? '').trim().isNotEmpty) field.key!.trim(),
+    };
+
+    final remainingBaseFields = baseFields.where((field) {
+      final fieldId = (field.id ?? '').trim();
+      final fieldKey = (field.key ?? '').trim();
+      return !visibleAssignedIds.contains(fieldId) &&
+          !visibleAssignedKeys.contains(fieldKey);
+    }).toList();
+
+    final orderedBaseFields = [
+      for (final visibleField in visibleAssignedFields)
+        ...baseFields.where(
+          (field) => _sameField(
+            field,
+            visibleField.id ?? '',
+            visibleField.key ?? '',
+          ),
+        ),
+      ...remainingBaseFields,
+    ].asMap().entries.map((entry) {
+      return entry.value.copyWith(sortOrder: entry.key + 1);
+    }).toList();
+
+    final updatedForm = activeForm.copyWith(
+      fields: orderedBaseFields.map((field) => field.copyWith()).toList(),
+      updatedAt: DateTime.now(),
+    );
+
+    form = updatedForm;
+    _fieldsByFormId[formId] = orderedBaseFields
+        .map((field) => field.copyWith())
+        .toList();
+    fields = fieldsForForm(updatedForm, answers: answers ?? this.answers);
+    _replaceFormInCollections(updatedForm);
+    _cacheCurrentState();
+    notifyListeners();
+    unawaited(_statusRepository.saveFields(formId, orderedBaseFields));
   }
 
   void removeAdditionalField(String fieldKey) {
@@ -571,6 +766,15 @@ class BookingWorkflowViewModel extends BaseViewModel {
         (savedKey.isNotEmpty && field.key == savedKey);
   }
 
+  void _replaceFormInCollections(StatusForm updatedForm) {
+    mainForms = mainForms
+        .map((item) => (item.id == updatedForm.id) ? updatedForm : item)
+        .toList();
+    secondaryForms = secondaryForms
+        .map((item) => (item.id == updatedForm.id) ? updatedForm : item)
+        .toList();
+  }
+
   Future<Booking?> submit() async {
     final currentUser = user;
     final currentBooking = booking;
@@ -591,7 +795,10 @@ class BookingWorkflowViewModel extends BaseViewModel {
         _engine.applyOutputToBooking(
           currentBooking,
           activeForm,
-          [...fields, ...additionalFields],
+          [
+            ...StatusFormEngine.visibleFields(fields, answers),
+            ...StatusFormEngine.visibleFields(additionalFields, answers),
+          ],
           answers,
           currentUser.id ?? '',
         ),
@@ -630,7 +837,10 @@ class BookingWorkflowViewModel extends BaseViewModel {
         _engine.applyOutputToBooking(
           currentBooking,
           activeForm,
-          [...fieldsForForm(activeForm), ...additionalFields],
+          [
+            ...fieldsForForm(activeForm, answers: formAnswers),
+            ...StatusFormEngine.visibleFields(additionalFields, formAnswers),
+          ],
           formAnswers,
           currentUser.id ?? '',
         ),
@@ -652,7 +862,11 @@ class BookingWorkflowViewModel extends BaseViewModel {
       return false;
     }
 
-    final validationErrors = _engine.validateFields(fields, answers);
+    final activeForm = form;
+    final activeFields = activeForm == null
+        ? fields
+        : fieldsForForm(activeForm, answers: answers);
+    final validationErrors = _engine.validateFields(activeFields, answers);
     validationErrors.addAll(_engine.validateFields(additionalFields, answers));
     errors = validationErrors;
     notifyListeners();
@@ -737,6 +951,37 @@ class BookingWorkflowViewModel extends BaseViewModel {
       ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
   }
 
+  Map<String, String> memberOptionLabelsForCurrentBooking() {
+    final clientId = normalizeId(booking?.client?.id);
+    if (clientId == null) {
+      return const {};
+    }
+
+    final members = _usersById.values.where((item) {
+      return isSubClientRole(item.role) &&
+          (item.isActive ?? true) &&
+          normalizeId(item.parentClientId) == clientId;
+    }).toList()
+      ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
+
+    final labels = <String, String>{};
+    for (final member in members) {
+      final id = normalizeId(member.id);
+      if (id == null) {
+        continue;
+      }
+      final parts = <String>[
+        if ((member.name?.trim() ?? '').isNotEmpty) member.name!.trim() else 'Unnamed Member',
+        if ((member.phone?.trim() ?? '').isNotEmpty)
+          normalizePhilippinePhone(member.phone) ?? member.phone!.trim(),
+        if ((member.position?.trim() ?? '').isNotEmpty) member.position!.trim(),
+      ];
+      labels[id] = parts.join(' | ');
+    }
+
+    return labels;
+  }
+
   String roleUserLabel(String userId, {required String fallbackRole}) {
     final user = _usersById[userId];
     if (user == null) {
@@ -781,7 +1026,10 @@ class BookingWorkflowViewModel extends BaseViewModel {
     return false;
   }
 
-  static Map<String, dynamic> _initialAnswersForBooking(Booking booking) {
+  Map<String, dynamic> _initialAnswersForBooking(
+    Booking booking, {
+    required List<StatusField> fieldLibrary,
+  }) {
     final answers = <String, dynamic>{};
     if ((booking.truck?.id ?? '').trim().isNotEmpty) {
       answers['truck_id'] = booking.truck!.id!.trim();
@@ -792,23 +1040,111 @@ class BookingWorkflowViewModel extends BaseViewModel {
     if ((booking.helper?.id ?? '').trim().isNotEmpty) {
       answers['helper_id'] = booking.helper!.id!.trim();
     }
-    for (final key in const [
-      'waybill_number',
-      'van_number',
-      'van_size',
-      'amount',
-    ]) {
+    final candidateKeys = <String>{
+      'truck_id',
+      'driver_id',
+      'helper_id',
+      for (final field in fieldLibrary)
+        if ((field.key ?? '').trim().isNotEmpty) field.key!.trim(),
+    };
+    for (final key in candidateKeys) {
       final value = _firstNonEmptyOutputField(booking, key);
-      if (value is String && value.trim().isNotEmpty) {
-        answers[key] = key == 'van_size'
-            ? (VehicleRequest.instance.normalizeVehicleSizeId(value) ??
-                  value.trim())
-            : value.trim();
-      } else if (value != null) {
-        answers[key] = value;
+      if (_isEmptyValue(value)) {
+        continue;
       }
+      if (value is String) {
+        final trimmed = value.trim();
+        if (trimmed.isEmpty) {
+          continue;
+        }
+        answers[key] = key == 'van_size'
+            ? (VehicleRequest.instance.normalizeVehicleSizeId(trimmed) ??
+                  trimmed)
+            : trimmed;
+        continue;
+      }
+      answers[key] = value;
+    }
+    final resolvedMemberId = _resolveRepresentativeMemberId(booking, answers);
+    if (resolvedMemberId != null && resolvedMemberId.isNotEmpty) {
+      answers['member_id'] = resolvedMemberId;
     }
     return answers;
+  }
+
+  String? _resolveRepresentativeMemberId(
+    Booking booking,
+    Map<String, dynamic> answers,
+  ) {
+    final explicitMemberId = normalizeId(answers['member_id']?.toString());
+    if (explicitMemberId != null) {
+      return explicitMemberId;
+    }
+
+    final clientId = normalizeId(booking.client?.id);
+    if (clientId == null) {
+      return null;
+    }
+
+    final representativeName = (answers['representative_name']?.toString() ?? '')
+        .trim();
+    final representativePhone = normalizePhilippinePhone(
+      answers['representative_phone']?.toString(),
+    );
+    final representativePosition = (answers['representative_position']
+                ?.toString() ??
+            '')
+        .trim()
+        .toLowerCase();
+
+    if (representativeName.isEmpty &&
+        (representativePhone == null || representativePhone.isEmpty) &&
+        representativePosition.isEmpty) {
+      return null;
+    }
+
+    final repFirstLast = _firstAndLastWords(representativeName);
+    final candidateUsers = _usersById.values.where((user) {
+      return isSubClientRole(user.role) &&
+          normalizeId(user.parentClientId) == clientId &&
+          (user.isActive ?? true);
+    }).toList();
+
+    for (final user in candidateUsers) {
+      final userId = normalizeId(user.id);
+      if (userId == null) {
+        continue;
+      }
+      final userFirstLast = _firstAndLastWords(user.name ?? '');
+      final nameMatches =
+          repFirstLast != null &&
+          userFirstLast != null &&
+          repFirstLast.$1 == userFirstLast.$1 &&
+          repFirstLast.$2 == userFirstLast.$2;
+      final phoneMatches = representativePhone != null &&
+          representativePhone.isNotEmpty &&
+          normalizePhilippinePhone(user.phone) == representativePhone;
+      final positionMatches = representativePosition.isNotEmpty &&
+          (user.position?.trim().toLowerCase() ?? '') == representativePosition;
+
+      if (nameMatches || phoneMatches || positionMatches) {
+        return userId;
+      }
+    }
+    return null;
+  }
+
+  (String, String)? _firstAndLastWords(String raw) {
+    final parts = raw
+        .trim()
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) {
+      return null;
+    }
+    return (parts.first, parts.last);
   }
 
   static List<StatusField> _initialAdditionalFieldsForBooking({

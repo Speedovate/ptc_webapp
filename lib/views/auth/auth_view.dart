@@ -45,6 +45,14 @@ class _AuthViewState extends State<AuthView> {
   final _registerLatController = TextEditingController();
   final _registerLngController = TextEditingController();
   final _registerPasswordController = TextEditingController();
+  final _loginIdentifierFocusNode = FocusNode();
+  final _loginPasswordFocusNode = FocusNode();
+  final _registerEmailFocusNode = FocusNode();
+  final _registerNameFocusNode = FocusNode();
+  final _registerPhoneFocusNode = FocusNode();
+  final _registerLatFocusNode = FocusNode();
+  final _registerLngFocusNode = FocusNode();
+  final _registerPasswordFocusNode = FocusNode();
   final AuthRequest _authRequest = AuthRequest.instance;
 
   String? _registerRole;
@@ -119,6 +127,14 @@ class _AuthViewState extends State<AuthView> {
     _registerLatController.dispose();
     _registerLngController.dispose();
     _registerPasswordController.dispose();
+    _loginIdentifierFocusNode.dispose();
+    _loginPasswordFocusNode.dispose();
+    _registerEmailFocusNode.dispose();
+    _registerNameFocusNode.dispose();
+    _registerPhoneFocusNode.dispose();
+    _registerLatFocusNode.dispose();
+    _registerLngFocusNode.dispose();
+    _registerPasswordFocusNode.dispose();
     super.dispose();
   }
 
@@ -147,6 +163,20 @@ class _AuthViewState extends State<AuthView> {
       _resetLoginFields();
       _resetRegisterFields();
     });
+  }
+
+  void _focusNext(FocusNode focusNode) {
+    if (!mounted) {
+      return;
+    }
+    FocusScope.of(context).requestFocus(focusNode);
+  }
+
+  void _unfocusCurrentField() {
+    final currentFocus = FocusScope.of(context);
+    if (!currentFocus.hasPrimaryFocus) {
+      currentFocus.unfocus();
+    }
   }
 
   Future<void> _showPendingApprovalDialog() async {
@@ -331,10 +361,18 @@ class _AuthViewState extends State<AuthView> {
                                                     _AuthTextField(
                                                       controller:
                                                           _loginEmailController,
+                                                      focusNode:
+                                                          _loginIdentifierFocusNode,
                                                       label: 'Email or Number',
                                                       keyboardType:
                                                           TextInputType
                                                               .emailAddress,
+                                                      textInputAction:
+                                                          TextInputAction.next,
+                                                      onSubmitted: (_) =>
+                                                          _focusNext(
+                                                            _loginPasswordFocusNode,
+                                                          ),
                                                     ),
                                                     const SizedBox(
                                                       height: _authFieldSpacing,
@@ -342,8 +380,16 @@ class _AuthViewState extends State<AuthView> {
                                                     _AuthTextField(
                                                       controller:
                                                           _loginPasswordController,
+                                                      focusNode:
+                                                          _loginPasswordFocusNode,
                                                       label: 'Password',
                                                       obscureText: true,
+                                                      textInputAction:
+                                                          TextInputAction.done,
+                                                      onSubmitted: (_) {
+                                                        _unfocusCurrentField();
+                                                        _submit(vm);
+                                                      },
                                                     ),
                                                   ],
                                                 ),
@@ -386,7 +432,8 @@ class _AuthViewState extends State<AuthView> {
                                                     if (_registerRole ==
                                                         'driver') ...[
                                                       const SizedBox(
-                                                        height: _authFieldSpacing,
+                                                        height:
+                                                            _authFieldSpacing,
                                                       ),
                                                       _AuthDropdownField(
                                                         label: 'Vehicle Type',
@@ -439,19 +486,33 @@ class _AuthViewState extends State<AuthView> {
                                                         },
                                                       ),
                                                     ],
-                                                    const SizedBox(height: _authFieldSpacing),
+                                                    const SizedBox(
+                                                      height: _authFieldSpacing,
+                                                    ),
                                                     _AuthTextField(
                                                       controller:
                                                           _registerEmailController,
+                                                      focusNode:
+                                                          _registerEmailFocusNode,
                                                       label: 'Email',
                                                       keyboardType:
                                                           TextInputType
                                                               .emailAddress,
+                                                      textInputAction:
+                                                          TextInputAction.next,
+                                                      onSubmitted: (_) =>
+                                                          _focusNext(
+                                                            _registerNameFocusNode,
+                                                          ),
                                                     ),
-                                                    const SizedBox(height: _authFieldSpacing),
+                                                    const SizedBox(
+                                                      height: _authFieldSpacing,
+                                                    ),
                                                     _AuthTextField(
                                                       controller:
                                                           _registerNameController,
+                                                      focusNode:
+                                                          _registerNameFocusNode,
                                                       label: 'Name',
                                                       textCapitalization:
                                                           TextCapitalization
@@ -459,22 +520,41 @@ class _AuthViewState extends State<AuthView> {
                                                       inputFormatters: const [
                                                         NameCaseTextInputFormatter(),
                                                       ],
+                                                      textInputAction:
+                                                          TextInputAction.next,
+                                                      onSubmitted: (_) =>
+                                                          _focusNext(
+                                                            _registerPhoneFocusNode,
+                                                          ),
                                                     ),
-                                                    const SizedBox(height: _authFieldSpacing),
+                                                    const SizedBox(
+                                                      height: _authFieldSpacing,
+                                                    ),
                                                     _AuthTextField(
                                                       controller:
                                                           _registerPhoneController,
+                                                      focusNode:
+                                                          _registerPhoneFocusNode,
                                                       label: 'Phone',
                                                       keyboardType:
                                                           TextInputType.phone,
                                                       inputFormatters: const [
                                                         PhilippinesPhoneInputFormatter(),
                                                       ],
+                                                      textInputAction:
+                                                          TextInputAction.next,
+                                                      onSubmitted: (_) => _focusNext(
+                                                        _registerRole ==
+                                                                'driver'
+                                                            ? _registerLatFocusNode
+                                                            : _registerPasswordFocusNode,
+                                                      ),
                                                     ),
                                                     if (_registerRole ==
                                                         'driver') ...[
                                                       const SizedBox(
-                                                        height: _authFieldSpacing,
+                                                        height:
+                                                            _authFieldSpacing,
                                                       ),
                                                       _AuthActionField(
                                                         label: 'License',
@@ -485,38 +565,68 @@ class _AuthViewState extends State<AuthView> {
                                                             _pickRegisterLicensePhoto,
                                                       ),
                                                       const SizedBox(
-                                                        height: _authFieldSpacing,
+                                                        height:
+                                                            _authFieldSpacing,
                                                       ),
                                                       _AuthTextField(
                                                         controller:
                                                             _registerLatController,
+                                                        focusNode:
+                                                            _registerLatFocusNode,
                                                         label: 'Latitude',
                                                         keyboardType:
                                                             const TextInputType.numberWithOptions(
                                                               decimal: true,
                                                               signed: true,
                                                             ),
+                                                        textInputAction:
+                                                            TextInputAction
+                                                                .next,
+                                                        onSubmitted: (_) =>
+                                                            _focusNext(
+                                                              _registerLngFocusNode,
+                                                            ),
                                                       ),
                                                       const SizedBox(
-                                                        height: _authFieldSpacing,
+                                                        height:
+                                                            _authFieldSpacing,
                                                       ),
                                                       _AuthTextField(
                                                         controller:
                                                             _registerLngController,
+                                                        focusNode:
+                                                            _registerLngFocusNode,
                                                         label: 'Longitude',
                                                         keyboardType:
                                                             const TextInputType.numberWithOptions(
                                                               decimal: true,
                                                               signed: true,
                                                             ),
+                                                        textInputAction:
+                                                            TextInputAction
+                                                                .next,
+                                                        onSubmitted: (_) =>
+                                                            _focusNext(
+                                                              _registerPasswordFocusNode,
+                                                            ),
                                                       ),
                                                     ],
-                                                    const SizedBox(height: _authFieldSpacing),
+                                                    const SizedBox(
+                                                      height: _authFieldSpacing,
+                                                    ),
                                                     _AuthTextField(
                                                       controller:
                                                           _registerPasswordController,
+                                                      focusNode:
+                                                          _registerPasswordFocusNode,
                                                       label: 'Password',
                                                       obscureText: true,
+                                                      textInputAction:
+                                                          TextInputAction.done,
+                                                      onSubmitted: (_) {
+                                                        _unfocusCurrentField();
+                                                        _submit(vm);
+                                                      },
                                                     ),
                                                   ],
                                                 ),
@@ -637,10 +747,8 @@ class _AuthViewState extends State<AuthView> {
   Future<void> _submit(AuthViewModel vm) async {
     try {
       if (_isLoginMode) {
-        debugPrint('[AUTH][LOGIN] Submit start');
         final validationMessage = _loginValidationMessage();
         if (validationMessage != null) {
-          debugPrint('[AUTH][LOGIN] Validation failed: $validationMessage');
           AppSnackbar.showError(context, validationMessage);
           return;
         }
@@ -654,23 +762,15 @@ class _AuthViewState extends State<AuthView> {
           password: _loginPasswordController.text,
         );
         if (user != null) {
-          debugPrint(
-            '[AUTH][LOGIN] Success userId=${user.id} role=${user.role} photo=${user.photo}',
-          );
           widget.onAuthenticated(user);
         } else if (mounted && vm.errorMessage?.isNotEmpty == true) {
-          debugPrint('[AUTH][LOGIN] Failed message=${vm.errorMessage}');
           AppSnackbar.showError(context, vm.errorMessage!);
         }
         return;
       }
 
-      debugPrint(
-        '[AUTH][REGISTER] Submit start role=$_registerRole email=${_registerEmailController.text.trim()}',
-      );
       final validationMessage = _registerValidationMessage();
       if (validationMessage != null) {
-        debugPrint('[AUTH][REGISTER] Validation failed: $validationMessage');
         AppSnackbar.showError(context, validationMessage);
         return;
       }
@@ -716,59 +816,35 @@ class _AuthViewState extends State<AuthView> {
               ),
       );
       if (user != null) {
-        debugPrint(
-          '[AUTH][REGISTER] Firestore user created id=${user.id} role=${user.role} active=${user.isActive} photo=${user.photo}',
-        );
         await _showAuthFlowStage('Uploading your photo ...');
         final uploadResult = await _completeRegisterImageUploads(user);
         final uploadedUser = uploadResult.user;
-        debugPrint(
-          '[AUTH][REGISTER] Upload result id=${uploadedUser.id} photo=${uploadedUser.photo} uploadError=${uploadResult.errorMessage}',
-        );
         if (!mounted) {
-          debugPrint('[AUTH][REGISTER] Widget unmounted after upload result');
           return;
         }
         if (uploadResult.errorMessage?.trim().isNotEmpty == true) {
-          debugPrint(
-            '[AUTH][REGISTER] Showing upload error snackbar: ${uploadResult.errorMessage}',
-          );
           _setAuthFlowLoading(false);
           await _showPostRegisterUploadIssue(uploadResult.errorMessage!);
           if (!mounted) {
-            debugPrint('[AUTH][REGISTER] Widget unmounted after upload error');
             return;
           }
           await _showAuthFlowStage('Signing you in ...');
         }
         if (uploadedUser.isActive ?? false) {
-          debugPrint(
-            '[AUTH][REGISTER] Active account, attempting auto login for ${_registerEmailController.text.trim()}',
-          );
           await _showAuthFlowStage('Signing you in ...');
           final authenticatedUser = await vm.login(
             identifier: _registerEmailController.text.trim(),
             password: _registerPasswordController.text,
           );
           if (!mounted) {
-            debugPrint('[AUTH][REGISTER] Widget unmounted after auto login');
             return;
           }
           if (authenticatedUser != null) {
-            debugPrint(
-              '[AUTH][REGISTER] Auto login success userId=${authenticatedUser.id} photo=${authenticatedUser.photo}',
-            );
             widget.onAuthenticated(authenticatedUser);
           } else {
-            debugPrint(
-              '[AUTH][REGISTER] Auto login returned null, falling back to uploaded user. vmError=${vm.errorMessage}',
-            );
             widget.onAuthenticated(uploadedUser);
           }
         } else {
-          debugPrint(
-            '[AUTH][REGISTER] Account pending approval role=${uploadedUser.role}',
-          );
           if (!mounted) {
             return;
           }
@@ -784,9 +860,6 @@ class _AuthViewState extends State<AuthView> {
           });
         }
       } else if (mounted && vm.errorMessage?.isNotEmpty == true) {
-        debugPrint(
-          '[AUTH][REGISTER] Register failed message=${vm.errorMessage}',
-        );
         AppSnackbar.showError(context, vm.errorMessage!);
       }
     } finally {
@@ -928,12 +1001,8 @@ class _AuthViewState extends State<AuthView> {
     final file = result?.files.singleOrNull;
     final bytes = file?.bytes;
     if (file == null || bytes == null) {
-      debugPrint('[AUTH][REGISTER] Image pick cancelled or bytes unavailable');
       return null;
     }
-    debugPrint(
-      '[AUTH][REGISTER] Image picked name=${file.name} size=${file.size} mime=${_resolvedMimeType(file.extension)}',
-    );
     return _PendingAuthImageUpload(
       bytes: bytes,
       fileName: file.name,
@@ -951,9 +1020,6 @@ class _AuthViewState extends State<AuthView> {
     try {
       final profileUpload = _registerProfilePhotoUpload;
       if (profileUpload != null && (updatedUser.id?.isNotEmpty == true)) {
-        debugPrint(
-          '[AUTH][REGISTER] Uploading profile photo for userId=${updatedUser.id} file=${profileUpload.fileName} size=${profileUpload.size}',
-        );
         updatedUser = await _authRequest.saveUserPhoto(
           userId: updatedUser.id!,
           bytes: profileUpload.bytes,
@@ -961,18 +1027,12 @@ class _AuthViewState extends State<AuthView> {
           mimeType: profileUpload.mimeType,
           size: profileUpload.size,
         );
-        debugPrint(
-          '[AUTH][REGISTER] Profile photo upload complete userId=${updatedUser.id} photo=${updatedUser.photo}',
-        );
       }
 
       final licenseUpload = _registerLicensePhotoUpload;
       if (licenseUpload != null &&
           updatedUser.role == 'driver' &&
           (updatedUser.id?.isNotEmpty == true)) {
-        debugPrint(
-          '[AUTH][REGISTER] Uploading license photo for userId=${updatedUser.id} file=${licenseUpload.fileName} size=${licenseUpload.size}',
-        );
         updatedUser = await _authRequest.saveDriverLicensePhoto(
           userId: updatedUser.id!,
           bytes: licenseUpload.bytes,
@@ -980,15 +1040,10 @@ class _AuthViewState extends State<AuthView> {
           mimeType: licenseUpload.mimeType,
           size: licenseUpload.size,
         );
-        debugPrint(
-          '[AUTH][REGISTER] License photo upload complete userId=${updatedUser.id} license=${updatedUser.asDriver?.license}',
-        );
       }
     } on AuthFailure catch (error) {
-      debugPrint('[AUTH][REGISTER] Upload AuthFailure: ${error.message}');
       errorMessage = error.message;
     } catch (error) {
-      debugPrint('[AUTH][REGISTER] Upload unexpected error: $error');
       errorMessage = userFacingErrorMessage(
         error,
         fallback:
@@ -1064,19 +1119,25 @@ class _PendingAuthImageUpload {
 class _AuthTextField extends StatefulWidget {
   const _AuthTextField({
     required this.controller,
+    this.focusNode,
     required this.label,
     this.keyboardType,
     this.obscureText = false,
     this.textCapitalization = TextCapitalization.none,
     this.inputFormatters,
+    this.textInputAction,
+    this.onSubmitted,
   });
 
   final TextEditingController controller;
+  final FocusNode? focusNode;
   final String label;
   final TextInputType? keyboardType;
   final bool obscureText;
   final TextCapitalization textCapitalization;
   final List<TextInputFormatter>? inputFormatters;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
 
   @override
   State<_AuthTextField> createState() => _AuthTextFieldState();
@@ -1117,36 +1178,40 @@ class _AuthTextFieldState extends State<_AuthTextField> {
         },
         child: TextFormField(
           controller: widget.controller,
+          focusNode: widget.focusNode,
           keyboardType: widget.keyboardType,
           obscureText: _isObscured,
           textCapitalization: widget.textCapitalization,
           inputFormatters: widget.inputFormatters,
+          textInputAction: widget.textInputAction,
+          onFieldSubmitted: widget.onSubmitted,
           style: adminFieldValueTextStyle,
-          decoration: adminFormInputDecoration(
-            widget.label,
-            radius: 18,
-            minHeight: adminModalFieldMinHeight,
-          ).copyWith(
-            fillColor: _isHovered || _isPressed
-                ? activeFillColor
-                : AppColors.primarySurface,
-            suffixIcon: widget.obscureText
-                ? Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: IconButton(
-                      onPressed: () {
-                        setState(() => _isObscured = !_isObscured);
-                      },
-                      icon: Icon(
-                        _isObscured
-                            ? Icons.visibility_off_rounded
-                            : Icons.visibility_rounded,
-                        color: AppColors.primaryColor,
-                      ),
-                    ),
-                  )
-                : null,
-          ),
+          decoration:
+              adminFormInputDecoration(
+                widget.label,
+                radius: 18,
+                minHeight: adminModalFieldMinHeight,
+              ).copyWith(
+                fillColor: _isHovered || _isPressed
+                    ? activeFillColor
+                    : AppColors.primarySurface,
+                suffixIcon: widget.obscureText
+                    ? Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: IconButton(
+                          onPressed: () {
+                            setState(() => _isObscured = !_isObscured);
+                          },
+                          icon: Icon(
+                            _isObscured
+                                ? Icons.visibility_off_rounded
+                                : Icons.visibility_rounded,
+                            color: AppColors.primaryColor,
+                          ),
+                        ),
+                      )
+                    : null,
+              ),
         ),
       ),
     );
@@ -1200,19 +1265,20 @@ class _AuthActionFieldState extends State<_AuthActionField> {
   @override
   Widget build(BuildContext context) {
     final hoveredFillColor = appFieldInteractiveFillColor(context);
-    final decoration = adminFormInputDecoration(
-      widget.label,
-      radius: 18,
-      minHeight: adminModalFieldMinHeight,
-    ).copyWith(
-      suffixIcon: const Padding(
-        padding: EdgeInsets.only(right: 6),
-        child: Icon(Icons.upload_rounded, color: AppColors.primaryColor),
-      ),
-      fillColor: _isPressed || _isHovered
-          ? hoveredFillColor
-          : AppColors.primarySurface,
-    );
+    final decoration =
+        adminFormInputDecoration(
+          widget.label,
+          radius: 18,
+          minHeight: adminModalFieldMinHeight,
+        ).copyWith(
+          suffixIcon: const Padding(
+            padding: EdgeInsets.only(right: 6),
+            child: Icon(Icons.upload_rounded, color: AppColors.primaryColor),
+          ),
+          fillColor: _isPressed || _isHovered
+              ? hoveredFillColor
+              : AppColors.primarySurface,
+        );
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,

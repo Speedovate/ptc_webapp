@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/app_cached_network_image.dart';
 
 const Color bookingFormDangerStripColor = AppColors.dangerStrong;
@@ -54,10 +55,7 @@ const BookingFormPalette bookingFormDeliveredPalette = BookingFormPalette(
   border: Color(0xFFBFE1C8),
 );
 
-bool bookingFormUsesDangerTheme({
-  String? title,
-  String? buttonText,
-}) {
+bool bookingFormUsesDangerTheme({String? title, String? buttonText}) {
   bool containsCancel(String? value) =>
       value?.toLowerCase().contains('cancel') == true;
 
@@ -109,10 +107,7 @@ Color bookingFormResolvedActionColor({
   return fallbackColor ?? AppColors.primaryColor;
 }
 
-Color bookingFormResolvedLegendColor({
-  String? title,
-  String? buttonText,
-}) {
+Color bookingFormResolvedLegendColor({String? title, String? buttonText}) {
   if (bookingFormUsesDangerTheme(title: title, buttonText: buttonText)) {
     return bookingFormDangerPalette.accent;
   }
@@ -281,11 +276,7 @@ class BookingFormHeaderCard extends StatelessWidget {
             ),
           if (showRequiredLegend) ...[
             const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              height: 1,
-              color: palette.border,
-            ),
+            Container(width: double.infinity, height: 1, color: palette.border),
             const SizedBox(height: 14),
             Text(
               '* indicates required input',
@@ -311,9 +302,7 @@ class BookingFormHeaderCard extends StatelessWidget {
               decoration: BoxDecoration(
                 color: messageBackgroundColor ?? palette.surfaceAlt,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: messageBorderColor ?? palette.border,
-                ),
+                border: Border.all(color: messageBorderColor ?? palette.border),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -470,7 +459,11 @@ class BookingPhotoFieldInput extends StatefulWidget {
     super.key,
     required this.initialValue,
     required this.onChanged,
-    this.placeholder = 'Upload a photo',
+    this.focusNode,
+    this.nextFocusNode,
+    this.activateNextFocus = false,
+    this.onMoveToNextFocus,
+    this.placeholder,
     this.supportText = 'JPG, PNG, or supported image file',
     this.errorText,
     this.showRemoveAction = false,
@@ -479,7 +472,11 @@ class BookingPhotoFieldInput extends StatefulWidget {
 
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
-  final String placeholder;
+  final FocusNode? focusNode;
+  final FocusNode? nextFocusNode;
+  final bool activateNextFocus;
+  final ValueChanged<FocusNode>? onMoveToNextFocus;
+  final String? placeholder;
   final String supportText;
   final String? errorText;
   final bool showRemoveAction;
@@ -500,18 +497,35 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
   bool _isProcessing = false;
   bool _isSelectingPhoto = false;
 
+  FocusNode? get _focusNode => widget.focusNode;
+  String get _placeholder =>
+      widget.placeholder?.trim().isNotEmpty == true
+          ? widget.placeholder!.trim()
+          : adminUploadPlaceholder('Photo');
+
   @override
   void initState() {
     super.initState();
     _syncFromInitialValue();
+    _focusNode?.addListener(_handleFocusChanged);
   }
 
   @override
   void didUpdateWidget(covariant BookingPhotoFieldInput oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.focusNode != widget.focusNode) {
+      oldWidget.focusNode?.removeListener(_handleFocusChanged);
+      widget.focusNode?.addListener(_handleFocusChanged);
+    }
     if (oldWidget.initialValue != widget.initialValue) {
       _syncFromInitialValue();
     }
+  }
+
+  @override
+  void dispose() {
+    _focusNode?.removeListener(_handleFocusChanged);
+    super.dispose();
   }
 
   void _syncFromInitialValue() {
@@ -561,6 +575,34 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
       _isSelectingPhoto = false;
     });
     widget.onChanged(nextPhoto);
+    final nextFocusNode = widget.nextFocusNode;
+    if (nextFocusNode != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        final moveToNextFocus = widget.onMoveToNextFocus;
+        if (moveToNextFocus != null) {
+          moveToNextFocus(nextFocusNode);
+          return;
+        }
+        FocusScope.of(context).requestFocus(nextFocusNode);
+        if (widget.activateNextFocus) {
+          final primaryFocus = FocusManager.instance.primaryFocus;
+          final nextContext = primaryFocus?.context ?? nextFocusNode.context;
+          if (nextContext != null) {
+            Actions.maybeInvoke(nextContext, const ActivateIntent());
+          }
+        }
+      });
+    }
+  }
+
+  void _handleFocusChanged() {
+    final focusNode = _focusNode;
+    if (focusNode == null) {
+      return;
+    }
   }
 
   void _removePhoto() {
@@ -593,7 +635,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
           width: double.infinity,
           padding: hasImage ? EdgeInsets.zero : const EdgeInsets.all(18),
           decoration: hasImage
-                ? null
+              ? null
               : BoxDecoration(
                   color: widget.palette.surface,
                   borderRadius: BorderRadius.circular(16),
@@ -694,7 +736,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                 const SizedBox(height: 10),
               ],
               Text(
-                hasFileName ? fileName! : widget.placeholder,
+                hasFileName ? fileName! : _placeholder,
                 style: TextStyle(
                   color: hasFileName
                       ? AppColors.textPrimary
@@ -745,6 +787,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                   SizedBox(
                     height: 32,
                     child: FilledButton.icon(
+                      focusNode: _focusNode,
                       onPressed: _isProcessing ? null : _pickPhoto,
                       style: FilledButton.styleFrom(
                         backgroundColor: widget.palette.accent,

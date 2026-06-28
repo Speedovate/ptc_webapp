@@ -5,6 +5,7 @@ class AppMousePressable extends StatefulWidget {
     super.key,
     required this.child,
     this.onTap,
+    this.onTapDownAction,
     this.borderRadius,
     this.behavior = HitTestBehavior.deferToChild,
     this.cursor = SystemMouseCursors.click,
@@ -13,6 +14,7 @@ class AppMousePressable extends StatefulWidget {
 
   final Widget child;
   final VoidCallback? onTap;
+  final VoidCallback? onTapDownAction;
   final BorderRadius? borderRadius;
   final HitTestBehavior behavior;
   final MouseCursor cursor;
@@ -28,11 +30,13 @@ class _AppMousePressableState extends State<AppMousePressable> {
 
   @override
   Widget build(BuildContext context) {
-    final hasAction = widget.onTap != null;
+    final hasAction = widget.onTap != null || widget.onTapDownAction != null;
     final trackVisualState = hasAction && widget.enableVisualState;
     return MouseRegion(
       cursor: hasAction ? widget.cursor : MouseCursor.defer,
-      onEnter: trackVisualState ? (_) => setState(() => _isHovered = true) : null,
+      onEnter: trackVisualState
+          ? (_) => setState(() => _isHovered = true)
+          : null,
       onExit: trackVisualState
           ? (_) => setState(() {
               _isHovered = false;
@@ -41,8 +45,17 @@ class _AppMousePressableState extends State<AppMousePressable> {
           : null,
       child: GestureDetector(
         behavior: widget.behavior,
-        onTapDown: trackVisualState ? (_) => setState(() => _isPressed = true) : null,
-        onTapUp: trackVisualState ? (_) => setState(() => _isPressed = false) : null,
+        onTapDown: trackVisualState
+            ? (_) {
+                setState(() => _isPressed = true);
+                widget.onTapDownAction?.call();
+              }
+            : widget.onTapDownAction == null
+            ? null
+            : (_) => widget.onTapDownAction?.call(),
+        onTapUp: trackVisualState
+            ? (_) => setState(() => _isPressed = false)
+            : null,
         onTapCancel: trackVisualState
             ? () => setState(() => _isPressed = false)
             : null,

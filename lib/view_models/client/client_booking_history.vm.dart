@@ -118,10 +118,20 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
 
   void _applyBookingsForUser(UserModel user, List<Booking> allBookings) {
     final currentUserId = user.id ?? '';
+    final effectiveClientId =
+        isSubClientRole(user.role)
+            ? (user.parentClientId?.trim().isNotEmpty == true
+                  ? user.parentClientId!.trim()
+                  : currentUserId)
+            : currentUserId;
     bookings = switch (user.role) {
       'client' =>
         allBookings
             .where((booking) => booking.client?.id == currentUserId)
+            .toList(),
+      'sub-client' =>
+        allBookings
+            .where((booking) => booking.client?.id == effectiveClientId)
             .toList(),
       'driver' =>
         allBookings

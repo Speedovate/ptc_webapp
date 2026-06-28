@@ -1,4 +1,5 @@
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/constants/palawan_locations.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/vehicle_make.dart';
@@ -34,6 +35,10 @@ class StatusFormEngine {
       final isRequired = field.required ?? false;
       final title = field.title?.trim();
 
+      if (!isFieldVisible(field, answers)) {
+        continue;
+      }
+
       if (isRequired && _isEmptyAnswer(answer)) {
         errors[key] =
             field.requiredError ??
@@ -50,6 +55,49 @@ class StatusFormEngine {
       final min = field.min;
       final max = field.max;
       final type = field.type;
+      final normalizedKey = key.trim().toLowerCase();
+      final optionSourceKey = field.optionSourceKey?.trim().toLowerCase();
+      final isIdKey = normalizedKey.endsWith('_id');
+      final usesDynamicSource =
+          optionSourceKey != null &&
+          statusFieldDynamicOptionSources.contains(optionSourceKey);
+      final usesIdBackedDynamicSelection =
+          normalizedKey == 'driver_id' ||
+          normalizedKey == 'helper_id' ||
+          normalizedKey == 'member_id' ||
+          (isIdKey && usesDynamicSource) ||
+          optionSourceKey == statusFieldOptionSourceDrivers ||
+          optionSourceKey == statusFieldOptionSourceHelpers ||
+          optionSourceKey == statusFieldOptionSourceClientMembers;
+
+      if (answer is String && isPalawanLocationFieldKey(normalizedKey)) {
+        if (!isValidPalawanLocationOption(answer)) {
+          errors[key] =
+              field.validationError ??
+              ((title?.isNotEmpty == true)
+                  ? 'Select a valid $title.'
+                  : 'Select a valid option.');
+        }
+        continue;
+      }
+
+      if (answer is String &&
+          (type == 'dropdown' || type == 'search_dropdown') &&
+          !usesIdBackedDynamicSelection &&
+          field.options.isNotEmpty) {
+        final normalizedAnswer = answer.trim().toLowerCase();
+        final hasMatch = field.options.any(
+          (option) => option.trim().toLowerCase() == normalizedAnswer,
+        );
+        if (!hasMatch) {
+          errors[key] =
+              field.validationError ??
+              ((title?.isNotEmpty == true)
+                  ? 'Select a valid $title.'
+                  : 'Select a valid option.');
+        }
+        continue;
+      }
 
       if (answer is String &&
           (type == 'text' ||
@@ -181,6 +229,45 @@ class StatusFormEngine {
     return false;
   }
 
+  static bool isFieldVisible(
+    StatusField field,
+    Map<String, dynamic> answers,
+  ) {
+    final controllerKey = field.visibilityControllerKey?.trim();
+    final allowedValues = field.visibilityOptionValues
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+    if (controllerKey == null ||
+        controllerKey.isEmpty ||
+        allowedValues.isEmpty) {
+      return true;
+    }
+    final answer = answers[controllerKey];
+    if (_isEmptyAnswer(answer)) {
+      return false;
+    }
+    final normalizedAllowed = allowedValues
+        .map((item) => item.toLowerCase())
+        .toSet();
+    if (answer is String) {
+      return normalizedAllowed.contains(answer.trim().toLowerCase());
+    }
+    if (answer is List) {
+      return answer.any(
+        (item) => normalizedAllowed.contains(item.toString().trim().toLowerCase()),
+      );
+    }
+    return normalizedAllowed.contains(answer.toString().trim().toLowerCase());
+  }
+
+  static List<StatusField> visibleFields(
+    List<StatusField> fields,
+    Map<String, dynamic> answers,
+  ) {
+    return fields.where((field) => isFieldVisible(field, answers)).toList();
+  }
+
   static bool _looksLikeEmailField(StatusField field) {
     final haystack = [
       field.key,
@@ -263,6 +350,9 @@ class StatusFormEngine {
 
     answers.forEach((key, value) {
       final field = fieldByKey[key];
+      if (field != null && !isFieldVisible(field, answers)) {
+        return;
+      }
       if (value is String && field?.type == 'phone') {
         normalized[key] = normalizePhilippinePhone(value) ?? value.trim();
         return;
@@ -270,6 +360,29 @@ class StatusFormEngine {
       normalized[key] = value;
     });
 
+    _mirrorCompatibleField(normalized, primaryKey: 'origin', aliasKey: 'start');
+    _mirrorCompatibleField(
+      normalized,
+      primaryKey: 'destination',
+      aliasKey: 'end',
+    );
+
     return normalized;
+  }
+
+  static void _mirrorCompatibleField(
+    Map<String, dynamic> values, {
+    required String primaryKey,
+    required String aliasKey,
+  }) {
+    final primaryValue = values[primaryKey];
+    final aliasValue = values[aliasKey];
+    if (!_isEmptyAnswer(primaryValue) && _isEmptyAnswer(aliasValue)) {
+      values[aliasKey] = primaryValue;
+      return;
+    }
+    if (_isEmptyAnswer(primaryValue) && !_isEmptyAnswer(aliasValue)) {
+      values[primaryKey] = aliasValue;
+    }
   }
 }
