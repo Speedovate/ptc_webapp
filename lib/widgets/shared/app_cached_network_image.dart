@@ -85,11 +85,14 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     if (kIsWeb) {
       return Image.network(
         _resolvedImageUrl,
-        key: ValueKey<String>('$_resolvedImageUrl|${widget.width}|${widget.height}'),
+        key: ValueKey<String>(
+          '$_resolvedImageUrl|${widget.width}|${widget.height}',
+        ),
         width: widget.width,
         height: widget.height,
         fit: widget.fit,
         alignment: widget.alignment,
+        webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
         errorBuilder: (context, error, stackTrace) {
           _handleError(error);
           if (widget.errorBuilder != null) {
