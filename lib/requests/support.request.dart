@@ -6,6 +6,7 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/support_message.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/services/support_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -18,6 +19,8 @@ class SupportRequest {
 
   final FirebaseFirestore _firestore;
   final SupportStorageService _storage;
+  final OfflineMediaSyncService _offlineMediaSyncService =
+      OfflineMediaSyncService.instance;
 
   CollectionReference<Map<String, dynamic>> get _supportCollection =>
       _firestore.collection('support');
@@ -244,6 +247,61 @@ class SupportRequest {
       'updated_at': now.toIso8601String(),
       'is_active': true,
     }, SetOptions(merge: true));
+  }
+
+  Future<bool> sendMessageWithAttachments({
+    required String threadId,
+    required UserModel sender,
+    String? text,
+    List<QueuedSupportAttachmentInput> attachments = const [],
+  }) async {
+    final trimmedText = text?.trim();
+    if ((trimmedText == null || trimmedText.isEmpty) && attachments.isEmpty) {
+      return false;
+    }
+
+    try {
+      final uploadedAttachments = <SupportAttachment>[];
+      for (final attachment in attachments) {
+        uploadedAttachments.add(
+          await uploadAttachment(
+            threadId: threadId,
+            bytes: attachment.bytes,
+            fileName: attachment.fileName,
+            mimeType: attachment.mimeType,
+            size: attachment.size,
+          ),
+        );
+      }
+      await sendMessage(
+        threadId: threadId,
+        sender: sender,
+        text: trimmedText,
+        attachments: uploadedAttachments,
+      );
+      return false;
+    } catch (error) {
+      final normalizedError = normalizeUserErrorText(
+        error.toString(),
+        fallback: '',
+      ).toLowerCase();
+      if (!_isQueueableUploadError(normalizedError)) {
+        rethrow;
+      }
+      await _offlineMediaSyncService.queueSupportMessage(
+        threadId: threadId,
+        sender: sender,
+        text: trimmedText,
+        attachments: attachments,
+      );
+      return true;
+    }
+  }
+
+  bool _isQueueableUploadError(String normalizedError) {
+    return normalizedError.contains('internet connection') ||
+        normalizedError.contains('temporarily unavailable') ||
+        normalizedError.contains('request took too long');
   }
 
   static int _compareThreadsNewestFirst(SupportThread left, SupportThread right) {

@@ -11,6 +11,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/support.request.dart';
+import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_cached_network_image.dart';
@@ -445,23 +446,20 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       _isSending = true;
     });
     try {
-      final uploadedAttachments = <SupportAttachment>[];
-      for (final attachment in _pendingAttachments) {
-        uploadedAttachments.add(
-          await _supportRequest.uploadAttachment(
-            threadId: threadId,
-            bytes: attachment.bytes,
-            fileName: attachment.fileName,
-            mimeType: attachment.mimeType,
-            size: attachment.size,
-          ),
-        );
-      }
-      await _supportRequest.sendMessage(
+      final queuedForSync = await _supportRequest.sendMessageWithAttachments(
         threadId: threadId,
         sender: widget.user,
         text: trimmedMessage,
-        attachments: uploadedAttachments,
+        attachments: _pendingAttachments
+            .map(
+              (attachment) => QueuedSupportAttachmentInput(
+                bytes: attachment.bytes,
+                fileName: attachment.fileName,
+                mimeType: attachment.mimeType,
+                size: attachment.size,
+              ),
+            )
+            .toList(),
       );
       if (!mounted) {
         return;
@@ -470,6 +468,12 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         _messageController.clear();
         _pendingAttachments = const [];
       });
+      if (queuedForSync) {
+        AppSnackbar.showSuccess(
+          context,
+          'Message queued. It will send once your internet is back.',
+        );
+      }
     } catch (error) {
       if (!mounted) {
         return;

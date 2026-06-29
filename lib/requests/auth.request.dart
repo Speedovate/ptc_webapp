@@ -8,6 +8,7 @@ import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/services/app_session_reset.dart';
+import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -28,6 +29,8 @@ class AuthRequest implements AuthRepository {
   final VehicleRequest _vehicleRequest;
   final AuthStorageBackend _storage = createAuthStorageBackend();
   final PhotoStorageService _photoStorageService = PhotoStorageService.instance;
+  final OfflineMediaSyncService _offlineMediaSyncService =
+      OfflineMediaSyncService.instance;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
@@ -41,6 +44,7 @@ class AuthRequest implements AuthRepository {
   @override
   Future<void> initialize() async {
     await _storage.initialize();
+    await _offlineMediaSyncService.initialize();
   }
 
   Future<void> migrateSubClientDataOnce() async {
@@ -267,20 +271,48 @@ class AuthRequest implements AuthRepository {
       if (currentUser == null) {
         throw const AuthFailure('User not found.');
       }
-      final upload = await _photoStorageService.uploadUserPhoto(
-        bytes: bytes,
-        userId: normalizedUserId,
-        fieldKey: 'profile_photo',
-        fileName: fileName,
-        mimeType: mimeType,
-        size: size,
-      );
-      return saveUser(
-        currentUser.copyWith(
-          photo: upload['download_url']?.toString(),
-          updatedAt: DateTime.now(),
-        ),
-      );
+      try {
+        final upload = await _photoStorageService.uploadUserPhoto(
+          bytes: bytes,
+          userId: normalizedUserId,
+          fieldKey: 'profile_photo',
+          fileName: fileName,
+          mimeType: mimeType,
+          size: size,
+        );
+        return saveUser(
+          currentUser.copyWith(
+            photo: upload['download_url']?.toString(),
+            updatedAt: DateTime.now(),
+          ),
+        );
+      } catch (error) {
+        final normalizedError = normalizeUserErrorText(
+          error.toString(),
+          fallback: '',
+        ).toLowerCase();
+        if (!_isQueueableUploadError(normalizedError)) {
+          rethrow;
+        }
+        final queued = await _offlineMediaSyncService.queueUserPhotoUpload(
+          userId: normalizedUserId,
+          fieldKey: 'profile_photo',
+          bytes: bytes,
+          fileName: fileName,
+          mimeType: mimeType,
+          size: size,
+          originalValue: currentUser.photo,
+        );
+        final queuedUser = currentUser.copyWith(
+          photo: queued.previewUrl,
+          updatedAt: queued.queuedAt,
+        );
+        await _cache.upsertDocument(
+          resourceKey: _usersResourceKey,
+          document: _toFirestoreMap(queuedUser),
+        );
+        return queuedUser;
+      }
     }, fallback: 'We could not upload the profile photo right now.');
   }
 
@@ -307,20 +339,48 @@ class AuthRequest implements AuthRepository {
           'Only driver accounts can upload license photos.',
         );
       }
-      final upload = await _photoStorageService.uploadUserPhoto(
-        bytes: bytes,
-        userId: normalizedUserId,
-        fieldKey: 'license_photo',
-        fileName: fileName,
-        mimeType: mimeType,
-        size: size,
-      );
-      return saveUser(
-        driver.copyWith(
-          license: upload['download_url']?.toString(),
-          updatedAt: DateTime.now(),
-        ),
-      );
+      try {
+        final upload = await _photoStorageService.uploadUserPhoto(
+          bytes: bytes,
+          userId: normalizedUserId,
+          fieldKey: 'license_photo',
+          fileName: fileName,
+          mimeType: mimeType,
+          size: size,
+        );
+        return saveUser(
+          driver.copyWith(
+            license: upload['download_url']?.toString(),
+            updatedAt: DateTime.now(),
+          ),
+        );
+      } catch (error) {
+        final normalizedError = normalizeUserErrorText(
+          error.toString(),
+          fallback: '',
+        ).toLowerCase();
+        if (!_isQueueableUploadError(normalizedError)) {
+          rethrow;
+        }
+        final queued = await _offlineMediaSyncService.queueUserPhotoUpload(
+          userId: normalizedUserId,
+          fieldKey: 'license_photo',
+          bytes: bytes,
+          fileName: fileName,
+          mimeType: mimeType,
+          size: size,
+          originalValue: driver.license,
+        );
+        final queuedUser = driver.copyWith(
+          license: queued.previewUrl,
+          updatedAt: queued.queuedAt,
+        );
+        await _cache.upsertDocument(
+          resourceKey: _usersResourceKey,
+          document: _toFirestoreMap(queuedUser),
+        );
+        return queuedUser;
+      }
     }, fallback: 'We could not upload the license photo right now.');
   }
 
@@ -696,6 +756,12 @@ class AuthRequest implements AuthRepository {
       return value.toDouble();
     }
     return double.tryParse(value.toString());
+  }
+
+  bool _isQueueableUploadError(String normalizedError) {
+    return normalizedError.contains('internet connection') ||
+        normalizedError.contains('temporarily unavailable') ||
+        normalizedError.contains('request took too long');
   }
 
   Future<T> _runAuthRequest<T>(

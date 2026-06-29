@@ -5,6 +5,7 @@ import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
+import 'package:webapp/services/booking_offline_upload_queue_service.dart';
 import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -23,12 +24,16 @@ class BookingRequest implements BookingRepository {
   final AuthRequest _authRequest;
   final VehicleRequest _vehicleRequest;
   final PhotoStorageService _photoStorageService = PhotoStorageService.instance;
+  final BookingOfflineUploadQueueService _offlineUploadQueueService =
+      BookingOfflineUploadQueueService.instance;
 
   CollectionReference<Map<String, dynamic>> get _bookingsCollection =>
       _firestore.collection('bookings');
 
   @override
-  Future<void> initialize() async {}
+  Future<void> initialize() async {
+    await _offlineUploadQueueService.initialize();
+  }
 
   @override
   Future<List<Booking>> getBookings() async {
@@ -58,6 +63,7 @@ class BookingRequest implements BookingRepository {
   @override
   Future<Booking> saveBooking(Booking booking) async {
     return _runRequest(() async {
+      await initialize();
       final normalizedId = normalizeId(booking.id);
       final nextId = normalizedId ?? await _nextBookingId();
       final existingBookingData = await _getExistingBookingData(nextId);
@@ -209,15 +215,35 @@ class BookingRequest implements BookingRepository {
     final fileName = mapValue['name']?.toString().trim();
     final mimeType = mapValue['mime_type']?.toString().trim();
     final size = _toInt(mapValue['size']) ?? bytes.length;
-    return _photoStorageService.uploadBookingPhoto(
-      bytes: bytes,
-      bookingId: bookingId,
-      statusKey: statusKey.trim(),
-      fieldKey: fieldKey.trim(),
-      fileName: fileName?.isNotEmpty == true ? fileName! : 'photo',
-      mimeType: mimeType?.isNotEmpty == true ? mimeType : null,
-      size: size,
-    );
+    final resolvedFileName = fileName?.isNotEmpty == true ? fileName! : 'photo';
+    try {
+      return await _photoStorageService.uploadBookingPhoto(
+        bytes: bytes,
+        bookingId: bookingId,
+        statusKey: statusKey.trim(),
+        fieldKey: fieldKey.trim(),
+        fileName: resolvedFileName,
+        mimeType: mimeType?.isNotEmpty == true ? mimeType : null,
+        size: size,
+      );
+    } catch (error) {
+      final normalizedError = normalizeUserErrorText(
+        error.toString(),
+        fallback: '',
+      ).toLowerCase();
+      if (!_isQueueableUploadError(normalizedError)) {
+        rethrow;
+      }
+      return _offlineUploadQueueService.enqueueBookingPhoto(
+        bytes: bytes,
+        bookingId: bookingId,
+        statusKey: statusKey.trim(),
+        fieldKey: fieldKey.trim(),
+        fileName: resolvedFileName,
+        mimeType: mimeType?.isNotEmpty == true ? mimeType : null,
+        size: size,
+      );
+    }
   }
 
   Future<void> _deleteObsoletePhotos({
@@ -385,6 +411,12 @@ class BookingRequest implements BookingRepository {
       return value.toInt();
     }
     return int.tryParse(value.toString());
+  }
+
+  bool _isQueueableUploadError(String normalizedError) {
+    return normalizedError.contains('internet connection') ||
+        normalizedError.contains('temporarily unavailable') ||
+        normalizedError.contains('request took too long');
   }
 
   Future<T> _runRequest<T>(

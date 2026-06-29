@@ -65,7 +65,7 @@ class _AuthViewState extends State<AuthView> {
   _PendingAuthImageUpload? _registerProfilePhotoUpload;
   _PendingAuthImageUpload? _registerLicensePhotoUpload;
 
-  static const _roleOptions = ['client', 'driver', 'helper'];
+  static const _roleOptions = ['client', 'driver', 'helper', 'dispatcher'];
 
   @override
   void initState() {

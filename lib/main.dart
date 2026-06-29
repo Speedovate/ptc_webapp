@@ -6,6 +6,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/firebase_options.dart';
+import 'package:webapp/services/booking_offline_upload_queue_service.dart';
+import 'package:webapp/services/firestore_offline_service.dart';
+import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/views/shared/app_shell.dart';
 
 Future<void> main() async {
@@ -27,6 +30,9 @@ Future<void> main() async {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
+      await FirestoreOfflineService.initialize();
+      await BookingOfflineUploadQueueService.instance.initialize();
+      await OfflineMediaSyncService.instance.initialize();
       await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(true);
       runApp(const MyApp());
     },
