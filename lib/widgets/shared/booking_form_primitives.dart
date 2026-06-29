@@ -463,6 +463,7 @@ class BookingPhotoFieldInput extends StatefulWidget {
     this.nextFocusNode,
     this.activateNextFocus = false,
     this.onMoveToNextFocus,
+    this.onAdvanceAfterSelection,
     this.placeholder,
     this.supportText = 'JPG, PNG, or supported image file',
     this.errorText,
@@ -476,6 +477,7 @@ class BookingPhotoFieldInput extends StatefulWidget {
   final FocusNode? nextFocusNode;
   final bool activateNextFocus;
   final ValueChanged<FocusNode>? onMoveToNextFocus;
+  final ValueChanged<dynamic>? onAdvanceAfterSelection;
   final String? placeholder;
   final String supportText;
   final String? errorText;
@@ -575,6 +577,11 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
       _isSelectingPhoto = false;
     });
     widget.onChanged(nextPhoto);
+    final handleAdvance = widget.onAdvanceAfterSelection;
+    if (handleAdvance != null) {
+      handleAdvance(nextPhoto);
+      return;
+    }
     final nextFocusNode = widget.nextFocusNode;
     if (nextFocusNode != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {

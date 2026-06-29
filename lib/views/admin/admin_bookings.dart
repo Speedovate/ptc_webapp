@@ -1750,11 +1750,6 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
   }
 
   void _openBookedByOptions() {
-    debugPrint(
-      '[REP_BOOKED_BY_DEBUG][OPEN_BOOKED_BY] '
-      'selectedBookerId=${_selectedBookerId.isEmpty ? '-' : _selectedBookerId} '
-      'clientCount=${widget.clientUsers.length}',
-    );
     if (mounted) {
       setState(() {
         _bookerErrorText = 'Client is required.';
@@ -1768,19 +1763,8 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
       final targetContext =
           FocusManager.instance.primaryFocus?.context ??
           _bookedByFocusNode.context;
-      debugPrint(
-        '[REP_BOOKED_BY_DEBUG][OPEN_BOOKED_BY_POST_FRAME] '
-        'focusHasFocus=${_bookedByFocusNode.hasFocus} '
-        'targetContext=${targetContext == null ? 'null' : targetContext.widget.runtimeType}',
-      );
       if (targetContext != null) {
-        final invoked = Actions.maybeInvoke(
-          targetContext,
-          const ActivateIntent(),
-        );
-        debugPrint(
-          '[REP_BOOKED_BY_DEBUG][OPEN_BOOKED_BY_INVOKE] invoked=$invoked',
-        );
+        Actions.maybeInvoke(targetContext, const ActivateIntent());
       }
     });
   }
@@ -1841,10 +1825,6 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
                                   ),
                                 ).toList(),
                                 onChanged: (value) {
-                                  debugPrint(
-                                    '[REP_BOOKED_BY_DEBUG][BOOKED_BY_CHANGED] '
-                                    'value=${value ?? '-'}',
-                                  );
                                   setState(() {
                                     _selectedBookerId = value ?? '';
                                     _bookerErrorText = null;

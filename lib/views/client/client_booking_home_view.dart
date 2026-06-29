@@ -391,6 +391,95 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
     }
   }
 
+  bool _shouldActivateNextField(StatusField? nextField, FocusNode? nextFocus) {
+    if (nextFocus == null) {
+      return false;
+    }
+    if (nextField == null) {
+      return true;
+    }
+    final nextFieldType = (nextField.type ?? '').trim().toLowerCase();
+    return nextFieldType == 'dropdown' ||
+        nextFieldType == 'search_dropdown' ||
+        nextFieldType == 'date' ||
+        nextFieldType == 'time' ||
+        nextFieldType == 'photo';
+  }
+
+  void _moveToNextVisibleFieldAfterSelection(
+    StatusField currentField,
+    dynamic nextValue,
+  ) {
+    final currentFieldKey = currentField.key?.trim();
+    if (currentFieldKey == null || currentFieldKey.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        FocusScope.of(context).requestFocus(_submitFocusNode);
+      });
+      return;
+    }
+
+    final nextAnswers = Map<String, dynamic>.from(_answers);
+    if (_isEmptyValue(nextValue)) {
+      nextAnswers.remove(currentFieldKey);
+    } else {
+      nextAnswers[currentFieldKey] = nextValue;
+    }
+
+    final visibleFields = widget.vm.fieldsForForm(widget.form, answers: nextAnswers);
+    final currentIndex = visibleFields.indexWhere((field) {
+      final fieldKey = field.key?.trim();
+      if (fieldKey?.isNotEmpty == true && fieldKey == currentFieldKey) {
+        return true;
+      }
+      return field.id != null && field.id == currentField.id;
+    });
+    final nextField =
+        currentIndex >= 0 && currentIndex + 1 < visibleFields.length
+        ? visibleFields[currentIndex + 1]
+        : null;
+    final nextFocusKey = nextField == null
+        ? null
+        : _focusKeyForField(nextField, currentIndex + 1);
+
+    void resolveAndAdvance([int remainingAttempts = 3]) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        final resolvedNextFocusNode = nextField == null
+            ? _submitFocusNode
+            : (nextFocusKey == null ? null : _fieldFocusNodes[nextFocusKey]);
+        if (resolvedNextFocusNode == null) {
+          if (remainingAttempts > 1) {
+            resolveAndAdvance(remainingAttempts - 1);
+            return;
+          }
+          FocusScope.of(context).unfocus();
+          return;
+        }
+        FocusScope.of(context).requestFocus(resolvedNextFocusNode);
+        if (_shouldActivateNextField(nextField, resolvedNextFocusNode)) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) {
+              return;
+            }
+            final primaryFocus = FocusManager.instance.primaryFocus;
+            final targetContext =
+                primaryFocus?.context ?? resolvedNextFocusNode.context;
+            if (targetContext != null) {
+              Actions.maybeInvoke(targetContext, const ActivateIntent());
+            }
+          });
+        }
+      });
+    }
+
+    resolveAndAdvance();
+  }
+
   @override
   void dispose() {
     for (final node in _fieldFocusNodes.values) {
@@ -546,16 +635,6 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                   fieldKeyValue == memberFieldKey &&
                   widget.onRepresentativeTapWithoutClient != null &&
                   (widget.clientUser.id?.trim().isNotEmpty != true);
-              if (memberFieldKey != null && fieldKeyValue == memberFieldKey) {
-                debugPrint(
-                  '[REP_BOOKED_BY_DEBUG][FIELD_BUILD] '
-                  'fieldKey=$fieldKeyValue '
-                  'clientId=${widget.clientUser.id ?? '-'} '
-                  'hasRedirect=$shouldRedirectRepresentativeTap '
-                  'memberOptions=$memberOptionLabels.length',
-                );
-              }
-
               return Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: StatusFormRuntimeFieldCard(
@@ -564,6 +643,8 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                   focusNode: focusNode,
                   nextFocusNode: nextFocusNode,
                   activateNextFocus: activateNextFocus,
+                  onAdvanceAfterSelection: (value) =>
+                      _moveToNextVisibleFieldAfterSelection(field, value),
                   errorText: _errors[field.key],
                   initialValue: _answers[field.key],
                   formTitle: vm.resolvedTitleForForm(form),
@@ -576,11 +657,6 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                       : const {},
                   onDisabledTap: shouldRedirectRepresentativeTap
                       ? () {
-                          debugPrint(
-                            '[REP_BOOKED_BY_DEBUG][FIELD_REDIRECT] '
-                            'fieldKey=$fieldKeyValue '
-                            'clientId=${widget.clientUser.id ?? '-'}',
-                          );
                           widget.onRepresentativeTapWithoutClient?.call();
                         }
                       : null,

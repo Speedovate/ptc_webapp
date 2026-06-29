@@ -1476,6 +1476,19 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
     return StatusFormEngine.visibleFields(ordered, widget.answers);
   }
 
+  List<StatusField> _visibleFieldsForAnswers(Map<String, dynamic> answers) {
+    final ordered = <StatusField>[...widget.fields];
+    if (widget.allowAdditionalFields) {
+      ordered.addAll(
+        widget.vm.additionalFields.where((field) {
+          final key = field.key?.trim();
+          return key != null && key.isNotEmpty;
+        }),
+      );
+    }
+    return StatusFormEngine.visibleFields(ordered, answers);
+  }
+
   void _syncFocusNodes(List<StatusField> fields) {
     final activeKeys = <String>{};
     for (var index = 0; index < fields.length; index++) {
@@ -1508,6 +1521,65 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
         type == 'date' ||
         type == 'time' ||
         type == 'photo';
+  }
+
+  void _moveToNextVisibleFieldAfterSelection(
+    StatusField currentField,
+    dynamic nextValue,
+  ) {
+    final currentFieldKey = currentField.key?.trim();
+    if (currentFieldKey == null || currentFieldKey.isEmpty) {
+      final submitFocusNode = widget.submitFocusNode;
+      if (submitFocusNode == null) {
+        return;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        FocusScope.of(context).requestFocus(submitFocusNode);
+      });
+      return;
+    }
+
+    final nextAnswers = Map<String, dynamic>.from(widget.answers)
+      ..[currentFieldKey] = nextValue;
+    final visibleFields = _visibleFieldsForAnswers(nextAnswers);
+    final currentIndex = visibleFields.indexWhere((field) {
+      final fieldKey = field.key?.trim();
+      if (fieldKey?.isNotEmpty == true && fieldKey == currentFieldKey) {
+        return true;
+      }
+      return field.id != null && field.id == currentField.id;
+    });
+    final nextField = currentIndex >= 0 && currentIndex + 1 < visibleFields.length
+        ? visibleFields[currentIndex + 1]
+        : null;
+    final nextFocusNode = nextField == null
+        ? widget.submitFocusNode
+        : _fieldFocusNodes[_focusKeyForField(
+            nextField,
+            currentIndex + 1,
+          )];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final resolvedNextFocusNode = nextFocusNode;
+      if (resolvedNextFocusNode == null) {
+        FocusScope.of(context).unfocus();
+        return;
+      }
+      FocusScope.of(context).requestFocus(resolvedNextFocusNode);
+      if (_shouldActivateNextField(nextField, resolvedNextFocusNode)) {
+        final primaryFocus = FocusManager.instance.primaryFocus;
+        final targetContext =
+            primaryFocus?.context ?? resolvedNextFocusNode.context;
+        if (targetContext != null) {
+          Actions.maybeInvoke(targetContext, const ActivateIntent());
+        }
+      }
+    });
   }
 
   @override
@@ -1602,6 +1674,8 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
                   nextField,
                   nextFocusNode,
                 ),
+                onAdvanceAfterSelection: (value) =>
+                    _moveToNextVisibleFieldAfterSelection(field, value),
                 errorText: widget.errors[fieldKey],
                 initialValue: widget.answers[fieldKey],
                 onChanged: (value) => widget.onChanged(fieldKey, value),
@@ -1664,6 +1738,8 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
                   nextField,
                   nextFocusNode,
                 ),
+                onAdvanceAfterSelection: (value) =>
+                    _moveToNextVisibleFieldAfterSelection(field, value),
                 initialValue: widget.answers[field.key],
                 errorText: widget.errors[field.key],
                 onEdit: null,
@@ -1876,6 +1952,7 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
     this.focusNode,
     this.nextFocusNode,
     this.activateNextFocus = false,
+    this.onAdvanceAfterSelection,
     this.errorText,
     this.dragHandle,
   });
@@ -1893,6 +1970,7 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
   final FocusNode? focusNode;
   final FocusNode? nextFocusNode;
   final bool activateNextFocus;
+  final ValueChanged<dynamic>? onAdvanceAfterSelection;
   final String? errorText;
   final Widget? dragHandle;
 
@@ -1919,6 +1997,7 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
       focusNode: focusNode,
       nextFocusNode: nextFocusNode,
       activateNextFocus: activateNextFocus,
+      onAdvanceAfterSelection: onAdvanceAfterSelection,
       initialValue: initialValue,
       errorText: errorText,
       headerTrailing: Row(
@@ -2001,6 +2080,7 @@ class _WorkflowFieldCard extends StatelessWidget {
     this.focusNode,
     this.nextFocusNode,
     this.activateNextFocus = false,
+    this.onAdvanceAfterSelection,
     this.headerTrailing,
     this.onEdit,
     this.errorText,
@@ -2018,6 +2098,7 @@ class _WorkflowFieldCard extends StatelessWidget {
   final FocusNode? focusNode;
   final FocusNode? nextFocusNode;
   final bool activateNextFocus;
+  final ValueChanged<dynamic>? onAdvanceAfterSelection;
   final Widget? headerTrailing;
   final VoidCallback? onEdit;
   final String? errorText;
@@ -2135,6 +2216,11 @@ class _WorkflowFieldCard extends StatelessWidget {
         options: palawanLocationOptions,
         onChanged: (value) {
           onChanged(value);
+          final handleAdvance = onAdvanceAfterSelection;
+          if (handleAdvance != null) {
+            handleAdvance(value);
+            return;
+          }
           final resolvedNextFocusNode = nextFocusNode;
           if (resolvedNextFocusNode != null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2179,9 +2265,14 @@ class _WorkflowFieldCard extends StatelessWidget {
           ).copyWith(errorText: errorText),
           options: field.options,
           onChanged: (value) {
-            onChanged(value);
-            final resolvedNextFocusNode = nextFocusNode;
-            if (resolvedNextFocusNode != null) {
+          onChanged(value);
+          final handleAdvance = onAdvanceAfterSelection;
+          if (handleAdvance != null) {
+            handleAdvance(value);
+            return;
+          }
+          final resolvedNextFocusNode = nextFocusNode;
+          if (resolvedNextFocusNode != null) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (!context.mounted) {
                   return;
@@ -2311,10 +2402,15 @@ class _WorkflowFieldCard extends StatelessWidget {
               ),
             );
           }).toList(),
-          onChanged: (value) {
-            onChanged(value);
-            final resolvedNextFocusNode = nextFocusNode;
-            if (resolvedNextFocusNode != null) {
+        onChanged: (value) {
+          onChanged(value);
+          final handleAdvance = onAdvanceAfterSelection;
+          if (handleAdvance != null) {
+            handleAdvance(value);
+            return;
+          }
+          final resolvedNextFocusNode = nextFocusNode;
+          if (resolvedNextFocusNode != null) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (!context.mounted) {
                   return;
@@ -2513,6 +2609,11 @@ class _WorkflowFieldCard extends StatelessWidget {
           : 'No online helpers available.',
       onChanged: (value) {
         onChanged(value);
+        final handleAdvance = onAdvanceAfterSelection;
+        if (handleAdvance != null) {
+          handleAdvance(value);
+          return;
+        }
         final resolvedNextFocusNode = nextFocusNode;
         if (resolvedNextFocusNode != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {

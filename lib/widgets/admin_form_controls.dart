@@ -417,21 +417,9 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
                 onTap: () {
                   final onDisabledTap = widget.onDisabledTap;
                   if (onDisabledTap != null) {
-                    debugPrint(
-                      '[REP_BOOKED_BY_DEBUG][DISABLED_TAP] '
-                      'label=${fieldDecoration.labelText ?? '-'} '
-                      'hint=${fieldDecoration.hintText ?? '-'} '
-                      'hasOverride=true',
-                    );
                     onDisabledTap();
                     return;
                   }
-                  debugPrint(
-                    '[REP_BOOKED_BY_DEBUG][DISABLED_TAP] '
-                    'label=${fieldDecoration.labelText ?? '-'} '
-                    'hint=${fieldDecoration.hintText ?? '-'} '
-                    'hasOverride=false message=$disabledTapMessage',
-                  );
                   AppSnackbar.showError(context, disabledTapMessage);
                 },
                 child: const SizedBox.expand(),

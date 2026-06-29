@@ -30,6 +30,115 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
   Map<String, dynamic> _answers = {};
   Map<String, String> _errors = {};
   int _resetTick = 0;
+  final Map<String, FocusNode> _fieldFocusNodes = {};
+  final FocusNode _submitFocusNode = FocusNode(
+    debugLabel: 'booking_field(__cta__)',
+  );
+
+  String _focusKeyForField(StatusField field, int index) {
+    final key = (field.key ?? '').trim();
+    if (key.isNotEmpty) {
+      return key;
+    }
+    final title = (field.title ?? '').trim();
+    final type = (field.type ?? '').trim();
+    return '__index_$index:${title.isEmpty ? '-' : title}|${type.isEmpty ? '-' : type}';
+  }
+
+  void _syncFocusNodes(List<StatusField> fields) {
+    final activeKeys = <String>{};
+    for (var index = 0; index < fields.length; index++) {
+      final field = fields[index];
+      final focusKey = _focusKeyForField(field, index);
+      activeKeys.add(focusKey);
+      _fieldFocusNodes.putIfAbsent(
+        focusKey,
+        () => FocusNode(debugLabel: 'booking_field($focusKey)'),
+      );
+    }
+    final removedKeys = _fieldFocusNodes.keys
+        .where((key) => !activeKeys.contains(key))
+        .toList();
+    for (final key in removedKeys) {
+      _fieldFocusNodes.remove(key)?.dispose();
+    }
+  }
+
+  bool _shouldActivateNextField(StatusField? nextField, FocusNode? nextFocus) {
+    if (nextFocus == null) {
+      return false;
+    }
+    if (nextField == null) {
+      return true;
+    }
+    final nextFieldType = (nextField.type ?? '').trim().toLowerCase();
+    return nextFieldType == 'dropdown' ||
+        nextFieldType == 'search_dropdown' ||
+        nextFieldType == 'date' ||
+        nextFieldType == 'time' ||
+        nextFieldType == 'photo';
+  }
+
+  void _moveToNextVisibleFieldAfterSelection(
+    StatusField currentField,
+    dynamic nextValue,
+  ) {
+    final currentFieldKey = currentField.key?.trim();
+    if (currentFieldKey == null || currentFieldKey.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        FocusScope.of(context).requestFocus(_submitFocusNode);
+      });
+      return;
+    }
+
+    final nextAnswers = Map<String, dynamic>.from(_answers);
+    if (_isEmptyValue(nextValue)) {
+      nextAnswers.remove(currentFieldKey);
+    } else {
+      nextAnswers[currentFieldKey] = nextValue;
+    }
+
+    final visibleFields = StatusFormEngine.visibleFields(widget.fields, nextAnswers);
+    final currentIndex = visibleFields.indexWhere((field) {
+      final fieldKey = field.key?.trim();
+      if (fieldKey?.isNotEmpty == true && fieldKey == currentFieldKey) {
+        return true;
+      }
+      return field.id != null && field.id == currentField.id;
+    });
+    final nextField =
+        currentIndex >= 0 && currentIndex + 1 < visibleFields.length
+        ? visibleFields[currentIndex + 1]
+        : null;
+    final nextFocusKey = nextField == null
+        ? null
+        : _focusKeyForField(nextField, currentIndex + 1);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final resolvedNextFocusNode = nextField == null
+          ? _submitFocusNode
+          : (nextFocusKey == null ? null : _fieldFocusNodes[nextFocusKey]);
+      if (resolvedNextFocusNode == null) {
+        FocusScope.of(context).unfocus();
+        return;
+      }
+      FocusScope.of(context).requestFocus(resolvedNextFocusNode);
+      if (_shouldActivateNextField(nextField, resolvedNextFocusNode)) {
+        final primaryFocus = FocusManager.instance.primaryFocus;
+        final targetContext =
+            primaryFocus?.context ?? resolvedNextFocusNode.context;
+        if (targetContext != null) {
+          Actions.maybeInvoke(targetContext, const ActivateIntent());
+        }
+      }
+    });
+  }
 
   void _updateAnswer(String key, dynamic value) {
     final nextAnswers = Map<String, dynamic>.from(_answers);
@@ -76,6 +185,15 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
   }
 
   @override
+  void dispose() {
+    for (final node in _fieldFocusNodes.values) {
+      node.dispose();
+    }
+    _submitFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final trimmedOverrideTitle = widget.titleText?.trim();
     final trimmedFormTitle = widget.form?.statusText?.trim();
@@ -99,6 +217,7 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
     final dependencies =
         widget.form?.dependencies ?? const <StatusDependency>[];
     final visibleFields = StatusFormEngine.visibleFields(widget.fields, _answers);
+    _syncFocusNodes(visibleFields);
     final hasFields = visibleFields.isNotEmpty;
     final hasNextStatus = nextStatusKey != null && nextStatusKey.isNotEmpty;
     final showSubmitButton = hasFields || hasNextStatus;
@@ -123,11 +242,39 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
           if (hasFields) ...[
             const SizedBox(height: 14),
             ...visibleFields.map(
-              (field) => Padding(
+              (field) {
+                final index = visibleFields.indexOf(field);
+                final isLastField = index == visibleFields.length - 1;
+                final nextField = isLastField ? null : visibleFields[index + 1];
+                final focusKey = _focusKeyForField(field, index);
+                final nextFocusKey = nextField == null
+                    ? null
+                    : _focusKeyForField(nextField, index + 1);
+                final focusNode = _fieldFocusNodes[focusKey];
+                final nextFocusNode = isLastField
+                    ? _submitFocusNode
+                    : (nextFocusKey == null
+                          ? null
+                          : _fieldFocusNodes[nextFocusKey]);
+                final nextFieldType =
+                    (nextField?.type ?? '').trim().toLowerCase();
+                final activateNextFocus =
+                    isLastField ||
+                    nextFieldType == 'dropdown' ||
+                    nextFieldType == 'search_dropdown' ||
+                    nextFieldType == 'date' ||
+                    nextFieldType == 'time' ||
+                    nextFieldType == 'photo';
+                return Padding(
                 padding: const EdgeInsets.only(bottom: 14),
                 child: StatusFormRuntimeFieldCard(
                   key: ValueKey('${field.key}:$_resetTick'),
                   field: field,
+                  focusNode: focusNode,
+                  nextFocusNode: nextFocusNode,
+                  activateNextFocus: activateNextFocus,
+                  onAdvanceAfterSelection: (value) =>
+                      _moveToNextVisibleFieldAfterSelection(field, value),
                   initialValue: _answers[field.key],
                   errorText: _errors[field.key],
                   formTitle: resolvedTitle,
@@ -141,7 +288,8 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
                     _updateAnswer(key, value);
                   },
                 ),
-              ),
+              );
+              },
             ),
           ],
           if (showActionRow) ...[

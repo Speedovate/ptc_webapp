@@ -24,6 +24,7 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
     this.errorText,
     this.optionLabels = const {},
     this.onDisabledTap,
+    this.onAdvanceAfterSelection,
   });
 
   final StatusField field;
@@ -38,6 +39,7 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
   final String? errorText;
   final Map<String, String> optionLabels;
   final VoidCallback? onDisabledTap;
+  final ValueChanged<dynamic>? onAdvanceAfterSelection;
 
   @override
   Widget build(BuildContext context) {
@@ -81,6 +83,7 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
         formStatusKey: formStatusKey,
         optionLabels: optionLabels,
         onDisabledTap: onDisabledTap,
+        onAdvanceAfterSelection: onAdvanceAfterSelection,
         onChanged: onChanged,
       ),
     );
@@ -102,6 +105,7 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
     this.errorText,
     this.optionLabels = const {},
     this.onDisabledTap,
+    this.onAdvanceAfterSelection,
   });
 
   final StatusField field;
@@ -116,6 +120,7 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
   final String? errorText;
   final Map<String, String> optionLabels;
   final VoidCallback? onDisabledTap;
+  final ValueChanged<dynamic>? onAdvanceAfterSelection;
 
   @override
   Widget build(BuildContext context) {
@@ -131,6 +136,7 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         formTitle: formTitle,
         formButtonText: formButtonText,
         formStatusKey: formStatusKey,
+        onAdvanceAfterSelection: onAdvanceAfterSelection,
         onChanged: onChanged,
       );
     }
@@ -145,6 +151,7 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         formTitle: formTitle,
         formButtonText: formButtonText,
         formStatusKey: formStatusKey,
+        onAdvanceAfterSelection: onAdvanceAfterSelection,
         onChanged: onChanged,
       ),
       'search_dropdown' => _SearchDropdownFieldInput(
@@ -157,6 +164,7 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         formTitle: formTitle,
         formButtonText: formButtonText,
         formStatusKey: formStatusKey,
+        onAdvanceAfterSelection: onAdvanceAfterSelection,
         onChanged: onChanged,
       ),
       'dropdown' => _DropdownFieldInput(
@@ -171,6 +179,7 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         formStatusKey: formStatusKey,
         onDisabledTap: onDisabledTap,
         optionLabels: optionLabels,
+        onAdvanceAfterSelection: onAdvanceAfterSelection,
         onChanged: onChanged,
       ),
       'checkbox' => _CheckboxFieldInput(
@@ -268,6 +277,7 @@ class _SearchDropdownFieldInput extends StatelessWidget {
     this.nextFocusNode,
     this.activateNextFocus = false,
     this.errorText,
+    this.onAdvanceAfterSelection,
   });
 
   final StatusField field;
@@ -280,6 +290,7 @@ class _SearchDropdownFieldInput extends StatelessWidget {
   final String? formButtonText;
   final String? formStatusKey;
   final String? errorText;
+  final ValueChanged<dynamic>? onAdvanceAfterSelection;
 
   @override
   Widget build(BuildContext context) {
@@ -323,6 +334,11 @@ class _SearchDropdownFieldInput extends StatelessWidget {
       options: field.options,
       onChanged: (value) {
         onChanged(value);
+        final handleAdvance = onAdvanceAfterSelection;
+        if (handleAdvance != null) {
+          handleAdvance(value);
+          return;
+        }
         final resolvedNextFocusNode = nextFocusNode;
         if (resolvedNextFocusNode != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -364,6 +380,7 @@ class _PalawanLocationFieldInput extends StatelessWidget {
     this.nextFocusNode,
     this.activateNextFocus = false,
     this.errorText,
+    this.onAdvanceAfterSelection,
   });
 
   final StatusField field;
@@ -376,6 +393,7 @@ class _PalawanLocationFieldInput extends StatelessWidget {
   final String? formButtonText;
   final String? formStatusKey;
   final String? errorText;
+  final ValueChanged<dynamic>? onAdvanceAfterSelection;
 
   @override
   Widget build(BuildContext context) {
@@ -423,6 +441,11 @@ class _PalawanLocationFieldInput extends StatelessWidget {
       options: palawanLocationOptions,
       onChanged: (value) {
         onChanged(value);
+        final handleAdvance = onAdvanceAfterSelection;
+        if (handleAdvance != null) {
+          handleAdvance(value);
+          return;
+        }
         final resolvedNextFocusNode = nextFocusNode;
         if (resolvedNextFocusNode != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -672,6 +695,7 @@ class _DropdownFieldInput extends StatelessWidget {
     this.errorText,
     this.optionLabels = const {},
     this.onDisabledTap,
+    this.onAdvanceAfterSelection,
   });
 
   final StatusField field;
@@ -686,6 +710,7 @@ class _DropdownFieldInput extends StatelessWidget {
   final String? errorText;
   final Map<String, String> optionLabels;
   final VoidCallback? onDisabledTap;
+  final ValueChanged<dynamic>? onAdvanceAfterSelection;
 
   @override
   Widget build(BuildContext context) {
@@ -777,6 +802,11 @@ class _DropdownFieldInput extends StatelessWidget {
       }).toList(),
       onChanged: (value) {
         onChanged(value);
+        final handleAdvance = onAdvanceAfterSelection;
+        if (handleAdvance != null) {
+          handleAdvance(value);
+          return;
+        }
         moveToNextField();
       },
       onDisabledTap: onDisabledTap,
@@ -1206,6 +1236,7 @@ class _PhotoFieldInput extends StatefulWidget {
     required this.formButtonText,
     required this.formStatusKey,
     this.errorText,
+    this.onAdvanceAfterSelection,
   });
 
   final StatusField field;
@@ -1218,6 +1249,7 @@ class _PhotoFieldInput extends StatefulWidget {
   final String? formButtonText;
   final String? formStatusKey;
   final String? errorText;
+  final ValueChanged<dynamic>? onAdvanceAfterSelection;
 
   @override
   State<_PhotoFieldInput> createState() => _PhotoFieldInputState();
@@ -1266,6 +1298,7 @@ class _PhotoFieldInputState extends State<_PhotoFieldInput> {
                 : 'Optional'),
       showRemoveAction: true,
       onMoveToNextFocus: _focusAndMaybeActivateNext,
+      onAdvanceAfterSelection: widget.onAdvanceAfterSelection,
       onChanged: widget.onChanged,
     );
   }
