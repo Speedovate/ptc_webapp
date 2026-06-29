@@ -3,6 +3,11 @@
 const version = new URL(self.location.href).searchParams.get('v') || 'v1';
 const SHELL_CACHE = `paltranco-shell-${version}`;
 const RUNTIME_CACHE = `paltranco-runtime-${version}`;
+const IMAGE_CACHE = `paltranco-images-${version}`;
+const TRUSTED_IMAGE_HOSTS = new Set([
+  'firebasestorage.googleapis.com',
+  'storage.googleapis.com',
+]);
 
 const APP_SHELL_URLS = [
   '/',
@@ -30,7 +35,11 @@ self.addEventListener('activate', (event) => {
       const keys = await caches.keys();
       await Promise.all(
         keys.map((key) => {
-          if (key !== SHELL_CACHE && key !== RUNTIME_CACHE) {
+          if (
+            key !== SHELL_CACHE &&
+            key !== RUNTIME_CACHE &&
+            key !== IMAGE_CACHE
+          ) {
             return caches.delete(key);
           }
           return Promise.resolve(false);
@@ -48,6 +57,11 @@ self.addEventListener('fetch', (event) => {
   }
 
   const url = new URL(request.url);
+  if (isTrustedCrossOriginImageRequest(request, url)) {
+    event.respondWith(handleImageRequest(request));
+    return;
+  }
+
   if (url.origin !== self.location.origin) {
     return;
   }
@@ -102,4 +116,29 @@ async function handleAssetRequest(request) {
     }
     throw error;
   }
+}
+
+async function handleImageRequest(request) {
+  const imageCache = await caches.open(IMAGE_CACHE);
+  const cached =
+      (await imageCache.match(request, { ignoreSearch: false })) ||
+      (await imageCache.match(request, { ignoreSearch: true }));
+  if (cached) {
+    return cached;
+  }
+
+  const response = await fetch(request);
+  if (response && (response.ok || response.type === 'opaque')) {
+    await imageCache.put(request, response.clone());
+  }
+  return response;
+}
+
+function isTrustedCrossOriginImageRequest(request, url) {
+  return (
+    url.origin !== self.location.origin &&
+    request.method === 'GET' &&
+    request.destination === 'image' &&
+    TRUSTED_IMAGE_HOSTS.has(url.hostname)
+  );
 }

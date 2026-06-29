@@ -115,6 +115,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   bool _isLoadingAdminUsers = false;
   bool _isLoadingSupportAgent = false;
   bool _isSending = false;
+  bool _showAdminMobileChat = false;
   List<Booking> _accessibleBookings = const [];
   List<UserModel> _adminUsers = const [];
   List<_PendingSupportAttachment> _pendingAttachments = const [];
@@ -286,6 +287,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         _selectedThreadId = thread.id;
         _selectedAdminDraftUser = null;
         _pendingInitialAdminUserId = null;
+        _showAdminMobileChat = true;
       });
     } catch (error) {
       if (!mounted) {
@@ -296,6 +298,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         _selectedThreadId = null;
         _selectedAdminDraftUser = targetUser;
         _pendingInitialAdminUserId = null;
+        _showAdminMobileChat = true;
       });
     }
   }
@@ -505,6 +508,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       setState(() {
         _selectedThreadId = existingThread.id;
         _selectedAdminDraftUser = null;
+        _showAdminMobileChat = true;
       });
       return;
     }
@@ -512,6 +516,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     setState(() {
       _selectedThreadId = null;
       _selectedAdminDraftUser = user;
+      _showAdminMobileChat = true;
     });
   }
 
@@ -657,6 +662,13 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                       : _supportAgentUser,
                   counterpartUser: _isAdmin ? null : _supportAgentUser,
                   subtitleOverride: _isAdmin ? null : 'Client Support',
+                  onBack: _isAdmin
+                      ? () {
+                          setState(() {
+                            _showAdminMobileChat = false;
+                          });
+                        }
+                      : null,
                   messageController: _messageController,
                   pendingAttachments: _pendingAttachments,
                   isSending: _isSending,
@@ -680,39 +692,74 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                       bottomRight: Radius.circular(18),
                     ),
                     child: _isAdmin
-                        ? useWideLayout
-                              ? Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 370,
-                                      child: _SupportSidebarSurface(
-                                        child: sidebar,
-                                      ),
+                        ? () {
+                            final useMobileLayout =
+                                constraints.maxWidth < 760;
+                            if (useWideLayout) {
+                              return Row(
+                                children: [
+                                  SizedBox(
+                                    width: 370,
+                                    child: _SupportSidebarSurface(
+                                      child: sidebar,
                                     ),
-                                    const VerticalDivider(
-                                      width: 1,
-                                      thickness: 1,
-                                      color: AppColors.primaryBorder,
+                                  ),
+                                  const VerticalDivider(
+                                    width: 1,
+                                    thickness: 1,
+                                    color: AppColors.primaryBorder,
+                                  ),
+                                  Expanded(
+                                    child: _SupportChatPanel(
+                                      key: chatPanel.key,
+                                      currentUser: widget.user,
+                                      thread: selectedThread,
+                                      draftUser: _selectedAdminDraftUser,
+                                      counterpartUser: null,
+                                      subtitleOverride: null,
+                                      onBack: null,
+                                      messageController: _messageController,
+                                      pendingAttachments: _pendingAttachments,
+                                      isSending: _isSending,
+                                      onPickAttachments: _pickAttachments,
+                                      onRemovePendingAttachment: (index) {
+                                        setState(() {
+                                          final next =
+                                              List<_PendingSupportAttachment>.from(
+                                                _pendingAttachments,
+                                              )..removeAt(index);
+                                          _pendingAttachments = next;
+                                        });
+                                      },
+                                      onSend: _sendMessage,
+                                      supportRequest: _supportRequest,
                                     ),
-                                    Expanded(child: chatPanel),
-                                  ],
-                                )
-                              : Column(
-                                  children: [
-                                    SizedBox(
-                                      height: 320,
-                                      child: _SupportSidebarSurface(
-                                        child: sidebar,
-                                      ),
-                                    ),
-                                    const Divider(
-                                      height: 1,
-                                      thickness: 1,
-                                      color: AppColors.primaryBorder,
-                                    ),
-                                    Expanded(child: chatPanel),
-                                  ],
-                                )
+                                  ),
+                                ],
+                              );
+                            }
+                            if (useMobileLayout) {
+                              return _showAdminMobileChat
+                                  ? chatPanel
+                                  : _SupportSidebarSurface(child: sidebar);
+                            }
+                            return Column(
+                              children: [
+                                SizedBox(
+                                  height: 320,
+                                  child: _SupportSidebarSurface(
+                                    child: sidebar,
+                                  ),
+                                ),
+                                const Divider(
+                                  height: 1,
+                                  thickness: 1,
+                                  color: AppColors.primaryBorder,
+                                ),
+                                Expanded(child: chatPanel),
+                              ],
+                            );
+                          }()
                         : chatPanel,
                   ),
                 );
@@ -1316,6 +1363,7 @@ class _SupportChatPanel extends StatelessWidget {
     required this.draftUser,
     required this.counterpartUser,
     required this.subtitleOverride,
+    required this.onBack,
     required this.messageController,
     required this.pendingAttachments,
     required this.isSending,
@@ -1330,6 +1378,7 @@ class _SupportChatPanel extends StatelessWidget {
   final UserModel? draftUser;
   final UserModel? counterpartUser;
   final String? subtitleOverride;
+  final VoidCallback? onBack;
   final TextEditingController messageController;
   final List<_PendingSupportAttachment> pendingAttachments;
   final bool isSending;
@@ -1370,6 +1419,21 @@ class _SupportChatPanel extends StatelessWidget {
             ),
             child: Row(
               children: [
+                if (onBack != null) ...[
+                  IconButton(
+                    onPressed: onBack,
+                    icon: const Icon(Icons.arrow_back_rounded),
+                    color: AppColors.primaryColor,
+                    splashRadius: 20,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 36,
+                      minHeight: 36,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  const SizedBox(width: 10),
+                ],
                 AppProfileAvatar(
                   radius: 22,
                   photo:
