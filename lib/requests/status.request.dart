@@ -90,7 +90,7 @@ class StatusRequest implements StatusFormRepository {
   ) async {
     final forms = await _getHydratedForms();
     final statuses = await getStatuses();
-    final normalizedRole = role.trim();
+    final normalizedRole = effectiveBackOfficeRoleKey(role);
     final normalizedCurrentStatusKey = currentStatusKey.trim();
 
     bool isKnownActiveStatus(String? statusKey) {

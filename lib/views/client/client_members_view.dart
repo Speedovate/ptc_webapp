@@ -35,6 +35,7 @@ class ClientMembersView extends StatefulWidget {
     this.onViewBooking,
     this.onEditBooking,
     this.onNewBooking,
+    this.allowDelete = true,
   });
 
   final UserModel clientUser;
@@ -45,6 +46,7 @@ class ClientMembersView extends StatefulWidget {
   final Future<void> Function(Booking booking)? onViewBooking;
   final Future<void> Function(Booking booking)? onEditBooking;
   final Future<void> Function()? onNewBooking;
+  final bool allowDelete;
 
   @override
   State<ClientMembersView> createState() => _ClientMembersViewState();
@@ -192,19 +194,21 @@ class _ClientMembersViewState extends State<ClientMembersView> {
                   ].where((isActive) => isActive).length,
                 ),
               )
-                else
-                  _ClientMembersTable(
-                    members: filteredMembers,
-                    forceWideLayout: widget.forceWideLayout,
-                    onView: (member) => _openMemberView(context, member),
-                    onEdit: (member) => _openMemberDialog(
-                      context,
-                      vm,
-                      existingMember: member,
+            else
+              _ClientMembersTable(
+                members: filteredMembers,
+                forceWideLayout: widget.forceWideLayout,
+                onView: (member) => _openMemberView(context, member),
+                onEdit: (member) => _openMemberDialog(
+                  context,
+                  vm,
+                  existingMember: member,
                 ),
                 onToggleActive: (member) =>
                     _toggleMemberActive(context, vm, member),
-                onDelete: (member) => _deleteMember(context, vm, member),
+                onDelete: widget.allowDelete
+                    ? (member) => _deleteMember(context, vm, member)
+                    : null,
               ),
           ],
         );
@@ -437,7 +441,7 @@ class _ClientMembersTable extends StatelessWidget {
     required this.onView,
     required this.onEdit,
     required this.onToggleActive,
-    required this.onDelete,
+    this.onDelete,
   });
 
   final List<ClientMember> members;
@@ -445,7 +449,7 @@ class _ClientMembersTable extends StatelessWidget {
   final ValueChanged<ClientMember> onView;
   final ValueChanged<ClientMember> onEdit;
   final ValueChanged<ClientMember> onToggleActive;
-  final ValueChanged<ClientMember> onDelete;
+  final ValueChanged<ClientMember>? onDelete;
 
   static const _headerStyle = TextStyle(
     color: AppColors.textSecondary,
@@ -560,7 +564,9 @@ class _ClientMembersTable extends StatelessWidget {
                       onView: () => onView(entry.value),
                       onEdit: () => onEdit(entry.value),
                       onToggleActive: () => onToggleActive(entry.value),
-                      onDelete: () => onDelete(entry.value),
+                      onDelete: onDelete == null
+                          ? null
+                          : () => onDelete!(entry.value),
                     ),
                   ),
                 )
@@ -662,7 +668,9 @@ class _ClientMembersTable extends StatelessWidget {
                   onView: () => onView(entry.value),
                   onEdit: () => onEdit(entry.value),
                   onToggleActive: () => onToggleActive(entry.value),
-                  onDelete: () => onDelete(entry.value),
+                  onDelete: onDelete == null
+                      ? null
+                      : () => onDelete!(entry.value),
                 ),
               ),
             ),
@@ -737,7 +745,7 @@ class _ClientMembersWideRow extends StatelessWidget {
     required this.onView,
     required this.onEdit,
     required this.onToggleActive,
-    required this.onDelete,
+    this.onDelete,
   });
 
   final ClientMember member;
@@ -754,7 +762,7 @@ class _ClientMembersWideRow extends StatelessWidget {
   final VoidCallback onView;
   final VoidCallback onEdit;
   final VoidCallback onToggleActive;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -896,11 +904,12 @@ class _ClientMembersWideRow extends StatelessWidget {
                         : const Color(0xFF2EAD62),
                     onTap: onToggleActive,
                   ),
-                  _ClientMemberActionButton(
-                    icon: Icons.delete_rounded,
-                    isDanger: true,
-                    onTap: onDelete,
-                  ),
+                  if (onDelete != null)
+                    _ClientMemberActionButton(
+                      icon: Icons.delete_rounded,
+                      isDanger: true,
+                      onTap: onDelete!,
+                    ),
                 ],
               ),
             ),
@@ -917,14 +926,14 @@ class _ClientMemberResponsiveCard extends StatelessWidget {
     required this.onView,
     required this.onEdit,
     required this.onToggleActive,
-    required this.onDelete,
+    this.onDelete,
   });
 
   final ClientMember member;
   final VoidCallback onView;
   final VoidCallback onEdit;
   final VoidCallback onToggleActive;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
 
   static final _labelStyle = TextStyle(
     color: AppColors.primaryColor.withValues(alpha: 0.72),
@@ -983,11 +992,12 @@ class _ClientMemberResponsiveCard extends StatelessWidget {
                         : const Color(0xFF2EAD62),
                     onTap: onToggleActive,
                   ),
-                  _ClientMemberActionButton(
-                    icon: Icons.delete_rounded,
-                    isDanger: true,
-                    onTap: onDelete,
-                  ),
+                  if (onDelete != null)
+                    _ClientMemberActionButton(
+                      icon: Icons.delete_rounded,
+                      isDanger: true,
+                      onTap: onDelete!,
+                    ),
                 ],
               ),
             ],

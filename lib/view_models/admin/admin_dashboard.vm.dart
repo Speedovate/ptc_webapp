@@ -11,6 +11,10 @@ import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
 class AdminDashboardViewModel extends BaseViewModel {
+  static const billingStatusAll = 'all';
+  static const billingStatusBilled = 'billed';
+  static const billingStatusUnbilled = 'unbilled';
+
   AdminDashboardViewModel({
     AuthRepository? authRepository,
     VehicleCatalogRepository? vehicleRepository,
@@ -50,6 +54,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   String _searchQuery = '';
   DateTime? _startDate;
   DateTime? _endDate;
+  String? _billingStatusFilter;
   bool _isExporting = false;
   int _exportTotalSteps = 0;
   int _exportCompletedSteps = 0;
@@ -57,6 +62,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   String get searchQuery => _searchQuery;
   DateTime? get startDate => _startDate;
   DateTime? get endDate => _endDate;
+  String get billingStatusFilter => _billingStatusFilter ?? billingStatusAll;
   bool get isExporting => _isExporting;
   String get exportProgressLabel {
     if (!_isExporting || _exportTotalSteps <= 0) {
@@ -190,6 +196,12 @@ class AdminDashboardViewModel extends BaseViewModel {
   List<Booking> filteredCompletedBookings() {
     final query = _searchQuery.trim().toLowerCase();
     return _completedBookings.where((booking) {
+      final matchesBillingStatus =
+          _billingStatusFilter == null ||
+          billingStatusValue(booking) == _billingStatusFilter;
+      if (!matchesBillingStatus) {
+        return false;
+      }
       final deliveredDate =
           deliveredAt(booking) ?? booking.updatedAt ?? booking.createdAt;
       final matchesStartDate =
@@ -265,9 +277,166 @@ class AdminDashboardViewModel extends BaseViewModel {
       _endDate = null;
       changed = true;
     }
+    if (_billingStatusFilter != null) {
+      _billingStatusFilter = null;
+      changed = true;
+    }
     if (changed) {
       notifyListeners();
     }
+  }
+
+  void updateBillingStatusFilter(String? value) {
+    final normalized = switch (value?.trim().toLowerCase()) {
+      billingStatusBilled => billingStatusBilled,
+      billingStatusUnbilled => billingStatusUnbilled,
+      _ => null,
+    };
+    if (_billingStatusFilter == normalized) {
+      return;
+    }
+    _billingStatusFilter = normalized;
+    notifyListeners();
+  }
+
+  List<Booking> currentRangeExportBookings() {
+    if (_startDate == null || _endDate == null) {
+      return const [];
+    }
+    return _completedBookings.where((booking) {
+      final deliveredDate =
+          deliveredAt(booking) ?? booking.updatedAt ?? booking.createdAt;
+      if (deliveredDate == null) {
+        return false;
+      }
+      final dateOnly = _dateOnly(deliveredDate);
+      return !dateOnly.isBefore(_dateOnly(_startDate!)) &&
+          !dateOnly.isAfter(_dateOnly(_endDate!));
+    }).toList();
+  }
+
+  List<Booking> pastUnbilledExportBookings() {
+    final startDate = _startDate;
+    return _completedBookings.where((booking) {
+      if (billingStatusValue(booking) != billingStatusUnbilled) {
+        return false;
+      }
+      if (startDate == null) {
+        return true;
+      }
+      final deliveredDate =
+          deliveredAt(booking) ?? booking.updatedAt ?? booking.createdAt;
+      if (deliveredDate == null) {
+        return false;
+      }
+      return _dateOnly(deliveredDate).isBefore(_dateOnly(startDate));
+    }).toList();
+  }
+
+  List<Booking> mergedExportBookings({
+    required bool includeCurrentRange,
+    required bool includePastUnbilled,
+  }) {
+    final byId = <String, Booking>{};
+    if (includeCurrentRange) {
+      for (final booking in currentRangeExportBookings()) {
+        final id = booking.id;
+        if (id == null || id.isEmpty) {
+          continue;
+        }
+        byId[id] = booking;
+      }
+    }
+    if (includePastUnbilled) {
+      for (final booking in pastUnbilledExportBookings()) {
+        final id = booking.id;
+        if (id == null || id.isEmpty) {
+          continue;
+        }
+        byId.putIfAbsent(id, () => booking);
+      }
+    }
+    final merged = byId.values.toList();
+    merged.sort((left, right) {
+      final leftDate = deliveredAt(left) ?? left.updatedAt ?? left.createdAt;
+      final rightDate = deliveredAt(right) ?? right.updatedAt ?? right.createdAt;
+      final dateComparison = _compareLatestFirst(leftDate, rightDate);
+      if (dateComparison != 0) {
+        return dateComparison;
+      }
+      final leftId = int.tryParse(left.id ?? '');
+      final rightId = int.tryParse(right.id ?? '');
+      if (leftId != null && rightId != null) {
+        return rightId.compareTo(leftId);
+      }
+      return (right.id ?? '').compareTo(left.id ?? '');
+    });
+    return merged;
+  }
+
+  String billingStatusValue(Booking booking) {
+    return booking.billingStatus?.trim().toLowerCase() == billingStatusBilled
+        ? billingStatusBilled
+        : billingStatusUnbilled;
+  }
+
+  String billingStatusLabel(Booking booking) {
+    return billingStatusValue(booking) == billingStatusBilled
+        ? 'Billed'
+        : 'Unbilled';
+  }
+
+  Future<void> updateBookingBillingStatus(
+    Booking booking,
+    String billingStatus,
+  ) async {
+    final bookingId = booking.id?.trim();
+    if (bookingId == null || bookingId.isEmpty) {
+      throw Exception('We could not update the billing status right now.');
+    }
+    final updated = await _bookingRepository.updateBillingStatus(
+      bookingId,
+      billingStatus,
+    );
+    _replaceBooking(updated);
+  }
+
+  Future<void> updateBillingStatusesForExport({
+    required Iterable<String> billedBookingIds,
+    required Iterable<String> unbilledBookingIds,
+  }) async {
+    final statuses = <String, String>{};
+    for (final bookingId in billedBookingIds) {
+      final normalizedId = normalizeId(bookingId);
+      if (normalizedId == null) {
+        continue;
+      }
+      statuses[normalizedId] = billingStatusBilled;
+    }
+    for (final bookingId in unbilledBookingIds) {
+      final normalizedId = normalizeId(bookingId);
+      if (normalizedId == null) {
+        continue;
+      }
+      statuses[normalizedId] = billingStatusUnbilled;
+    }
+    if (statuses.isEmpty) {
+      return;
+    }
+    await _bookingRepository.updateBillingStatuses(statuses);
+    for (final entry in statuses.entries) {
+      final index = _completedBookings.indexWhere(
+        (booking) => booking.id == entry.key,
+      );
+      if (index < 0) {
+        continue;
+      }
+      _completedBookings[index] = _completedBookings[index].copyWith(
+        billingStatus: entry.value,
+      );
+    }
+    _cachedCompletedBookings = List<Booking>.from(_completedBookings);
+    notifyListeners();
   }
 
   String formatDate(DateTime? value) {
@@ -394,5 +563,15 @@ class AdminDashboardViewModel extends BaseViewModel {
       }
     }
     return values;
+  }
+
+  void _replaceBooking(Booking booking) {
+    final index = _completedBookings.indexWhere((item) => item.id == booking.id);
+    if (index < 0) {
+      return;
+    }
+    _completedBookings[index] = booking;
+    _cachedCompletedBookings = List<Booking>.from(_completedBookings);
+    notifyListeners();
   }
 }

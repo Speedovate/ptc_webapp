@@ -55,7 +55,7 @@ class BookingWorkflowView extends StatefulWidget {
 }
 
 String? _supportTargetUserIdForBooking(UserModel currentUser, Booking booking) {
-  if (normalizeRoleKey(currentUser.role) != 'admin') {
+  if (!isBackOfficeRole(currentUser.role)) {
     return null;
   }
   return normalizeId(
@@ -713,7 +713,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
           headlineStatusLabel: currentStatusLabel,
           statusLabelForKey: vm.statusLabelForKey,
           showStatusSubmissions: false,
-          showAllDetails: widget.user.role == 'admin',
+          showAllDetails: isBackOfficeRole(widget.user.role),
           originValue: BookingRecordCard.outputFieldDisplayValue(
             currentBooking.statusOutputs,
             'origin',
@@ -743,7 +743,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             );
           },
         ),
-        if (widget.user.role != 'admin') ...[
+        if (!isBackOfficeRole(widget.user.role)) ...[
           Builder(
             builder: (context) {
               final waybillPhotoValue = BookingRecordCard.outputFieldValue(
@@ -761,7 +761,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             },
           ),
         ],
-        if (widget.user.role == 'admin' &&
+        if (isBackOfficeRole(widget.user.role) &&
             (currentBooking.statusOutputs ?? const {}).isNotEmpty) ...[
           const SizedBox(height: 18),
           const AdminSectionTitle(title: 'Statuses'),

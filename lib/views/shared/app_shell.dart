@@ -83,6 +83,7 @@ class AppShell extends StatelessWidget {
     final normalizedRole = normalizeRoleKey(user.role);
     switch (normalizedRole) {
       case 'admin':
+      case 'dispatcher':
         return AdminHome(
           user: user,
           isQuickLoggedIn: isQuickLoggedIn,

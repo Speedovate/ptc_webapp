@@ -119,7 +119,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   List<_PendingSupportAttachment> _pendingAttachments = const [];
   String? _pendingInitialAdminUserId;
 
-  bool get _isAdmin => normalizeRoleKey(widget.user.role) == 'admin';
+  bool get _isAdmin => isBackOfficeRole(widget.user.role);
 
   @override
   void initState() {

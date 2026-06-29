@@ -3,6 +3,7 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_home.vm.dart';
 import 'package:webapp/views/admin/admin_bookings.dart';
 import 'package:webapp/views/admin/admin_dashboard.dart';
@@ -160,6 +161,20 @@ class _AdminHomeState extends State<AdminHome> {
     );
   }
 
+  bool get _canAccessVehicles => canAccessVehicleAdmin(_shellUser.role);
+
+  bool get _canAccessFlows => canAccessFlowAdmin(_shellUser.role);
+
+  AdminSection _resolvedSection(AdminSection section) {
+    if (section == AdminSection.vehicles && !_canAccessVehicles) {
+      return AdminSection.dashboard;
+    }
+    if (section == AdminSection.settings && !_canAccessFlows) {
+      return AdminSection.dashboard;
+    }
+    return section;
+  }
+
   Widget _buildSidebar(AdminHomeViewModel vm, {required bool isCompact}) {
     return PlatformSidebarContainer(
       onBrandTap: () {
@@ -191,68 +206,69 @@ class _AdminHomeState extends State<AdminHome> {
             }
           },
         ),
-        SidebarMenuItem(
-          label: AdminSection.vehicles.title,
-          icon: _menuIcon(AdminSection.vehicles),
-          isSelected: false,
-          trailing: Icon(
-            vm.isVehiclesExpanded
-                ? Icons.keyboard_arrow_down_rounded
-                : Icons.chevron_right_rounded,
-            color: Colors.white,
-            size: 18,
+        if (_canAccessVehicles)
+          SidebarMenuItem(
+            label: AdminSection.vehicles.title,
+            icon: _menuIcon(AdminSection.vehicles),
+            isSelected: false,
+            trailing: Icon(
+              vm.isVehiclesExpanded
+                  ? Icons.keyboard_arrow_down_rounded
+                  : Icons.chevron_right_rounded,
+              color: Colors.white,
+              size: 18,
+            ),
+            onTap: vm.toggleVehiclesExpanded,
+            children: vm.isVehiclesExpanded
+                ? [
+                    SidebarMenuItem(
+                      label: AdminVehiclesSection.makes.title,
+                      icon: Icons.directions_car_filled,
+                      isChild: true,
+                      isSelected:
+                          vm.selectedSection == AdminSection.vehicles &&
+                          vm.selectedVehiclesSection ==
+                              AdminVehiclesSection.makes,
+                      onTap: () {
+                        vm.selectVehiclesSection(AdminVehiclesSection.makes);
+                        if (isCompact) {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                    ),
+                    SidebarMenuItem(
+                      label: AdminVehiclesSection.types.title,
+                      icon: Icons.category_rounded,
+                      isChild: true,
+                      isSelected:
+                          vm.selectedSection == AdminSection.vehicles &&
+                          vm.selectedVehiclesSection ==
+                              AdminVehiclesSection.types,
+                      onTap: () {
+                        vm.selectVehiclesSection(AdminVehiclesSection.types);
+                        if (isCompact) {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                    ),
+                    SidebarMenuItem(
+                      label: AdminVehiclesSection.sizes.title,
+                      icon: Icons.crop_16_9_rounded,
+                      isChild: true,
+                      isSelected:
+                          vm.selectedSection == AdminSection.vehicles &&
+                          vm.selectedVehiclesSection ==
+                              AdminVehiclesSection.sizes,
+                      onTap: () {
+                        vm.selectVehiclesSection(AdminVehiclesSection.sizes);
+                        if (isCompact) {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                    ),
+                  ]
+                : const [],
           ),
-          onTap: vm.toggleVehiclesExpanded,
-          children: vm.isVehiclesExpanded
-              ? [
-                  SidebarMenuItem(
-                    label: AdminVehiclesSection.makes.title,
-                    icon: Icons.directions_car_filled,
-                    isChild: true,
-                    isSelected:
-                        vm.selectedSection == AdminSection.vehicles &&
-                        vm.selectedVehiclesSection ==
-                            AdminVehiclesSection.makes,
-                    onTap: () {
-                      vm.selectVehiclesSection(AdminVehiclesSection.makes);
-                      if (isCompact) {
-                        Navigator.of(context).pop();
-                      }
-                    },
-                  ),
-                  SidebarMenuItem(
-                    label: AdminVehiclesSection.types.title,
-                    icon: Icons.category_rounded,
-                    isChild: true,
-                    isSelected:
-                        vm.selectedSection == AdminSection.vehicles &&
-                        vm.selectedVehiclesSection ==
-                            AdminVehiclesSection.types,
-                    onTap: () {
-                      vm.selectVehiclesSection(AdminVehiclesSection.types);
-                      if (isCompact) {
-                        Navigator.of(context).pop();
-                      }
-                    },
-                  ),
-                  SidebarMenuItem(
-                    label: AdminVehiclesSection.sizes.title,
-                    icon: Icons.crop_16_9_rounded,
-                    isChild: true,
-                    isSelected:
-                        vm.selectedSection == AdminSection.vehicles &&
-                        vm.selectedVehiclesSection ==
-                            AdminVehiclesSection.sizes,
-                    onTap: () {
-                      vm.selectVehiclesSection(AdminVehiclesSection.sizes);
-                      if (isCompact) {
-                        Navigator.of(context).pop();
-                      }
-                    },
-                  ),
-                ]
-              : const [],
-        ),
         SidebarMenuItem(
           label: AdminSection.support.title,
           icon: _menuIcon(AdminSection.support),
@@ -264,68 +280,69 @@ class _AdminHomeState extends State<AdminHome> {
             }
           },
         ),
-        SidebarMenuItem(
-          label: AdminSection.settings.title,
-          icon: _menuIcon(AdminSection.settings),
-          isSelected: false,
-          trailing: Icon(
-            vm.isSettingsExpanded
-                ? Icons.keyboard_arrow_down_rounded
-                : Icons.chevron_right_rounded,
-            color: Colors.white,
-            size: 18,
+        if (_canAccessFlows)
+          SidebarMenuItem(
+            label: AdminSection.settings.title,
+            icon: _menuIcon(AdminSection.settings),
+            isSelected: false,
+            trailing: Icon(
+              vm.isSettingsExpanded
+                  ? Icons.keyboard_arrow_down_rounded
+                  : Icons.chevron_right_rounded,
+              color: Colors.white,
+              size: 18,
+            ),
+            onTap: vm.toggleSettingsExpanded,
+            children: vm.isSettingsExpanded
+                ? [
+                    SidebarMenuItem(
+                      label: AdminSettingsSection.statuses.title,
+                      icon: Icons.flag_rounded,
+                      isChild: true,
+                      isSelected:
+                          vm.selectedSection == AdminSection.settings &&
+                          vm.selectedSettingsSection ==
+                              AdminSettingsSection.statuses,
+                      onTap: () {
+                        vm.selectSettingsSection(AdminSettingsSection.statuses);
+                        if (isCompact) {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                    ),
+                    SidebarMenuItem(
+                      label: AdminSettingsSection.forms.title,
+                      icon: Icons.description_rounded,
+                      isChild: true,
+                      isSelected:
+                          vm.selectedSection == AdminSection.settings &&
+                          vm.selectedSettingsSection ==
+                              AdminSettingsSection.forms,
+                      onTap: () {
+                        vm.selectSettingsSection(AdminSettingsSection.forms);
+                        if (isCompact) {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                    ),
+                    SidebarMenuItem(
+                      label: AdminSettingsSection.fields.title,
+                      icon: Icons.list_alt_rounded,
+                      isChild: true,
+                      isSelected:
+                          vm.selectedSection == AdminSection.settings &&
+                          vm.selectedSettingsSection ==
+                              AdminSettingsSection.fields,
+                      onTap: () {
+                        vm.selectSettingsSection(AdminSettingsSection.fields);
+                        if (isCompact) {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                    ),
+                  ]
+                : const [],
           ),
-          onTap: vm.toggleSettingsExpanded,
-          children: vm.isSettingsExpanded
-              ? [
-                  SidebarMenuItem(
-                    label: AdminSettingsSection.statuses.title,
-                    icon: Icons.flag_rounded,
-                    isChild: true,
-                    isSelected:
-                        vm.selectedSection == AdminSection.settings &&
-                        vm.selectedSettingsSection ==
-                            AdminSettingsSection.statuses,
-                    onTap: () {
-                      vm.selectSettingsSection(AdminSettingsSection.statuses);
-                      if (isCompact) {
-                        Navigator.of(context).pop();
-                      }
-                    },
-                  ),
-                  SidebarMenuItem(
-                    label: AdminSettingsSection.forms.title,
-                    icon: Icons.description_rounded,
-                    isChild: true,
-                    isSelected:
-                        vm.selectedSection == AdminSection.settings &&
-                        vm.selectedSettingsSection ==
-                            AdminSettingsSection.forms,
-                    onTap: () {
-                      vm.selectSettingsSection(AdminSettingsSection.forms);
-                      if (isCompact) {
-                        Navigator.of(context).pop();
-                      }
-                    },
-                  ),
-                  SidebarMenuItem(
-                    label: AdminSettingsSection.fields.title,
-                    icon: Icons.list_alt_rounded,
-                    isChild: true,
-                    isSelected:
-                        vm.selectedSection == AdminSection.settings &&
-                        vm.selectedSettingsSection ==
-                            AdminSettingsSection.fields,
-                    onTap: () {
-                      vm.selectSettingsSection(AdminSettingsSection.fields);
-                      if (isCompact) {
-                        Navigator.of(context).pop();
-                      }
-                    },
-                  ),
-                ]
-              : const [],
-        ),
         SidebarMenuItem(
           label: AdminSection.users.title,
           icon: _menuIcon(AdminSection.users),
@@ -353,7 +370,8 @@ class _AdminHomeState extends State<AdminHome> {
   }
 
   Widget _buildSelectedSection(AdminSection section) {
-    return switch (section) {
+    final resolvedSection = _resolvedSection(section);
+    return switch (resolvedSection) {
       AdminSection.dashboard => const AdminDashboardView(),
       AdminSection.bookings => AdminBookingsView(user: widget.user),
       AdminSection.vehicles => switch (_viewModel.selectedVehiclesSection) {
@@ -411,13 +429,14 @@ class _AdminHomeState extends State<AdminHome> {
   }
 
   String _selectedSectionTitle(AdminHomeViewModel vm) {
-    if (vm.selectedSection == AdminSection.settings) {
+    final resolvedSection = _resolvedSection(vm.selectedSection);
+    if (resolvedSection == AdminSection.settings) {
       return vm.selectedSettingsSection.title;
     }
-    if (vm.selectedSection == AdminSection.vehicles) {
+    if (resolvedSection == AdminSection.vehicles) {
       return vm.selectedVehiclesSection.title;
     }
-    return vm.selectedSection.title;
+    return resolvedSection.title;
   }
 
   IconData _menuIcon(AdminSection section) {

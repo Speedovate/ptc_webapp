@@ -234,7 +234,10 @@ class BookingWorkflowViewModel extends BaseViewModel {
       }
 
       final matchingForms = await _statusRepository
-          .getStatusFormsByRoleAndStatus(user.role ?? '', currentKey);
+          .getStatusFormsByRoleAndStatus(
+            effectiveBackOfficeRoleKey(user.role),
+            currentKey,
+          );
       final loadedForm = matchingForms
           .where((item) => item.resolvedIsMainForm)
           .firstOrNull;
@@ -372,8 +375,8 @@ class BookingWorkflowViewModel extends BaseViewModel {
 
   String? roleGuidanceMessage() {
     final key = currentStatusKey?.trim();
-    final role = user?.role?.trim();
-    if (key == null || key.isEmpty || role == null || role.isEmpty) {
+    final role = effectiveBackOfficeRoleKey(user?.role);
+    if (key == null || key.isEmpty || role.isEmpty) {
       return null;
     }
     final status = _statusesByKey[key];
@@ -441,7 +444,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   bool get supportsAdditionalFields =>
-      (user?.role ?? '') == 'admin' && hasActionablePrimaryForm;
+      isBackOfficeRole(user?.role) && hasActionablePrimaryForm;
 
   List<StatusField> fieldsForForm(
     StatusForm activeForm, {

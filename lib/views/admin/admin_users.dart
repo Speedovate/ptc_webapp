@@ -302,6 +302,8 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                         : null,
                     onQuickActionPressed: isViewingCurrentUser
                         ? null
+                        : !vm.canSignInAsOtherUsers
+                        ? null
                         : () async {
                             try {
                               await vm.loginAsUser(viewedUser);
@@ -316,7 +318,11 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                               AppSnackbar.showError(context, error.message);
                             }
                           },
-                    quickActionLabel: isViewingCurrentUser ? null : 'Sign In',
+                    quickActionLabel: isViewingCurrentUser
+                        ? null
+                        : vm.canSignInAsOtherUsers
+                        ? 'Sign In'
+                        : null,
                     onEditPressed: () async {
                       await AdminUsersView.showEditUserDialog(
                         context,
@@ -333,6 +339,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                       scrollable: false,
                       padding: EdgeInsets.zero,
                       forceWideLayout: false,
+                      allowDelete: vm.canDeleteUsers,
                       onViewUser: (memberUser) => vm.openUserView(
                         memberUser,
                         preserveCurrent: true,
@@ -758,6 +765,10 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     AdminUsersViewModel vm,
     UserModel user,
   ) async {
+    if (!vm.canDeleteUsers) {
+      AppSnackbar.showError(context, 'Only admins can delete users.');
+      return;
+    }
     if (vm.currentUser?.id == user.id) {
       AppSnackbar.showError(
         context,
@@ -1750,13 +1761,14 @@ class _UsersWideRow extends StatelessWidget {
                       AdminUsersView.handleToggleUserActive(context, vm, user);
                     },
                   ),
-                  _UserActionButton(
-                    icon: Icons.delete_rounded,
-                    isDanger: true,
-                    onTap: () {
-                      AdminUsersView.handleDeleteUser(context, vm, user);
-                    },
-                  ),
+                  if (vm.canDeleteUsers)
+                    _UserActionButton(
+                      icon: Icons.delete_rounded,
+                      isDanger: true,
+                      onTap: () {
+                        AdminUsersView.handleDeleteUser(context, vm, user);
+                      },
+                    ),
                 ],
               ),
             ),
@@ -1903,17 +1915,18 @@ class _UsersResponsiveCard extends StatelessWidget {
                             );
                           },
                         ),
-                        _UserActionButton(
-                          icon: Icons.delete_rounded,
-                          isDanger: true,
-                          onTap: () {
-                            AdminUsersView.handleDeleteUser(
-                              context,
-                              vm,
-                              user,
-                            );
-                          },
-                        ),
+                        if (vm.canDeleteUsers)
+                          _UserActionButton(
+                            icon: Icons.delete_rounded,
+                            isDanger: true,
+                            onTap: () {
+                              AdminUsersView.handleDeleteUser(
+                                context,
+                                vm,
+                                user,
+                              );
+                            },
+                          ),
                       ],
                     ),
                   ],
@@ -1979,13 +1992,14 @@ class _UsersResponsiveCard extends StatelessWidget {
                         );
                       },
                     ),
-                    _UserActionButton(
-                      icon: Icons.delete_rounded,
-                      isDanger: true,
-                      onTap: () {
-                        AdminUsersView.handleDeleteUser(context, vm, user);
-                      },
-                    ),
+                    if (vm.canDeleteUsers)
+                      _UserActionButton(
+                        icon: Icons.delete_rounded,
+                        isDanger: true,
+                        onTap: () {
+                          AdminUsersView.handleDeleteUser(context, vm, user);
+                        },
+                      ),
                   ],
                 ),
               ],
@@ -2029,13 +2043,14 @@ class _UsersResponsiveCard extends StatelessWidget {
                         );
                       },
                     ),
-                    _UserActionButton(
-                      icon: Icons.delete_rounded,
-                      isDanger: true,
-                      onTap: () {
-                        AdminUsersView.handleDeleteUser(context, vm, user);
-                      },
-                    ),
+                    if (vm.canDeleteUsers)
+                      _UserActionButton(
+                        icon: Icons.delete_rounded,
+                        isDanger: true,
+                        onTap: () {
+                          AdminUsersView.handleDeleteUser(context, vm, user);
+                        },
+                      ),
                   ],
                 ),
               ],
@@ -2320,14 +2335,15 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
                 ),
                 if ((viewedUser.role ?? '').trim() == 'client') ...[
                   const SizedBox(height: 18),
-                  ClientMembersView(
-                    clientUser: viewedUser,
-                    scrollable: false,
-                    padding: EdgeInsets.zero,
-                    forceWideLayout: false,
-                    onViewUser: (memberUser) => vm.openUserView(
-                      memberUser,
-                      preserveCurrent: true,
+                    ClientMembersView(
+                      clientUser: viewedUser,
+                      scrollable: false,
+                      padding: EdgeInsets.zero,
+                      forceWideLayout: false,
+                      allowDelete: canDeleteAdminData(widget.currentUser.role),
+                      onViewUser: (memberUser) => vm.openUserView(
+                        memberUser,
+                        preserveCurrent: true,
                     ),
                     onViewBooking: (booking) async {
                       await AdminBookingsView.showBookingDetailDialog(
@@ -2511,7 +2527,14 @@ class _UserFormDialog extends StatefulWidget {
 }
 
 class _UserFormDialogState extends State<_UserFormDialog> {
-  static const _roleOptions = ['client', 'driver', 'admin', 'helper', 'sub-client'];
+  static const _roleOptions = [
+    'client',
+    'driver',
+    'admin',
+    'helper',
+    'sub-client',
+    'dispatcher',
+  ];
 
   late final TextEditingController _latController;
   late final TextEditingController _lngController;

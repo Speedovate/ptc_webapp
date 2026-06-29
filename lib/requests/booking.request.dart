@@ -70,12 +70,61 @@ class BookingRequest implements BookingRepository {
       final saved = booking.copyWith(
         id: nextId,
         createdAt: booking.createdAt ?? now,
+        billingStatus: _normalizedBillingStatus(booking.billingStatus),
         statusOutputs: persistedStatusOutputs,
         updatedAt: now,
       );
       await _bookingsCollection.doc(nextId).set(_toFirestoreMap(saved));
       return saved;
     }, fallback: 'We could not save the booking right now.');
+  }
+
+  @override
+  Future<Booking> updateBillingStatus(String bookingId, String billingStatus) {
+    return _runRequest(() async {
+      final normalizedId = normalizeId(bookingId);
+      if (normalizedId == null) {
+        throw Exception('We could not update the billing status right now.');
+      }
+      final normalizedBillingStatus = _normalizedBillingStatus(billingStatus);
+      await _bookingsCollection.doc(normalizedId).update({
+        'billing_status': normalizedBillingStatus,
+      });
+      final bookings = await getBookings();
+      final updated = bookings.where((booking) => booking.id == normalizedId).firstOrNull;
+      if (updated != null) {
+        return updated;
+      }
+      final existingBookingData = await _getExistingBookingData(normalizedId);
+      if (existingBookingData == null) {
+        throw Exception('We could not update the billing status right now.');
+      }
+      return _bookingFromFirestoreMap(
+        existingBookingData,
+        userById: await _userById(),
+        makeById: await _makeById(),
+      );
+    }, fallback: 'We could not update the billing status right now.');
+  }
+
+  @override
+  Future<void> updateBillingStatuses(Map<String, String> statusesByBookingId) {
+    return _runRequest(() async {
+      if (statusesByBookingId.isEmpty) {
+        return;
+      }
+      final batch = _firestore.batch();
+      for (final entry in statusesByBookingId.entries) {
+        final normalizedId = normalizeId(entry.key);
+        if (normalizedId == null) {
+          continue;
+        }
+        batch.update(_bookingsCollection.doc(normalizedId), {
+          'billing_status': _normalizedBillingStatus(entry.value),
+        });
+      }
+      await batch.commit();
+    }, fallback: 'We could not update the billing statuses right now.');
   }
 
   Future<Map<String, dynamic>?> _getExistingBookingData(String bookingId) async {
@@ -249,6 +298,7 @@ class BookingRequest implements BookingRepository {
       'id': booking.id,
       'client_id': booking.client?.id,
       'client_status': booking.clientStatus,
+      'billing_status': _normalizedBillingStatus(booking.billingStatus),
       'driver_status': booking.driverStatus,
       'helper_status': booking.helperStatus,
       'vehicle_make_id': booking.vehicleMake?.id,
@@ -269,6 +319,7 @@ class BookingRequest implements BookingRepository {
       id: map['id']?.toString(),
       client: userById[map['client_id']?.toString()],
       clientStatus: map['client_status']?.toString(),
+      billingStatus: _normalizedBillingStatus(map['billing_status']?.toString()),
       driverStatus: map['driver_status']?.toString(),
       helperStatus: map['helper_status']?.toString(),
       vehicleMake: makeById[map['vehicle_make_id']?.toString()],
@@ -280,6 +331,21 @@ class BookingRequest implements BookingRepository {
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),
     );
+  }
+
+  Future<Map<String, UserModel>> _userById() async {
+    final users = await _authRequest.getUsers();
+    return {for (final item in users) item.id ?? '': item};
+  }
+
+  Future<Map<String, VehicleMake>> _makeById() async {
+    final makes = await _vehicleRequest.getMakes();
+    await _vehicleRequest.getSizes();
+    return {for (final item in makes) item.id ?? '': item};
+  }
+
+  String _normalizedBillingStatus(String? value) {
+    return (value?.trim().toLowerCase() == 'billed') ? 'billed' : 'unbilled';
   }
 
   Future<String> _nextBookingId() async {

@@ -10,6 +10,7 @@ class Booking {
     this.id,
     this.client,
     this.clientStatus,
+    this.billingStatus,
     this.driverStatus,
     this.helperStatus,
     this.vehicleMake,
@@ -23,6 +24,7 @@ class Booking {
   final String? id;
   final UserModel? client;
   final String? clientStatus;
+  final String? billingStatus;
   final String? driverStatus;
   final String? helperStatus;
   final VehicleMake? vehicleMake;
@@ -36,6 +38,7 @@ class Booking {
     Object? id = _bookingUndefined,
     Object? client = _bookingUndefined,
     Object? clientStatus = _bookingUndefined,
+    Object? billingStatus = _bookingUndefined,
     Object? driverStatus = _bookingUndefined,
     Object? helperStatus = _bookingUndefined,
     Object? vehicleMake = _bookingUndefined,
@@ -53,6 +56,9 @@ class Booking {
       clientStatus: identical(clientStatus, _bookingUndefined)
           ? this.clientStatus
           : clientStatus as String?,
+      billingStatus: identical(billingStatus, _bookingUndefined)
+          ? this.billingStatus
+          : billingStatus as String?,
       driverStatus: identical(driverStatus, _bookingUndefined)
           ? this.driverStatus
           : driverStatus as String?,
@@ -85,6 +91,7 @@ class Booking {
       'id': id,
       'client': client?.toMap(),
       'client_status': clientStatus,
+      'billing_status': billingStatus,
       'driver_status': driverStatus,
       'helper_status': helperStatus,
       'vehicle_make': vehicleMake?.toMap(),
@@ -101,6 +108,7 @@ class Booking {
       id: map['id']?.toString(),
       client: _toUserModel(map['client']),
       clientStatus: map['client_status']?.toString(),
+      billingStatus: map['billing_status']?.toString(),
       driverStatus: map['driver_status']?.toString(),
       helperStatus: map['helper_status']?.toString(),
       vehicleMake: _toVehicleMake(map['vehicle_make']),

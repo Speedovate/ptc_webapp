@@ -49,6 +49,8 @@ class AdminUsersViewModel extends BaseViewModel {
   DateTime? get startDate => _startDate;
   DateTime? get endDate => _endDate;
   String get busyMessage => _busyMessage;
+  bool get canDeleteUsers => canDeleteAdminData(_currentUser?.role);
+  bool get canSignInAsOtherUsers => canImpersonateUsers(_currentUser?.role);
 
   Future<void> loadUsers({UserModel? fallbackCurrentUser}) async {
     _busyMessage = 'Loading users ...';
@@ -154,6 +156,9 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<void> deleteUser(UserModel user) async {
+    if (!canDeleteUsers) {
+      throw const AuthFailure('Only admins can delete users.');
+    }
     _busyMessage = 'Deleting user ...';
     setBusy(true);
     try {
@@ -175,6 +180,9 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<void> loginAsUser(UserModel user) async {
+    if (!canSignInAsOtherUsers) {
+      throw const AuthFailure('Only admins can sign in as other users.');
+    }
     final userId = user.id ?? '';
     if (userId.isEmpty) {
       throw const AuthFailure('User ID is required.');

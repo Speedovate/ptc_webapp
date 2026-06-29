@@ -6,4 +6,6 @@ abstract class BookingRepository {
   Stream<List<Booking>> watchBookings();
   Future<List<Booking>> getBookingsForClient(String clientId);
   Future<Booking> saveBooking(Booking booking);
+  Future<Booking> updateBillingStatus(String bookingId, String billingStatus);
+  Future<void> updateBillingStatuses(Map<String, String> statusesByBookingId);
 }

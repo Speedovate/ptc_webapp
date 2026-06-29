@@ -12,8 +12,10 @@ import 'package:webapp/services/export_file_service.dart';
 import 'package:webapp/view_models/admin/admin_dashboard.vm.dart';
 import 'package:webapp/views/shared/booking_workflow_view.dart';
 import 'package:webapp/views/shared/support_center_view.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
+import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
@@ -31,6 +33,7 @@ class AdminDashboardView extends StatefulWidget {
 class _AdminDashboardViewState extends State<AdminDashboardView> {
   static const double _toolbarSectionGap = 12;
   Booking? _selectedBooking;
+  final Set<String> _excludedExportBookingIds = <String>{};
   late final ScrollController _detailScrollController;
 
   @override
@@ -113,7 +116,13 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                   _AdminDashboardToolbar(
                     vm: vm,
                     onExportPressed: () =>
-                        _exportBookings(context, vm, filteredBookings),
+                        _exportBookings(
+                          context,
+                          vm,
+                          excludedBookingIds: _excludedExportBookingIds,
+                          onToggleExcludedSession:
+                              _toggleExportExcludedBookingId,
+                        ),
                   ),
                   const SizedBox(height: _toolbarSectionGap),
                   AdminListItemCard(
@@ -139,7 +148,13 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                   _AdminDashboardToolbar(
                     vm: vm,
                     onExportPressed: () =>
-                        _exportBookings(context, vm, filteredBookings),
+                        _exportBookings(
+                          context,
+                          vm,
+                          excludedBookingIds: _excludedExportBookingIds,
+                          onToggleExcludedSession:
+                              _toggleExportExcludedBookingId,
+                        ),
                   ),
                   const SizedBox(height: _toolbarSectionGap),
                   AdminListItemCard(
@@ -166,7 +181,13 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                 _AdminDashboardToolbar(
                   vm: vm,
                   onExportPressed: () =>
-                      _exportBookings(context, vm, filteredBookings),
+                      _exportBookings(
+                        context,
+                        vm,
+                        excludedBookingIds: _excludedExportBookingIds,
+                        onToggleExcludedSession:
+                            _toggleExportExcludedBookingId,
+                      ),
                 ),
                 const SizedBox(height: _toolbarSectionGap),
                 if (filteredBookings.isEmpty)
@@ -181,6 +202,10 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                   _AdminDashboardCompletedBookingsTable(
                     bookings: filteredBookings,
                     vm: vm,
+                    excludedBookingIds: _excludedExportBookingIds,
+                    onToggleExcluded: _toggleExportExcludedBookingId,
+                    onToggleBillingStatus: (booking) =>
+                        _toggleBillingStatus(context, vm, booking),
                     onView: (booking) {
                       setState(() {
                         _selectedBooking = booking;
@@ -194,31 +219,115 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
       },
     );
   }
+
+  void _toggleExportExcludedBookingId(String bookingId) {
+    final normalizedId = normalizeId(bookingId);
+    if (normalizedId == null) {
+      return;
+    }
+    setState(() {
+      if (_excludedExportBookingIds.contains(normalizedId)) {
+        _excludedExportBookingIds.remove(normalizedId);
+      } else {
+        _excludedExportBookingIds.add(normalizedId);
+      }
+    });
+  }
+
+  Future<void> _toggleBillingStatus(
+    BuildContext context,
+    AdminDashboardViewModel vm,
+    Booking booking,
+  ) async {
+    final currentStatus = vm.billingStatusValue(booking);
+    final nextStatus =
+        currentStatus == AdminDashboardViewModel.billingStatusBilled
+        ? AdminDashboardViewModel.billingStatusUnbilled
+        : AdminDashboardViewModel.billingStatusBilled;
+    final deliveryNumber =
+        AdminDashboardViewModel.deliveryFormNumber(booking).trim().isNotEmpty
+        ? AdminDashboardViewModel.deliveryFormNumber(booking).trim()
+        : '-';
+    final confirmed = await showAdminActionConfirmation(
+      context,
+      title: nextStatus == AdminDashboardViewModel.billingStatusBilled
+          ? 'Mark $deliveryNumber as Billed'
+          : 'Mark $deliveryNumber as Unbilled',
+      message: nextStatus == AdminDashboardViewModel.billingStatusBilled
+          ? 'Are you sure you want to mark DR No. $deliveryNumber as billed?'
+          : 'Are you sure you want to mark DR No. $deliveryNumber as unbilled?',
+      confirmLabel:
+          nextStatus == AdminDashboardViewModel.billingStatusBilled
+          ? 'Mark as Billed'
+          : 'Mark as Unbilled',
+      isDanger: nextStatus != AdminDashboardViewModel.billingStatusBilled,
+    );
+    if (!confirmed || !context.mounted) {
+      return;
+    }
+    try {
+      await vm.updateBookingBillingStatus(booking, nextStatus);
+      if (!context.mounted) {
+        return;
+      }
+      AppSnackbar.showSuccess(
+        context,
+        nextStatus == AdminDashboardViewModel.billingStatusBilled
+            ? 'Marked as billed.'
+            : 'Marked as unbilled.',
+      );
+    } catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        error.toString(),
+      );
+    }
+  }
 }
 
 Future<void> _exportBookings(
   BuildContext context,
   AdminDashboardViewModel vm,
-  List<Booking> bookings, {
+  {
+  List<Booking>? bookings,
   bool singleItem = false,
+  required Set<String> excludedBookingIds,
+  required ValueChanged<String> onToggleExcludedSession,
 }) async {
-  if (bookings.isEmpty) {
+  final availableBookings = bookings ?? vm.completedBookings;
+  final singleItemCandidates = singleItem ? availableBookings : null;
+  if (availableBookings.isEmpty) {
     AppSnackbar.showError(
       context,
       'No completed bookings available to export.',
     );
     return;
   }
-
   final exportConfig = await showDialog<_DashboardBatchExportConfig>(
     context: context,
     builder: (dialogContext) => _DashboardExportDialog(
-      bookings: bookings,
+      bookings: availableBookings,
       vm: vm,
       singleItem: singleItem,
+      singleItemCandidates: singleItemCandidates,
+      excludedBookingIds: excludedBookingIds,
+      onToggleExcluded: onToggleExcludedSession,
     ),
   );
   if (!context.mounted || exportConfig == null) {
+    return;
+  }
+
+  final selectedBookings = exportConfig.selectedBookings(availableBookings);
+  final excludedCandidateIds = exportConfig.excludedCandidateBookingIds;
+  if (selectedBookings.isEmpty) {
+    AppSnackbar.showError(
+      context,
+      'No bookings selected for export.',
+    );
     return;
   }
 
@@ -229,7 +338,7 @@ Future<void> _exportBookings(
     for (final type in exportConfig.types) {
       final config = exportConfig.configFor(type);
       final payload = _buildDashboardExportPayload(
-        bookings: bookings,
+        bookings: selectedBookings,
         vm: vm,
         config: config,
       );
@@ -247,6 +356,21 @@ Future<void> _exportBookings(
     }
     vm.completeExport();
     await _yieldExportProgressFrame();
+    if (!context.mounted) {
+      vm.endExport();
+      return;
+    }
+    await vm.updateBillingStatusesForExport(
+      billedBookingIds: selectedBookings
+          .map((booking) => booking.id ?? '')
+          .where((bookingId) => bookingId.isNotEmpty),
+      unbilledBookingIds: excludedCandidateIds,
+    );
+    for (final bookingId in exportConfig.candidateBookingIds) {
+      if (excludedBookingIds.contains(bookingId)) {
+        onToggleExcludedSession(bookingId);
+      }
+    }
     if (!context.mounted) {
       vm.endExport();
       return;
@@ -307,10 +431,14 @@ class _AdminDashboardToolbar extends StatelessWidget {
 
 typedef _DashboardExportType = DashboardExportDocumentType;
 typedef _DashboardExportConfig = DashboardExportConfig;
+enum _DashboardExportSourceMode { currentRange, pastUnbilled, rangeAndPastUnbilled }
 
 class _DashboardBatchExportConfig {
   const _DashboardBatchExportConfig({
     required this.types,
+    required this.sourceMode,
+    required this.candidateBookingIds,
+    required this.selectedBookingIds,
     required this.documentDate,
     required this.coveredStartDate,
     required this.coveredEndDate,
@@ -329,6 +457,9 @@ class _DashboardBatchExportConfig {
   });
 
   final List<_DashboardExportType> types;
+  final _DashboardExportSourceMode sourceMode;
+  final List<String> candidateBookingIds;
+  final List<String> selectedBookingIds;
   final DateTime documentDate;
   final DateTime coveredStartDate;
   final DateTime coveredEndDate;
@@ -344,6 +475,21 @@ class _DashboardBatchExportConfig {
   final String bankName;
   final String accountName;
   final String accountNumber;
+
+  Iterable<String> get excludedCandidateBookingIds => candidateBookingIds.where(
+    (bookingId) => !selectedBookingIds.contains(bookingId),
+  );
+
+  List<Booking> selectedBookings(List<Booking> bookings) {
+    final bookingById = {
+      for (final booking in bookings)
+        if ((booking.id ?? '').isNotEmpty) booking.id!: booking,
+    };
+    return selectedBookingIds
+        .map((bookingId) => bookingById[bookingId])
+        .whereType<Booking>()
+        .toList();
+  }
 
   _DashboardExportConfig configFor(_DashboardExportType type) {
     return _DashboardExportConfig(
@@ -373,11 +519,17 @@ class _DashboardExportDialog extends StatefulWidget {
     required this.bookings,
     required this.vm,
     required this.singleItem,
+    required this.excludedBookingIds,
+    required this.onToggleExcluded,
+    this.singleItemCandidates,
   });
 
   final List<Booking> bookings;
   final AdminDashboardViewModel vm;
   final bool singleItem;
+  final List<Booking>? singleItemCandidates;
+  final Set<String> excludedBookingIds;
+  final ValueChanged<String> onToggleExcluded;
 
   @override
   State<_DashboardExportDialog> createState() => _DashboardExportDialogState();
@@ -401,14 +553,17 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
   late DateTime _coveredStartDate;
   late DateTime _coveredEndDate;
   final Set<_DashboardExportType> _selectedTypes = <_DashboardExportType>{};
+  late _DashboardExportSourceMode _sourceMode;
 
   @override
   void initState() {
     super.initState();
-    final coveredDates = _resolveCoveredDates(widget.bookings);
+    final initialSourceMode = _resolveInitialSourceMode();
+    final coveredDates = _resolveCoveredDates(_bookingsForSource(initialSourceMode));
     _documentDate = DateTime.now();
-    _coveredStartDate = coveredDates.$1;
-    _coveredEndDate = coveredDates.$2;
+    _coveredStartDate = widget.vm.startDate ?? coveredDates.$1;
+    _coveredEndDate = widget.vm.endDate ?? coveredDates.$2;
+    _sourceMode = initialSourceMode;
     _regularStatementNumberController = TextEditingController();
     _hustlingStatementNumberController = TextEditingController();
     _companyNameController = TextEditingController(
@@ -457,6 +612,18 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
   bool get _showsBankFields =>
       _selectedTypes.any((type) => type.isBillingStatement);
   bool get _showsCoveredDateRange => !widget.singleItem;
+  bool get _hasCurrentRangeFilters =>
+      widget.vm.startDate != null && widget.vm.endDate != null;
+  List<Booking> get _candidateBookings => _bookingsForSource(_sourceMode);
+  List<String> get _candidateBookingIds => _candidateBookings
+      .map((booking) => normalizeId(booking.id))
+      .whereType<String>()
+      .toList();
+  List<String> get _selectedBookingIds => _candidateBookings
+      .map((booking) => normalizeId(booking.id))
+      .whereType<String>()
+      .where((bookingId) => !widget.excludedBookingIds.contains(bookingId))
+      .toList();
 
   void _unfocusCurrentField() {
     final currentFocus = FocusScope.of(context);
@@ -465,8 +632,61 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
     }
   }
 
+  _DashboardExportSourceMode _resolveInitialSourceMode() {
+    if (widget.singleItem) {
+      return _DashboardExportSourceMode.currentRange;
+    }
+    if (_hasCurrentRangeFilters) {
+      return _DashboardExportSourceMode.rangeAndPastUnbilled;
+    }
+    return _DashboardExportSourceMode.pastUnbilled;
+  }
+
+  List<Booking> _bookingsForSource(_DashboardExportSourceMode sourceMode) {
+    if (widget.singleItem) {
+      return widget.singleItemCandidates ?? widget.bookings.take(1).toList();
+    }
+    return switch (sourceMode) {
+      _DashboardExportSourceMode.currentRange =>
+        widget.vm.currentRangeExportBookings(),
+      _DashboardExportSourceMode.pastUnbilled =>
+        widget.vm.pastUnbilledExportBookings(),
+      _DashboardExportSourceMode.rangeAndPastUnbilled =>
+        widget.vm.mergedExportBookings(
+          includeCurrentRange: true,
+          includePastUnbilled: true,
+        ),
+    };
+  }
+
+  void _selectSourceMode(_DashboardExportSourceMode nextMode) {
+    if (!widget.singleItem &&
+        (nextMode == _DashboardExportSourceMode.currentRange ||
+            nextMode == _DashboardExportSourceMode.rangeAndPastUnbilled) &&
+        !_hasCurrentRangeFilters) {
+      AppSnackbar.showError(
+        context,
+        'Please set both start and end date filters first.',
+      );
+      return;
+    }
+    setState(() {
+      _sourceMode = nextMode;
+    });
+  }
+
+  void _toggleExcludedBooking(Booking booking) {
+    final bookingId = normalizeId(booking.id);
+    if (bookingId == null) {
+      return;
+    }
+    widget.onToggleExcluded(bookingId);
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
+    final candidateBookings = _candidateBookings;
     return AdminModalShell(
       title: 'Export As',
       contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
@@ -500,6 +720,33 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
                   ),
                 ),
                 if (_selectedTypes.isNotEmpty) ...[
+                  AdminModalFieldSlot(
+                    bottomPadding: 20,
+                    child: _DashboardExportSourceSection(
+                      singleItem: widget.singleItem,
+                      sourceMode: _sourceMode,
+                      hasCurrentRangeFilters: _hasCurrentRangeFilters,
+                      currentRangeCount: widget.vm.currentRangeExportBookings().length,
+                      pastUnbilledCount: widget.vm.pastUnbilledExportBookings().length,
+                      combinedCount: widget.vm
+                          .mergedExportBookings(
+                            includeCurrentRange: true,
+                            includePastUnbilled: true,
+                          )
+                          .length,
+                      onChanged: _selectSourceMode,
+                    ),
+                  ),
+                  AdminModalFieldSlot(
+                    bottomPadding: 20,
+                    child: _DashboardExportCandidateSection(
+                      title: _candidateSectionTitle(_sourceMode, widget.singleItem),
+                      bookings: candidateBookings,
+                      vm: widget.vm,
+                      excludedBookingIds: widget.excludedBookingIds,
+                      onToggleExcluded: _toggleExcludedBooking,
+                    ),
+                  ),
                   _DashboardExportDateField(
                     label: 'Document Date',
                     value: _documentDate,
@@ -657,6 +904,20 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
       );
       return;
     }
+    if (_candidateBookings.isEmpty) {
+      AppSnackbar.showError(
+        context,
+        'No bookings are available for the selected export source.',
+      );
+      return;
+    }
+    if (_selectedBookingIds.isEmpty) {
+      AppSnackbar.showError(
+        context,
+        'Please keep at least one booking included for export.',
+      );
+      return;
+    }
     if (_requiresRegularStatementNumber && regularStatementNumber.isEmpty) {
       AppSnackbar.showError(
         context,
@@ -699,6 +960,9 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
     Navigator.of(context).pop(
       _DashboardBatchExportConfig(
         types: _selectedTypes.toList(),
+        sourceMode: _sourceMode,
+        candidateBookingIds: _candidateBookingIds,
+        selectedBookingIds: _selectedBookingIds,
         documentDate: _documentDate,
         coveredStartDate: _coveredStartDate,
         coveredEndDate: _coveredEndDate,
@@ -717,6 +981,21 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
       ),
     );
   }
+}
+
+String _candidateSectionTitle(
+  _DashboardExportSourceMode sourceMode,
+  bool singleItem,
+) {
+  if (singleItem) {
+    return 'Selected Booking';
+  }
+  return switch (sourceMode) {
+    _DashboardExportSourceMode.currentRange => 'Current Range Bookings',
+    _DashboardExportSourceMode.pastUnbilled => 'Past Unbilled Bookings',
+    _DashboardExportSourceMode.rangeAndPastUnbilled =>
+      'Range + Past Unbilled Bookings',
+  };
 }
 
 class _ExportTypeChoiceField extends StatelessWidget {
@@ -812,6 +1091,361 @@ class _DashboardExportTypeChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _DashboardExportSourceSection extends StatelessWidget {
+  const _DashboardExportSourceSection({
+    required this.singleItem,
+    required this.sourceMode,
+    required this.hasCurrentRangeFilters,
+    required this.currentRangeCount,
+    required this.pastUnbilledCount,
+    required this.combinedCount,
+    required this.onChanged,
+  });
+
+  final bool singleItem;
+  final _DashboardExportSourceMode sourceMode;
+  final bool hasCurrentRangeFilters;
+  final int currentRangeCount;
+  final int pastUnbilledCount;
+  final int combinedCount;
+  final ValueChanged<_DashboardExportSourceMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    if (singleItem) {
+      return const SizedBox.shrink();
+    }
+    final helperStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+      color: AppColors.textSecondary,
+      height: 1.35,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 8),
+          child: Text(
+            'Export Source',
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(color: AppColors.textPrimary),
+          ),
+        ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _DashboardExportSourceChip(
+              label: 'Current Range',
+              count: currentRangeCount,
+              selected: sourceMode == _DashboardExportSourceMode.currentRange,
+              enabled: hasCurrentRangeFilters,
+              onTap: () =>
+                  onChanged(_DashboardExportSourceMode.currentRange),
+            ),
+            _DashboardExportSourceChip(
+              label: 'Past Unbilled',
+              count: pastUnbilledCount,
+              selected: sourceMode == _DashboardExportSourceMode.pastUnbilled,
+              onTap: () =>
+                  onChanged(_DashboardExportSourceMode.pastUnbilled),
+            ),
+            _DashboardExportSourceChip(
+              label: 'Range + Past Unbilled',
+              count: combinedCount,
+              selected:
+                  sourceMode == _DashboardExportSourceMode.rangeAndPastUnbilled,
+              enabled: hasCurrentRangeFilters,
+              onTap: () =>
+                  onChanged(_DashboardExportSourceMode.rangeAndPastUnbilled),
+            ),
+          ],
+        ),
+        if (!hasCurrentRangeFilters)
+          Padding(
+            padding: const EdgeInsets.only(top: 8, left: 2),
+            child: Text(
+              'Set both dashboard start and end date filters to enable range-based exports.',
+              style: helperStyle,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _DashboardExportSourceChip extends StatelessWidget {
+  const _DashboardExportSourceChip({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+    this.enabled = true,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor = selected
+        ? AppColors.primaryColor
+        : AppColors.primaryBorder;
+    final backgroundColor = selected ? AppColors.primarySurface : Colors.white;
+    final textColor = enabled
+        ? (selected ? AppColors.primaryColor : AppColors.textPrimary)
+        : AppColors.textSecondary;
+    return Opacity(
+      opacity: enabled ? 1 : 0.56,
+      child: AppMousePressable(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(999),
+        child: Builder(
+          builder: (context) => AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: appPressableActive(context)
+                  ? AppColors.primarySurfaceAlt.withValues(alpha: 0.34)
+                  : backgroundColor,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: borderColor),
+            ),
+            child: Text(
+              '$label ($count)',
+              style: TextStyle(
+                color: textColor,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardExportCandidateSection extends StatelessWidget {
+  const _DashboardExportCandidateSection({
+    required this.title,
+    required this.bookings,
+    required this.vm,
+    required this.excludedBookingIds,
+    required this.onToggleExcluded,
+  });
+
+  final String title;
+  final List<Booking> bookings;
+  final AdminDashboardViewModel vm;
+  final Set<String> excludedBookingIds;
+  final ValueChanged<Booking> onToggleExcluded;
+
+  @override
+  Widget build(BuildContext context) {
+    final helperStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+      color: AppColors.textSecondary,
+      height: 1.35,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 8),
+          child: Text(
+            title,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(color: AppColors.textPrimary),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 10),
+          child: Text(
+            'Tick the checkbox to exclude a booking from this export session.',
+            style: helperStyle,
+          ),
+        ),
+        if (bookings.isEmpty)
+          const AdminListItemCard(
+            padding: EdgeInsets.all(20),
+            child: AdminListStateText(
+              message: 'No bookings are available for this export source.',
+            ),
+          )
+        else
+          ...bookings.asMap().entries.map((entry) {
+            final bookingId = normalizeId(entry.value.id);
+            final isExcluded =
+                bookingId != null && excludedBookingIds.contains(bookingId);
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: entry.key == bookings.length - 1 ? 0 : 10,
+              ),
+              child: _DashboardExportCandidateRow(
+                booking: entry.value,
+                vm: vm,
+                isExcluded: isExcluded,
+                onToggleExcluded: () => onToggleExcluded(entry.value),
+              ),
+            );
+          }),
+      ],
+    );
+  }
+}
+
+class _DashboardExportCandidateRow extends StatelessWidget {
+  const _DashboardExportCandidateRow({
+    required this.booking,
+    required this.vm,
+    required this.isExcluded,
+    required this.onToggleExcluded,
+  });
+
+  final Booking booking;
+  final AdminDashboardViewModel vm;
+  final bool isExcluded;
+  final VoidCallback onToggleExcluded;
+
+  @override
+  Widget build(BuildContext context) {
+    return AdminListItemCard(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _DashboardExcludeCheckbox(
+            value: isExcluded,
+            onTap: onToggleExcluded,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'DR ${AdminDashboardViewModel.deliveryFormNumber(booking)}',
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${AdminDashboardViewModel.dropOffDateDisplay(booking)} | ${AdminDashboardViewModel.waybillNumber(booking)}',
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _AdminDashboardCompletedBookingsTable._displayClientName(
+                    vm.client(booking),
+                  ),
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${vm.vanSize(booking)} | ${AdminDashboardViewModel.amount(booking)} | ${vm.billingStatusLabel(booking)}',
+                  style: TextStyle(
+                    color: isExcluded
+                        ? AppColors.danger
+                        : AppColors.primaryColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DashboardExcludeCheckbox extends StatelessWidget {
+  const _DashboardExcludeCheckbox({
+    required this.value,
+    required this.onTap,
+  });
+
+  final bool value;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor = value
+        ? AppColors.primaryColor
+        : AppColors.primaryBorder;
+    final fillColor = value ? AppColors.primaryColor : Colors.white;
+    return AppMousePressable(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Builder(
+        builder: (context) => AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          width: 18,
+          height: 18,
+          decoration: BoxDecoration(
+            color: appPressableActive(context)
+                ? (value
+                      ? AppColors.primaryColor.withValues(alpha: 0.88)
+                      : AppColors.primarySurfaceAlt.withValues(alpha: 0.4))
+                : fillColor,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: borderColor,
+              width: value ? 1.5 : 1.25,
+            ),
+          ),
+          child: value
+              ? const Icon(
+                  Icons.check_rounded,
+                  size: 11,
+                  color: Colors.white,
+                )
+              : null,
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardBillingStatusAction extends StatelessWidget {
+  const _DashboardBillingStatusAction({
+    required this.value,
+    required this.onTap,
+  });
+
+  static const Color _billedColor = Color(0xFF2EAD62);
+
+  final String value;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isBilled = value == AdminDashboardViewModel.billingStatusBilled;
+    return AdminListActionButton(
+      icon: isBilled ? Icons.check_rounded : Icons.close_rounded,
+      backgroundColor: isBilled ? _billedColor : AppColors.dangerStrong,
+      onTap: onTap,
+      size: 38,
     );
   }
 }
@@ -1073,6 +1707,15 @@ class _DashboardFiltersPanelState extends State<_DashboardFiltersPanel> {
                   SizedBox(
                     width: itemWidth,
                     height: adminFilterFieldMinHeight,
+                    child: _DashboardBillingStatusFilter(
+                      value: widget.vm.billingStatusFilter,
+                      onChanged: widget.vm.updateBillingStatusFilter,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    height: adminFilterFieldMinHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
@@ -1097,6 +1740,41 @@ class _DashboardFiltersPanelState extends State<_DashboardFiltersPanel> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _DashboardBillingStatusFilter extends StatelessWidget {
+  const _DashboardBillingStatusFilter({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String value;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return AdminDropdownFormField<String>(
+      initialValue: value == AdminDashboardViewModel.billingStatusAll
+          ? null
+          : value,
+      decoration: adminFormInputDecoration(
+        'Billing Status',
+        radius: 16,
+        minHeight: adminFilterFieldMinHeight,
+      ),
+      items: const [
+        DropdownMenuItem<String>(
+          value: AdminDashboardViewModel.billingStatusBilled,
+          child: Text('Billed', overflow: TextOverflow.ellipsis),
+        ),
+        DropdownMenuItem<String>(
+          value: AdminDashboardViewModel.billingStatusUnbilled,
+          child: Text('Unbilled', overflow: TextOverflow.ellipsis),
+        ),
+      ],
+      onChanged: onChanged,
     );
   }
 }
@@ -1233,6 +1911,9 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
   const _AdminDashboardCompletedBookingsTable({
     required this.bookings,
     required this.vm,
+    required this.excludedBookingIds,
+    required this.onToggleExcluded,
+    required this.onToggleBillingStatus,
     required this.onView,
   });
 
@@ -1255,6 +1936,9 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
 
   final List<Booking> bookings;
   final AdminDashboardViewModel vm;
+  final Set<String> excludedBookingIds;
+  final ValueChanged<String> onToggleExcluded;
+  final ValueChanged<Booking> onToggleBillingStatus;
   final ValueChanged<Booking> onView;
 
   @override
@@ -1262,6 +1946,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final textScaler = MediaQuery.textScalerOf(context);
+        const resolvedExcludeWidth = 32.0;
         final resolvedDeliveryNumberWidth = _resolvedColumnWidth(
           _maxTextWidth(
             context,
@@ -1352,7 +2037,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
           ),
         );
         final actionsWidth = _maxValue(
-          96,
+          138,
           AdminListMeasurements.measureTextWidth(
             context,
             textScaler,
@@ -1363,6 +2048,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
         final resolvedActionWidth = actionsWidth + _extraWidthAllowance;
 
         final totalMeasuredWidth =
+            resolvedExcludeWidth +
             resolvedDeliveryNumberWidth +
             resolvedDateWidth +
             resolvedWaybillWidth +
@@ -1391,12 +2077,21 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                           AdminDashboardViewModel.dropOffDateDisplay(
                             entry.value,
                           ),
+                      isExcluded: excludedBookingIds.contains(
+                        normalizeId(entry.value.id) ?? '',
+                      ),
+                      onToggleExcluded: () =>
+                          onToggleExcluded(entry.value.id ?? ''),
+                      onToggleBillingStatus: () =>
+                          onToggleBillingStatus(entry.value),
                       onViewPressed: () => onView(entry.value),
                       onExportPressed: () => _exportBookings(
                         context,
                         vm,
-                        <Booking>[entry.value],
+                        bookings: <Booking>[entry.value],
                         singleItem: true,
+                        excludedBookingIds: excludedBookingIds,
+                        onToggleExcludedSession: onToggleExcluded,
                       ),
                     ),
                   ),
@@ -1413,6 +2108,10 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
               borderRadius: 16,
               child: Row(
                 children: [
+                  const _DashboardFixedSlot(
+                    width: resolvedExcludeWidth,
+                    child: _DashboardHeaderCell(label: ''),
+                  ),
                   _DashboardFixedSlot(
                     width: resolvedDeliveryNumberWidth,
                     child: const _DashboardHeaderCell(label: 'Dr No.'),
@@ -1465,6 +2164,10 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                   clientName: vm.client(entry.value),
                   dateValue:
                       AdminDashboardViewModel.dropOffDateDisplay(entry.value),
+                  isExcluded: excludedBookingIds.contains(
+                    normalizeId(entry.value.id) ?? '',
+                  ),
+                  resolvedExcludeWidth: resolvedExcludeWidth,
                   resolvedDeliveryNumberWidth: resolvedDeliveryNumberWidth,
                   resolvedDateWidth: resolvedDateWidth,
                   resolvedWaybillWidth: resolvedWaybillWidth,
@@ -1473,10 +2176,18 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                   resolvedClientWidth: resolvedClientWidth,
                   resolvedAmountWidth: resolvedAmountWidth,
                   resolvedActionWidth: resolvedActionWidth,
+                  onToggleExcluded: () => onToggleExcluded(entry.value.id ?? ''),
+                  onToggleBillingStatus: () =>
+                      onToggleBillingStatus(entry.value),
                   onViewPressed: () => onView(entry.value),
-                  onExportPressed: () => _exportBookings(context, vm, <Booking>[
-                    entry.value,
-                  ], singleItem: true),
+                  onExportPressed: () => _exportBookings(
+                    context,
+                    vm,
+                    bookings: <Booking>[entry.value],
+                    singleItem: true,
+                    excludedBookingIds: excludedBookingIds,
+                    onToggleExcludedSession: onToggleExcluded,
+                  ),
                 ),
               ),
             ),
@@ -1614,6 +2325,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
     required this.vm,
     required this.clientName,
     required this.dateValue,
+    required this.isExcluded,
+    required this.resolvedExcludeWidth,
     required this.resolvedDeliveryNumberWidth,
     required this.resolvedDateWidth,
     required this.resolvedWaybillWidth,
@@ -1622,6 +2335,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
     required this.resolvedClientWidth,
     required this.resolvedAmountWidth,
     required this.resolvedActionWidth,
+    required this.onToggleExcluded,
+    required this.onToggleBillingStatus,
     required this.onViewPressed,
     required this.onExportPressed,
   });
@@ -1630,6 +2345,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
   final AdminDashboardViewModel vm;
   final String clientName;
   final String dateValue;
+  final bool isExcluded;
+  final double resolvedExcludeWidth;
   final double resolvedDeliveryNumberWidth;
   final double resolvedDateWidth;
   final double resolvedWaybillWidth;
@@ -1638,6 +2355,8 @@ class _AdminDashboardWideRow extends StatelessWidget {
   final double resolvedClientWidth;
   final double resolvedAmountWidth;
   final double resolvedActionWidth;
+  final VoidCallback? onToggleExcluded;
+  final VoidCallback? onToggleBillingStatus;
   final VoidCallback? onViewPressed;
   final VoidCallback? onExportPressed;
 
@@ -1648,6 +2367,16 @@ class _AdminDashboardWideRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          _DashboardFixedSlot(
+            width: resolvedExcludeWidth,
+            child: _DashboardBodyCell(
+              trailingPadding: 8,
+              child: _DashboardExcludeCheckbox(
+                value: isExcluded,
+                onTap: onToggleExcluded,
+              ),
+            ),
+          ),
           _DashboardFixedSlot(
             width: resolvedDeliveryNumberWidth,
             child: _DashboardBodyCell(
@@ -1737,6 +2466,11 @@ class _AdminDashboardWideRow extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  _DashboardBillingStatusAction(
+                    value: vm.billingStatusValue(booking),
+                    onTap: onToggleBillingStatus,
+                  ),
+                  const SizedBox(width: 8),
                   AdminListActionButton(
                     icon: Icons.visibility_rounded,
                     backgroundColor: Colors.yellow.shade900,
@@ -1765,6 +2499,9 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
     required this.vm,
     required this.clientName,
     required this.dateValue,
+    required this.isExcluded,
+    required this.onToggleExcluded,
+    required this.onToggleBillingStatus,
     required this.onViewPressed,
     required this.onExportPressed,
   });
@@ -1773,6 +2510,9 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
   final AdminDashboardViewModel vm;
   final String clientName;
   final String dateValue;
+  final bool isExcluded;
+  final VoidCallback? onToggleExcluded;
+  final VoidCallback? onToggleBillingStatus;
   final VoidCallback? onViewPressed;
   final VoidCallback? onExportPressed;
 
@@ -1800,6 +2540,33 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Row(
+                children: [
+                  _DashboardExcludeCheckbox(
+                    value: isExcluded,
+                    onTap: onToggleExcluded,
+                  ),
+                  const Spacer(),
+                  _DashboardBillingStatusAction(
+                    value: vm.billingStatusValue(booking),
+                    onTap: onToggleBillingStatus,
+                  ),
+                  const SizedBox(width: 8),
+                  AdminListActionButton(
+                    icon: Icons.visibility_rounded,
+                    backgroundColor: Colors.yellow.shade900,
+                    onTap: onViewPressed,
+                    size: 38,
+                  ),
+                  const SizedBox(width: 8),
+                  AdminListActionButton(
+                    icon: Icons.download_rounded,
+                    onTap: onExportPressed,
+                    size: 38,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
               Wrap(
                 spacing: spacing,
                 runSpacing: 10,
@@ -1814,27 +2581,6 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
                       ),
                     )
                     .toList(),
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    AdminListActionButton(
-                      icon: Icons.visibility_rounded,
-                      backgroundColor: Colors.yellow.shade900,
-                      onTap: onViewPressed,
-                      size: 38,
-                    ),
-                    const SizedBox(width: 8),
-                    AdminListActionButton(
-                      icon: Icons.download_rounded,
-                      onTap: onExportPressed,
-                      size: 38,
-                    ),
-                  ],
-                ),
               ),
             ],
           ),

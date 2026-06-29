@@ -35,6 +35,38 @@ String normalizeRoleKey(String? value) {
   return normalized;
 }
 
+bool isAdminRole(String? role) {
+  return normalizeRoleKey(role) == 'admin';
+}
+
+bool isDispatcherRole(String? role) {
+  return normalizeRoleKey(role) == 'dispatcher';
+}
+
+bool isBackOfficeRole(String? role) {
+  return isAdminRole(role) || isDispatcherRole(role);
+}
+
+bool canImpersonateUsers(String? role) {
+  return isAdminRole(role);
+}
+
+bool canDeleteAdminData(String? role) {
+  return isAdminRole(role);
+}
+
+bool canAccessVehicleAdmin(String? role) {
+  return isAdminRole(role);
+}
+
+bool canAccessFlowAdmin(String? role) {
+  return isAdminRole(role);
+}
+
+String effectiveBackOfficeRoleKey(String? role) {
+  return isDispatcherRole(role) ? 'admin' : normalizeRoleKey(role);
+}
+
 bool isPrimaryClientRole(String? role) {
   return normalizeRoleKey(role) == 'client';
 }
