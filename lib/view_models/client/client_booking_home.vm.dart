@@ -1,19 +1,19 @@
 import 'package:stacked/stacked.dart';
-import 'package:webapp/models/booking.dart';
-import 'package:webapp/models/client_member.dart';
-import 'package:webapp/models/status.dart';
-import 'package:webapp/models/status_field.dart';
-import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/user.dart';
-import 'package:webapp/requests/booking.request.dart';
-import 'package:webapp/requests/client_member.request.dart';
-import 'package:webapp/requests/status.request.dart';
-import 'package:webapp/repositories/interfaces/booking_repository.dart';
-import 'package:webapp/repositories/interfaces/client_member_repository.dart';
-import 'package:webapp/repositories/interfaces/status_form_repository.dart';
-import 'package:webapp/services/status_field_option_resolver.dart';
-import 'package:webapp/services/status_form_engine.dart';
+import 'package:webapp/models/status.dart';
+import 'package:webapp/models/booking.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/models/status_form.dart';
+import 'package:webapp/models/status_field.dart';
+import 'package:webapp/models/client_member.dart';
+import 'package:webapp/requests/status.request.dart';
+import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/services/status_form_engine.dart';
+import 'package:webapp/requests/client_member.request.dart';
+import 'package:webapp/services/status_field_option_resolver.dart';
+import 'package:webapp/repositories/interfaces/booking_repository.dart';
+import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/repositories/interfaces/client_member_repository.dart';
 
 class ClientBookingHomeViewModel extends BaseViewModel {
   ClientBookingHomeViewModel({
@@ -81,13 +81,12 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   bool isSubmitting = false;
   int resetTick = 0;
   UserModel? _activeClientUser;
-  static const representativeNameKey = 'representative_name';
-  static const representativePhoneKey = 'representative_phone';
-  static const representativePositionKey = 'representative_position';
-  static const memberIdKey = 'member_id';
+  UserModel? _pendingClientUser;
+  static const representativeIdKey = 'representative_id';
 
   Future<void> load(UserModel clientUser) async {
     if (isBusyLoading) {
+      _pendingClientUser = clientUser;
       return;
     }
 
@@ -157,6 +156,14 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     } finally {
       isBusyLoading = false;
       notifyListeners();
+      final pendingClientUser = _pendingClientUser;
+      if (pendingClientUser != null &&
+          pendingClientUser.id != _activeClientUser?.id) {
+        _pendingClientUser = null;
+        Future<void>.microtask(() => load(pendingClientUser));
+      } else {
+        _pendingClientUser = null;
+      }
     }
   }
 
@@ -235,22 +242,10 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       );
     }).toList();
 
-    final hasMemberField = resolvedFields.any(_isMemberField);
-    if (!hasMemberField) {
-      return StatusFormEngine.visibleFields(
-        resolvedFields,
-        answers ?? this.answers,
-      );
-    }
-
-    final filteredFields = resolvedFields.where((field) {
-      final key = (field.key ?? '').trim();
-      return key != representativeNameKey &&
-          key != representativePhoneKey &&
-          key != representativePositionKey;
-    }).toList();
-
-    return StatusFormEngine.visibleFields(filteredFields, answers ?? this.answers);
+    return StatusFormEngine.visibleFields(
+      resolvedFields,
+      answers ?? this.answers,
+    );
   }
 
   Map<String, String> validateAnswersForForm(
@@ -268,6 +263,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     required Map<String, dynamic> formAnswers,
     required UserModel clientUser,
     required String submittedByUserId,
+    required String? submittedByUserRole,
   }) async {
     if (blockedMessageForForm(activeForm, clientUser) != null) {
       notifyListeners();
@@ -293,6 +289,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         fieldsForForm(activeForm, answers: normalizedAnswers),
         normalizedAnswers,
         submittedByUserId,
+        submittedByUserRole,
       );
       return await _bookingRepository.saveBooking(nextBooking);
     } finally {
@@ -304,6 +301,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   Future<Booking?> submit({
     required UserModel clientUser,
     required String submittedByUserId,
+    required String? submittedByUserRole,
   }) async {
     final activeForm = form;
     if (activeForm == null) {
@@ -334,6 +332,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         fields,
         normalizedAnswers,
         submittedByUserId,
+        submittedByUserRole,
       );
       final savedBooking = await _bookingRepository.saveBooking(nextBooking);
       answers = {};
@@ -453,12 +452,14 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   bool _isMemberField(StatusField field) {
     final key = (field.key ?? '').trim().toLowerCase();
     final sourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(field);
-    return key == memberIdKey ||
+    return key == representativeIdKey ||
         sourceKey == statusFieldOptionSourceClientMembers;
   }
 
-  Map<String, dynamic> _answersWithMemberSnapshot(Map<String, dynamic> answers) {
-    final memberId = normalizeId(answers[memberIdKey]?.toString());
+  Map<String, dynamic> _answersWithMemberSnapshot(
+    Map<String, dynamic> answers,
+  ) {
+    final memberId = normalizeId(answers[representativeIdKey]?.toString());
     if (memberId == null) {
       return answers;
     }
@@ -470,24 +471,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     }
 
     final nextAnswers = Map<String, dynamic>.from(answers);
-    nextAnswers[memberIdKey] = memberId;
-    final name = matchedMember.name?.trim() ?? '';
-    final phone = matchedMember.normalizedPhone;
-    final position = matchedMember.position?.trim() ?? '';
-
-    if (name.isNotEmpty) {
-      nextAnswers[representativeNameKey] = name;
-      nextAnswers['member_name'] = name;
-    }
-    if (phone.isNotEmpty) {
-      nextAnswers[representativePhoneKey] = phone;
-      nextAnswers['member_phone'] = phone;
-    }
-    if (position.isNotEmpty) {
-      nextAnswers[representativePositionKey] = position;
-      nextAnswers['member_position'] = position;
-    }
-
+    nextAnswers[representativeIdKey] = memberId;
     return nextAnswers;
   }
 }

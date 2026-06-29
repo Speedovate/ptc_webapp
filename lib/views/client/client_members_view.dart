@@ -486,6 +486,11 @@ class _ClientMembersTable extends StatelessWidget {
         (member) => member.createdAt == null ? '-' : _formatDateTime(member.createdAt!),
       ),
     );
+    final longestUpdatedAtValue = _longestText(
+      members.map(
+        (member) => member.updatedAt == null ? '-' : _formatDateTime(member.updatedAt!),
+      ),
+    );
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -505,6 +510,7 @@ class _ClientMembersTable extends StatelessWidget {
         final emailWidth = _maxTextWidth(context, textScaler, 'Email', longestEmailValue);
         final positionWidth = _maxTextWidth(context, textScaler, 'Position', longestPositionValue);
         final createdAtWidth = _maxTextWidth(context, textScaler, 'Created', longestCreatedAtValue);
+        final updatedAtWidth = _maxTextWidth(context, textScaler, 'Updated', longestUpdatedAtValue);
         final actionsWidth = _maxValue(
           176,
           AdminListMeasurements.measureTextWidth(
@@ -522,6 +528,7 @@ class _ClientMembersTable extends StatelessWidget {
         final resolvedEmailWidth = _resolvedColumnWidth(emailWidth);
         final resolvedPositionWidth = _resolvedColumnWidth(positionWidth);
         final resolvedCreatedAtWidth = _resolvedColumnWidth(createdAtWidth);
+        final resolvedUpdatedAtWidth = _resolvedColumnWidth(updatedAtWidth);
         final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
         final totalMeasuredWidth =
             resolvedIdWidth +
@@ -531,6 +538,7 @@ class _ClientMembersTable extends StatelessWidget {
             resolvedEmailWidth +
             resolvedPositionWidth +
             resolvedCreatedAtWidth +
+            resolvedUpdatedAtWidth +
             resolvedActionsWidth +
             40;
         final shouldFlexNameAndEmail =
@@ -606,6 +614,10 @@ class _ClientMembersTable extends StatelessWidget {
                     width: resolvedCreatedAtWidth,
                     child: const _ClientMembersHeader(label: 'Created'),
                   ),
+                  _ClientMembersFixedSlot(
+                    width: resolvedUpdatedAtWidth,
+                    child: const _ClientMembersHeader(label: 'Updated'),
+                  ),
                   if (forceWideLayout)
                     _ClientMembersFixedSlot(
                       width: resolvedActionsWidth,
@@ -645,6 +657,7 @@ class _ClientMembersTable extends StatelessWidget {
                   resolvedEmailWidth: resolvedEmailWidth,
                   resolvedPositionWidth: resolvedPositionWidth,
                   resolvedCreatedAtWidth: resolvedCreatedAtWidth,
+                  resolvedUpdatedAtWidth: resolvedUpdatedAtWidth,
                   resolvedActionsWidth: resolvedActionsWidth,
                   onView: () => onView(entry.value),
                   onEdit: () => onEdit(entry.value),
@@ -719,6 +732,7 @@ class _ClientMembersWideRow extends StatelessWidget {
     required this.resolvedEmailWidth,
     required this.resolvedPositionWidth,
     required this.resolvedCreatedAtWidth,
+    required this.resolvedUpdatedAtWidth,
     required this.resolvedActionsWidth,
     required this.onView,
     required this.onEdit,
@@ -735,6 +749,7 @@ class _ClientMembersWideRow extends StatelessWidget {
   final double resolvedEmailWidth;
   final double resolvedPositionWidth;
   final double resolvedCreatedAtWidth;
+  final double resolvedUpdatedAtWidth;
   final double resolvedActionsWidth;
   final VoidCallback onView;
   final VoidCallback onEdit;
@@ -845,6 +860,16 @@ class _ClientMembersWideRow extends StatelessWidget {
               ),
             ),
           ),
+          _ClientMembersFixedSlot(
+            width: resolvedUpdatedAtWidth,
+            child: _ClientMembersCell(
+              child: Text(
+                member.updatedAt == null ? '-' : _formatDateTime(member.updatedAt!),
+                style: _ClientMembersTable._valueStyle,
+                softWrap: true,
+              ),
+            ),
+          ),
           AdminListTrailingActionsLane(
             width: resolvedActionsWidth,
             child: _ClientMembersCell(
@@ -921,6 +946,7 @@ class _ClientMemberResponsiveCard extends StatelessWidget {
       ('Email', member.email?.trim().isNotEmpty == true ? member.email!.trim() : '-'),
       ('Position', member.position?.trim().isNotEmpty == true ? member.position!.trim() : '-'),
       ('Created', member.createdAt == null ? '-' : _formatDateTime(member.createdAt!)),
+      ('Updated', member.updatedAt == null ? '-' : _formatDateTime(member.updatedAt!)),
       ('Status', isActive ? 'Active' : 'Inactive'),
     ];
 

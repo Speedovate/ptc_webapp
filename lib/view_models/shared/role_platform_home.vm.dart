@@ -4,6 +4,7 @@ enum RolePlatformSection {
   home('Home'),
   history('History'),
   members('Members'),
+  support('Support'),
   profile('Profile');
 
   const RolePlatformSection(this.title);

@@ -1,19 +1,24 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/constants/palawan_locations.dart';
 import 'package:webapp/constants/puerto_princesa_barangays.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/status.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
+import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_bookings.vm.dart';
+import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/views/client/client_booking_home_view.dart';
 import 'package:webapp/views/shared/booking_workflow_view.dart';
+import 'package:webapp/views/shared/support_center_view.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
@@ -42,6 +47,7 @@ class AdminBookingsView extends StatefulWidget {
   static Future<Booking?> showEditBookingDialog(
     BuildContext context, {
     required Booking booking,
+    required UserModel currentUser,
   }) async {
     final vm = AdminBookingsViewModel();
     await vm.load();
@@ -88,8 +94,15 @@ class AdminBookingsView extends StatefulWidget {
       context: context,
       builder: (dialogContext) => _EditAdminBookingDialog(
         booking: booking,
+        currentUser: currentUser,
         currentStatusLabel: vm.clientStatusLabel(booking),
+        clientUsers: vm.clientUsers(),
         statuses: vm.activeStatuses(),
+        clientMembersByClientId: {
+          for (final client in vm.clientUsers())
+            if ((client.id ?? '').trim().isNotEmpty)
+              client.id!.trim(): vm.clientMembersForClientId(client.id),
+        },
         drivers: vm.roleUsers('driver'),
         helpers: vm.roleUsers('helper'),
         vehicleSizes: vm.activeVehicleSizes(),
@@ -172,6 +185,7 @@ class _AdminBookingWorkflowDialogState extends State<_AdminBookingWorkflowDialog
             children: [
               _AdminBookingDetailHeader(
                 booking: _booking,
+                user: widget.user,
                 onBack: () => Navigator.of(context).pop(),
               ),
               const SizedBox(height: 16),
@@ -273,8 +287,15 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
       context: context,
       builder: (dialogContext) => _EditAdminBookingDialog(
         booking: booking,
+        currentUser: widget.user,
         currentStatusLabel: vm.clientStatusLabel(booking),
+        clientUsers: vm.clientUsers(),
         statuses: vm.activeStatuses(),
+        clientMembersByClientId: {
+          for (final client in vm.clientUsers())
+            if ((client.id ?? '').trim().isNotEmpty)
+              client.id!.trim(): vm.clientMembersForClientId(client.id),
+        },
         drivers: vm.roleUsers('driver'),
         helpers: vm.roleUsers('helper'),
         vehicleSizes: vm.activeVehicleSizes(),
@@ -325,6 +346,7 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
                 children: [
                   _AdminBookingDetailHeader(
                     booking: selectedBooking,
+                    user: widget.user,
                     onBack: () {
                       setState(() {
                         _selectedBooking = null;
@@ -416,8 +438,11 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
 class _EditAdminBookingDialog extends StatefulWidget {
   const _EditAdminBookingDialog({
     required this.booking,
+    required this.currentUser,
     required this.currentStatusLabel,
+    required this.clientUsers,
     required this.statuses,
+    required this.clientMembersByClientId,
     required this.drivers,
     required this.helpers,
     required this.vehicleSizes,
@@ -426,8 +451,11 @@ class _EditAdminBookingDialog extends StatefulWidget {
   });
 
   final Booking booking;
+  final UserModel currentUser;
   final String currentStatusLabel;
+  final List<UserModel> clientUsers;
   final List<Status> statuses;
+  final Map<String, List<UserModel>> clientMembersByClientId;
   final List<UserModel> drivers;
   final List<UserModel> helpers;
   final List<VehicleCatalogItem> vehicleSizes;
@@ -440,6 +468,11 @@ class _EditAdminBookingDialog extends StatefulWidget {
 }
 
 class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
+  late final TextEditingController _pickUpDateController;
+  late final TextEditingController _pickUpTimeController;
+  late final TextEditingController _dropOffDateController;
+  late final TextEditingController _dropOffTimeController;
+  late final TextEditingController _deliveryFormNumberController;
   late final TextEditingController _waybillNumberController;
   late final TextEditingController _vanNumberController;
   late final TextEditingController _amountController;
@@ -447,21 +480,33 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
   late final TextEditingController _originBarangayController;
   late final TextEditingController _destinationController;
   late final TextEditingController _destinationBarangayController;
+  final FocusNode _representativeFocusNode = FocusNode();
+  final FocusNode _waybillPhotoFocusNode = FocusNode();
   final FocusNode _waybillNumberFocusNode = FocusNode();
   final FocusNode _vanNumberFocusNode = FocusNode();
   final FocusNode _vanSizeFocusNode = FocusNode();
   final FocusNode _amountFocusNode = FocusNode();
+  final FocusNode _pickUpDateFocusNode = FocusNode();
+  final FocusNode _pickUpTimeFocusNode = FocusNode();
+  final FocusNode _dropOffDateFocusNode = FocusNode();
+  final FocusNode _dropOffTimeFocusNode = FocusNode();
   final FocusNode _originFocusNode = FocusNode();
   final FocusNode _originBarangayFocusNode = FocusNode();
   final FocusNode _destinationFocusNode = FocusNode();
   final FocusNode _destinationBarangayFocusNode = FocusNode();
+  final FocusNode _deliveryFormPhotoFocusNode = FocusNode();
+  final FocusNode _deliveryFormNumberFocusNode = FocusNode();
   final FocusNode _statusFocusNode = FocusNode();
   final FocusNode _driverFocusNode = FocusNode();
   final FocusNode _helperFocusNode = FocusNode();
+  late String _selectedBookerId;
   late String _statusKey;
+  String? _representativeId;
   String? _driverId;
   String? _helperId;
   String? _vanSize;
+  dynamic _waybillPhotoValue;
+  dynamic _deliveryFormPhotoValue;
   String? _originErrorText;
   String? _originBarangayErrorText;
   String? _destinationErrorText;
@@ -470,6 +515,14 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
   @override
   void initState() {
     super.initState();
+    final initialRepresentativeId = _existingFieldValue('representative_id');
+    final initialPickUpDate = _existingFieldValue('pick_up_date');
+    final initialPickUpTime = _existingFieldValue('pick_up_time');
+    final initialDropOffDate = _existingFieldValue('drop_off_date');
+    final initialDropOffTime = _existingFieldValue('drop_off_time');
+    final initialDeliveryFormNumber = _existingFieldValue(
+      'delivery_form_number',
+    );
     final initialWaybill = _existingFieldValue('waybill_number');
     final initialVanNumber = _existingFieldValue('van_number');
     final initialAmount = _existingFieldValue('amount');
@@ -478,6 +531,17 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     final initialDestination = _existingFieldValue('destination');
     final initialDestinationBarangay = _existingFieldValue(
       'destination_barangay',
+    );
+    _pickUpDateController = TextEditingController(text: initialPickUpDate ?? '');
+    _pickUpTimeController = TextEditingController(text: initialPickUpTime ?? '');
+    _dropOffDateController = TextEditingController(
+      text: initialDropOffDate ?? '',
+    );
+    _dropOffTimeController = TextEditingController(
+      text: initialDropOffTime ?? '',
+    );
+    _deliveryFormNumberController = TextEditingController(
+      text: initialDeliveryFormNumber ?? '',
     );
     _waybillNumberController = TextEditingController(
       text: initialWaybill ?? '',
@@ -494,15 +558,32 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     _destinationBarangayController = TextEditingController(
       text: initialDestinationBarangay ?? '',
     );
+    _selectedBookerId = widget.booking.client?.id?.trim() ?? '';
     _statusKey = widget.booking.clientStatus ?? '';
+    _representativeId = initialRepresentativeId?.trim().isEmpty == true
+        ? null
+        : initialRepresentativeId;
     _driverId = widget.booking.driver?.id;
     _helperId = widget.booking.helper?.id;
     final rawVanSize = _existingFieldValue('van_size');
     _vanSize = _normalizeVehicleSizeId(rawVanSize?.toString());
+    _waybillPhotoValue = BookingRecordCard.outputFieldValue(
+      widget.booking.statusOutputs,
+      'waybill_photo',
+    );
+    _deliveryFormPhotoValue = BookingRecordCard.outputFieldValue(
+      widget.booking.statusOutputs,
+      'delivery_form_photo',
+    );
   }
 
   @override
   void dispose() {
+    _pickUpDateController.dispose();
+    _pickUpTimeController.dispose();
+    _dropOffDateController.dispose();
+    _dropOffTimeController.dispose();
+    _deliveryFormNumberController.dispose();
     _waybillNumberController.dispose();
     _vanNumberController.dispose();
     _amountController.dispose();
@@ -510,14 +591,22 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     _originBarangayController.dispose();
     _destinationController.dispose();
     _destinationBarangayController.dispose();
+    _representativeFocusNode.dispose();
+    _waybillPhotoFocusNode.dispose();
     _waybillNumberFocusNode.dispose();
     _vanNumberFocusNode.dispose();
     _vanSizeFocusNode.dispose();
     _amountFocusNode.dispose();
+    _pickUpDateFocusNode.dispose();
+    _pickUpTimeFocusNode.dispose();
+    _dropOffDateFocusNode.dispose();
+    _dropOffTimeFocusNode.dispose();
     _originFocusNode.dispose();
     _originBarangayFocusNode.dispose();
     _destinationFocusNode.dispose();
     _destinationBarangayFocusNode.dispose();
+    _deliveryFormPhotoFocusNode.dispose();
+    _deliveryFormNumberFocusNode.dispose();
     _statusFocusNode.dispose();
     _driverFocusNode.dispose();
     _helperFocusNode.dispose();
@@ -536,6 +625,81 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     if (!currentFocus.hasPrimaryFocus) {
       currentFocus.unfocus();
     }
+  }
+
+  Widget _buildPhotoUploadField({
+    required String label,
+    required FocusNode focusNode,
+    required FocusNode nextFocusNode,
+    required dynamic value,
+    required ValueChanged<dynamic> onChanged,
+    double bottomPadding = 4,
+  }) {
+    return AdminModalActionField(
+      label: label,
+      focusNode: focusNode,
+      valueText: _photoDisplayValue(value),
+      hintText: '',
+      bottomPadding: bottomPadding,
+      onTap: () => _pickPhotoFieldImage(
+        nextFocusNode: nextFocusNode,
+        onChanged: onChanged,
+      ),
+      onSubmitted: () => _pickPhotoFieldImage(
+        nextFocusNode: nextFocusNode,
+        onChanged: onChanged,
+      ),
+      suffixIcon: const Padding(
+        padding: EdgeInsets.only(right: 6),
+        child: Icon(Icons.upload_rounded, color: AppColors.primaryColor),
+      ),
+    );
+  }
+
+  Future<void> _pickPhotoFieldImage({
+    required FocusNode nextFocusNode,
+    required ValueChanged<dynamic> onChanged,
+  }) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null || !mounted) {
+      return;
+    }
+    onChanged(<String, dynamic>{
+      'name': file.name,
+      'bytes': bytes,
+      'size': file.size,
+      'mime_type': _resolvedPhotoMimeType(file),
+    });
+    _focusNext(nextFocusNode);
+  }
+
+  static String _photoDisplayValue(dynamic value) {
+    if (value is Map) {
+      final name = value['name']?.toString().trim();
+      if (name?.isNotEmpty == true) {
+        return name!;
+      }
+    }
+    final raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) {
+      return '';
+    }
+    final normalized = raw.split('?').first;
+    final lastSegment = normalized.split('/').last.trim();
+    return lastSegment.isNotEmpty ? lastSegment : raw;
+  }
+
+  static String? _resolvedPhotoMimeType(PlatformFile file) {
+    final extension = file.extension?.trim().toLowerCase();
+    if (extension == null || extension.isEmpty) {
+      return null;
+    }
+    return 'image/$extension';
   }
 
   String? _pendingFieldValue(String key) {
@@ -576,6 +740,14 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
 
   bool get _showsDestinationBarangayField =>
       _destinationController.text.trim().toLowerCase() == 'puerto princesa city';
+
+  List<UserModel> get _activeClientMembers {
+    final clientId = _selectedBookerId.trim();
+    if (clientId.isEmpty) {
+      return const <UserModel>[];
+    }
+    return widget.clientMembersByClientId[clientId] ?? const <UserModel>[];
+  }
 
   List<DropdownMenuItem<String>> _buildVanSizeItems() {
     final items = <DropdownMenuItem<String>>[];
@@ -719,8 +891,10 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
 
   String _fallbackUserLabel(String userId, String fallbackRole) {
     for (final user in [
+      ..._activeClientMembers,
       ...widget.drivers,
       ...widget.helpers,
+      if (widget.booking.client != null) widget.booking.client!,
       if (widget.booking.driver != null) widget.booking.driver!,
       if (widget.booking.helper != null) widget.booking.helper!,
     ]) {
@@ -729,6 +903,45 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
       }
     }
     return fallbackRole;
+  }
+
+  Future<void> _pickDateForController(
+    TextEditingController controller,
+    FocusNode nextFocusNode,
+  ) async {
+    final now = DateTime.now();
+    final initialDate = DateTime.tryParse(controller.text.trim()) ?? now;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 5),
+    );
+    if (picked == null || !mounted) {
+      return;
+    }
+    setState(() {
+      controller.text = picked.toIso8601String().split('T').first;
+    });
+    _focusNext(nextFocusNode);
+  }
+
+  Future<void> _pickTimeForController(
+    TextEditingController controller,
+    FocusNode nextFocusNode,
+  ) async {
+    final localizations = MaterialLocalizations.of(context);
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    if (picked == null || !mounted) {
+      return;
+    }
+    setState(() {
+      controller.text = localizations.formatTimeOfDay(picked);
+    });
+    _focusNext(nextFocusNode);
   }
 
   @override
@@ -758,6 +971,71 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
             children: [
               AdminModalFieldsSection(
                 children: [
+                  AdminModalDropdownField<String>(
+                    label: 'Booked By',
+                    hintText: 'Select Client',
+                    initialValue: _selectedBookerId.isEmpty
+                        ? null
+                        : _selectedBookerId,
+                    bottomPadding: 8,
+                    isExpanded: true,
+                    disabledTapMessage: 'No client accounts available yet.',
+                    items: widget.clientUsers.map((user) {
+                      return DropdownMenuItem<String>(
+                        value: user.id,
+                        child: Text(
+                          _bookerLabel(user),
+                          overflow: TextOverflow.ellipsis,
+                          style: adminDropdownDisplayTextStyle,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        _selectedBookerId = value ?? '';
+                        final memberIds = _activeClientMembers
+                            .map((user) => user.id?.trim() ?? '')
+                            .where((id) => id.isNotEmpty)
+                            .toSet();
+                        if (_representativeId?.trim().isNotEmpty != true ||
+                            !memberIds.contains(_representativeId!.trim())) {
+                          _representativeId = null;
+                        }
+                      });
+                      _focusNext(_representativeFocusNode);
+                    },
+                  ),
+                  AdminModalDropdownField<String>(
+                    focusNode: _representativeFocusNode,
+                    label: 'Representative',
+                    initialValue: _representativeId,
+                    bottomPadding: 8,
+                    isExpanded: true,
+                    disabledTapMessage: 'No active representatives available.',
+                    items: _buildRoleUserItems(
+                      selectedUserId: _representativeId,
+                      activeUsers: _activeClientMembers,
+                      fallbackRole: 'Representative',
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        _representativeId = value;
+                      });
+                      _focusNext(_waybillPhotoFocusNode);
+                    },
+                  ),
+                  _buildPhotoUploadField(
+                    label: 'Waybill Photo',
+                    focusNode: _waybillPhotoFocusNode,
+                    nextFocusNode: _waybillNumberFocusNode,
+                    value: _waybillPhotoValue,
+                    onChanged: (value) {
+                      setState(() {
+                        _waybillPhotoValue = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 6),
                   AdminModalTextField(
                     controller: _waybillNumberController,
                     focusNode: _waybillNumberFocusNode,
@@ -796,7 +1074,75 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     keyboardType: TextInputType.number,
                     bottomPadding: 6,
                     textInputAction: TextInputAction.next,
-                    onSubmitted: (_) => _focusNext(_originFocusNode),
+                    onSubmitted: (_) => _focusNext(_pickUpDateFocusNode),
+                  ),
+                  AdminModalActionField(
+                    label: 'Pick Up Date',
+                    focusNode: _pickUpDateFocusNode,
+                    valueText: _pickUpDateController.text.trim().isEmpty
+                        ? null
+                        : _pickUpDateController.text.trim(),
+                    hintText: adminSelectPlaceholder('Pick Up Date'),
+                    bottomPadding: 6,
+                    onTap: () => _pickDateForController(
+                      _pickUpDateController,
+                      _pickUpTimeFocusNode,
+                    ),
+                    onSubmitted: () => _pickDateForController(
+                      _pickUpDateController,
+                      _pickUpTimeFocusNode,
+                    ),
+                  ),
+                  AdminModalActionField(
+                    label: 'Pick Up Time',
+                    focusNode: _pickUpTimeFocusNode,
+                    valueText: _pickUpTimeController.text.trim().isEmpty
+                        ? null
+                        : _pickUpTimeController.text.trim(),
+                    hintText: adminSelectPlaceholder('Pick Up Time'),
+                    bottomPadding: 6,
+                    onTap: () => _pickTimeForController(
+                      _pickUpTimeController,
+                      _dropOffDateFocusNode,
+                    ),
+                    onSubmitted: () => _pickTimeForController(
+                      _pickUpTimeController,
+                      _dropOffDateFocusNode,
+                    ),
+                  ),
+                  AdminModalActionField(
+                    label: 'Drop Off Date',
+                    focusNode: _dropOffDateFocusNode,
+                    valueText: _dropOffDateController.text.trim().isEmpty
+                        ? null
+                        : _dropOffDateController.text.trim(),
+                    hintText: adminSelectPlaceholder('Drop Off Date'),
+                    bottomPadding: 6,
+                    onTap: () => _pickDateForController(
+                      _dropOffDateController,
+                      _dropOffTimeFocusNode,
+                    ),
+                    onSubmitted: () => _pickDateForController(
+                      _dropOffDateController,
+                      _dropOffTimeFocusNode,
+                    ),
+                  ),
+                  AdminModalActionField(
+                    label: 'Drop Off Time',
+                    focusNode: _dropOffTimeFocusNode,
+                    valueText: _dropOffTimeController.text.trim().isEmpty
+                        ? null
+                        : _dropOffTimeController.text.trim(),
+                    hintText: adminSelectPlaceholder('Drop Off Time'),
+                    bottomPadding: 6,
+                    onTap: () => _pickTimeForController(
+                      _dropOffTimeController,
+                      _originFocusNode,
+                    ),
+                    onSubmitted: () => _pickTimeForController(
+                      _dropOffTimeController,
+                      _originFocusNode,
+                    ),
                   ),
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6),
@@ -887,7 +1233,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                         _focusNext(
                           _showsDestinationBarangayField
                               ? _destinationBarangayFocusNode
-                              : _statusFocusNode,
+                              : _deliveryFormPhotoFocusNode,
                         );
                       },
                     ),
@@ -918,10 +1264,31 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                             _destinationBarangayController.text = value ?? '';
                             _destinationBarangayErrorText = null;
                           });
-                          _focusNext(_statusFocusNode);
+                          _focusNext(_deliveryFormPhotoFocusNode);
                         },
                       ),
                     ),
+                  _buildPhotoUploadField(
+                    label: 'Delivery Form Photo',
+                    focusNode: _deliveryFormPhotoFocusNode,
+                    nextFocusNode: _deliveryFormNumberFocusNode,
+                    value: _deliveryFormPhotoValue,
+                    onChanged: (value) {
+                      setState(() {
+                        _deliveryFormPhotoValue = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 6),
+                  AdminModalTextField(
+                    controller: _deliveryFormNumberController,
+                    focusNode: _deliveryFormNumberFocusNode,
+                    label: 'Delivery Form Number',
+                    keyboardType: TextInputType.number,
+                    bottomPadding: 6,
+                    textInputAction: TextInputAction.next,
+                    onSubmitted: (_) => _focusNext(_statusFocusNode),
+                  ),
                   AdminModalDropdownField<String>(
                     focusNode: _statusFocusNode,
                     label: 'Status',
@@ -1039,57 +1406,106 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     final currentOutputs = Map<String, dynamic>.from(
       widget.booking.statusOutputs ?? const <String, dynamic>{},
     );
-    final pendingSection = Map<String, dynamic>.from(
-      currentOutputs['pending'] is Map
-          ? currentOutputs['pending'] as Map
-          : const <String, dynamic>{},
-    );
-    final pendingFields = Map<String, dynamic>.from(
-      pendingSection['fields'] is Map
-          ? pendingSection['fields'] as Map
-          : const <String, dynamic>{},
-    );
+    final latestStoredFields = _latestOutputFieldValues(currentOutputs);
+    final editedFields = <String, dynamic>{};
 
     _setOrRemoveField(
-      pendingFields,
+      editedFields,
+      'representative_id',
+      _representativeId?.trim() ?? '',
+    );
+    _setOrRemovePhotoField(editedFields, 'waybill_photo', _waybillPhotoValue);
+    _setOrRemoveField(
+      editedFields,
       'waybill_number',
       _waybillNumberController.text.trim(),
     );
     _setOrRemoveField(
-      pendingFields,
+      editedFields,
       'van_number',
       _vanNumberController.text.trim(),
     );
-    _setOrRemoveField(pendingFields, 'van_size', _vanSize?.trim() ?? '');
-    _setOrRemoveField(pendingFields, 'amount', _amountController.text.trim());
-    _setOrRemoveField(pendingFields, 'origin', _originController.text.trim());
+    _setOrRemoveField(editedFields, 'van_size', _vanSize?.trim() ?? '');
+    _setOrRemoveField(editedFields, 'amount', _amountController.text.trim());
     _setOrRemoveField(
-      pendingFields,
+      editedFields,
+      'pick_up_date',
+      _pickUpDateController.text.trim(),
+    );
+    _setOrRemoveField(
+      editedFields,
+      'pick_up_time',
+      _pickUpTimeController.text.trim(),
+    );
+    _setOrRemoveField(
+      editedFields,
+      'drop_off_date',
+      _dropOffDateController.text.trim(),
+    );
+    _setOrRemoveField(
+      editedFields,
+      'drop_off_time',
+      _dropOffTimeController.text.trim(),
+    );
+    _setOrRemoveField(editedFields, 'origin', _originController.text.trim());
+    _setOrRemoveField(
+      editedFields,
       'origin_barangay',
       _originBarangayController.text.trim(),
     );
     _setOrRemoveField(
-      pendingFields,
+      editedFields,
       'destination',
       _destinationController.text.trim(),
     );
     _setOrRemoveField(
-      pendingFields,
+      editedFields,
       'destination_barangay',
       _destinationBarangayController.text.trim(),
     );
-    pendingFields.remove('start');
-    pendingFields.remove('end');
+    _setOrRemovePhotoField(
+      editedFields,
+      'delivery_form_photo',
+      _deliveryFormPhotoValue,
+    );
+    _setOrRemoveField(
+      editedFields,
+      'delivery_form_number',
+      _deliveryFormNumberController.text.trim(),
+    );
 
-    if (pendingFields.isEmpty) {
-      currentOutputs.remove('pending');
-    } else {
-      pendingSection['fields'] = pendingFields;
-      currentOutputs['pending'] = pendingSection;
+    final previousStatusKey = (widget.booking.clientStatus ?? '').trim();
+    final nextStatusKey = _statusKey.trim();
+    final displayStatusKeyForAppend = nextStatusKey.isNotEmpty
+        ? nextStatusKey
+        : previousStatusKey;
+    final statusChangeFields = _changedStatusFields(
+      before: latestStoredFields,
+      after: editedFields,
+    );
+    if (displayStatusKeyForAppend.isNotEmpty) {
+      final appendedOutputs = StatusFormEngine.appendStatusOutputSection(
+        currentOutputs,
+        displayStatusKey: displayStatusKeyForAppend,
+        statusFormReference: null,
+        submittedRole: widget.currentUser.role,
+        submittedRoles: [
+          if ((widget.currentUser.role ?? '').trim().isNotEmpty)
+            widget.currentUser.role!.trim(),
+        ],
+        submittedBy: widget.currentUser.id ?? '',
+        fields: statusChangeFields,
+      );
+      currentOutputs
+        ..clear()
+        ..addAll(appendedOutputs);
     }
 
     Navigator.of(context).pop(
       widget.booking.copyWith(
+        client: widget.clientUsers
+            .where((user) => user.id == _selectedBookerId)
+            .firstOrNull,
         clientStatus: _statusKey.isEmpty
             ? widget.booking.clientStatus
             : _statusKey,
@@ -1104,6 +1520,105 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
         statusOutputs: currentOutputs,
       ),
     );
+  }
+
+  Map<String, dynamic> _latestOutputFieldValues(Map<String, dynamic> outputs) {
+    if (outputs.isEmpty) {
+      return const <String, dynamic>{};
+    }
+
+    final sections = outputs.entries
+        .where((entry) => entry.value is Map)
+        .map((entry) {
+          final raw = Map<String, dynamic>.from(entry.value as Map);
+          return (
+            entryKey: entry.key,
+            submittedAt: DateTime.tryParse(
+              raw['submitted_at']?.toString() ?? '',
+            ),
+            fields: raw['fields'] is Map
+                ? Map<String, dynamic>.from(raw['fields'] as Map)
+                : const <String, dynamic>{},
+          );
+        })
+        .toList();
+
+    sections.sort((a, b) {
+      final aSubmittedAt = a.submittedAt;
+      final bSubmittedAt = b.submittedAt;
+      if (aSubmittedAt != null && bSubmittedAt != null) {
+        return bSubmittedAt.compareTo(aSubmittedAt);
+      }
+      if (aSubmittedAt != null) {
+        return -1;
+      }
+      if (bSubmittedAt != null) {
+        return 1;
+      }
+      return b.entryKey.compareTo(a.entryKey);
+    });
+
+    final latestValues = <String, dynamic>{};
+    for (final section in sections) {
+      section.fields.forEach((key, value) {
+        latestValues.putIfAbsent(key, () => value);
+      });
+    }
+    return latestValues;
+  }
+
+  Map<String, dynamic> _changedStatusFields({
+    required Map<String, dynamic> before,
+    required Map<String, dynamic> after,
+  }) {
+    final changed = <String, dynamic>{};
+    final candidateKeys = <String>{...before.keys, ...after.keys};
+    for (final key in candidateKeys) {
+      final previousValue = before[key];
+      final nextValue = after[key];
+      if (_normalizedFieldValue(previousValue) == _normalizedFieldValue(nextValue)) {
+        continue;
+      }
+      if (_isEmptyFieldValue(nextValue)) {
+        continue;
+      }
+      changed[key] = nextValue;
+    }
+    return changed;
+  }
+
+  dynamic _normalizedFieldValue(dynamic value) {
+    if (value is String) {
+      return value.trim();
+    }
+    if (value is List) {
+      return value.map(_normalizedFieldValue).toList();
+    }
+    if (value is Map) {
+      final entries = Map<String, dynamic>.from(value);
+      final normalized = <String, dynamic>{};
+      for (final entry in entries.entries) {
+        normalized[entry.key] = _normalizedFieldValue(entry.value);
+      }
+      return normalized;
+    }
+    return value;
+  }
+
+  bool _isEmptyFieldValue(dynamic value) {
+    if (value == null) {
+      return true;
+    }
+    if (value is String) {
+      return value.trim().isEmpty;
+    }
+    if (value is List) {
+      return value.isEmpty;
+    }
+    if (value is Map) {
+      return value.isEmpty;
+    }
+    return false;
   }
 
   UserModel? _resolveSelectedUser(String? userId, List<UserModel> users) {
@@ -1137,6 +1652,26 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     fields[key] = value;
   }
 
+  static void _setOrRemovePhotoField(
+    Map<String, dynamic> fields,
+    String key,
+    dynamic value,
+  ) {
+    if (value == null) {
+      fields.remove(key);
+      return;
+    }
+    if (value is String && value.trim().isEmpty) {
+      fields.remove(key);
+      return;
+    }
+    if (value is Map && value.isEmpty) {
+      fields.remove(key);
+      return;
+    }
+    fields[key] = value;
+  }
+
   static String _userLabel(UserModel user) {
     final name = (user.name ?? '').trim();
     final phone = (user.phone ?? '').trim();
@@ -1151,6 +1686,21 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     }
     final role = (user.role ?? '').trim();
     return role.isNotEmpty ? humanizeDropdownValue(role) : 'User';
+  }
+
+  String _bookerLabel(UserModel user) {
+    final name = (user.name ?? '').trim();
+    final phone = (user.phone ?? '').trim();
+    if (name.isNotEmpty && phone.isNotEmpty) {
+      return '$name | $phone';
+    }
+    if (name.isNotEmpty) {
+      return name;
+    }
+    if (phone.isNotEmpty) {
+      return phone;
+    }
+    return 'Client';
   }
 
   String? _normalizeVehicleSizeId(String? rawValue) {
@@ -1184,11 +1734,55 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
   late String _selectedBookerId;
   String? _bookerErrorText;
   static const _placeholderClientUser = UserModel(role: 'client');
+  late final FocusNode _bookedByFocusNode;
 
   @override
   void initState() {
     super.initState();
     _selectedBookerId = '';
+    _bookedByFocusNode = FocusNode();
+  }
+
+  @override
+  void dispose() {
+    _bookedByFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _openBookedByOptions() {
+    debugPrint(
+      '[REP_BOOKED_BY_DEBUG][OPEN_BOOKED_BY] '
+      'selectedBookerId=${_selectedBookerId.isEmpty ? '-' : _selectedBookerId} '
+      'clientCount=${widget.clientUsers.length}',
+    );
+    if (mounted) {
+      setState(() {
+        _bookerErrorText = 'Client is required.';
+      });
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      FocusScope.of(context).requestFocus(_bookedByFocusNode);
+      final targetContext =
+          FocusManager.instance.primaryFocus?.context ??
+          _bookedByFocusNode.context;
+      debugPrint(
+        '[REP_BOOKED_BY_DEBUG][OPEN_BOOKED_BY_POST_FRAME] '
+        'focusHasFocus=${_bookedByFocusNode.hasFocus} '
+        'targetContext=${targetContext == null ? 'null' : targetContext.widget.runtimeType}',
+      );
+      if (targetContext != null) {
+        final invoked = Actions.maybeInvoke(
+          targetContext,
+          const ActivateIntent(),
+        );
+        debugPrint(
+          '[REP_BOOKED_BY_DEBUG][OPEN_BOOKED_BY_INVOKE] invoked=$invoked',
+        );
+      }
+    });
   }
 
   @override
@@ -1209,80 +1803,92 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
         width: 760,
         child: SizedBox(
           height: 700,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                AdminModalFormBody(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final formVisibleHeight =
+                  (constraints.maxHeight - 126).clamp(280.0, 700.0).toDouble();
+              return SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    AdminModalFieldsSection(
+                    AdminModalFormBody(
                       children: [
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: AdminModalDropdownField<String>(
-                            label: 'Booked By',
-                            hintText: 'Select Client',
-                            errorText: _bookerErrorText,
-                            initialValue: _selectedBookerId.isEmpty
-                                ? null
-                                : _selectedBookerId,
-                            bottomPadding: 0,
-                            isExpanded: true,
-                            disabledTapMessage:
-                                'No client accounts available yet.',
-                            items: widget.clientUsers.map(
-                              (user) => DropdownMenuItem<String>(
-                                value: user.id,
-                                child: Text(
-                                  _bookerLabel(user),
-                                  overflow: TextOverflow.ellipsis,
-                                  style: adminDropdownDisplayTextStyle,
-                                ),
+                        AdminModalFieldsSection(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: AdminModalDropdownField<String>(
+                                label: 'Booked By',
+                                hintText: 'Select Client',
+                                errorText: _bookerErrorText,
+                                focusNode: _bookedByFocusNode,
+                                initialValue: _selectedBookerId.isEmpty
+                                    ? null
+                                    : _selectedBookerId,
+                                bottomPadding: 0,
+                                isExpanded: true,
+                                disabledTapMessage:
+                                    'No client accounts available yet.',
+                                items: widget.clientUsers.map(
+                                  (user) => DropdownMenuItem<String>(
+                                    value: user.id,
+                                    child: Text(
+                                      _bookerLabel(user),
+                                      overflow: TextOverflow.ellipsis,
+                                      style: adminDropdownDisplayTextStyle,
+                                    ),
+                                  ),
+                                ).toList(),
+                                onChanged: (value) {
+                                  debugPrint(
+                                    '[REP_BOOKED_BY_DEBUG][BOOKED_BY_CHANGED] '
+                                    'value=${value ?? '-'}',
+                                  );
+                                  setState(() {
+                                    _selectedBookerId = value ?? '';
+                                    _bookerErrorText = null;
+                                  });
+                                },
                               ),
-                            ).toList(),
-                            onChanged: (value) {
-                              setState(() {
-                                _selectedBookerId = value ?? '';
-                                _bookerErrorText = null;
-                              });
-                            },
-                          ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
+                    const SizedBox(height: 6),
+                    ClientBookingHomeView(
+                      user: selectedUser ?? _placeholderClientUser,
+                      bookingClientUser: selectedUser ?? _placeholderClientUser,
+                      submittedByUserId: widget.currentUser.id,
+                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
+                      scrollable: false,
+                      loadingPlaceholderMinHeight: formVisibleHeight,
+                      submitBlockMessage: () {
+                        if (selectedUser == null) {
+                          if (mounted) {
+                            setState(() {
+                              _bookerErrorText = 'Client is required.';
+                            });
+                          }
+                          return 'Select a client first before creating a booking.';
+                        }
+                        if (_bookerErrorText != null && mounted) {
+                          setState(() {
+                            _bookerErrorText = null;
+                          });
+                        }
+                        return null;
+                      },
+                      onRepresentativeTapWithoutClient: _openBookedByOptions,
+                      onBookingSubmitted: selectedUser == null
+                          ? null
+                          : widget.onBookingSubmitted,
+                    ),
                   ],
                 ),
-                const SizedBox(height: 6),
-                ClientBookingHomeView(
-                  user: selectedUser ?? _placeholderClientUser,
-                  bookingClientUser: selectedUser ?? _placeholderClientUser,
-                  submittedByUserId: widget.currentUser.id,
-                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
-                  scrollable: false,
-                  loadingPlaceholderMinHeight: 520,
-                  submitBlockMessage: () {
-                    if (selectedUser == null) {
-                      if (mounted) {
-                        setState(() {
-                          _bookerErrorText = 'Client is required.';
-                        });
-                      }
-                      return 'Select a client first before creating a booking.';
-                    }
-                    if (_bookerErrorText != null && mounted) {
-                      setState(() {
-                        _bookerErrorText = null;
-                      });
-                    }
-                    return null;
-                  },
-                  onBookingSubmitted: selectedUser == null
-                      ? null
-                      : widget.onBookingSubmitted,
-                ),
-              ],
-            ),
+              );
+            },
           ),
         ),
       ),
@@ -1351,8 +1957,11 @@ class _AdminBookingsTable extends StatelessWidget {
     final longestIdValue = _longestText(
       bookings.map((booking) => booking.id ?? '-'),
     );
-    final longestDateValue = _longestText(
+    final longestCreatedValue = _longestText(
       bookings.map((booking) => _formatBookingDateTime(booking.createdAt)),
+    );
+    final longestUpdatedValue = _longestText(
+      bookings.map((booking) => _formatBookingDateTime(booking.updatedAt)),
     );
     final longestWaybillNumber = _longestText(
       bookings.map((booking) => _waybillNumber(booking)),
@@ -1379,11 +1988,17 @@ class _AdminBookingsTable extends StatelessWidget {
           'ID',
           longestIdValue,
         );
-        final dateWidth = _maxTextWidth(
+        final createdWidth = _maxTextWidth(
           context,
           textScaler,
-          'Date Time',
-          longestDateValue,
+          'Created',
+          longestCreatedValue,
+        );
+        final updatedWidth = _maxTextWidth(
+          context,
+          textScaler,
+          'Updated',
+          longestUpdatedValue,
         );
         final waybillWidth = _maxTextWidth(
           context,
@@ -1433,7 +2048,8 @@ class _AdminBookingsTable extends StatelessWidget {
         );
 
         final resolvedIdWidth = _resolvedColumnWidth(idWidth);
-        final resolvedDateWidth = _resolvedColumnWidth(dateWidth);
+        final resolvedCreatedWidth = _resolvedColumnWidth(createdWidth);
+        final resolvedUpdatedWidth = _resolvedColumnWidth(updatedWidth);
         final resolvedWaybillWidth = _resolvedColumnWidth(waybillWidth);
         final resolvedVanNumberWidth = _resolvedColumnWidth(vanNumberWidth);
         final resolvedVanSizeWidth = _resolvedColumnWidth(vanSizeWidth);
@@ -1442,12 +2058,13 @@ class _AdminBookingsTable extends StatelessWidget {
         final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
         final totalMeasuredWidth =
             resolvedIdWidth +
-            resolvedDateWidth +
             resolvedWaybillWidth +
             resolvedVanNumberWidth +
             resolvedVanSizeWidth +
             resolvedAmountWidth +
             resolvedStatusWidth +
+            resolvedCreatedWidth +
+            resolvedUpdatedWidth +
             resolvedActionsWidth +
             40;
         final useResponsiveCards = totalMeasuredWidth > constraints.maxWidth;
@@ -1487,10 +2104,6 @@ class _AdminBookingsTable extends StatelessWidget {
                     child: const _AdminBookingsHeaderCell(label: 'ID'),
                   ),
                   _AdminBookingsFixedSlot(
-                    width: resolvedDateWidth,
-                    child: const _AdminBookingsHeaderCell(label: 'Date Time'),
-                  ),
-                  _AdminBookingsFixedSlot(
                     width: resolvedWaybillWidth,
                     child: const _AdminBookingsHeaderCell(
                       label: 'Waybill Number',
@@ -1511,6 +2124,14 @@ class _AdminBookingsTable extends StatelessWidget {
                   _AdminBookingsFixedSlot(
                     width: resolvedStatusWidth,
                     child: const _AdminBookingsHeaderCell(label: 'Status'),
+                  ),
+                  _AdminBookingsFixedSlot(
+                    width: resolvedCreatedWidth,
+                    child: const _AdminBookingsHeaderCell(label: 'Created'),
+                  ),
+                  _AdminBookingsFixedSlot(
+                    width: resolvedUpdatedWidth,
+                    child: const _AdminBookingsHeaderCell(label: 'Updated'),
                   ),
                   AdminListTrailingActionsLane(
                     width: resolvedActionsWidth,
@@ -1534,12 +2155,13 @@ class _AdminBookingsTable extends StatelessWidget {
                   booking: entry.value,
                   statusLabel: vm.clientStatusLabel(entry.value),
                   resolvedIdWidth: resolvedIdWidth,
-                  resolvedDateWidth: resolvedDateWidth,
                   resolvedWaybillWidth: resolvedWaybillWidth,
                   resolvedVanNumberWidth: resolvedVanNumberWidth,
                   resolvedVanSizeWidth: resolvedVanSizeWidth,
                   resolvedAmountWidth: resolvedAmountWidth,
                   resolvedStatusWidth: resolvedStatusWidth,
+                  resolvedCreatedWidth: resolvedCreatedWidth,
+                  resolvedUpdatedWidth: resolvedUpdatedWidth,
                   resolvedActionsWidth: resolvedActionsWidth,
                   onView: () => onView(entry.value),
                   onEdit: () => onEdit(entry.value),
@@ -1615,30 +2237,11 @@ class _AdminBookingsTable extends StatelessWidget {
       );
 
   static String _formatBookingDateTime(DateTime? value) {
-    if (value == null) {
-      return '-';
-    }
-    final monthNames = const [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    final month = monthNames[value.month - 1];
-    final hour = value.hour == 0
-        ? 12
-        : (value.hour > 12 ? value.hour - 12 : value.hour);
-    final minute = value.minute.toString().padLeft(2, '0');
-    final period = value.hour >= 12 ? 'PM' : 'AM';
-    return '$month ${value.day}, ${value.year} | $hour:$minute $period';
+    return AdminUsersView.formatCreatedAt(value);
+  }
+
+  static String _formatBookingDateTimeSingleLine(DateTime? value) {
+    return AdminUsersView.formatCreatedAtSingleLine(value);
   }
 }
 
@@ -1647,12 +2250,13 @@ class _AdminBookingWideRow extends StatelessWidget {
     required this.booking,
     required this.statusLabel,
     required this.resolvedIdWidth,
-    required this.resolvedDateWidth,
     required this.resolvedWaybillWidth,
     required this.resolvedVanNumberWidth,
     required this.resolvedVanSizeWidth,
     required this.resolvedAmountWidth,
     required this.resolvedStatusWidth,
+    required this.resolvedCreatedWidth,
+    required this.resolvedUpdatedWidth,
     required this.resolvedActionsWidth,
     required this.onView,
     required this.onEdit,
@@ -1661,12 +2265,13 @@ class _AdminBookingWideRow extends StatelessWidget {
   final Booking booking;
   final String statusLabel;
   final double resolvedIdWidth;
-  final double resolvedDateWidth;
   final double resolvedWaybillWidth;
   final double resolvedVanNumberWidth;
   final double resolvedVanSizeWidth;
   final double resolvedAmountWidth;
   final double resolvedStatusWidth;
+  final double resolvedCreatedWidth;
+  final double resolvedUpdatedWidth;
   final double resolvedActionsWidth;
   final VoidCallback onView;
   final VoidCallback onEdit;
@@ -1683,16 +2288,6 @@ class _AdminBookingWideRow extends StatelessWidget {
             child: _AdminBookingsBodyCell(
               child: Text(
                 booking.id ?? '-',
-                style: _AdminBookingsTable._valueStyle,
-                softWrap: true,
-              ),
-            ),
-          ),
-          _AdminBookingsFixedSlot(
-            width: resolvedDateWidth,
-            child: _AdminBookingsBodyCell(
-              child: Text(
-                _AdminBookingsTable._formatBookingDateTime(booking.createdAt),
                 style: _AdminBookingsTable._valueStyle,
                 softWrap: true,
               ),
@@ -1741,6 +2336,26 @@ class _AdminBookingWideRow extends StatelessWidget {
           _AdminBookingsFixedSlot(
             width: resolvedStatusWidth,
             child: _AdminBookingsBodyCell(child: adminMetaPill(statusLabel)),
+          ),
+          _AdminBookingsFixedSlot(
+            width: resolvedCreatedWidth,
+            child: _AdminBookingsBodyCell(
+              child: Text(
+                _AdminBookingsTable._formatBookingDateTime(booking.createdAt),
+                style: _AdminBookingsTable._valueStyle,
+                softWrap: true,
+              ),
+            ),
+          ),
+          _AdminBookingsFixedSlot(
+            width: resolvedUpdatedWidth,
+            child: _AdminBookingsBodyCell(
+              child: Text(
+                _AdminBookingsTable._formatBookingDateTime(booking.updatedAt),
+                style: _AdminBookingsTable._valueStyle,
+                softWrap: true,
+              ),
+            ),
           ),
           AdminListTrailingActionsLane(
             width: resolvedActionsWidth,
@@ -1794,14 +2409,23 @@ class _AdminBookingResponsiveCard extends StatelessWidget {
 
         final items = [
           ('ID', booking.id ?? '-'),
-          (
-            'Date Time',
-            _AdminBookingsTable._formatBookingDateTime(booking.createdAt),
-          ),
           ('Waybill Number', _AdminBookingsTable._waybillNumber(booking)),
           ('Van Number', _AdminBookingsTable._vanNumber(booking)),
           ('Van Size', _AdminBookingsTable._vanSize(booking)),
           ('Amount', _AdminBookingsTable._amount(booking)),
+          ('Status', statusLabel),
+          (
+            'Created',
+            _AdminBookingsTable._formatBookingDateTimeSingleLine(
+              booking.createdAt,
+            ),
+          ),
+          (
+            'Updated',
+            _AdminBookingsTable._formatBookingDateTimeSingleLine(
+              booking.updatedAt,
+            ),
+          ),
         ];
 
         return AdminListItemCard(
@@ -1910,14 +2534,22 @@ class _AdminBookingsBodyCell extends StatelessWidget {
 class _AdminBookingDetailHeader extends StatelessWidget {
   const _AdminBookingDetailHeader({
     required this.booking,
+    required this.user,
     required this.onBack,
   });
 
   final Booking booking;
+  final UserModel user;
   final VoidCallback onBack;
 
   @override
   Widget build(BuildContext context) {
+    final representativeUserId = normalizeId(
+      BookingRecordCard.outputFieldValue(
+        booking.statusOutputs,
+        'representative_id',
+      )?.toString(),
+    );
     return Row(
       children: [
         Expanded(
@@ -1951,7 +2583,15 @@ class _AdminBookingDetailHeader extends StatelessWidget {
             ),
           ),
         ),
-        BookingSupportButton(onPressed: () => launchBookingSupport(context)),
+        BookingSupportButton(
+          onPressed: () => openSupportDestination(
+            context,
+            user: user,
+            initialTopicKey: supportTopicBooking,
+            initialBookingId: booking.id,
+            initialUserId: representativeUserId,
+          ),
+        ),
       ],
     );
   }

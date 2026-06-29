@@ -6,6 +6,7 @@ enum AdminSection {
   vehicles('Vehicles'),
   settings('Flows'),
   users('Users'),
+  support('Support'),
   profile('Profile');
 
   const AdminSection(this.title);

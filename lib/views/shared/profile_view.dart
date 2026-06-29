@@ -516,8 +516,8 @@ class _ProfileViewState extends State<ProfileView> {
     if (lat == null && lng == null) {
       return 'Not set';
     }
-    final latLabel = lat?.toString() ?? 'Not set';
-    final lngLabel = lng?.toString() ?? 'Not set';
+    final latLabel = lat?.toStringAsFixed(4) ?? 'Not set';
+    final lngLabel = lng?.toStringAsFixed(4) ?? 'Not set';
     return '$latLabel, $lngLabel';
   }
 
@@ -1028,7 +1028,7 @@ class _LicensePreview extends StatelessWidget {
             memoryBytes!,
             width: double.infinity,
             height: 220,
-            fit: BoxFit.cover,
+            fit: BoxFit.contain,
           ),
         ),
       );
@@ -1056,7 +1056,7 @@ class _LicensePreview extends StatelessWidget {
               imageUrl: normalizedValue,
               width: double.infinity,
               height: 220,
-              fit: BoxFit.cover,
+              fit: BoxFit.contain,
               errorBuilder: (context, error) {
                 return const _LicenseImageFallback(
                   icon: Icons.broken_image_rounded,

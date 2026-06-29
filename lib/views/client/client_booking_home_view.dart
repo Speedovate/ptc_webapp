@@ -6,6 +6,7 @@ import 'package:webapp/models/client_member.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/client/client_booking_home.vm.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
@@ -62,6 +63,9 @@ class ClientBookingHomeView extends StatefulWidget {
     this.padding = const EdgeInsets.fromLTRB(24, 24, 24, 24),
     this.scrollable = true,
     this.loadingPlaceholderMinHeight,
+    this.loadingOverlayVisibleHeight,
+    this.loadingOverlayAlignmentY = 0,
+    this.onRepresentativeTapWithoutClient,
   });
 
   final UserModel user;
@@ -72,6 +76,9 @@ class ClientBookingHomeView extends StatefulWidget {
   final EdgeInsets padding;
   final bool scrollable;
   final double? loadingPlaceholderMinHeight;
+  final double? loadingOverlayVisibleHeight;
+  final double loadingOverlayAlignmentY;
+  final VoidCallback? onRepresentativeTapWithoutClient;
 
   @override
   State<ClientBookingHomeView> createState() => _ClientBookingHomeViewState();
@@ -101,6 +108,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
 
   String get _effectiveSubmittedByUserId =>
       widget.submittedByUserId ?? widget.user.id ?? '';
+
+  String? get _effectiveSubmittedByUserRole => widget.user.role;
 
   double get _loadingPlaceholderMinHeight =>
       widget.loadingPlaceholderMinHeight ?? 220;
@@ -145,6 +154,9 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
     final oldClientUser = oldWidget.bookingClientUser ?? oldWidget.user;
     if (oldClientUser.id != _effectiveClientUser.id ||
         oldClientUser.updatedAt != _effectiveClientUser.updatedAt) {
+      setState(() {
+        _selectedMemberId = null;
+      });
       _viewModel?.syncClient(_effectiveClientUser);
       _viewModel?.load(_effectiveClientUser);
     }
@@ -167,6 +179,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
             message: vm.isSubmitting
                 ? 'Submitting booking ...'
                 : 'Loading booking form ...',
+            visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
+            loadingAlignmentY: widget.loadingOverlayAlignmentY,
             child: _ClientBookingStateCard(
               scrollable: widget.scrollable,
               padding: widget.padding,
@@ -194,6 +208,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
             message: vm.isSubmitting
                 ? 'Submitting booking ...'
                 : 'Loading booking form ...',
+            visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
+            loadingAlignmentY: widget.loadingOverlayAlignmentY,
             child: _ClientBookingStateCard(
               scrollable: widget.scrollable,
               padding: widget.padding,
@@ -247,6 +263,7 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
                   form: activeForm,
                   clientUser: _effectiveClientUser,
                   submittedByUserId: _effectiveSubmittedByUserId,
+                  submittedByUserRole: _effectiveSubmittedByUserRole,
                   selectedMember: selectedMember,
                   showRepresentativePreset:
                       !isSubClientRole(widget.user.role) &&
@@ -258,6 +275,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
                     });
                   },
                   submitBlockMessage: widget.submitBlockMessage,
+                  onRepresentativeTapWithoutClient:
+                      widget.onRepresentativeTapWithoutClient,
                   onBookingSubmitted: widget.onBookingSubmitted,
                   onUnfocusWithoutScroll: () => _unfocusWithoutScroll(context),
                 ),
@@ -274,6 +293,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
           message: vm.isSubmitting
               ? 'Submitting booking ...'
               : 'Loading booking form ...',
+          visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
+          loadingAlignmentY: widget.loadingOverlayAlignmentY,
           child: scaffold,
         );
       },
@@ -288,24 +309,28 @@ class _ClientBookingFormSection extends StatefulWidget {
     required this.form,
     required this.clientUser,
     required this.submittedByUserId,
+    required this.submittedByUserRole,
     required this.selectedMember,
     required this.showRepresentativePreset,
     required this.onSelectedMemberChanged,
     required this.onUnfocusWithoutScroll,
     this.submitBlockMessage,
     this.onBookingSubmitted,
+    this.onRepresentativeTapWithoutClient,
   });
 
   final ClientBookingHomeViewModel vm;
   final StatusForm form;
   final UserModel clientUser;
   final String submittedByUserId;
+  final String? submittedByUserRole;
   final ClientMember? selectedMember;
   final bool showRepresentativePreset;
   final ValueChanged<String?> onSelectedMemberChanged;
   final VoidCallback onUnfocusWithoutScroll;
   final String? Function()? submitBlockMessage;
   final ValueChanged<Booking>? onBookingSubmitted;
+  final VoidCallback? onRepresentativeTapWithoutClient;
 
   @override
   State<_ClientBookingFormSection> createState() =>
@@ -321,10 +346,20 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
   final FocusNode _submitFocusNode = FocusNode(
     debugLabel: 'booking_field(__cta__)',
   );
-  static const _memberIdKey = 'member_id';
-  static const _representativeNameKey = 'representative_name';
-  static const _representativePhoneKey = 'representative_phone';
-  static const _representativePositionKey = 'representative_position';
+
+  String? _clientMemberFieldKey(List<StatusField> fields) {
+    for (final field in fields) {
+      final key = (field.key ?? '').trim().toLowerCase();
+      final sourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
+        field,
+      );
+      if (sourceKey == statusFieldOptionSourceClientMembers ||
+          key == 'representative_id') {
+        return (field.key ?? '').trim();
+      }
+    }
+    return null;
+  }
 
   String _focusKeyForField(StatusField field, int index) {
     final key = (field.key ?? '').trim();
@@ -396,6 +431,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
         .map((field) => (field.key ?? '').trim())
         .where((key) => key.isNotEmpty)
         .toSet();
+    final memberFieldKey = _clientMemberFieldKey(fields);
     final nextAnswers = Map<String, dynamic>.from(_answers);
 
     void applyValue(String key, String? value) {
@@ -413,19 +449,18 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
       nextAnswers[key] = trimmedValue;
     }
 
-    applyValue(_memberIdKey, selectedMember.id);
-    applyValue(_representativeNameKey, selectedMember.name);
-    applyValue(_representativePhoneKey, selectedMember.normalizedPhone);
-    applyValue(_representativePositionKey, selectedMember.position);
+    if (memberFieldKey != null && memberFieldKey.isNotEmpty) {
+      applyValue(memberFieldKey, selectedMember.id);
+    }
 
     if (mounted) {
       setState(() {
         _answers = nextAnswers;
-        _errors = Map<String, String>.from(_errors)
-          ..remove(_memberIdKey)
-          ..remove(_representativeNameKey)
-          ..remove(_representativePhoneKey)
-          ..remove(_representativePositionKey);
+        if (memberFieldKey != null && memberFieldKey.isNotEmpty) {
+          _errors = Map<String, String>.from(_errors)..remove(memberFieldKey);
+        } else {
+          _errors = Map<String, String>.from(_errors);
+        }
       });
     } else {
       _answers = nextAnswers;
@@ -437,6 +472,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
     final vm = widget.vm;
     final form = widget.form;
     final fields = vm.fieldsForForm(form, answers: _answers);
+    final memberFieldKey = _clientMemberFieldKey(fields);
     final memberOptionLabels = vm.memberOptionLabelsForForm(form);
     _syncFocusNodes(fields);
     final blockedMessage = vm.blockedMessageForForm(form, widget.clientUser);
@@ -504,6 +540,21 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                   nextFieldType == 'date' ||
                   nextFieldType == 'time' ||
                   nextFieldType == 'photo';
+              final fieldKeyValue = (field.key ?? '').trim();
+              final shouldRedirectRepresentativeTap =
+                  memberFieldKey != null &&
+                  fieldKeyValue == memberFieldKey &&
+                  widget.onRepresentativeTapWithoutClient != null &&
+                  (widget.clientUser.id?.trim().isNotEmpty != true);
+              if (memberFieldKey != null && fieldKeyValue == memberFieldKey) {
+                debugPrint(
+                  '[REP_BOOKED_BY_DEBUG][FIELD_BUILD] '
+                  'fieldKey=$fieldKeyValue '
+                  'clientId=${widget.clientUser.id ?? '-'} '
+                  'hasRedirect=$shouldRedirectRepresentativeTap '
+                  'memberOptions=$memberOptionLabels.length',
+                );
+              }
 
               return Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -518,9 +569,21 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                   formTitle: vm.resolvedTitleForForm(form),
                   formButtonText: form.buttonText,
                   formStatusKey: form.currentStatusKey,
-                  optionLabels: (field.key ?? '').trim() == _memberIdKey
+                  optionLabels:
+                      memberFieldKey != null &&
+                          (field.key ?? '').trim() == memberFieldKey
                       ? memberOptionLabels
                       : const {},
+                  onDisabledTap: shouldRedirectRepresentativeTap
+                      ? () {
+                          debugPrint(
+                            '[REP_BOOKED_BY_DEBUG][FIELD_REDIRECT] '
+                            'fieldKey=$fieldKeyValue '
+                            'clientId=${widget.clientUser.id ?? '-'}',
+                          );
+                          widget.onRepresentativeTapWithoutClient?.call();
+                        }
+                      : null,
                   onChanged: (value) {
                     final key = field.key;
                     if (key == null || key.isEmpty) {
@@ -591,6 +654,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
               formAnswers: Map<String, dynamic>.from(_answers),
               clientUser: widget.clientUser,
               submittedByUserId: widget.submittedByUserId,
+              submittedByUserRole: widget.submittedByUserRole,
             );
             if (!mounted) {
               return;

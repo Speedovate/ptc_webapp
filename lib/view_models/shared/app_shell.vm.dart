@@ -2,7 +2,6 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
-import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 
 class AppShellViewModel extends BaseViewModel {
@@ -20,7 +19,6 @@ class AppShellViewModel extends BaseViewModel {
     notifyListeners();
     await _repository.initialize();
     await AuthRequest.instance.migrateSubClientDataOnce();
-    await StatusRequest.instance.seedPuertoPrincesaBarangayConditionalFieldsOnce();
     try {
       await BookingRequest.instance.getBookings();
     } catch (_) {}

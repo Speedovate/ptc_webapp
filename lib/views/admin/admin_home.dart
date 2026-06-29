@@ -14,9 +14,11 @@ import 'package:webapp/views/admin/admin_vehicle_makes.dart';
 import 'package:webapp/views/admin/admin_vehicle_sizes.dart';
 import 'package:webapp/views/admin/admin_vehicle_types.dart';
 import 'package:webapp/views/shared/profile_view.dart';
+import 'package:webapp/views/shared/support_center_view.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/admin_shell_layout_scope.dart';
 import 'package:webapp/widgets/shared/platform_shell.dart';
+import 'package:webapp/widgets/shared/support_section_navigation_scope.dart';
 import 'package:webapp/widgets/shared/user_bookings_section.dart';
 import 'package:webapp/widgets/sidebar_menu_item.dart';
 
@@ -44,6 +46,10 @@ class _AdminHomeState extends State<AdminHome> {
   final AuthRepository _authRepository = AuthRequest.instance;
   late UserModel _shellUser;
   bool _isUploadingProfilePhoto = false;
+  String? _supportInitialTopicKey;
+  String? _supportInitialBookingId;
+  String? _supportInitialUserId;
+  int _supportViewTick = 0;
 
   @override
   void initState() {
@@ -121,16 +127,31 @@ class _AdminHomeState extends State<AdminHome> {
           onLogout: widget.onLogout,
           logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
           sidebar: _buildSidebar(vm, isCompact: isCompact),
-          body: AppPageLoadingOverlay(
-            isVisible: overlayVisible,
-            message: 'Uploading profile photo ...',
-            child: KeyedSubtree(
-              key: ValueKey(
-                '${vm.selectedSection}:${vm.selectedSettingsSection}',
-              ),
-              child: AdminShellLayoutScope(
-                filtersRightGap: showRail ? 44 : 24,
-                child: _buildSelectedSection(vm.selectedSection),
+          body: SupportSectionNavigationScope(
+            onOpenSupport: ({
+              String? initialTopicKey,
+              String? initialBookingId,
+              String? initialUserId,
+            }) {
+              setState(() {
+                _supportInitialTopicKey = initialTopicKey;
+                _supportInitialBookingId = initialBookingId;
+                _supportInitialUserId = initialUserId;
+                _supportViewTick++;
+              });
+              vm.selectSection(AdminSection.support);
+            },
+            child: AppPageLoadingOverlay(
+              isVisible: overlayVisible,
+              message: 'Uploading profile photo ...',
+              child: KeyedSubtree(
+                key: ValueKey(
+                  '${vm.selectedSection}:${vm.selectedSettingsSection}',
+                ),
+                child: AdminShellLayoutScope(
+                  filtersRightGap: showRail ? 44 : 24,
+                  child: _buildSelectedSection(vm.selectedSection),
+                ),
               ),
             ),
           ),
@@ -231,6 +252,17 @@ class _AdminHomeState extends State<AdminHome> {
                   ),
                 ]
               : const [],
+        ),
+        SidebarMenuItem(
+          label: AdminSection.support.title,
+          icon: _menuIcon(AdminSection.support),
+          isSelected: vm.selectedSection == AdminSection.support,
+          onTap: () {
+            vm.selectSection(AdminSection.support);
+            if (isCompact) {
+              Navigator.of(context).pop();
+            }
+          },
         ),
         SidebarMenuItem(
           label: AdminSection.settings.title,
@@ -342,6 +374,16 @@ class _AdminHomeState extends State<AdminHome> {
         initialEditUserId: _viewModel.pendingEditUserId,
         onInitialEditHandled: _viewModel.clearPendingEditUser,
       ),
+      AdminSection.support => SupportCenterView(
+        key: ValueKey(
+          'support:$_supportViewTick:${_supportInitialTopicKey ?? '-'}:${_supportInitialBookingId ?? '-'}:${_supportInitialUserId ?? '-'}',
+        ),
+        user: _shellUser,
+        embedded: true,
+        initialTopicKey: _supportInitialTopicKey,
+        initialBookingId: _supportInitialBookingId,
+        initialUserId: _supportInitialUserId,
+      ),
       AdminSection.profile => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
         child: Column(
@@ -385,6 +427,7 @@ class _AdminHomeState extends State<AdminHome> {
       AdminSection.vehicles => Icons.local_shipping,
       AdminSection.settings => Icons.alt_route_rounded,
       AdminSection.users => Icons.people_alt_rounded,
+      AdminSection.support => Icons.support_agent_rounded,
       AdminSection.profile => Icons.account_circle_rounded,
     };
   }

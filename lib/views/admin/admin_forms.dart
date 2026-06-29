@@ -837,12 +837,34 @@ class _StatusFormsTable extends StatelessWidget {
         final sampleActive = forms
             .map((form) => (form.isActive ?? false) ? 'Active' : 'Inactive')
             .fold<String>('Inactive', _longerText);
+        final sampleCreated = forms
+            .map((form) => AdminUsersView.formatCreatedAt(form.createdAt))
+            .fold<String>('-', _longerText);
+        final sampleUpdated = forms
+            .map((form) => AdminUsersView.formatUpdatedAt(form.updatedAt))
+            .fold<String>('-', _longerText);
         final activeWidth = _maxTextWidth(
           context,
           textScaler,
           'Active',
           _headerStyle,
           sampleActive,
+          _valueStyle,
+        );
+        final createdWidth = _maxTextWidth(
+          context,
+          textScaler,
+          'Created',
+          _headerStyle,
+          sampleCreated,
+          _valueStyle,
+        );
+        final updatedWidth = _maxTextWidth(
+          context,
+          textScaler,
+          'Updated',
+          _headerStyle,
+          sampleUpdated,
           _valueStyle,
         );
         final actionsWidth = _maxValue(
@@ -857,6 +879,8 @@ class _StatusFormsTable extends StatelessWidget {
         final resolvedButtonWidth = _resolvedColumnWidth(buttonWidth);
         final resolvedNextWidth = _resolvedColumnWidth(nextWidth);
         final resolvedActiveWidth = _resolvedColumnWidth(activeWidth) + 12;
+        final resolvedCreatedWidth = _resolvedColumnWidth(createdWidth);
+        final resolvedUpdatedWidth = _resolvedColumnWidth(updatedWidth);
         final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
 
         final totalMeasuredWidth =
@@ -867,6 +891,8 @@ class _StatusFormsTable extends StatelessWidget {
             resolvedButtonWidth +
             resolvedNextWidth +
             resolvedActiveWidth +
+            resolvedCreatedWidth +
+            resolvedUpdatedWidth +
             resolvedActionsWidth +
             40;
 
@@ -913,54 +939,42 @@ class _StatusFormsTable extends StatelessWidget {
                 children: [
                   _FixedSlot(
                     width: resolvedIdWidth,
-                    child: const _HeaderCell(label: 'ID', trailingPadding: 20),
+                    child: const _HeaderCell(label: 'ID'),
                   ),
                   if (shouldFlexRoles)
-                    const Expanded(
-                      child: _HeaderCell(label: 'Roles', trailingPadding: 20),
-                    )
+                    const Expanded(child: _HeaderCell(label: 'Roles'))
                   else
                     _FixedSlot(
                       width: resolvedRoleWidth,
-                      child: const _HeaderCell(
-                        label: 'Roles',
-                        trailingPadding: 20,
-                      ),
+                      child: const _HeaderCell(label: 'Roles'),
                     ),
                   _FixedSlot(
                     width: resolvedCurrentWidth,
-                    child: const _HeaderCell(
-                      label: 'Status',
-                      trailingPadding: 20,
-                    ),
+                    child: const _HeaderCell(label: 'Status'),
                   ),
                   _FixedSlot(
                     width: resolvedStatusWidth,
-                    child: const _HeaderCell(
-                      label: 'Label',
-                      trailingPadding: 20,
-                    ),
+                    child: const _HeaderCell(label: 'Label'),
                   ),
                   _FixedSlot(
                     width: resolvedButtonWidth,
-                    child: const _HeaderCell(
-                      label: 'Button',
-                      trailingPadding: 20,
-                    ),
+                    child: const _HeaderCell(label: 'Button'),
                   ),
                   _FixedSlot(
                     width: resolvedNextWidth,
-                    child: const _HeaderCell(
-                      label: 'Next',
-                      trailingPadding: 20,
-                    ),
+                    child: const _HeaderCell(label: 'Next'),
                   ),
                   _FixedSlot(
                     width: resolvedActiveWidth,
-                    child: const _HeaderCell(
-                      label: 'Active',
-                      trailingPadding: 20,
-                    ),
+                    child: const _HeaderCell(label: 'Active'),
+                  ),
+                  _FixedSlot(
+                    width: resolvedCreatedWidth,
+                    child: const _HeaderCell(label: 'Created'),
+                  ),
+                  _FixedSlot(
+                    width: resolvedUpdatedWidth,
+                    child: const _HeaderCell(label: 'Updated'),
                   ),
                   AdminListTrailingActionsLane(
                     width: resolvedActionsWidth,
@@ -998,6 +1012,8 @@ class _StatusFormsTable extends StatelessWidget {
                     resolvedButtonWidth: resolvedButtonWidth,
                     resolvedNextWidth: resolvedNextWidth,
                     resolvedActiveWidth: resolvedActiveWidth,
+                    resolvedCreatedWidth: resolvedCreatedWidth,
+                    resolvedUpdatedWidth: resolvedUpdatedWidth,
                     resolvedActionsWidth: resolvedActionsWidth,
                   ),
                 ),
@@ -1072,6 +1088,8 @@ class _StatusFormsTableRow extends StatelessWidget {
     required this.resolvedButtonWidth,
     required this.resolvedNextWidth,
     required this.resolvedActiveWidth,
+    required this.resolvedCreatedWidth,
+    required this.resolvedUpdatedWidth,
     required this.resolvedActionsWidth,
   });
 
@@ -1089,6 +1107,8 @@ class _StatusFormsTableRow extends StatelessWidget {
   final double resolvedButtonWidth;
   final double resolvedNextWidth;
   final double resolvedActiveWidth;
+  final double resolvedCreatedWidth;
+  final double resolvedUpdatedWidth;
   final double resolvedActionsWidth;
 
   @override
@@ -1201,6 +1221,32 @@ class _StatusFormsTableRow extends StatelessWidget {
               ),
             ),
           ),
+          _FixedSlot(
+            width: resolvedCreatedWidth,
+            child: _BodyCell(
+              child: Text(
+                AdminUsersView.formatCreatedAt(form.createdAt),
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+                softWrap: true,
+              ),
+            ),
+          ),
+          _FixedSlot(
+            width: resolvedUpdatedWidth,
+            child: _BodyCell(
+              child: Text(
+                AdminUsersView.formatUpdatedAt(form.updatedAt),
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+                softWrap: true,
+              ),
+            ),
+          ),
           AdminListTrailingActionsLane(
             width: resolvedActionsWidth,
             child: _BodyCell(
@@ -1279,6 +1325,8 @@ class _StatusFormResponsiveCard extends StatelessWidget {
           ),
           ('Button', form.buttonText ?? '-'),
           ('Next', form.nextStatusKey ?? '-'),
+          ('Created', AdminUsersView.formatCreatedAt(form.createdAt)),
+          ('Updated', AdminUsersView.formatUpdatedAt(form.updatedAt)),
         ];
         final contentWidths = resolvedFields
             .map(

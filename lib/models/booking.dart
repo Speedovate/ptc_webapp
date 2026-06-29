@@ -12,7 +12,7 @@ class Booking {
     this.clientStatus,
     this.driverStatus,
     this.helperStatus,
-    this.truck,
+    this.vehicleMake,
     this.driver,
     this.helper,
     this.statusOutputs,
@@ -25,7 +25,7 @@ class Booking {
   final String? clientStatus;
   final String? driverStatus;
   final String? helperStatus;
-  final VehicleMake? truck;
+  final VehicleMake? vehicleMake;
   final UserModel? driver;
   final UserModel? helper;
   final Map<String, dynamic>? statusOutputs;
@@ -38,7 +38,7 @@ class Booking {
     Object? clientStatus = _bookingUndefined,
     Object? driverStatus = _bookingUndefined,
     Object? helperStatus = _bookingUndefined,
-    Object? truck = _bookingUndefined,
+    Object? vehicleMake = _bookingUndefined,
     Object? driver = _bookingUndefined,
     Object? helper = _bookingUndefined,
     Object? statusOutputs = _bookingUndefined,
@@ -59,9 +59,9 @@ class Booking {
       helperStatus: identical(helperStatus, _bookingUndefined)
           ? this.helperStatus
           : helperStatus as String?,
-      truck: identical(truck, _bookingUndefined)
-          ? this.truck
-          : truck as VehicleMake?,
+      vehicleMake: identical(vehicleMake, _bookingUndefined)
+          ? this.vehicleMake
+          : vehicleMake as VehicleMake?,
       driver: identical(driver, _bookingUndefined)
           ? this.driver
           : driver as UserModel?,
@@ -87,7 +87,7 @@ class Booking {
       'client_status': clientStatus,
       'driver_status': driverStatus,
       'helper_status': helperStatus,
-      'truck': truck?.toMap(),
+      'vehicle_make': vehicleMake?.toMap(),
       'driver': driver?.toMap(),
       'helper': helper?.toMap(),
       'status_outputs': statusOutputs,
@@ -103,7 +103,7 @@ class Booking {
       clientStatus: map['client_status']?.toString(),
       driverStatus: map['driver_status']?.toString(),
       helperStatus: map['helper_status']?.toString(),
-      truck: _toVehicleMake(map['truck']),
+      vehicleMake: _toVehicleMake(map['vehicle_make']),
       driver: _toUserModel(map['driver']),
       helper: _toUserModel(map['helper']),
       statusOutputs: map['status_outputs'] is Map

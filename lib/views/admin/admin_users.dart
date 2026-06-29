@@ -20,7 +20,6 @@ import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
-import 'package:webapp/widgets/shared/app_profile_avatar.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/user_bookings_section.dart';
 
@@ -78,6 +77,12 @@ class AdminUsersView extends StatefulWidget {
   static String formatCreatedAtSingleLine(DateTime? value) =>
       _AdminUsersViewState.formatCreatedAtSingleLine(value);
 
+  static String formatUpdatedAt(DateTime? value) =>
+      _AdminUsersViewState.formatCreatedAt(value);
+
+  static String formatUpdatedAtSingleLine(DateTime? value) =>
+      _AdminUsersViewState.formatCreatedAtSingleLine(value);
+
   static String buildEmptyStateMessage({
     required String noun,
     required bool hasSearch,
@@ -104,6 +109,25 @@ class AdminUsersView extends StatefulWidget {
     BuildContext context,
     AdminUsersViewModel vm,
   ) => _AdminUsersViewState.showNewUserDialog(context, vm);
+
+  static Future<void> showUserDetailDialog(
+    BuildContext context, {
+    required UserModel currentUser,
+    required UserModel viewedUser,
+    Future<void> Function()? onCurrentUserUpdated,
+    VoidCallback? onLogout,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => _AdminUserDetailDialog(
+        currentUser: currentUser,
+        initialViewedUser: viewedUser,
+        onCurrentUserUpdated:
+            onCurrentUserUpdated ?? () async {},
+        onLogout: onLogout ?? () {},
+      ),
+    );
+  }
 
   static void handleDeleteUser(
     BuildContext context,
@@ -325,6 +349,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                           await AdminBookingsView.showEditBookingDialog(
                             context,
                             booking: booking,
+                            currentUser: widget.user,
                           );
                         } catch (error) {
                           if (!context.mounted) {
@@ -380,6 +405,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                         await AdminBookingsView.showEditBookingDialog(
                           context,
                           booking: booking,
+                          currentUser: widget.user,
                         );
                       } catch (error) {
                         if (!context.mounted) {
@@ -1280,6 +1306,9 @@ class _UsersTable extends StatelessWidget {
     final longestCreatedAtValue = _longestText(
       users.map((user) => AdminUsersView.formatCreatedAt(user.createdAt)),
     );
+    final longestUpdatedAtValue = _longestText(
+      users.map((user) => AdminUsersView.formatUpdatedAt(user.updatedAt)),
+    );
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1291,10 +1320,6 @@ class _UsersTable extends StatelessWidget {
           _headerStyle,
           longestIdValue,
           _valueStyle,
-        );
-        final photoWidth = _maxValue(
-          44,
-          _measureTextWidth(context, textScaler, 'Photo', _headerStyle),
         );
         final nameWidth = _cappedBasisWidth(
           _maxTextWidth(
@@ -1345,26 +1370,37 @@ class _UsersTable extends StatelessWidget {
           ),
           _maxCreatedBasisWidth,
         );
+        final updatedAtWidth = _cappedBasisWidth(
+          _maxTextWidth(
+            context,
+            textScaler,
+            'Updated',
+            _headerStyle,
+            longestUpdatedAtValue,
+            _valueStyle,
+          ),
+          _maxCreatedBasisWidth,
+        );
         final actionsWidth = _maxValue(
           176,
           _measureTextWidth(context, textScaler, 'Actions', _headerStyle),
         );
         final resolvedIdWidth = _resolvedColumnWidth(idWidth);
-        final resolvedPhotoWidth = _resolvedColumnWidth(photoWidth);
         final resolvedNameWidth = _resolvedColumnWidth(nameWidth);
         final resolvedPhoneWidth = _resolvedColumnWidth(phoneWidth);
         final resolvedRoleWidth = _resolvedColumnWidth(roleWidth);
         final resolvedEmailWidth = _resolvedColumnWidth(emailWidth);
         final resolvedCreatedAtWidth = _resolvedColumnWidth(createdAtWidth);
+        final resolvedUpdatedAtWidth = _resolvedColumnWidth(updatedAtWidth);
         final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
         final totalMeasuredWidth =
             resolvedIdWidth +
-            resolvedPhotoWidth +
             resolvedNameWidth +
             resolvedPhoneWidth +
             resolvedEmailWidth +
             resolvedRoleWidth +
             resolvedCreatedAtWidth +
+            resolvedUpdatedAtWidth +
             resolvedActionsWidth +
             40;
         final useResponsiveCards = totalMeasuredWidth > constraints.maxWidth;
@@ -1413,13 +1449,6 @@ class _UsersTable extends StatelessWidget {
                     ),
                   ),
                   _UsersFixedSlot(
-                    width: resolvedPhotoWidth,
-                    child: const _UsersHeader(
-                      label: 'Photo',
-                      trailingPadding: _defaultTrailingPadding,
-                    ),
-                  ),
-                  _UsersFixedSlot(
                     width: resolvedNameWidth,
                     child: const _UsersHeader(
                       label: 'Name',
@@ -1455,6 +1484,13 @@ class _UsersTable extends StatelessWidget {
                     ),
                   ),
                   _UsersFixedSlot(
+                    width: resolvedUpdatedAtWidth,
+                    child: const _UsersHeader(
+                      label: 'Updated',
+                      trailingPadding: _defaultTrailingPadding,
+                    ),
+                  ),
+                  _UsersFixedSlot(
                     width: resolvedActionsWidth,
                     child: const _UsersHeader(
                       label: 'Actions',
@@ -1483,12 +1519,12 @@ class _UsersTable extends StatelessWidget {
                           vm: vm,
                           onCurrentUserUpdated: onCurrentUserUpdated,
                           resolvedIdWidth: resolvedIdWidth,
-                          resolvedPhotoWidth: resolvedPhotoWidth,
                           resolvedNameWidth: resolvedNameWidth,
                           resolvedPhoneWidth: resolvedPhoneWidth,
                           resolvedEmailWidth: resolvedEmailWidth,
                           resolvedRoleWidth: resolvedRoleWidth,
                           resolvedCreatedAtWidth: resolvedCreatedAtWidth,
+                          resolvedUpdatedAtWidth: resolvedUpdatedAtWidth,
                           resolvedActionsWidth: resolvedActionsWidth,
                         ),
                       ),
@@ -1566,12 +1602,12 @@ class _UsersWideRow extends StatelessWidget {
     required this.vm,
     required this.onCurrentUserUpdated,
     required this.resolvedIdWidth,
-    required this.resolvedPhotoWidth,
     required this.resolvedNameWidth,
     required this.resolvedPhoneWidth,
     required this.resolvedEmailWidth,
     required this.resolvedRoleWidth,
     required this.resolvedCreatedAtWidth,
+    required this.resolvedUpdatedAtWidth,
     required this.resolvedActionsWidth,
   });
 
@@ -1579,12 +1615,12 @@ class _UsersWideRow extends StatelessWidget {
   final AdminUsersViewModel vm;
   final Future<void> Function() onCurrentUserUpdated;
   final double resolvedIdWidth;
-  final double resolvedPhotoWidth;
   final double resolvedNameWidth;
   final double resolvedPhoneWidth;
   final double resolvedEmailWidth;
   final double resolvedRoleWidth;
   final double resolvedCreatedAtWidth;
+  final double resolvedUpdatedAtWidth;
   final double resolvedActionsWidth;
 
   @override
@@ -1595,6 +1631,7 @@ class _UsersWideRow extends StatelessWidget {
     final emailValue = user.email ?? '-';
     final roleValue = AdminUsersView.formatRole(user.role);
     final createdAtValue = AdminUsersView.formatCreatedAt(user.createdAt);
+    final updatedAtValue = AdminUsersView.formatUpdatedAt(user.updatedAt);
     return AdminListItemCard(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
       child: Row(
@@ -1607,20 +1644,6 @@ class _UsersWideRow extends StatelessWidget {
                 idValue,
                 style: _UsersTable._valueStyle,
                 softWrap: true,
-              ),
-            ),
-          ),
-          _UsersFixedSlot(
-            width: resolvedPhotoWidth,
-            child: _UsersCell(
-              child: AppProfileAvatar(
-                photo: user.photo,
-                fallbackText: AdminUsersView.initials(user.name),
-                radius: 22,
-                enablePreview: true,
-                previewTitle: user.name?.trim().isNotEmpty == true
-                    ? '${user.name} Photo'
-                    : 'User Photo',
               ),
             ),
           ),
@@ -1673,6 +1696,16 @@ class _UsersWideRow extends StatelessWidget {
             child: _UsersCell(
               child: Text(
                 createdAtValue,
+                style: _UsersTable._valueStyle,
+                softWrap: true,
+              ),
+            ),
+          ),
+          _UsersFixedSlot(
+            width: resolvedUpdatedAtWidth,
+            child: _UsersCell(
+              child: Text(
+                updatedAtValue,
                 style: _UsersTable._valueStyle,
                 softWrap: true,
               ),
@@ -1807,6 +1840,7 @@ class _UsersResponsiveCard extends StatelessWidget {
           ('Email', user.email ?? '-'),
           ('Role', AdminUsersView.formatRole(user.role)),
           ('Created', AdminUsersView.formatCreatedAtSingleLine(user.createdAt)),
+          ('Updated', AdminUsersView.formatUpdatedAtSingleLine(user.updatedAt)),
         ];
         final contentWidths = resolvedFields
             .map(
@@ -1827,90 +1861,64 @@ class _UsersResponsiveCard extends StatelessWidget {
                 ? CrossAxisAlignment.center
                 : CrossAxisAlignment.start,
             children: [
-              if (showTopActionsRow && stackTopActions)
-                Column(
-                  children: [
-                    AppProfileAvatar(
-                      photo: user.photo,
-                      fallbackText: AdminUsersView.initials(user.name),
-                      radius: 24,
-                      enablePreview: true,
-                      previewTitle: user.name?.trim().isNotEmpty == true
-                          ? '${user.name} Photo'
-                          : 'User Photo',
-                    ),
-                  ],
-                )
-              else
+              if (showTopActionsRow && !stackTopActions)
                 Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    AppProfileAvatar(
-                      photo: user.photo,
-                      fallbackText: AdminUsersView.initials(user.name),
-                      radius: 24,
-                      enablePreview: true,
-                      previewTitle: user.name?.trim().isNotEmpty == true
-                          ? '${user.name} Photo'
-                          : 'User Photo',
+                    const Spacer(),
+                    Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _UserActionButton(
+                          icon: Icons.visibility_rounded,
+                          backgroundColor: Colors.yellow.shade900,
+                          onTap: () {
+                            vm.openUserView(user);
+                          },
+                        ),
+                        _UserActionButton(
+                          icon: Icons.edit_rounded,
+                          onTap: () {
+                            AdminUsersView.showEditUserDialog(
+                              context,
+                              vm,
+                              user,
+                              onCurrentUserUpdated,
+                            );
+                          },
+                        ),
+                        _UserActionButton(
+                          icon: (user.isActive ?? false)
+                              ? Icons.close_rounded
+                              : Icons.check_rounded,
+                          backgroundColor: (user.isActive ?? false)
+                              ? AppColors.dangerStrong
+                              : const Color(0xFF2EAD62),
+                          onTap: () {
+                            AdminUsersView.handleToggleUserActive(
+                              context,
+                              vm,
+                              user,
+                            );
+                          },
+                        ),
+                        _UserActionButton(
+                          icon: Icons.delete_rounded,
+                          isDanger: true,
+                          onTap: () {
+                            AdminUsersView.handleDeleteUser(
+                              context,
+                              vm,
+                              user,
+                            );
+                          },
+                        ),
+                      ],
                     ),
-                    if (showTopActionsRow) ...[
-                      const Spacer(),
-                      Wrap(
-                        alignment: WrapAlignment.end,
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          _UserActionButton(
-                            icon: Icons.visibility_rounded,
-                            backgroundColor: Colors.yellow.shade900,
-                            onTap: () {
-                              vm.openUserView(user);
-                            },
-                          ),
-                          _UserActionButton(
-                            icon: Icons.edit_rounded,
-                            onTap: () {
-                              AdminUsersView.showEditUserDialog(
-                                context,
-                                vm,
-                                user,
-                                onCurrentUserUpdated,
-                              );
-                            },
-                          ),
-                          _UserActionButton(
-                            icon: (user.isActive ?? false)
-                                ? Icons.close_rounded
-                                : Icons.check_rounded,
-                            backgroundColor: (user.isActive ?? false)
-                                ? AppColors.dangerStrong
-                                : const Color(0xFF2EAD62),
-                            onTap: () {
-                              AdminUsersView.handleToggleUserActive(
-                                context,
-                                vm,
-                                user,
-                              );
-                            },
-                          ),
-                          _UserActionButton(
-                            icon: Icons.delete_rounded,
-                            isDanger: true,
-                            onTap: () {
-                              AdminUsersView.handleDeleteUser(
-                                context,
-                                vm,
-                                user,
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
                   ],
                 ),
-              const SizedBox(height: 18),
+              if (showTopActionsRow) const SizedBox(height: 18),
               Wrap(
                 spacing: fieldGap,
                 runSpacing: fieldGap,
@@ -2125,6 +2133,316 @@ class _UsersEmptyState extends StatelessWidget {
   }
 }
 
+class _AdminUserDetailDialog extends StatelessWidget {
+  const _AdminUserDetailDialog({
+    required this.currentUser,
+    required this.initialViewedUser,
+    required this.onCurrentUserUpdated,
+    required this.onLogout,
+  });
+
+  final UserModel currentUser;
+  final UserModel initialViewedUser;
+  final Future<void> Function() onCurrentUserUpdated;
+  final VoidCallback onLogout;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final dialogWidth = size.width > 1280 ? 1160.0 : size.width - 48;
+    final dialogHeight = size.height > 940 ? 860.0 : size.height - 48;
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: dialogWidth,
+        height: dialogHeight,
+        child: _AdminUserDetailDialogBody(
+          currentUser: currentUser,
+          initialViewedUser: initialViewedUser,
+          onCurrentUserUpdated: onCurrentUserUpdated,
+          onLogout: onLogout,
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminUserDetailDialogBody extends StatefulWidget {
+  const _AdminUserDetailDialogBody({
+    required this.currentUser,
+    required this.initialViewedUser,
+    required this.onCurrentUserUpdated,
+    required this.onLogout,
+  });
+
+  final UserModel currentUser;
+  final UserModel initialViewedUser;
+  final Future<void> Function() onCurrentUserUpdated;
+  final VoidCallback onLogout;
+
+  @override
+  State<_AdminUserDetailDialogBody> createState() =>
+      _AdminUserDetailDialogBodyState();
+}
+
+class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> {
+  bool _initializedInitialViewedUser = false;
+  bool _isUploadingViewedProfilePhoto = false;
+  bool _isUploadingViewedLicensePhoto = false;
+
+  Future<void> _saveViewedUserProfileChanges(
+    AdminUsersViewModel vm,
+    UserModel user,
+    ProfilePendingProfileChanges changes,
+  ) async {
+    if ((_isUploadingViewedProfilePhoto || _isUploadingViewedLicensePhoto) ||
+        !changes.hasChanges) {
+      return;
+    }
+    final userId = user.id?.trim();
+    if (userId == null || userId.isEmpty) {
+      throw const AuthFailure('User ID is required.');
+    }
+
+    setState(() {
+      _isUploadingViewedProfilePhoto = changes.photoUpload != null;
+      _isUploadingViewedLicensePhoto = changes.licenseUpload != null;
+    });
+    try {
+      var updatedUser = user;
+      final photoUpload = changes.photoUpload;
+      if (photoUpload != null) {
+        updatedUser = await AuthRequest.instance.saveUserPhoto(
+          userId: userId,
+          bytes: photoUpload.bytes,
+          fileName: photoUpload.fileName,
+          mimeType: photoUpload.mimeType,
+          size: photoUpload.size,
+        );
+      }
+      final licenseUpload = changes.licenseUpload;
+      if (licenseUpload != null) {
+        updatedUser = await AuthRequest.instance.saveDriverLicensePhoto(
+          userId: userId,
+          bytes: licenseUpload.bytes,
+          fileName: licenseUpload.fileName,
+          mimeType: licenseUpload.mimeType,
+          size: licenseUpload.size,
+        );
+      }
+      vm.syncUser(updatedUser);
+      if (updatedUser.id == widget.currentUser.id) {
+        await widget.onCurrentUserUpdated();
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingViewedProfilePhoto = false;
+          _isUploadingViewedLicensePhoto = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ViewModelBuilder<AdminUsersViewModel>.reactive(
+      viewModelBuilder: AdminUsersViewModel.new,
+      onViewModelReady: (vm) async {
+        await vm.loadUsers(fallbackCurrentUser: widget.currentUser);
+        if (!mounted || _initializedInitialViewedUser) {
+          return;
+        }
+        final matchedUser =
+            vm.users.where((user) => user.id == widget.initialViewedUser.id).firstOrNull ??
+            widget.initialViewedUser;
+        _initializedInitialViewedUser = true;
+        vm.openUserView(matchedUser);
+      },
+      builder: (context, vm, _) {
+        final viewedUser = vm.viewedUser;
+        if (viewedUser == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final isViewingCurrentUser = viewedUser.id == widget.currentUser.id;
+        final viewedBusinessUser = vm.parentBusinessFor(viewedUser);
+        return AppPageLoadingOverlay(
+          isVisible:
+              vm.isBusy ||
+              _isUploadingViewedProfilePhoto ||
+              _isUploadingViewedLicensePhoto,
+          message: _isUploadingViewedLicensePhoto
+              ? 'Uploading license photo ...'
+              : _isUploadingViewedProfilePhoto
+              ? 'Uploading profile photo ...'
+              : vm.busyMessage,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ProfileView(
+                  key: profileViewRefreshKey(viewedUser),
+                  user: viewedUser,
+                  scrollable: false,
+                  padding: EdgeInsets.zero,
+                  businessUser: viewedBusinessUser,
+                  onBusinessDetailsPressed:
+                      viewedBusinessUser == null
+                          ? null
+                          : () => vm.openUserView(
+                              viewedBusinessUser,
+                              preserveCurrent: true,
+                            ),
+                  isCurrentUserView: isViewingCurrentUser,
+                  onLogout: widget.onLogout,
+                  logoutLabel: 'Logout',
+                  onSaveProfileChanges: isViewingCurrentUser
+                      ? (changes) => _saveViewedUserProfileChanges(
+                          vm,
+                          viewedUser,
+                          changes,
+                        )
+                      : null,
+                  onQuickActionPressed: isViewingCurrentUser
+                      ? null
+                      : () => Navigator.of(context).pop(),
+                  quickActionLabel: isViewingCurrentUser ? null : 'Close',
+                  onEditPressed: () async {
+                    await AdminUsersView.showEditUserDialog(
+                      context,
+                      vm,
+                      viewedUser,
+                      widget.onCurrentUserUpdated,
+                    );
+                  },
+                ),
+                if ((viewedUser.role ?? '').trim() == 'client') ...[
+                  const SizedBox(height: 18),
+                  ClientMembersView(
+                    clientUser: viewedUser,
+                    scrollable: false,
+                    padding: EdgeInsets.zero,
+                    forceWideLayout: false,
+                    onViewUser: (memberUser) => vm.openUserView(
+                      memberUser,
+                      preserveCurrent: true,
+                    ),
+                    onViewBooking: (booking) async {
+                      await AdminBookingsView.showBookingDetailDialog(
+                        context,
+                        user: widget.currentUser,
+                        booking: booking,
+                      );
+                    },
+                    onEditBooking: (booking) async {
+                      try {
+                        await AdminBookingsView.showEditBookingDialog(
+                          context,
+                          booking: booking,
+                          currentUser: widget.currentUser,
+                        );
+                      } catch (error) {
+                        if (!context.mounted) {
+                          return;
+                        }
+                        AppSnackbar.showError(
+                          context,
+                          userFacingErrorMessage(
+                            error,
+                            fallback:
+                                'We could not open the booking editor right now.',
+                          ),
+                        );
+                      }
+                    },
+                    onNewBooking: () async {
+                      try {
+                        await AdminBookingsView.showNewBookingDialog(
+                          context,
+                          currentUser: widget.currentUser,
+                        );
+                      } catch (error) {
+                        if (!context.mounted) {
+                          return;
+                        }
+                        AppSnackbar.showError(
+                          context,
+                          userFacingErrorMessage(
+                            error,
+                            fallback:
+                                'We could not open the new booking dialog right now.',
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                ],
+                const SizedBox(height: 18),
+                UserBookingsSection(
+                  user: viewedUser,
+                  padding: EdgeInsets.zero,
+                  useAdminListStyle: true,
+                  forceWideLayout: false,
+                  onViewBooking: (booking) async {
+                    await AdminBookingsView.showBookingDetailDialog(
+                      context,
+                      user: widget.currentUser,
+                      booking: booking,
+                    );
+                  },
+                  onEditBooking: (booking) async {
+                    try {
+                      await AdminBookingsView.showEditBookingDialog(
+                        context,
+                        booking: booking,
+                        currentUser: widget.currentUser,
+                      );
+                    } catch (error) {
+                      if (!context.mounted) {
+                        return;
+                      }
+                      AppSnackbar.showError(
+                        context,
+                        userFacingErrorMessage(
+                          error,
+                          fallback:
+                              'We could not open the booking editor right now.',
+                        ),
+                      );
+                    }
+                  },
+                  onNewBooking: () async {
+                    try {
+                      await AdminBookingsView.showNewBookingDialog(
+                        context,
+                        currentUser: widget.currentUser,
+                      );
+                    } catch (error) {
+                      if (!context.mounted) {
+                        return;
+                      }
+                      AppSnackbar.showError(
+                        context,
+                        userFacingErrorMessage(
+                          error,
+                          fallback:
+                              'We could not open the new booking dialog right now.',
+                        ),
+                      );
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _UserDetailHeader extends StatelessWidget {
   const _UserDetailHeader({required this.user, required this.onBack});
 
@@ -2282,8 +2600,12 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     super.initState();
     final user = widget.initialUser ?? const UserModel();
     final driver = user.asDriver;
-    _latController = TextEditingController(text: driver?.lat?.toString() ?? '');
-    _lngController = TextEditingController(text: driver?.lng?.toString() ?? '');
+    _latController = TextEditingController(
+      text: driver?.lat?.toStringAsFixed(4) ?? '',
+    );
+    _lngController = TextEditingController(
+      text: driver?.lng?.toStringAsFixed(4) ?? '',
+    );
     _emailController = TextEditingController(text: user.email ?? '');
     _nameController = TextEditingController(text: user.name ?? '');
     _photoController = TextEditingController(text: user.photo ?? '');

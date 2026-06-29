@@ -4,11 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/models/support_thread.dart';
+import 'package:webapp/models/user.dart';
 import 'package:webapp/services/dashboard_export_naming.dart';
 import 'package:webapp/services/dashboard_docx_export_service.dart';
 import 'package:webapp/services/export_file_service.dart';
 import 'package:webapp/view_models/admin/admin_dashboard.vm.dart';
 import 'package:webapp/views/shared/booking_workflow_view.dart';
+import 'package:webapp/views/shared/support_center_view.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
@@ -70,6 +73,7 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                 children: [
                   _AdminDashboardBookingDetailHeader(
                     booking: selectedBooking,
+                    currentUser: vm.currentUser!,
                     onBack: () {
                       setState(() {
                         _selectedBooking = null;
@@ -1233,8 +1237,6 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
   });
 
   static const double _sectionGap = 14;
-  static bool _didPrintDashboardTableMetrics = false;
-
   static const _headerStyle = TextStyle(
     color: AppColors.textSecondary,
     fontSize: 12,
@@ -1281,9 +1283,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
             _longerText(
               'Date',
               _longestText(
-                bookings.map(
-                  (booking) => _formatBookingDateTime(booking.createdAt),
-                ),
+                bookings.map(AdminDashboardViewModel.dropOffDateDisplay),
               ),
             ),
           ),
@@ -1373,46 +1373,6 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
             resolvedActionWidth +
             40;
         final useResponsiveCards = totalMeasuredWidth > constraints.maxWidth;
-        if (!_didPrintDashboardTableMetrics && bookings.isNotEmpty) {
-          _didPrintDashboardTableMetrics = true;
-          final sampleBooking = bookings.first;
-          final sampleClientName = _displayClientName(vm.client(sampleBooking));
-          debugPrint(
-            '[ADMIN_DASHBOARD_TABLE_DEBUG][TABLE] '
-            'available=${constraints.maxWidth.toStringAsFixed(1)} '
-            'total=${totalMeasuredWidth.toStringAsFixed(1)} '
-            'responsive=$useResponsiveCards '
-            'drNo=${resolvedDeliveryNumberWidth.toStringAsFixed(0)} '
-            'date=${resolvedDateWidth.toStringAsFixed(0)} '
-            'waybill=${resolvedWaybillWidth.toStringAsFixed(0)} '
-            'vanNo=${resolvedVanNumberWidth.toStringAsFixed(0)} '
-            'vanSize=${resolvedVanSizeWidth.toStringAsFixed(0)} '
-            'client=${resolvedClientWidth.toStringAsFixed(0)} '
-            'amount=${resolvedAmountWidth.toStringAsFixed(0)} '
-            'actions=${resolvedActionWidth.toStringAsFixed(0)}',
-          );
-          debugPrint(
-            '[ADMIN_DASHBOARD_TABLE_DEBUG][LONGEST] '
-            'drNo="${_longestText(bookings.map(AdminDashboardViewModel.deliveryFormNumber))}" '
-            'date="${_longestText(bookings.map((booking) => _formatBookingDateTime(booking.createdAt)))}" '
-            'waybill="${_longestText(bookings.map(AdminDashboardViewModel.waybillNumber))}" '
-            'vanNo="${_longestText(bookings.map(AdminDashboardViewModel.vanNumber))}" '
-            'vanSize="${_longestText(bookings.map(vm.vanSize))}" '
-            'client="${_longestText(bookings.map((booking) => _widestRenderedLine(_displayClientName(vm.client(booking)))))}" '
-            'amount="${_longestText(bookings.map(AdminDashboardViewModel.amount))}"',
-          );
-          debugPrint(
-            '[ADMIN_DASHBOARD_TABLE_DEBUG][SAMPLE_ROW] '
-            'drNo="${AdminDashboardViewModel.deliveryFormNumber(sampleBooking)}" '
-            'date="${_formatBookingDateTime(sampleBooking.createdAt)}" '
-            'waybill="${AdminDashboardViewModel.waybillNumber(sampleBooking)}" '
-            'vanNo="${AdminDashboardViewModel.vanNumber(sampleBooking)}" '
-            'vanSize="${vm.vanSize(sampleBooking)}" '
-            'client="$sampleClientName" '
-            'amount="${AdminDashboardViewModel.amount(sampleBooking)}"',
-          );
-        }
-
         if (useResponsiveCards) {
           return Column(
             children: bookings
@@ -1427,7 +1387,10 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                       booking: entry.value,
                       vm: vm,
                       clientName: vm.client(entry.value),
-                      dateValue: entry.value.createdAt,
+                      dateValue:
+                          AdminDashboardViewModel.dropOffDateDisplay(
+                            entry.value,
+                          ),
                       onViewPressed: () => onView(entry.value),
                       onExportPressed: () => _exportBookings(
                         context,
@@ -1500,7 +1463,8 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                   booking: entry.value,
                   vm: vm,
                   clientName: vm.client(entry.value),
-                  dateValue: entry.value.createdAt,
+                  dateValue:
+                      AdminDashboardViewModel.dropOffDateDisplay(entry.value),
                   resolvedDeliveryNumberWidth: resolvedDeliveryNumberWidth,
                   resolvedDateWidth: resolvedDateWidth,
                   resolvedWaybillWidth: resolvedWaybillWidth,
@@ -1583,22 +1547,17 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
     );
   }
 
-  static String _formatBookingDateTime(DateTime? value) {
-    if (value == null) {
-      return '-';
-    }
-    final year = (value.year % 100).toString().padLeft(2, '0');
-    return '${value.month}/${value.day}/$year';
-  }
 }
 
 class _AdminDashboardBookingDetailHeader extends StatelessWidget {
   const _AdminDashboardBookingDetailHeader({
     required this.booking,
+    required this.currentUser,
     required this.onBack,
   });
 
   final Booking booking;
+  final UserModel currentUser;
   final VoidCallback onBack;
 
   @override
@@ -1636,7 +1595,14 @@ class _AdminDashboardBookingDetailHeader extends StatelessWidget {
             ),
           ),
         ),
-        BookingSupportButton(onPressed: () => launchBookingSupport(context)),
+        BookingSupportButton(
+          onPressed: () => openSupportDestination(
+            context,
+            user: currentUser,
+            initialTopicKey: supportTopicBooking,
+            initialBookingId: booking.id,
+          ),
+        ),
       ],
     );
   }
@@ -1663,7 +1629,7 @@ class _AdminDashboardWideRow extends StatelessWidget {
   final Booking booking;
   final AdminDashboardViewModel vm;
   final String clientName;
-  final DateTime? dateValue;
+  final String dateValue;
   final double resolvedDeliveryNumberWidth;
   final double resolvedDateWidth;
   final double resolvedWaybillWidth;
@@ -1697,9 +1663,7 @@ class _AdminDashboardWideRow extends StatelessWidget {
             width: resolvedDateWidth,
             child: _DashboardBodyCell(
               child: Text(
-                _AdminDashboardCompletedBookingsTable._formatBookingDateTime(
-                  dateValue,
-                ),
+                dateValue,
                 style: _AdminDashboardCompletedBookingsTable._valueStyle,
                 maxLines: 1,
                 softWrap: false,
@@ -1808,7 +1772,7 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
   final Booking booking;
   final AdminDashboardViewModel vm;
   final String clientName;
-  final DateTime? dateValue;
+  final String dateValue;
   final VoidCallback? onViewPressed;
   final VoidCallback? onExportPressed;
 
@@ -1823,12 +1787,7 @@ class _AdminDashboardResponsiveCard extends StatelessWidget {
 
         final items = [
           ('Dr No.', AdminDashboardViewModel.deliveryFormNumber(booking)),
-          (
-            'Date',
-            _AdminDashboardCompletedBookingsTable._formatBookingDateTime(
-              dateValue,
-            ),
-          ),
+          ('Date', dateValue),
           ('Waybill No.', AdminDashboardViewModel.waybillNumber(booking)),
           ('Van No.', AdminDashboardViewModel.vanNumber(booking)),
           ('Van Size', vm.vanSize(booking)),

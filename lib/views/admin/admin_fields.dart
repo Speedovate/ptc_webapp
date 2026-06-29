@@ -586,6 +586,12 @@ class _FieldsTable extends StatelessWidget {
         final sampleActive = fields
             .map((field) => (field.isActive ?? false) ? 'Active' : 'Inactive')
             .fold<String>('Inactive', _longerText);
+        final sampleCreated = fields
+            .map((field) => AdminUsersView.formatCreatedAt(field.createdAt))
+            .fold<String>('-', _longerText);
+        final sampleUpdated = fields
+            .map((field) => AdminUsersView.formatUpdatedAt(field.updatedAt))
+            .fold<String>('-', _longerText);
 
         final idWidth = _maxTextWidth(
           context,
@@ -627,6 +633,22 @@ class _FieldsTable extends StatelessWidget {
           sampleActive,
           _valueStyle,
         );
+        final createdWidth = _maxTextWidth(
+          context,
+          textScaler,
+          'Created',
+          _headerStyle,
+          sampleCreated,
+          _valueStyle,
+        );
+        final updatedWidth = _maxTextWidth(
+          context,
+          textScaler,
+          'Updated',
+          _headerStyle,
+          sampleUpdated,
+          _valueStyle,
+        );
         final actionsWidth = _maxValue(
           176,
           _measureTextWidth(context, textScaler, 'Actions', _headerStyle),
@@ -637,11 +659,15 @@ class _FieldsTable extends StatelessWidget {
         final resolvedTitleWidth = _resolvedColumnWidth(titleWidth);
         final resolvedTypeWidth = _resolvedColumnWidth(typeWidth);
         final resolvedActiveWidth = _resolvedColumnWidth(activeWidth) + 12;
+        final resolvedCreatedWidth = _resolvedColumnWidth(createdWidth);
+        final resolvedUpdatedWidth = _resolvedColumnWidth(updatedWidth);
         final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
         final fixedWidthTotal =
             resolvedIdWidth +
             resolvedTypeWidth +
             resolvedActiveWidth +
+            resolvedCreatedWidth +
+            resolvedUpdatedWidth +
             resolvedActionsWidth +
             40;
         final desiredVariableWidthTotal = resolvedKeyWidth + resolvedTitleWidth;
@@ -688,6 +714,14 @@ class _FieldsTable extends StatelessWidget {
                     width: resolvedActiveWidth,
                     child: const _FieldsHeaderCell(label: 'Active'),
                   ),
+                  _FieldsFixedSlot(
+                    width: resolvedCreatedWidth,
+                    child: const _FieldsHeaderCell(label: 'Created'),
+                  ),
+                  _FieldsFixedSlot(
+                    width: resolvedUpdatedWidth,
+                    child: const _FieldsHeaderCell(label: 'Updated'),
+                  ),
                   AdminListTrailingActionsLane(
                     width: resolvedActionsWidth,
                     child: const _FieldsHeaderCell(
@@ -717,6 +751,8 @@ class _FieldsTable extends StatelessWidget {
                     resolvedTitleWidth: effectiveTitleWidth,
                     resolvedTypeWidth: resolvedTypeWidth,
                     resolvedActiveWidth: resolvedActiveWidth,
+                    resolvedCreatedWidth: resolvedCreatedWidth,
+                    resolvedUpdatedWidth: resolvedUpdatedWidth,
                     resolvedActionsWidth: resolvedActionsWidth,
                   ),
                 ),
@@ -782,6 +818,8 @@ class _FieldTableRow extends StatelessWidget {
     required this.resolvedTitleWidth,
     required this.resolvedTypeWidth,
     required this.resolvedActiveWidth,
+    required this.resolvedCreatedWidth,
+    required this.resolvedUpdatedWidth,
     required this.resolvedActionsWidth,
   });
 
@@ -792,6 +830,8 @@ class _FieldTableRow extends StatelessWidget {
   final double resolvedTitleWidth;
   final double resolvedTypeWidth;
   final double resolvedActiveWidth;
+  final double resolvedCreatedWidth;
+  final double resolvedUpdatedWidth;
   final double resolvedActionsWidth;
 
   @override
@@ -838,6 +878,26 @@ class _FieldTableRow extends StatelessWidget {
               child: _metaPill(
                 (field.isActive ?? false) ? 'Active' : 'Inactive',
                 isFilled: field.isActive ?? false,
+              ),
+            ),
+          ),
+          _FieldsFixedSlot(
+            width: resolvedCreatedWidth,
+            child: _FieldsBodyCell(
+              child: Text(
+                AdminUsersView.formatCreatedAt(field.createdAt),
+                style: _FieldsStyles.valueStyle,
+                softWrap: true,
+              ),
+            ),
+          ),
+          _FieldsFixedSlot(
+            width: resolvedUpdatedWidth,
+            child: _FieldsBodyCell(
+              child: Text(
+                AdminUsersView.formatUpdatedAt(field.updatedAt),
+                style: _FieldsStyles.valueStyle,
+                softWrap: true,
               ),
             ),
           ),
@@ -924,6 +984,8 @@ class _FieldResponsiveCard extends StatelessWidget {
             field.title?.trim().isNotEmpty == true ? field.title! : '-',
           ),
           ('Type', field.type ?? '-'),
+          ('Created', AdminUsersView.formatCreatedAt(field.createdAt)),
+          ('Updated', AdminUsersView.formatUpdatedAt(field.updatedAt)),
         ];
         final contentWidths = resolvedFields
             .map(

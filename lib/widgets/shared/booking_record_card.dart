@@ -26,6 +26,12 @@ class BookingRecordCard extends StatelessWidget {
     this.driverPhone = '-',
     this.helperName = '-',
     this.helperPhone = '-',
+    this.clientId,
+    this.driverId,
+    this.helperId,
+    this.onLinkedUserTap,
+    this.linkedUserDisplayForField,
+    this.onLinkedUserTapForField,
     this.trailingActions,
   });
 
@@ -43,6 +49,13 @@ class BookingRecordCard extends StatelessWidget {
   final String driverPhone;
   final String helperName;
   final String helperPhone;
+  final String? clientId;
+  final String? driverId;
+  final String? helperId;
+  final ValueChanged<String>? onLinkedUserTap;
+  final String? Function(String fieldKey, String rawValue)? linkedUserDisplayForField;
+  final VoidCallback? Function(String fieldKey, String rawValue)?
+  onLinkedUserTapForField;
   final Widget? trailingActions;
 
   @override
@@ -142,9 +155,36 @@ class BookingRecordCard extends StatelessWidget {
                         label: 'Destination',
                         value: destinationValue,
                       ),
-                      _BookingMetaData(label: 'Client', value: clientName),
-                      _BookingMetaData(label: 'Driver', value: driverName),
-                      _BookingMetaData(label: 'Helper', value: helperName),
+                      _BookingMetaData(
+                        label: 'Client',
+                        value: clientName,
+                        linkedUserId: clientId,
+                        linkedUserDisplay: _linkedUserDisplay(
+                          clientId,
+                          clientName,
+                        ),
+                        onLinkedUserTap: _linkedUserTap(clientId),
+                      ),
+                      _BookingMetaData(
+                        label: 'Driver',
+                        value: driverName,
+                        linkedUserId: driverId,
+                        linkedUserDisplay: _linkedUserDisplay(
+                          driverId,
+                          driverName,
+                        ),
+                        onLinkedUserTap: _linkedUserTap(driverId),
+                      ),
+                      _BookingMetaData(
+                        label: 'Helper',
+                        value: helperName,
+                        linkedUserId: helperId,
+                        linkedUserDisplay: _linkedUserDisplay(
+                          helperId,
+                          helperName,
+                        ),
+                        onLinkedUserTap: _linkedUserTap(helperId),
+                      ),
                       _BookingMetaData(label: 'Client No.', value: clientPhone),
                       _BookingMetaData(label: 'Driver No.', value: driverPhone),
                       _BookingMetaData(label: 'Helper No.', value: helperPhone),
@@ -250,6 +290,23 @@ class BookingRecordCard extends StatelessWidget {
     );
   }
 
+  String? _linkedUserDisplay(String? userId, String name) {
+    final normalizedId = normalizeId(userId);
+    final trimmedName = name.trim();
+    if (normalizedId == null || trimmedName.isEmpty || trimmedName == '-') {
+      return null;
+    }
+    return '$normalizedId | $trimmedName';
+  }
+
+  VoidCallback? _linkedUserTap(String? userId) {
+    final normalizedId = normalizeId(userId);
+    if (normalizedId == null || onLinkedUserTap == null) {
+      return null;
+    }
+    return () => onLinkedUserTap!(normalizedId);
+  }
+
   static List<_BookingOutputSection> _extractOutputSections(
     Map<String, dynamic>? outputs,
   ) {
@@ -258,14 +315,19 @@ class BookingRecordCard extends StatelessWidget {
     }
 
     final sections = outputs.entries
-        .where((entry) => entry.value is Map)
+        .toList()
+        .asMap()
+        .entries
+        .where((entry) => entry.value.value is Map)
         .map((entry) {
-          final raw = Map<String, dynamic>.from(entry.value as Map);
+          final mapEntry = entry.value;
+          final raw = Map<String, dynamic>.from(mapEntry.value as Map);
           final fields = raw['fields'] is Map
               ? Map<String, dynamic>.from(raw['fields'] as Map)
               : const <String, dynamic>{};
           return _BookingOutputSection(
-            statusKey: entry.key,
+            sourceIndex: entry.key,
+            statusKey: _displayStatusKeyForEntry(mapEntry.key, raw),
             fields: fields,
             submittedAt: _toDateTime(raw['submitted_at']),
             submittedRole: raw['submitted_role']?.toString(),
@@ -281,12 +343,12 @@ class BookingRecordCard extends StatelessWidget {
         return bSubmittedAt.compareTo(aSubmittedAt);
       }
       if (aSubmittedAt != null) {
-        return 1;
-      }
-      if (bSubmittedAt != null) {
         return -1;
       }
-      return b.statusKey.compareTo(a.statusKey);
+      if (bSubmittedAt != null) {
+        return 1;
+      }
+      return a.sourceIndex.compareTo(b.sourceIndex);
     });
 
     return sections;
@@ -308,14 +370,14 @@ class BookingRecordCard extends StatelessWidget {
       return null;
     }
 
+    final orderedSections = _extractOutputSections(outputs);
+
     for (final candidateKey in _candidateFieldKeys(fieldKey)) {
-      final preferredPendingSection = outputs['pending'];
-      if (preferredPendingSection is Map &&
-          preferredPendingSection['fields'] is Map) {
-        final fields = Map<String, dynamic>.from(
-          preferredPendingSection['fields'] as Map,
-        );
-        final value = fields[candidateKey];
+      for (final section in orderedSections) {
+        if (section.displayStatusKey != 'pending') {
+          continue;
+        }
+        final value = section.fields[candidateKey];
         final normalized = _simpleDisplayValue(value);
         if (normalized != '-') {
           return value;
@@ -323,15 +385,8 @@ class BookingRecordCard extends StatelessWidget {
       }
     }
 
-    for (final entry in outputs.entries) {
-      if (entry.value is! Map) {
-        continue;
-      }
-      final raw = Map<String, dynamic>.from(entry.value as Map);
-      if (raw['fields'] is! Map) {
-        continue;
-      }
-      final fields = Map<String, dynamic>.from(raw['fields'] as Map);
+    for (final section in orderedSections) {
+      final fields = section.fields;
       for (final candidateKey in _candidateFieldKeys(fieldKey)) {
         final value = fields[candidateKey];
         final normalized = _simpleDisplayValue(value);
@@ -342,16 +397,25 @@ class BookingRecordCard extends StatelessWidget {
     }
     return null;
   }
+
+  static String _displayStatusKeyForEntry(
+    String entryKey,
+    Map<String, dynamic> raw,
+  ) {
+    final explicitStatusKey = raw['status_key']?.toString().trim();
+    if (explicitStatusKey != null && explicitStatusKey.isNotEmpty) {
+      return explicitStatusKey;
+    }
+    final separatorIndex = entryKey.indexOf('__');
+    if (separatorIndex > 0) {
+      return entryKey.substring(0, separatorIndex);
+    }
+    return entryKey;
+  }
 }
 
 List<String> _candidateFieldKeys(String fieldKey) {
-  return switch (fieldKey.trim()) {
-    'origin' => const ['origin', 'start'],
-    'start' => const ['start', 'origin'],
-    'destination' => const ['destination', 'end'],
-    'end' => const ['end', 'destination'],
-    _ => [fieldKey],
-  };
+  return [fieldKey];
 }
 
 class BookingRecordCardActions extends StatelessWidget {
@@ -555,12 +619,17 @@ class BookingStatusSubmissionsSection extends StatelessWidget {
     required this.statusLabelForKey,
     required this.userNameForId,
     required this.userRoleForId,
+    this.linkedUserDisplayForField,
+    this.onLinkedUserTapForField,
   });
 
   final Booking booking;
   final String Function(String? statusKey) statusLabelForKey;
   final String Function(String? userId) userNameForId;
   final String Function(String? userId, String fallbackRole) userRoleForId;
+  final String? Function(String fieldKey, String rawValue)? linkedUserDisplayForField;
+  final VoidCallback? Function(String fieldKey, String rawValue)?
+  onLinkedUserTapForField;
 
   @override
   Widget build(BuildContext context) {
@@ -633,8 +702,13 @@ class BookingStatusSubmissionsSection extends StatelessWidget {
                       final items = [
                         ...section.fields.entries.map(
                           (field) => _BookingFieldData(
+                            fieldKey: field.key,
                             label: _titleCase(field.key.replaceAll('_', ' ')),
                             value: field.value,
+                            linkedUserDisplay:
+                                _resolvedLinkedUserDisplay(field.key, field.value),
+                            onLinkedUserTap:
+                                _resolvedLinkedUserTap(field.key, field.value),
                           ),
                         ),
                       ];
@@ -646,10 +720,7 @@ class BookingStatusSubmissionsSection extends StatelessWidget {
                             .map(
                               (item) => SizedBox(
                                 width: itemWidth,
-                                child: _BookingFieldItem(
-                                  label: item.label,
-                                  value: item.value,
-                                ),
+                                child: _BookingFieldItem(item: item),
                               ),
                             )
                             .toList(),
@@ -664,13 +735,38 @@ class BookingStatusSubmissionsSection extends StatelessWidget {
       }).toList(),
     );
   }
+
+  String? _resolvedLinkedUserDisplay(String fieldKey, dynamic value) {
+    final rawValue = value?.toString().trim();
+    if (rawValue == null || rawValue.isEmpty) {
+      return null;
+    }
+    return linkedUserDisplayForField?.call(fieldKey, rawValue);
+  }
+
+  VoidCallback? _resolvedLinkedUserTap(String fieldKey, dynamic value) {
+    final rawValue = value?.toString().trim();
+    if (rawValue == null || rawValue.isEmpty) {
+      return null;
+    }
+    return onLinkedUserTapForField?.call(fieldKey, rawValue);
+  }
 }
 
 class _BookingMetaData {
-  const _BookingMetaData({required this.label, required this.value});
+  const _BookingMetaData({
+    required this.label,
+    required this.value,
+    this.linkedUserId,
+    this.linkedUserDisplay,
+    this.onLinkedUserTap,
+  });
 
   final String label;
   final String value;
+  final String? linkedUserId;
+  final String? linkedUserDisplay;
+  final VoidCallback? onLinkedUserTap;
 }
 
 class _BookingHeaderColumn extends StatelessWidget {
@@ -731,10 +827,19 @@ class _BookingStatusPill extends StatelessWidget {
 }
 
 class _BookingFieldData {
-  const _BookingFieldData({required this.label, required this.value});
+  const _BookingFieldData({
+    required this.fieldKey,
+    required this.label,
+    required this.value,
+    this.linkedUserDisplay,
+    this.onLinkedUserTap,
+  });
 
+  final String fieldKey;
   final String label;
   final dynamic value;
+  final String? linkedUserDisplay;
+  final VoidCallback? onLinkedUserTap;
 }
 
 class _BookingMetaItem extends StatelessWidget {
@@ -753,17 +858,20 @@ class _BookingMetaItem extends StatelessWidget {
             color: AppColors.primaryColor.withValues(alpha: 0.72),
           ),
         ),
-        Text(item.value, style: _bookingItemValueTextStyle),
+        _BookingValueContent(
+          value: item.value,
+          linkedUserDisplay: item.linkedUserDisplay,
+          onLinkedUserTap: item.onLinkedUserTap,
+        ),
       ],
     );
   }
 }
 
 class _BookingFieldItem extends StatelessWidget {
-  const _BookingFieldItem({required this.label, required this.value});
+  const _BookingFieldItem({required this.item});
 
-  final String label;
-  final dynamic value;
+  final _BookingFieldData item;
 
   @override
   Widget build(BuildContext context) {
@@ -771,24 +879,40 @@ class _BookingFieldItem extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          label,
+          item.label,
           style: _bookingItemLabelTextStyle.copyWith(
             color: AppColors.primaryColor.withValues(alpha: 0.72),
           ),
         ),
-        _BookingValueContent(value: value),
+        _BookingValueContent(
+          value: item.value,
+          linkedUserDisplay: item.linkedUserDisplay,
+          onLinkedUserTap: item.onLinkedUserTap,
+        ),
       ],
     );
   }
 }
 
 class _BookingValueContent extends StatelessWidget {
-  const _BookingValueContent({required this.value});
+  const _BookingValueContent({
+    required this.value,
+    this.linkedUserDisplay,
+    this.onLinkedUserTap,
+  });
 
   final dynamic value;
+  final String? linkedUserDisplay;
+  final VoidCallback? onLinkedUserTap;
 
   @override
   Widget build(BuildContext context) {
+    if (linkedUserDisplay?.trim().isNotEmpty == true) {
+      return _BookingLinkedUserValue(
+        label: linkedUserDisplay!,
+        onTap: onLinkedUserTap,
+      );
+    }
     if (value == null) {
       return const Text('-', style: _bookingItemValueTextStyle);
     }
@@ -835,6 +959,46 @@ class _BookingValueContent extends StatelessWidget {
     }
 
     return Text('$value', style: _bookingItemValueTextStyle);
+  }
+}
+
+class _BookingLinkedUserValue extends StatelessWidget {
+  const _BookingLinkedUserValue({required this.label, this.onTap});
+
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Flexible(child: Text(label, style: _bookingItemValueTextStyle)),
+        if (onTap != null) ...[
+          const SizedBox(width: 4),
+          AppMousePressable(
+            borderRadius: BorderRadius.circular(999),
+            onTap: onTap,
+            child: Builder(
+              builder: (context) => Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  color: appPressableActive(context)
+                      ? AppColors.primarySurfaceAlt.withValues(alpha: 0.34)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Icon(
+                  Icons.visibility_outlined,
+                  size: 18,
+                  color: AppColors.primaryColor,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
   }
 }
 
@@ -892,6 +1056,7 @@ class _BookingPhotoValue extends StatelessWidget {
 
 class _BookingOutputSection {
   const _BookingOutputSection({
+    required this.sourceIndex,
     required this.statusKey,
     required this.fields,
     required this.submittedAt,
@@ -899,6 +1064,7 @@ class _BookingOutputSection {
     required this.submittedBy,
   });
 
+  final int sourceIndex;
   final String statusKey;
   final Map<String, dynamic> fields;
   final DateTime? submittedAt;

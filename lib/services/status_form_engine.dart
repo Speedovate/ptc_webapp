@@ -64,7 +64,7 @@ class StatusFormEngine {
       final usesIdBackedDynamicSelection =
           normalizedKey == 'driver_id' ||
           normalizedKey == 'helper_id' ||
-          normalizedKey == 'member_id' ||
+          normalizedKey == 'representative_id' ||
           (isIdKey && usesDynamicSource) ||
           optionSourceKey == statusFieldOptionSourceDrivers ||
           optionSourceKey == statusFieldOptionSourceHelpers ||
@@ -189,31 +189,80 @@ class StatusFormEngine {
     List<StatusField> fields,
     Map<String, dynamic> answers,
     String userId,
+    String? userRole,
   ) {
     final nextStatus = statusForm.nextStatusKey;
-    final outputKey = (nextStatus?.trim() == 'cancelled')
-        ? 'cancelled'
-        : (statusForm.currentStatusKey ?? 'status');
-    final truckId = _stringAnswer(answers['truck_id']);
+    final vehicleMakeId = _stringAnswer(answers['vehicle_make_id']);
     final normalizedAnswers = _normalizeAnswersForStorage(answers, fields);
-    final nextOutputs = Map<String, dynamic>.from(booking.statusOutputs ?? {})
-      ..[outputKey] = {
-        'status_form': statusForm.toReferenceMap(),
-        'submitted_role': statusForm.primaryRole ?? statusForm.role,
-        'submitted_roles': statusForm.resolvedRoles,
-        'submitted_by': userId,
-        'submitted_at': DateTime.now().toIso8601String(),
-        'fields': normalizedAnswers,
-      };
+    final changedAnswers = _changedAnswersForStorage(
+      booking.statusOutputs,
+      normalizedAnswers,
+    );
+    final displayStatusKey = (statusForm.currentStatusKey ?? 'status').trim();
+    final nextOutputs = appendStatusOutputSection(
+      booking.statusOutputs ?? const <String, dynamic>{},
+      displayStatusKey: displayStatusKey,
+      statusFormReference: statusForm.toReferenceMap(),
+      submittedRole: userRole,
+      submittedRoles: [
+        if (userRole?.trim().isNotEmpty == true) userRole!.trim(),
+      ],
+      submittedBy: userId,
+      fields: changedAnswers,
+    );
 
     return booking.copyWith(
       clientStatus: nextStatus ?? booking.clientStatus,
       driverStatus: nextStatus ?? booking.driverStatus,
       helperStatus: nextStatus ?? booking.helperStatus,
-      truck: truckId == null ? booking.truck : VehicleMake(id: truckId),
+      vehicleMake: vehicleMakeId == null
+          ? booking.vehicleMake
+          : VehicleMake(id: vehicleMakeId),
       statusOutputs: nextOutputs,
       updatedAt: DateTime.now(),
     );
+  }
+
+  static Map<String, dynamic> appendStatusOutputSection(
+    Map<String, dynamic> existingOutputs, {
+    required String displayStatusKey,
+    required Map<String, dynamic>? statusFormReference,
+    required String? submittedRole,
+    required List<String> submittedRoles,
+    required String submittedBy,
+    required Map<String, dynamic> fields,
+    DateTime? submittedAt,
+  }) {
+    final trimmedDisplayStatusKey = displayStatusKey.trim().isEmpty
+        ? 'status'
+        : displayStatusKey.trim();
+    final resolvedSubmittedAt = submittedAt ?? DateTime.now();
+    final nextOutputs = Map<String, dynamic>.from(existingOutputs);
+    final entryKey = buildStatusOutputEntryKey(
+      trimmedDisplayStatusKey,
+      submittedAt: resolvedSubmittedAt,
+    );
+    nextOutputs[entryKey] = {
+      'status_key': trimmedDisplayStatusKey,
+      'status_form': statusFormReference,
+      'submitted_role': submittedRole,
+      'submitted_roles': submittedRoles,
+      'submitted_by': submittedBy,
+      'submitted_at': resolvedSubmittedAt.toIso8601String(),
+      'fields': fields,
+    };
+    return nextOutputs;
+  }
+
+  static String buildStatusOutputEntryKey(
+    String displayStatusKey, {
+    DateTime? submittedAt,
+  }) {
+    final trimmedStatusKey = displayStatusKey.trim().isEmpty
+        ? 'status'
+        : displayStatusKey.trim();
+    final timestamp = (submittedAt ?? DateTime.now()).microsecondsSinceEpoch;
+    return '${trimmedStatusKey}__$timestamp';
   }
 
   static bool _isEmptyAnswer(dynamic value) {
@@ -360,29 +409,107 @@ class StatusFormEngine {
       normalized[key] = value;
     });
 
-    _mirrorCompatibleField(normalized, primaryKey: 'origin', aliasKey: 'start');
-    _mirrorCompatibleField(
-      normalized,
-      primaryKey: 'destination',
-      aliasKey: 'end',
-    );
-
     return normalized;
   }
 
-  static void _mirrorCompatibleField(
-    Map<String, dynamic> values, {
-    required String primaryKey,
-    required String aliasKey,
-  }) {
-    final primaryValue = values[primaryKey];
-    final aliasValue = values[aliasKey];
-    if (!_isEmptyAnswer(primaryValue) && _isEmptyAnswer(aliasValue)) {
-      values[aliasKey] = primaryValue;
-      return;
+  static Map<String, dynamic> _changedAnswersForStorage(
+    Map<String, dynamic>? existingOutputs,
+    Map<String, dynamic> normalizedAnswers,
+  ) {
+    if (normalizedAnswers.isEmpty) {
+      return const <String, dynamic>{};
     }
-    if (_isEmptyAnswer(primaryValue) && !_isEmptyAnswer(aliasValue)) {
-      values[primaryKey] = aliasValue;
+
+    final previousValues = _latestFieldValues(existingOutputs);
+    final changed = <String, dynamic>{};
+
+    normalizedAnswers.forEach((key, value) {
+      if (!_fieldValuesEqual(previousValues[key], value)) {
+        changed[key] = value;
+      }
+    });
+
+    return changed;
+  }
+
+  static Map<String, dynamic> _latestFieldValues(
+    Map<String, dynamic>? outputs,
+  ) {
+    if (outputs == null || outputs.isEmpty) {
+      return const <String, dynamic>{};
     }
+
+    final sections = outputs.entries
+        .where((entry) => entry.value is Map)
+        .map((entry) {
+          final raw = Map<String, dynamic>.from(entry.value as Map);
+          return (
+            entryKey: entry.key,
+            submittedAt: _toDateTime(raw['submitted_at']),
+            fields: raw['fields'] is Map
+                ? Map<String, dynamic>.from(raw['fields'] as Map)
+                : const <String, dynamic>{},
+          );
+        })
+        .toList();
+
+    sections.sort((a, b) {
+      final aSubmittedAt = a.submittedAt;
+      final bSubmittedAt = b.submittedAt;
+      if (aSubmittedAt != null && bSubmittedAt != null) {
+        return bSubmittedAt.compareTo(aSubmittedAt);
+      }
+      if (aSubmittedAt != null) {
+        return -1;
+      }
+      if (bSubmittedAt != null) {
+        return 1;
+      }
+      return b.entryKey.compareTo(a.entryKey);
+    });
+
+    final latestValues = <String, dynamic>{};
+    for (final section in sections) {
+      section.fields.forEach((key, value) {
+        latestValues.putIfAbsent(key, () => value);
+      });
+    }
+    return latestValues;
+  }
+
+  static bool _fieldValuesEqual(dynamic left, dynamic right) {
+    if (left is List && right is List) {
+      if (left.length != right.length) {
+        return false;
+      }
+      for (var index = 0; index < left.length; index += 1) {
+        if (!_fieldValuesEqual(left[index], right[index])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (left is Map && right is Map) {
+      if (left.length != right.length) {
+        return false;
+      }
+      for (final entry in left.entries) {
+        if (!_fieldValuesEqual(right[entry.key], entry.value)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return left == right;
+  }
+
+  static DateTime? _toDateTime(dynamic value) {
+    if (value == null) {
+      return null;
+    }
+    if (value is DateTime) {
+      return value;
+    }
+    return DateTime.tryParse(value.toString());
   }
 }

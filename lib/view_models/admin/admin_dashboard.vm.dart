@@ -352,6 +352,22 @@ class AdminDashboardViewModel extends BaseViewModel {
         'amount',
       ).toUpperCase();
 
+  static String dropOffDateDisplay(Booking booking) {
+    final rawValue = BookingRecordCard.outputFieldDisplayValue(
+      booking.statusOutputs,
+      'drop_off_date',
+    ).trim();
+    if (rawValue.isEmpty) {
+      return '-';
+    }
+    final parsedValue = DateTime.tryParse(rawValue);
+    if (parsedValue == null) {
+      return rawValue.toUpperCase();
+    }
+    final year = (parsedValue.year % 100).toString().padLeft(2, '0');
+    return '${parsedValue.month}/${parsedValue.day}/$year';
+  }
+
   static DateTime _dateOnly(DateTime value) =>
       DateTime(value.year, value.month, value.day);
 

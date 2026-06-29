@@ -1,18 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:stacked/stacked.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/constants/palawan_locations.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/status_field.dart';
+import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/shared/booking_workflow.vm.dart';
+import 'package:webapp/views/admin/admin_users.dart';
+import 'package:webapp/views/shared/support_center_view.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
@@ -36,6 +38,8 @@ class BookingWorkflowView extends StatefulWidget {
     this.embedded = false,
     this.embeddedScrollController,
     this.onBookingUpdated,
+    this.loadingOverlayVisibleHeight,
+    this.loadingOverlayAlignmentY = 0,
   });
 
   final UserModel user;
@@ -43,13 +47,24 @@ class BookingWorkflowView extends StatefulWidget {
   final bool embedded;
   final ScrollController? embeddedScrollController;
   final ValueChanged<Booking>? onBookingUpdated;
+  final double? loadingOverlayVisibleHeight;
+  final double loadingOverlayAlignmentY;
 
   @override
   State<BookingWorkflowView> createState() => _BookingWorkflowViewState();
 }
 
-const String _bookingSupportPhoneDisplay = '+63 917 812 3776';
-const String _bookingSupportPhoneDial = '+639178123776';
+String? _supportTargetUserIdForBooking(UserModel currentUser, Booking booking) {
+  if (normalizeRoleKey(currentUser.role) != 'admin') {
+    return null;
+  }
+  return normalizeId(
+    BookingRecordCard.outputFieldValue(
+      booking.statusOutputs,
+      'representative_id',
+    )?.toString(),
+  );
+}
 
 class _WorkflowHeaderPalette {
   const _WorkflowHeaderPalette({
@@ -413,13 +428,24 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
         return AppPageLoadingOverlay(
           isVisible: overlayVisible,
           message: overlayMessage,
+          visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
+          loadingAlignmentY: widget.loadingOverlayAlignmentY,
           child: Scaffold(
             backgroundColor: const Color(0xFFF7F7FB),
             appBar: AppBar(
               title: Text('Booking ${currentBooking.id ?? '-'}'),
               actions: [
                 BookingSupportButton(
-                  onPressed: () => launchBookingSupport(context),
+                  onPressed: () => openSupportDestination(
+                    context,
+                    user: widget.user,
+                    initialTopicKey: supportTopicBooking,
+                    initialBookingId: currentBooking.id,
+                    initialUserId: _supportTargetUserIdForBooking(
+                      widget.user,
+                      currentBooking,
+                    ),
+                  ),
                 ),
                 const SizedBox(width: 4),
               ],
@@ -619,6 +645,24 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                     const Spacer(),
                   ],
                   if (hasFormFields) ...[
+                    if (vm.supportsAdditionalFields) const SizedBox(width: 12),
+                    if (vm.supportsAdditionalFields)
+                      _WorkflowAddFieldButton(
+                        availableFields: vm.availableFieldsForSelection,
+                        onSelected: vm.addExistingField,
+                        onCreateNew: () => _openManagedFieldEditor(
+                          context,
+                          vm,
+                          initialField: vm.buildNewFieldDraft(),
+                          addAfterSave: true,
+                        ),
+                        textColor: _workflowResolvedActionColor(
+                          title: vm.form?.statusText?.trim(),
+                          buttonText: primaryActionLabel,
+                          currentStatusKey: currentBooking.clientStatus,
+                        ),
+                      ),
+                    if (vm.supportsAdditionalFields) const SizedBox(width: 12),
                     GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTapDown: (_) => _unfocusWithoutScroll(context),
@@ -640,8 +684,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                       ),
                     ),
                   ],
-                  if (vm.supportsAdditionalFields) ...[
-                    if (hasFormFields) const SizedBox(width: 12),
+                  if (!hasFormFields && vm.supportsAdditionalFields)
                     _WorkflowAddFieldButton(
                       availableFields: vm.availableFieldsForSelection,
                       onSelected: vm.addExistingField,
@@ -657,7 +700,6 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                         currentStatusKey: currentBooking.clientStatus,
                       ),
                     ),
-                  ],
                 ],
               ),
             ],
@@ -680,12 +722,26 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             currentBooking.statusOutputs,
             'destination',
           ),
+          clientId: currentBooking.client?.id,
           clientName: vm.userName(currentBooking.client?.id, 'Unknown client'),
           clientPhone: vm.userPhone(currentBooking.client?.id),
+          driverId: currentBooking.driver?.id,
           driverName: vm.userName(currentBooking.driver?.id, '-'),
           driverPhone: vm.userPhone(currentBooking.driver?.id),
+          helperId: currentBooking.helper?.id,
           helperName: vm.userName(currentBooking.helper?.id, '-'),
           helperPhone: vm.userPhone(currentBooking.helper?.id),
+          onLinkedUserTap: (userId) {
+            final linkedUser = vm.userById(userId);
+            if (linkedUser == null) {
+              return;
+            }
+            AdminUsersView.showUserDetailDialog(
+              context,
+              currentUser: widget.user,
+              viewedUser: linkedUser,
+            );
+          },
         ),
         if (widget.user.role != 'admin') ...[
           Builder(
@@ -716,6 +772,35 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             userNameForId: (userId) => vm.userName(userId, '-'),
             userRoleForId: (userId, fallbackRole) =>
                 vm.userRole(userId, fallbackRole),
+            linkedUserDisplayForField: (fieldKey, rawValue) {
+              if (!fieldKey.trim().toLowerCase().endsWith('_id')) {
+                return null;
+              }
+              final linkedUser = vm.userById(rawValue);
+              final linkedName = linkedUser?.name?.trim();
+              if (linkedUser == null ||
+                  linkedName == null ||
+                  linkedName.isEmpty) {
+                return null;
+              }
+              return '${linkedUser.id} | $linkedName';
+            },
+            onLinkedUserTapForField: (fieldKey, rawValue) {
+              if (!fieldKey.trim().toLowerCase().endsWith('_id')) {
+                return null;
+              }
+              final linkedUser = vm.userById(rawValue);
+              if (linkedUser == null) {
+                return null;
+              }
+              return () {
+                AdminUsersView.showUserDetailDialog(
+                  context,
+                  currentUser: widget.user,
+                  viewedUser: linkedUser,
+                );
+              };
+            },
           ),
         ],
         if (hasMultipleSecondaryForms) ...[
@@ -940,20 +1025,6 @@ class _WorkflowGuidanceCard extends StatelessWidget {
       ),
     );
   }
-}
-
-Future<void> launchBookingSupport(BuildContext context) async {
-  final supportUri = Uri(scheme: 'tel', path: _bookingSupportPhoneDial);
-  if (await launchUrl(supportUri)) {
-    return;
-  }
-  if (!context.mounted) {
-    return;
-  }
-  AppSnackbar.showError(
-    context,
-    'Could not open customer support for $_bookingSupportPhoneDisplay.',
-  );
 }
 
 class BookingSupportButton extends StatelessWidget {
@@ -1476,6 +1547,25 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
             shrinkWrap: true,
             buildDefaultDragHandles: false,
             physics: const NeverScrollableScrollPhysics(),
+            proxyDecorator: (child, index, animation) {
+              final proxyChild = child is _WorkflowReorderableFieldListItem
+                  ? child.proxyChild
+                  : child;
+              return AnimatedBuilder(
+                animation: animation,
+                builder: (context, _) {
+                  return Material(
+                    type: MaterialType.transparency,
+                    borderRadius: BorderRadius.circular(18),
+                    clipBehavior: Clip.antiAlias,
+                    elevation: 0,
+                    shadowColor: Colors.transparent,
+                    surfaceTintColor: Colors.transparent,
+                    child: proxyChild,
+                  );
+                },
+              );
+            },
             onReorder: (oldIndex, newIndex) {
               widget.vm.reorderManagedFields(
                 orderedFields,
@@ -1499,45 +1589,46 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
                       orderedIndex + 1,
                     )];
               final fieldKey = field.key ?? '';
-              return Padding(
+              final fieldCard = _WorkflowRemovableFieldCard(
+                vm: widget.vm,
+                formTitle: widget.title,
+                formButtonText: widget.buttonText,
+                formStatusKey: widget.currentStatusKey,
+                preferredScrollController: widget.preferredScrollController,
+                field: field,
+                focusNode: _fieldFocusNodes[focusKey],
+                nextFocusNode: nextFocusNode,
+                activateNextFocus: _shouldActivateNextField(
+                  nextField,
+                  nextFocusNode,
+                ),
+                errorText: widget.errors[fieldKey],
+                initialValue: widget.answers[fieldKey],
+                onChanged: (value) => widget.onChanged(fieldKey, value),
+                onRemove: () => widget.vm.removeManagedField(field),
+                onEdit: () =>
+                    _openFieldEditor(context, widget.vm, initialField: field),
+                dragHandle: widget.vm.isFormAssignedField(field)
+                    ? ReorderableDragStartListener(
+                        index: entry.key,
+                        child: SizedBox(
+                          width: 36,
+                          height: 36,
+                          child: Icon(
+                            Icons.drag_indicator_rounded,
+                            size: 20,
+                            color: palette.accent.withValues(alpha: 0.8),
+                          ),
+                        ),
+                      )
+                    : null,
+              );
+              return _WorkflowReorderableFieldListItem(
                 key: ValueKey(
                   '${field.key}:${field.type}:${field.updatedAt?.millisecondsSinceEpoch ?? 0}:${widget.resetTick}',
                 ),
-                padding: EdgeInsets.only(bottom: isLastField ? 0 : 14),
-                child: _WorkflowRemovableFieldCard(
-                  vm: widget.vm,
-                  formTitle: widget.title,
-                  formButtonText: widget.buttonText,
-                  formStatusKey: widget.currentStatusKey,
-                  preferredScrollController: widget.preferredScrollController,
-                  field: field,
-                  focusNode: _fieldFocusNodes[focusKey],
-                  nextFocusNode: nextFocusNode,
-                  activateNextFocus: _shouldActivateNextField(
-                    nextField,
-                    nextFocusNode,
-                  ),
-                  errorText: widget.errors[fieldKey],
-                  initialValue: widget.answers[fieldKey],
-                  onChanged: (value) => widget.onChanged(fieldKey, value),
-                  onRemove: () => widget.vm.removeManagedField(field),
-                  onEdit: () =>
-                      _openFieldEditor(context, widget.vm, initialField: field),
-                  dragHandle: widget.vm.isFormAssignedField(field)
-                      ? ReorderableDragStartListener(
-                          index: entry.key,
-                          child: SizedBox(
-                            width: 36,
-                            height: 36,
-                            child: Icon(
-                              Icons.drag_indicator_rounded,
-                              size: 20,
-                              color: palette.accent.withValues(alpha: 0.8),
-                            ),
-                          ),
-                        )
-                      : null,
-                ),
+                bottomSpacing: isLastField ? 0 : 14,
+                child: fieldCard,
               );
             }).toList(),
           )
@@ -1640,63 +1731,71 @@ class _WorkflowAddFieldButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      tooltip: 'Add field',
-      color: Colors.white,
-      surfaceTintColor: Colors.white,
-      onSelected: (value) async {
-        if (value == '__create_new_field__') {
-          onCreateNew();
-          return;
-        }
-        await onSelected(value);
+    return Builder(
+      builder: (buttonContext) {
+        return TextButton(
+          onPressed: () async {
+            final button = buttonContext.findRenderObject() as RenderBox?;
+            final overlay = Overlay.of(buttonContext)
+                .context
+                .findRenderObject() as RenderBox?;
+            if (button == null || overlay == null) {
+              return;
+            }
+            final result = await showMenu<String>(
+              context: buttonContext,
+              color: Colors.white,
+              surfaceTintColor: Colors.white,
+              position: RelativeRect.fromRect(
+                Rect.fromPoints(
+                  button.localToGlobal(Offset.zero, ancestor: overlay),
+                  button.localToGlobal(
+                    button.size.bottomRight(Offset.zero),
+                    ancestor: overlay,
+                  ),
+                ),
+                Offset.zero & overlay.size,
+              ),
+              items: [
+                ...availableFields.map(
+                  (field) => PopupMenuItem<String>(
+                    value: field.id,
+                    child: Text(
+                      field.title?.trim().isNotEmpty == true
+                          ? field.title!
+                          : field.key ?? 'Untitled Field',
+                      style: adminDropdownDisplayTextStyle,
+                    ),
+                  ),
+                ),
+                if (availableFields.isNotEmpty)
+                  const PopupMenuDivider(height: 1, thickness: 1),
+                PopupMenuItem<String>(
+                  value: '__create_new_field__',
+                  child: Text(
+                    'Create New Field',
+                    style: TextStyle(
+                      color: textColor,
+                      fontWeight: FontWeight.w700,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+              ],
+            );
+            if (result == null) {
+              return;
+            }
+            if (result == '__create_new_field__') {
+              onCreateNew();
+              return;
+            }
+            await onSelected(result);
+          },
+          style: TextButton.styleFrom(foregroundColor: textColor),
+          child: const Text('Add Field'),
+        );
       },
-      itemBuilder: (context) => [
-        ...availableFields.map(
-          (field) => PopupMenuItem<String>(
-            value: field.id,
-            child: Text(
-              field.title?.trim().isNotEmpty == true
-                  ? field.title!
-                  : field.key ?? 'Untitled Field',
-              style: adminDropdownDisplayTextStyle,
-            ),
-          ),
-        ),
-        if (availableFields.isNotEmpty)
-          const PopupMenuDivider(height: 1, thickness: 1),
-        PopupMenuItem<String>(
-          value: '__create_new_field__',
-          child: Text(
-            'Create New Field',
-            style: TextStyle(
-              color: textColor,
-              fontWeight: FontWeight.w700,
-              height: 1.2,
-            ),
-          ),
-        ),
-      ],
-      child: _WorkflowInlineAddButton(textColor: textColor),
-    );
-  }
-}
-
-class _WorkflowInlineAddButton extends StatelessWidget {
-  const _WorkflowInlineAddButton({required this.textColor});
-
-  final Color textColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      child: Text(
-        'Add Field',
-        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-          color: textColor,
-        ),
-      ),
     );
   }
 }
@@ -1856,6 +1955,33 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
         ],
       ),
       onChanged: onChanged,
+    );
+  }
+}
+
+class _WorkflowReorderableFieldListItem extends StatelessWidget {
+  const _WorkflowReorderableFieldListItem({
+    super.key,
+    required this.child,
+    required this.bottomSpacing,
+  });
+
+  final Widget child;
+  final double bottomSpacing;
+
+  Widget get proxyChild => child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (bottomSpacing <= 0) {
+      return child;
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        child,
+        SizedBox(height: bottomSpacing),
+      ],
     );
   }
 }
@@ -2153,7 +2279,7 @@ class _WorkflowFieldCard extends StatelessWidget {
             StatusFieldOptionResolver.resolvedOptionSourceKey(field);
         final memberOptionLabels =
             optionSourceKey == statusFieldOptionSourceClientMembers ||
-                fieldKey == 'member_id'
+                fieldKey == 'representative_id'
             ? vm.memberOptionLabelsForCurrentBooking()
             : const <String, String>{};
         final effectiveOptions = field.options.isNotEmpty

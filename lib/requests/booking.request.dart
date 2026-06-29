@@ -251,7 +251,7 @@ class BookingRequest implements BookingRepository {
       'client_status': booking.clientStatus,
       'driver_status': booking.driverStatus,
       'helper_status': booking.helperStatus,
-      'truck_id': booking.truck?.id,
+      'vehicle_make_id': booking.vehicleMake?.id,
       'driver_id': booking.driver?.id,
       'helper_id': booking.helper?.id,
       'status_outputs': booking.statusOutputs,
@@ -271,7 +271,7 @@ class BookingRequest implements BookingRepository {
       clientStatus: map['client_status']?.toString(),
       driverStatus: map['driver_status']?.toString(),
       helperStatus: map['helper_status']?.toString(),
-      truck: makeById[map['truck_id']?.toString()],
+      vehicleMake: makeById[map['vehicle_make_id']?.toString()],
       driver: userById[map['driver_id']?.toString()],
       helper: userById[map['helper_id']?.toString()],
       statusOutputs: map['status_outputs'] is Map

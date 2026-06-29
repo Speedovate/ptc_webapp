@@ -290,14 +290,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
       blockedMessage = loadedForm == null
           ? null
           : _engine.getBlockedMessage(booking, loadedForm);
-      additionalFields = loadedForm == null
-          ? const []
-          : _initialAdditionalFieldsForBooking(
-              booking: booking,
-              currentStatusKey: currentKey,
-              fieldLibrary: fieldLibrary,
-              assignedKeys: fields.map((field) => field.key ?? '').toSet(),
-            );
+      additionalFields = const [];
       errors = {};
       cancelErrors = {};
       _cacheCurrentState();
@@ -801,6 +794,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
           ],
           answers,
           currentUser.id ?? '',
+          currentUser.role,
         ),
         currentBooking: currentBooking,
         formAnswers: answers,
@@ -843,6 +837,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
           ],
           formAnswers,
           currentUser.id ?? '',
+          currentUser.role,
         ),
         currentBooking: currentBooking,
         formAnswers: formAnswers,
@@ -897,6 +892,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
           cancelFields,
           cancelAnswers,
           currentUser.id ?? '',
+          currentUser.role,
         ),
         currentBooking: currentBooking,
         formAnswers: cancelAnswers,
@@ -936,6 +932,14 @@ class BookingWorkflowViewModel extends BaseViewModel {
   String userRole(String? userId, String fallback) {
     final role = _usersById[userId]?.role?.trim();
     return role?.isNotEmpty == true ? role! : fallback;
+  }
+
+  UserModel? userById(String? userId) {
+    final normalizedId = normalizeId(userId);
+    if (normalizedId == null) {
+      return null;
+    }
+    return _usersById[normalizedId];
   }
 
   List<UserModel> roleUsers(String role) {
@@ -1031,8 +1035,8 @@ class BookingWorkflowViewModel extends BaseViewModel {
     required List<StatusField> fieldLibrary,
   }) {
     final answers = <String, dynamic>{};
-    if ((booking.truck?.id ?? '').trim().isNotEmpty) {
-      answers['truck_id'] = booking.truck!.id!.trim();
+    if ((booking.vehicleMake?.id ?? '').trim().isNotEmpty) {
+      answers['vehicle_make_id'] = booking.vehicleMake!.id!.trim();
     }
     if ((booking.driver?.id ?? '').trim().isNotEmpty) {
       answers['driver_id'] = booking.driver!.id!.trim();
@@ -1041,7 +1045,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
       answers['helper_id'] = booking.helper!.id!.trim();
     }
     final candidateKeys = <String>{
-      'truck_id',
+      'vehicle_make_id',
       'driver_id',
       'helper_id',
       for (final field in fieldLibrary)
@@ -1065,111 +1069,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
       }
       answers[key] = value;
     }
-    final resolvedMemberId = _resolveRepresentativeMemberId(booking, answers);
-    if (resolvedMemberId != null && resolvedMemberId.isNotEmpty) {
-      answers['member_id'] = resolvedMemberId;
-    }
     return answers;
-  }
-
-  String? _resolveRepresentativeMemberId(
-    Booking booking,
-    Map<String, dynamic> answers,
-  ) {
-    final explicitMemberId = normalizeId(answers['member_id']?.toString());
-    if (explicitMemberId != null) {
-      return explicitMemberId;
-    }
-
-    final clientId = normalizeId(booking.client?.id);
-    if (clientId == null) {
-      return null;
-    }
-
-    final representativeName = (answers['representative_name']?.toString() ?? '')
-        .trim();
-    final representativePhone = normalizePhilippinePhone(
-      answers['representative_phone']?.toString(),
-    );
-    final representativePosition = (answers['representative_position']
-                ?.toString() ??
-            '')
-        .trim()
-        .toLowerCase();
-
-    if (representativeName.isEmpty &&
-        (representativePhone == null || representativePhone.isEmpty) &&
-        representativePosition.isEmpty) {
-      return null;
-    }
-
-    final repFirstLast = _firstAndLastWords(representativeName);
-    final candidateUsers = _usersById.values.where((user) {
-      return isSubClientRole(user.role) &&
-          normalizeId(user.parentClientId) == clientId &&
-          (user.isActive ?? true);
-    }).toList();
-
-    for (final user in candidateUsers) {
-      final userId = normalizeId(user.id);
-      if (userId == null) {
-        continue;
-      }
-      final userFirstLast = _firstAndLastWords(user.name ?? '');
-      final nameMatches =
-          repFirstLast != null &&
-          userFirstLast != null &&
-          repFirstLast.$1 == userFirstLast.$1 &&
-          repFirstLast.$2 == userFirstLast.$2;
-      final phoneMatches = representativePhone != null &&
-          representativePhone.isNotEmpty &&
-          normalizePhilippinePhone(user.phone) == representativePhone;
-      final positionMatches = representativePosition.isNotEmpty &&
-          (user.position?.trim().toLowerCase() ?? '') == representativePosition;
-
-      if (nameMatches || phoneMatches || positionMatches) {
-        return userId;
-      }
-    }
-    return null;
-  }
-
-  (String, String)? _firstAndLastWords(String raw) {
-    final parts = raw
-        .trim()
-        .toLowerCase()
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .toList();
-    if (parts.isEmpty) {
-      return null;
-    }
-    return (parts.first, parts.last);
-  }
-
-  static List<StatusField> _initialAdditionalFieldsForBooking({
-    required Booking booking,
-    required String currentStatusKey,
-    required List<StatusField> fieldLibrary,
-    required Set<String> assignedKeys,
-  }) {
-    final section = booking.statusOutputs?[currentStatusKey];
-    if (section is! Map || section['fields'] is! Map) {
-      return const [];
-    }
-    final rawFields = Map<String, dynamic>.from(section['fields'] as Map);
-    final libraryByKey = {
-      for (final field in fieldLibrary)
-        if ((field.key ?? '').trim().isNotEmpty) field.key!.trim(): field,
-    };
-    return rawFields.entries
-        .where((entry) {
-          final key = entry.key.trim();
-          return key.isNotEmpty && !assignedKeys.contains(key);
-        })
-        .map((entry) => libraryByKey[entry.key.trim()]?.copyWith())
-        .whereType<StatusField>()
-        .toList();
   }
 
   static Map<String, dynamic> _outputFieldsForStatus(

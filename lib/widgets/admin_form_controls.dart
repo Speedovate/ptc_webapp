@@ -112,6 +112,7 @@ class AdminDropdownFormField<T> extends StatefulWidget {
     this.onChanged,
     this.isExpanded = true,
     this.disabledTapMessage,
+    this.onDisabledTap,
   });
 
   final T? initialValue;
@@ -126,6 +127,7 @@ class AdminDropdownFormField<T> extends StatefulWidget {
   final ValueChanged<T?>? onChanged;
   final bool isExpanded;
   final String? disabledTapMessage;
+  final VoidCallback? onDisabledTap;
 
   @override
   State<AdminDropdownFormField<T>> createState() =>
@@ -412,7 +414,26 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
               cursor: SystemMouseCursors.basic,
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
-                onTap: () => AppSnackbar.showError(context, disabledTapMessage),
+                onTap: () {
+                  final onDisabledTap = widget.onDisabledTap;
+                  if (onDisabledTap != null) {
+                    debugPrint(
+                      '[REP_BOOKED_BY_DEBUG][DISABLED_TAP] '
+                      'label=${fieldDecoration.labelText ?? '-'} '
+                      'hint=${fieldDecoration.hintText ?? '-'} '
+                      'hasOverride=true',
+                    );
+                    onDisabledTap();
+                    return;
+                  }
+                  debugPrint(
+                    '[REP_BOOKED_BY_DEBUG][DISABLED_TAP] '
+                    'label=${fieldDecoration.labelText ?? '-'} '
+                    'hint=${fieldDecoration.hintText ?? '-'} '
+                    'hasOverride=false message=$disabledTapMessage',
+                  );
+                  AppSnackbar.showError(context, disabledTapMessage);
+                },
                 child: const SizedBox.expand(),
               ),
             ),
@@ -428,7 +449,7 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
         decoratedField,
         if (errorText?.isNotEmpty == true)
           Padding(
-            padding: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.only(top: 2),
             child: Text(
               errorText!,
               style: const TextStyle(
@@ -486,6 +507,7 @@ class AdminSearchSelectFormField extends StatefulWidget {
     this.autoActivateOnFocus = false,
     this.decoration,
     this.enabled = true,
+    this.dialogTitle,
   });
 
   final List<String> options;
@@ -496,6 +518,7 @@ class AdminSearchSelectFormField extends StatefulWidget {
   final bool autoActivateOnFocus;
   final InputDecoration? decoration;
   final bool enabled;
+  final String? dialogTitle;
 
   @override
   State<AdminSearchSelectFormField> createState() =>
@@ -583,7 +606,7 @@ class _AdminSearchSelectFormFieldState
     final selected = await showDialog<String>(
       context: context,
       builder: (context) => _AdminSearchSelectDialog(
-        title: _resolvedDialogTitle(widget.decoration),
+        title: _resolvedDialogTitle(widget.dialogTitle, widget.decoration),
         options: widget.options,
         initialQuery: _controller.text.trim(),
       ),
@@ -609,7 +632,14 @@ class _AdminSearchSelectFormFieldState
     _focusNode.unfocus();
   }
 
-  String _resolvedDialogTitle(InputDecoration? decoration) {
+  String _resolvedDialogTitle(
+    String? dialogTitle,
+    InputDecoration? decoration,
+  ) {
+    final trimmedDialogTitle = dialogTitle?.trim();
+    if (trimmedDialogTitle != null && trimmedDialogTitle.isNotEmpty) {
+      return trimmedDialogTitle;
+    }
     final labelText = decoration?.labelText?.trim();
     if (labelText != null && labelText.isNotEmpty) {
       return labelText;
@@ -704,7 +734,7 @@ class _AdminSearchSelectFormFieldState
         ),
         if (errorText?.isNotEmpty == true)
           Padding(
-            padding: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.only(top: 2),
             child: Text(
               errorText!,
               style: const TextStyle(

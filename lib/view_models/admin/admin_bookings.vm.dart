@@ -358,6 +358,26 @@ class AdminBookingsViewModel extends BaseViewModel {
       ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
   }
 
+  List<UserModel> clientMembersForBooking(Booking booking) {
+    return clientMembersForClientId(booking.client?.id);
+  }
+
+  List<UserModel> clientMembersForClientId(String? clientId) {
+    final normalizedClientId = clientId?.trim();
+    if (normalizedClientId == null || normalizedClientId.isEmpty) {
+      return const <UserModel>[];
+    }
+    return _usersById.values
+        .where(
+          (user) =>
+              (user.role ?? '').trim() == 'sub-client' &&
+              (user.parentClientId ?? '').trim() == normalizedClientId &&
+              (user.isActive ?? false),
+        )
+        .toList()
+      ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
+  }
+
   static List<String> _flattenBookingOutputValues(
     Map<String, dynamic>? outputs,
   ) {

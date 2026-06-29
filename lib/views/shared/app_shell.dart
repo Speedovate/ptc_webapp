@@ -29,7 +29,7 @@ class AppShell extends StatelessWidget {
                 body: SafeArea(
                   child: Center(
                     child: AppPageLoading(
-                      message: 'Loading account ...',
+                      message: 'Loading, please wait ...',
                       compact: true,
                     ),
                   ),

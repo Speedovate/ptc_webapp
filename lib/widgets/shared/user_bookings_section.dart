@@ -165,8 +165,10 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
 
   bool _matchesSubClientBooking(Booking booking, String userId) {
     final memberId = normalizeId(
-      BookingRecordCard.outputFieldValue(booking.statusOutputs, 'member_id')
-          ?.toString(),
+      BookingRecordCard.outputFieldValue(
+        booking.statusOutputs,
+        'representative_id',
+      )?.toString(),
     );
     if (memberId == userId) {
       return true;
@@ -412,9 +414,17 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
           'ID',
           longestText(bookings.map((booking) => booking.id ?? '-')),
         );
-        final dateWidth = maxTextWidth(
-          'Date Time',
-          longestText(bookings.map((booking) => _formatBookingDateTime(booking.createdAt))),
+        final createdWidth = maxTextWidth(
+          'Created',
+          longestText(
+            bookings.map((booking) => _formatBookingDateTime(booking.createdAt)),
+          ),
+        );
+        final updatedWidth = maxTextWidth(
+          'Updated',
+          longestText(
+            bookings.map((booking) => _formatBookingDateTime(booking.updatedAt)),
+          ),
         );
         final waybillWidth = maxTextWidth(
           'Waybill Number',
@@ -458,7 +468,8 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
         );
 
         final resolvedIdWidth = resolvedColumnWidth(idWidth);
-        final resolvedDateWidth = resolvedColumnWidth(dateWidth);
+        final resolvedCreatedWidth = resolvedColumnWidth(createdWidth);
+        final resolvedUpdatedWidth = resolvedColumnWidth(updatedWidth);
         final resolvedWaybillWidth = resolvedColumnWidth(waybillWidth);
         final resolvedVanNumberWidth = resolvedColumnWidth(vanNumberWidth);
         final resolvedVanSizeWidth = resolvedColumnWidth(vanSizeWidth);
@@ -467,12 +478,13 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
         final resolvedActionsWidth = actionsWidth + extraWidthAllowance;
         final totalMeasuredWidth =
             resolvedIdWidth +
-            resolvedDateWidth +
             resolvedWaybillWidth +
             resolvedVanNumberWidth +
             resolvedVanSizeWidth +
             resolvedAmountWidth +
             resolvedStatusWidth +
+            resolvedCreatedWidth +
+            resolvedUpdatedWidth +
             resolvedActionsWidth +
             40;
         final useResponsiveCards =
@@ -516,12 +528,13 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
               child: Row(
                 children: [
                   fixedSlot(resolvedIdWidth, headerCell('ID')),
-                  fixedSlot(resolvedDateWidth, headerCell('Date Time')),
                   fixedSlot(resolvedWaybillWidth, headerCell('Waybill Number')),
                   fixedSlot(resolvedVanNumberWidth, headerCell('Van Number')),
                   fixedSlot(resolvedVanSizeWidth, headerCell('Van Size')),
                   fixedSlot(resolvedAmountWidth, headerCell('Amount')),
                   fixedSlot(resolvedStatusWidth, headerCell('Status')),
+                  fixedSlot(resolvedCreatedWidth, headerCell('Created')),
+                  fixedSlot(resolvedUpdatedWidth, headerCell('Updated')),
                   AdminListTrailingActionsLane(
                     width: resolvedActionsWidth,
                     child: headerCell(
@@ -553,16 +566,6 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
                         ),
                       ),
                       fixedSlot(
-                        resolvedDateWidth,
-                        bodyCell(
-                          Text(
-                            _formatBookingDateTime(booking.createdAt),
-                            style: valueStyle,
-                            softWrap: true,
-                          ),
-                        ),
-                      ),
-                      fixedSlot(
                         resolvedWaybillWidth,
                         bodyCell(Text(_waybillNumber(booking), style: valueStyle, softWrap: true)),
                       ),
@@ -581,6 +584,26 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
                       fixedSlot(
                         resolvedStatusWidth,
                         bodyCell(adminMetaPill(_headlineStatusLabel(booking))),
+                      ),
+                      fixedSlot(
+                        resolvedCreatedWidth,
+                        bodyCell(
+                          Text(
+                            _formatBookingDateTime(booking.createdAt),
+                            style: valueStyle,
+                            softWrap: true,
+                          ),
+                        ),
+                      ),
+                      fixedSlot(
+                        resolvedUpdatedWidth,
+                        bodyCell(
+                          Text(
+                            _formatBookingDateTime(booking.updatedAt),
+                            style: valueStyle,
+                            softWrap: true,
+                          ),
+                        ),
                       ),
                       AdminListTrailingActionsLane(
                         width: resolvedActionsWidth,
@@ -654,11 +677,13 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
             (constraints.maxWidth - (spacing * (columns - 1))) / columns;
         final items = [
           ('ID', booking.id ?? '-'),
-          ('Date Time', _formatBookingDateTime(booking.createdAt)),
           ('Waybill Number', _waybillNumber(booking)),
           ('Van Number', _vanNumber(booking)),
           ('Van Size', _vanSize(booking)),
           ('Amount', _amount(booking)),
+          ('Status', _headlineStatusLabel(booking)),
+          ('Created', _formatBookingDateTime(booking.createdAt)),
+          ('Updated', _formatBookingDateTime(booking.updatedAt)),
         ];
 
         return AdminListItemCard(

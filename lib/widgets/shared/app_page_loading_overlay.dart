@@ -9,6 +9,9 @@ class AppPageLoadingOverlay extends StatelessWidget {
     this.message = 'Loading, please wait ...',
     this.padding = const EdgeInsets.all(24),
     this.opacity = 0.72,
+    this.visibleHeightWhenUnbounded,
+    this.visibleTopOffsetWhenUnbounded,
+    this.loadingAlignmentY = 0,
   });
 
   final Widget child;
@@ -16,6 +19,9 @@ class AppPageLoadingOverlay extends StatelessWidget {
   final String message;
   final EdgeInsets padding;
   final double opacity;
+  final double? visibleHeightWhenUnbounded;
+  final double? visibleTopOffsetWhenUnbounded;
+  final double loadingAlignmentY;
 
   @override
   Widget build(BuildContext context) {
@@ -33,13 +39,16 @@ class AppPageLoadingOverlay extends StatelessWidget {
               Positioned.fill(
                 child: ColoredBox(
                   color: Colors.white.withValues(alpha: opacity),
-                  child: AppPageLoading(
-                    message: message,
-                    compact: true,
-                    padding: padding,
+                  child: Align(
+                    alignment: Alignment(0, loadingAlignmentY),
+                    child: AppPageLoading(
+                      message: message,
+                      compact: true,
+                      padding: padding,
+                    ),
                   ),
                 ),
-              ),
+            ),
           ],
         );
 

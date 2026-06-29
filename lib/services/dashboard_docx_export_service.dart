@@ -20,7 +20,7 @@ enum DashboardExportDocumentType {
     DashboardExportDocumentType.btHustling => 'BT Hustling',
   };
 
-  String get detailsLabel => isHustling ? 'Hustling' : 'Regular Trip';
+  String get detailsLabel => isHustling ? 'Hustling Trip' : 'Regular Trip';
 
   String get headingLabel => isHustling ? 'HUSTLING' : 'REGULAR TRIP';
 
@@ -295,9 +295,14 @@ class DashboardDocxExportService {
       throw StateError('The billing statement table is missing rows.');
     }
     final templateRow = tableRows[1].copy();
-    final totalRow = tableRows.last;
+    final totalRow =
+        tableRows.where((row) {
+          return _rowText(row).trim().toUpperCase().contains('TOTAL');
+        }).firstOrNull ??
+        tableRows.last;
+    final totalRowIndex = tableRows.indexOf(totalRow);
 
-    for (var index = tableRows.length - 2; index >= 1; index--) {
+    for (var index = totalRowIndex - 1; index >= 1; index--) {
       tableRows[index].parent?.children.remove(tableRows[index]);
     }
 
@@ -443,6 +448,14 @@ class DashboardDocxExportService {
   String _tableText(XmlElement table) {
     final buffer = StringBuffer();
     for (final textNode in table.findAllElements('w:t')) {
+      buffer.write(textNode.innerText);
+    }
+    return buffer.toString();
+  }
+
+  String _rowText(XmlElement row) {
+    final buffer = StringBuffer();
+    for (final textNode in row.findAllElements('w:t')) {
       buffer.write(textNode.innerText);
     }
     return buffer.toString();

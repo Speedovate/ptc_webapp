@@ -53,8 +53,9 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
   }
 
   void _validateForm() {
+    final visibleFields = StatusFormEngine.visibleFields(widget.fields, _answers);
     setState(() {
-      _errors = _engine.validateFields(widget.fields, _answers);
+      _errors = _engine.validateFields(visibleFields, _answers);
     });
   }
 
@@ -97,7 +98,8 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
     );
     final dependencies =
         widget.form?.dependencies ?? const <StatusDependency>[];
-    final hasFields = widget.fields.isNotEmpty;
+    final visibleFields = StatusFormEngine.visibleFields(widget.fields, _answers);
+    final hasFields = visibleFields.isNotEmpty;
     final hasNextStatus = nextStatusKey != null && nextStatusKey.isNotEmpty;
     final showSubmitButton = hasFields || hasNextStatus;
     final showActionRow = showSubmitButton || hasFields;
@@ -113,14 +115,14 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
             subtitle: statusSubtext,
             buttonText: buttonText,
             currentStatusKey: currentStatusKey,
-            showRequiredLegend: widget.fields.any(
+            showRequiredLegend: visibleFields.any(
               (field) => field.required == true,
             ),
             showDependencyNotice: dependencies.isNotEmpty,
           ),
           if (hasFields) ...[
             const SizedBox(height: 14),
-            ...widget.fields.map(
+            ...visibleFields.map(
               (field) => Padding(
                 padding: const EdgeInsets.only(bottom: 14),
                 child: StatusFormRuntimeFieldCard(

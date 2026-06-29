@@ -609,6 +609,12 @@ class _StatusesTable extends StatelessWidget {
         final sampleActive = statuses
             .map((status) => (status.isActive ?? false) ? 'Active' : 'Inactive')
             .fold<String>('Inactive', _longerText);
+        final sampleCreated = statuses
+            .map((status) => AdminUsersView.formatCreatedAt(status.createdAt))
+            .fold<String>('-', _longerText);
+        final sampleUpdated = statuses
+            .map((status) => AdminUsersView.formatUpdatedAt(status.updatedAt))
+            .fold<String>('-', _longerText);
 
         final idWidth = _maxTextWidth(
           context,
@@ -658,6 +664,22 @@ class _StatusesTable extends StatelessWidget {
           sampleActive,
           _valueStyle,
         );
+        final createdWidth = _maxTextWidth(
+          context,
+          textScaler,
+          'Created',
+          _headerStyle,
+          sampleCreated,
+          _valueStyle,
+        );
+        final updatedWidth = _maxTextWidth(
+          context,
+          textScaler,
+          'Updated',
+          _headerStyle,
+          sampleUpdated,
+          _valueStyle,
+        );
         final actionsWidth = _maxValue(
           176,
           _measureTextWidth(context, textScaler, 'Actions', _headerStyle),
@@ -669,12 +691,16 @@ class _StatusesTable extends StatelessWidget {
         final resolvedDescriptionWidth = _resolvedColumnWidth(descriptionWidth);
         final resolvedRolesWidth = _resolvedColumnWidth(rolesWidth);
         final resolvedActiveWidth = _resolvedColumnWidth(activeWidth) + 12;
+        final resolvedCreatedWidth = _resolvedColumnWidth(createdWidth);
+        final resolvedUpdatedWidth = _resolvedColumnWidth(updatedWidth);
         final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
 
         final fixedWidthTotal =
             resolvedIdWidth +
             resolvedKeyWidth +
             resolvedActiveWidth +
+            resolvedCreatedWidth +
+            resolvedUpdatedWidth +
             resolvedActionsWidth +
             40;
         final desiredVariableWidthTotal =
@@ -729,6 +755,14 @@ class _StatusesTable extends StatelessWidget {
                     width: resolvedActiveWidth,
                     child: const _StatusesHeaderCell(label: 'Active'),
                   ),
+                  _StatusesFixedSlot(
+                    width: resolvedCreatedWidth,
+                    child: const _StatusesHeaderCell(label: 'Created'),
+                  ),
+                  _StatusesFixedSlot(
+                    width: resolvedUpdatedWidth,
+                    child: const _StatusesHeaderCell(label: 'Updated'),
+                  ),
                   AdminListTrailingActionsLane(
                     width: resolvedActionsWidth,
                     child: const _StatusesHeaderCell(
@@ -759,6 +793,8 @@ class _StatusesTable extends StatelessWidget {
                     resolvedDescriptionWidth: effectiveDescriptionWidth,
                     resolvedRolesWidth: effectiveRolesWidth,
                     resolvedActiveWidth: resolvedActiveWidth,
+                    resolvedCreatedWidth: resolvedCreatedWidth,
+                    resolvedUpdatedWidth: resolvedUpdatedWidth,
                     resolvedActionsWidth: resolvedActionsWidth,
                   ),
                 ),
@@ -825,6 +861,8 @@ class _StatusTableRow extends StatelessWidget {
     required this.resolvedDescriptionWidth,
     required this.resolvedRolesWidth,
     required this.resolvedActiveWidth,
+    required this.resolvedCreatedWidth,
+    required this.resolvedUpdatedWidth,
     required this.resolvedActionsWidth,
   });
 
@@ -836,6 +874,8 @@ class _StatusTableRow extends StatelessWidget {
   final double resolvedDescriptionWidth;
   final double resolvedRolesWidth;
   final double resolvedActiveWidth;
+  final double resolvedCreatedWidth;
+  final double resolvedUpdatedWidth;
   final double resolvedActionsWidth;
 
   @override
@@ -894,6 +934,26 @@ class _StatusTableRow extends StatelessWidget {
               child: _metaPill(
                 (status.isActive ?? false) ? 'Active' : 'Inactive',
                 isFilled: status.isActive ?? false,
+              ),
+            ),
+          ),
+          _StatusesFixedSlot(
+            width: resolvedCreatedWidth,
+            child: _StatusesBodyCell(
+              child: Text(
+                AdminUsersView.formatCreatedAt(status.createdAt),
+                style: _StatusesStyles.valueStyle,
+                softWrap: true,
+              ),
+            ),
+          ),
+          _StatusesFixedSlot(
+            width: resolvedUpdatedWidth,
+            child: _StatusesBodyCell(
+              child: Text(
+                AdminUsersView.formatUpdatedAt(status.updatedAt),
+                style: _StatusesStyles.valueStyle,
+                softWrap: true,
               ),
             ),
           ),
@@ -993,6 +1053,8 @@ class _StatusResponsiveCard extends StatelessWidget {
             'Roles',
             AdminStatusesView.formatApplicableRoles(status.applicableRoles),
           ),
+          ('Created', AdminUsersView.formatCreatedAt(status.createdAt)),
+          ('Updated', AdminUsersView.formatUpdatedAt(status.updatedAt)),
         ];
         final contentWidths = resolvedFields
             .map(

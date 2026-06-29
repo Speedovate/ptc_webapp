@@ -3,6 +3,7 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/view_models/admin/admin_vehicle_sizes.vm.dart';
+import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
@@ -81,6 +82,12 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
             final sampleActive = filteredSizes
                 .map((item) => (item.isActive ?? false) ? 'Active' : 'Inactive')
                 .fold<String>('Inactive', AdminListMeasurements.longerText);
+            final sampleCreated = filteredSizes
+                .map((item) => AdminUsersView.formatCreatedAt(item.createdAt))
+                .fold<String>('-', AdminListMeasurements.longerText);
+            final sampleUpdated = filteredSizes
+                .map((item) => AdminUsersView.formatUpdatedAt(item.updatedAt))
+                .fold<String>('-', AdminListMeasurements.longerText);
             final idWidth = AdminListMeasurements.maxTextWidth(
               context,
               textScaler,
@@ -111,6 +118,22 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
               'Active',
               _headerStyle,
               sampleActive,
+              _valueStyle,
+            );
+            final createdWidth = AdminListMeasurements.maxTextWidth(
+              context,
+              textScaler,
+              'Created',
+              _headerStyle,
+              sampleCreated,
+              _valueStyle,
+            );
+            final updatedWidth = AdminListMeasurements.maxTextWidth(
+              context,
+              textScaler,
+              'Updated',
+              _headerStyle,
+              sampleUpdated,
               _valueStyle,
             );
             final actionsWidth = AdminListMeasurements.maxValue(
@@ -144,6 +167,18 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
                   extraWidthAllowance: _extraWidthAllowance,
                 ) +
                 12;
+            final resolvedCreatedWidth =
+                AdminListMeasurements.resolvedColumnWidth(
+                  createdWidth,
+                  trailingPadding: _defaultTrailingPadding,
+                  extraWidthAllowance: _extraWidthAllowance,
+                );
+            final resolvedUpdatedWidth =
+                AdminListMeasurements.resolvedColumnWidth(
+                  updatedWidth,
+                  trailingPadding: _defaultTrailingPadding,
+                  extraWidthAllowance: _extraWidthAllowance,
+                );
             final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
 
             return AppPageLoadingOverlay(
@@ -201,6 +236,8 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
                           nameWidth: resolvedNameWidth,
                           slugWidth: resolvedSlugWidth,
                           activeWidth: resolvedActiveWidth,
+                          createdWidth: resolvedCreatedWidth,
+                          updatedWidth: resolvedUpdatedWidth,
                           actionsWidth: resolvedActionsWidth,
                         ),
                       if (useWideTable) const SizedBox(height: 14),
@@ -223,6 +260,8 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
                                         nameWidth: resolvedNameWidth,
                                         slugWidth: resolvedSlugWidth,
                                         activeWidth: resolvedActiveWidth,
+                                        createdWidth: resolvedCreatedWidth,
+                                        updatedWidth: resolvedUpdatedWidth,
                                         actionsWidth: resolvedActionsWidth,
                                       )
                                     : _VehicleSizeResponsiveCard(
@@ -349,6 +388,8 @@ class _VehicleSizeHeaderRow extends StatelessWidget {
     required this.nameWidth,
     required this.slugWidth,
     required this.activeWidth,
+    required this.createdWidth,
+    required this.updatedWidth,
     required this.actionsWidth,
   });
 
@@ -356,6 +397,8 @@ class _VehicleSizeHeaderRow extends StatelessWidget {
   final double nameWidth;
   final double slugWidth;
   final double activeWidth;
+  final double createdWidth;
+  final double updatedWidth;
   final double actionsWidth;
 
   @override
@@ -382,6 +425,14 @@ class _VehicleSizeHeaderRow extends StatelessWidget {
             width: activeWidth,
             child: const AdminListHeaderCell(label: 'Active'),
           ),
+          AdminListFixedSlot(
+            width: createdWidth,
+            child: const AdminListHeaderCell(label: 'Created'),
+          ),
+          AdminListFixedSlot(
+            width: updatedWidth,
+            child: const AdminListHeaderCell(label: 'Updated'),
+          ),
           AdminListTrailingActionsLane(
             width: actionsWidth,
             child: const AdminListHeaderCell(
@@ -404,6 +455,8 @@ class _VehicleSizeDesktopRow extends StatelessWidget {
     required this.nameWidth,
     required this.slugWidth,
     required this.activeWidth,
+    required this.createdWidth,
+    required this.updatedWidth,
     required this.actionsWidth,
   });
 
@@ -412,6 +465,8 @@ class _VehicleSizeDesktopRow extends StatelessWidget {
   final double nameWidth;
   final double slugWidth;
   final double activeWidth;
+  final double createdWidth;
+  final double updatedWidth;
   final double actionsWidth;
 
   @override
@@ -452,6 +507,26 @@ class _VehicleSizeDesktopRow extends StatelessWidget {
               ),
             ),
           ),
+          AdminListFixedSlot(
+            width: createdWidth,
+            child: AdminListBodyCell(
+              child: Text(
+                AdminUsersView.formatCreatedAt(item.createdAt),
+                style: _VehicleSizeStyles.valueStyle,
+                softWrap: true,
+              ),
+            ),
+          ),
+          AdminListFixedSlot(
+            width: updatedWidth,
+            child: AdminListBodyCell(
+              child: Text(
+                AdminUsersView.formatUpdatedAt(item.updatedAt),
+                style: _VehicleSizeStyles.valueStyle,
+                softWrap: true,
+              ),
+            ),
+          ),
           AdminListTrailingActionsLane(
             width: actionsWidth,
             child: AdminListBodyCell(
@@ -488,6 +563,8 @@ class _VehicleSizeResponsiveCard extends StatelessWidget {
             ('ID', item.id ?? '-'),
             ('Name', item.name ?? '-'),
             ('Slug', item.slug ?? '-'),
+            ('Created', AdminUsersView.formatCreatedAt(item.createdAt)),
+            ('Updated', AdminUsersView.formatUpdatedAt(item.updatedAt)),
           ];
 
           return Column(

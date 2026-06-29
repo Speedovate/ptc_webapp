@@ -3,8 +3,10 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/view_models/client/client_booking_history.vm.dart';
 import 'package:webapp/views/shared/booking_workflow_view.dart';
+import 'package:webapp/views/shared/support_center_view.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
@@ -85,6 +87,7 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
                 children: [
                   _BookingDetailHeader(
                     booking: selectedBooking,
+                    user: widget.user,
                     onBack: () {
                       setState(() {
                         _selectedBooking = null;
@@ -622,9 +625,14 @@ class _BookingHistoryCard extends StatelessWidget {
 }
 
 class _BookingDetailHeader extends StatelessWidget {
-  const _BookingDetailHeader({required this.booking, required this.onBack});
+  const _BookingDetailHeader({
+    required this.booking,
+    required this.user,
+    required this.onBack,
+  });
 
   final Booking booking;
+  final UserModel user;
   final VoidCallback onBack;
 
   @override
@@ -650,7 +658,14 @@ class _BookingDetailHeader extends StatelessWidget {
             ),
           ),
         ),
-        BookingSupportButton(onPressed: () => launchBookingSupport(context)),
+        BookingSupportButton(
+          onPressed: () => openSupportDestination(
+            context,
+            user: user,
+            initialTopicKey: supportTopicBooking,
+            initialBookingId: booking.id,
+          ),
+        ),
       ],
     );
   }

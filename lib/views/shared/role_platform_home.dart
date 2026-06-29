@@ -12,12 +12,14 @@ import 'package:webapp/views/client/client_members_view.dart';
 import 'package:webapp/view_models/shared/role_assigned_home.vm.dart';
 import 'package:webapp/view_models/shared/role_platform_home.vm.dart';
 import 'package:webapp/views/shared/profile_view.dart';
+import 'package:webapp/views/shared/support_center_view.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 import 'package:webapp/widgets/shared/platform_shell.dart';
+import 'package:webapp/widgets/shared/support_section_navigation_scope.dart';
 import 'package:webapp/widgets/shared/user_bookings_section.dart';
 import 'package:webapp/widgets/sidebar_menu_item.dart';
 
@@ -45,6 +47,10 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
   late UserModel _shellUser;
   bool _isUploadingProfilePhoto = false;
   bool _isUploadingLicensePhoto = false;
+  String? _supportInitialTopicKey;
+  String? _supportInitialBookingId;
+  String? _supportInitialUserId;
+  int _supportViewTick = 0;
 
   @override
   void initState() {
@@ -138,12 +144,28 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
           onLogout: widget.onLogout,
           logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
           sidebar: _buildSidebar(vm, isCompact: isCompact),
-          body: AppPageLoadingOverlay(
-            isVisible: overlayVisible,
-            message: overlayMessage,
-            child: KeyedSubtree(
-              key: ValueKey(vm.selectedSection),
-              child: _buildSelectedSection(vm.selectedSection),
+          body: SupportSectionNavigationScope(
+            onOpenSupport: ({
+              String? initialTopicKey,
+              String? initialBookingId,
+              String? initialUserId,
+            }) {
+              setState(() {
+                _supportInitialTopicKey = initialTopicKey;
+                _supportInitialBookingId = initialBookingId;
+                _supportInitialUserId = initialUserId;
+                _supportViewTick++;
+                _selectedHistoryBooking = null;
+              });
+              _viewModel.selectSection(RolePlatformSection.support);
+            },
+            child: AppPageLoadingOverlay(
+              isVisible: overlayVisible,
+              message: overlayMessage,
+              child: KeyedSubtree(
+                key: ValueKey(vm.selectedSection),
+                child: _buildSelectedSection(vm.selectedSection),
+              ),
             ),
           ),
         );
@@ -185,6 +207,12 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
             icon: Icons.groups_rounded,
             isCompact: isCompact,
           ),
+        _sectionItem(
+          vm: vm,
+          section: RolePlatformSection.support,
+          icon: Icons.support_agent_rounded,
+          isCompact: isCompact,
+        ),
         _sectionItem(
           vm: vm,
           section: RolePlatformSection.profile,
@@ -257,6 +285,16 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
         },
       ),
       RolePlatformSection.members => ClientMembersView(clientUser: _shellUser),
+      RolePlatformSection.support => SupportCenterView(
+        key: ValueKey(
+          'support:$_supportViewTick:${_supportInitialTopicKey ?? '-'}:${_supportInitialBookingId ?? '-'}:${_supportInitialUserId ?? '-'}',
+        ),
+        user: _shellUser,
+        embedded: true,
+        initialTopicKey: _supportInitialTopicKey,
+        initialBookingId: _supportInitialBookingId,
+        initialUserId: _supportInitialUserId,
+      ),
       RolePlatformSection.profile => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
         child: Column(

@@ -556,14 +556,25 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> saveLibraryField(StatusField field) async {
+    final existingField = _loadedLibraryFieldById(field.id);
+    final now = DateTime.now();
+    final normalizedField = field.copyWith(
+      updatedAt: now,
+      createdAt: field.createdAt ?? now,
+    );
+    if (existingField != null &&
+        _sameLibraryFieldContent(existingField, normalizedField)) {
+      successMessage = 'Nothing changed.';
+      errorMessage = null;
+      notifyListeners();
+      return;
+    }
+
     busyMessage = 'Saving field ...';
     isLoading = true;
     notifyListeners();
     try {
-      final now = DateTime.now();
-      await _repository.saveField(
-        field.copyWith(updatedAt: now, createdAt: field.createdAt ?? now),
-      );
+      await _repository.saveField(normalizedField);
       draftNewField = null;
       await loadForms();
     } finally {
@@ -620,14 +631,25 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> saveStatus(Status status) async {
+    final existingStatus = _loadedStatusById(status.id);
+    final now = DateTime.now();
+    final normalizedStatus = status.copyWith(
+      updatedAt: now,
+      createdAt: status.createdAt ?? now,
+    );
+    if (existingStatus != null &&
+        _sameStatusContent(existingStatus, normalizedStatus)) {
+      successMessage = 'Nothing changed.';
+      errorMessage = null;
+      notifyListeners();
+      return;
+    }
+
     busyMessage = 'Saving status ...';
     isLoading = true;
     notifyListeners();
     try {
-      final now = DateTime.now();
-      await _repository.saveStatus(
-        status.copyWith(updatedAt: now, createdAt: status.createdAt ?? now),
-      );
+      await _repository.saveStatus(normalizedStatus);
       draftNewStatus = null;
       await loadForms();
     } finally {
@@ -951,6 +973,18 @@ class AdminFlowViewModel extends BaseViewModel {
       final normalizedFields = fields.asMap().entries.map((entry) {
         return entry.value.copyWith(sortOrder: entry.key + 1);
       }).toList();
+      final existingForm = _loadedFormById(normalizedForm.id);
+      final existingFields = normalizedForm.id == null
+          ? const <StatusField>[]
+          : (_fieldsByFormId[normalizedForm.id!] ?? const <StatusField>[]);
+
+      if (existingForm != null &&
+          _sameFormContent(existingForm, normalizedForm) &&
+          _sameAssignedFields(existingFields, normalizedFields)) {
+        successMessage = 'Nothing changed.';
+        errorMessage = null;
+        return;
+      }
 
       await _repository.saveStatusForm(normalizedForm);
       await _repository.saveFields(normalizedForm.id ?? '', normalizedFields);
@@ -1059,6 +1093,70 @@ class AdminFlowViewModel extends BaseViewModel {
       (a, b) =>
           _createdAtLatestFirstCompare(a.createdAt, b.createdAt, a.id, b.id),
     );
+  }
+
+  StatusField? _loadedLibraryFieldById(String? fieldId) {
+    if (fieldId == null || fieldId.isEmpty) {
+      return null;
+    }
+    for (final field in fieldLibrary) {
+      if (field.id == fieldId) {
+        return field;
+      }
+    }
+    return null;
+  }
+
+  Status? _loadedStatusById(String? statusId) {
+    if (statusId == null || statusId.isEmpty) {
+      return null;
+    }
+    for (final status in statuses) {
+      if (status.id == statusId) {
+        return status;
+      }
+    }
+    return null;
+  }
+
+  StatusForm? _loadedFormById(String? formId) {
+    if (formId == null || formId.isEmpty) {
+      return null;
+    }
+    for (final form in forms) {
+      if (form.id == formId) {
+        return form;
+      }
+    }
+    return null;
+  }
+
+  bool _sameLibraryFieldContent(StatusField left, StatusField right) {
+    return left.copyWith(updatedAt: null, createdAt: null) ==
+        right.copyWith(updatedAt: null, createdAt: null);
+  }
+
+  bool _sameStatusContent(Status left, Status right) {
+    return left.copyWith(updatedAt: null, createdAt: null) ==
+        right.copyWith(updatedAt: null, createdAt: null);
+  }
+
+  bool _sameFormContent(StatusForm left, StatusForm right) {
+    return left.copyWith(updatedAt: null, createdAt: null, fields: const []) ==
+        right.copyWith(updatedAt: null, createdAt: null, fields: const []);
+  }
+
+  bool _sameAssignedFields(List<StatusField> left, List<StatusField> right) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      if (left[index].copyWith(updatedAt: null, createdAt: null) !=
+          right[index].copyWith(updatedAt: null, createdAt: null)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   int _createdAtLatestFirstCompare(
