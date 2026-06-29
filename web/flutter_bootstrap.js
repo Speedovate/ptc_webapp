@@ -3,7 +3,7 @@
 
 (function () {
   const serviceWorkerVersion =
-    "{{flutter_service_worker_version}}" || String(Date.now());
+    {{flutter_service_worker_version}} || String(Date.now());
 
   _flutter.loader.load({
     serviceWorkerSettings: {
