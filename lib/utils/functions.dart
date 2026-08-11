@@ -2,7 +2,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 
 Map<String, dynamic> documentData(DocumentSnapshot<Map<String, dynamic>> doc) {
-  final data = doc.data() ?? <String, dynamic>{};
+  final rawData = doc.data();
+  final data = <String, dynamic>{};
+  if (rawData != null) {
+    rawData.forEach((key, value) {
+      data[key.toString()] = value;
+    });
+  }
   return <String, dynamic>{
     if (!data.containsKey('id') && doc.id.trim().isNotEmpty) 'id': doc.id,
     ...data,

@@ -7,10 +7,7 @@ const _statusFormUndefined = Object();
 const _statusFieldOverrideUndefined = Object();
 
 class StatusDependency {
-  const StatusDependency({
-    this.statusType,
-    this.statusKey,
-  });
+  const StatusDependency({this.statusType, this.statusKey});
 
   final String? statusType;
   final String? statusKey;
@@ -30,10 +27,7 @@ class StatusDependency {
   }
 
   Map<String, dynamic> toMap() {
-    return {
-      'status_type': statusType,
-      'status_key': statusKey,
-    };
+    return {'status_type': statusType, 'status_key': statusKey};
   }
 
   factory StatusDependency.fromMap(Map<String, dynamic> map) {
@@ -66,10 +60,7 @@ class StatusDependency {
 }
 
 class StatusFieldOverride {
-  const StatusFieldOverride({
-    this.required,
-    this.placeholder,
-  });
+  const StatusFieldOverride({this.required, this.placeholder});
 
   final bool? required;
   final String? placeholder;
@@ -89,10 +80,7 @@ class StatusFieldOverride {
   }
 
   Map<String, dynamic> toMap() {
-    return {
-      'required': required,
-      'placeholder': placeholder,
-    };
+    return {'required': required, 'placeholder': placeholder};
   }
 
   factory StatusFieldOverride.fromMap(Map<String, dynamic> map) {
@@ -237,7 +225,8 @@ class StatusForm {
   factory StatusForm.fromMap(Map<String, dynamic> map) {
     final dependencyMaps = map['dependencies'] as List<dynamic>? ?? const [];
     final fieldMaps = map['fields'] as List<dynamic>? ?? const [];
-    final fieldOverrideMaps = (map['field_overrides'] as Map?)?.map(
+    final fieldOverrideMaps =
+        (map['field_overrides'] as Map?)?.map(
           (key, value) => MapEntry(
             key.toString(),
             StatusFieldOverride.fromMap(
@@ -324,11 +313,11 @@ class StatusForm {
   List<String> get resolvedRoles {
     if (roles.isNotEmpty) {
       return roles
-          .map((item) => item.trim())
+          .map((item) => item.trim().toLowerCase())
           .where((item) => item.isNotEmpty)
           .toList();
     }
-    final trimmedRole = role?.trim();
+    final trimmedRole = role?.trim().toLowerCase();
     if (trimmedRole == null || trimmedRole.isEmpty) {
       return const [];
     }
@@ -379,7 +368,9 @@ class StatusForm {
     buttonText,
     Object.hashAll(fields.map((field) => field.id)),
     Object.hashAll(
-      fieldOverrides.entries.map((entry) => Object.hash(entry.key, entry.value)),
+      fieldOverrides.entries.map(
+        (entry) => Object.hash(entry.key, entry.value),
+      ),
     ),
     Object.hashAll(dependencies),
     blockedMessage,

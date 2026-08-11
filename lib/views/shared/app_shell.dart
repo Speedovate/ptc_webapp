@@ -10,6 +10,7 @@ import 'package:webapp/views/driver/driver_home.dart';
 import 'package:webapp/views/helper/helper_home.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
+import 'package:webapp/widgets/shared/app_sync_status_banner.dart';
 import 'package:webapp/widgets/shared/in_app_browser_guard.dart';
 
 class AppShell extends StatelessWidget {
@@ -69,7 +70,9 @@ class AppShell extends StatelessWidget {
                 },
               );
 
-        return SelectionArea(child: InAppBrowserGuard(child: content));
+        return SelectionArea(
+          child: InAppBrowserGuard(child: AppSyncStatusBanner(child: content)),
+        );
       },
     );
   }

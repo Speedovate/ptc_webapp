@@ -41,12 +41,8 @@ class Status {
   }) {
     return Status(
       id: identical(id, _statusUndefined) ? this.id : id as String?,
-      key: identical(key, _statusUndefined)
-          ? this.key
-          : key as String?,
-      label: identical(label, _statusUndefined)
-          ? this.label
-          : label as String?,
+      key: identical(key, _statusUndefined) ? this.key : key as String?,
+      label: identical(label, _statusUndefined) ? this.label : label as String?,
       description: identical(description, _statusUndefined)
           ? this.description
           : description as String?,
@@ -85,19 +81,17 @@ class Status {
   factory Status.fromMap(Map<String, dynamic> map) {
     return Status(
       id: map['id']?.toString(),
-      key: map['key']?.toString(),
+      key: map['key']?.toString().trim().toLowerCase(),
       label: map['label']?.toString(),
       description: map['description']?.toString(),
       applicableRoles: (map['applicable_roles'] as List<dynamic>? ?? const [])
-          .map((item) => item.toString())
+          .map((item) => item.toString().trim().toLowerCase())
+          .where((item) => item.isNotEmpty)
           .toList(),
-      roleMessages: (map['role_messages'] as Map?)
-              ?.map(
-                (key, value) => MapEntry(
-                  key.toString(),
-                  value?.toString() ?? '',
-                ),
-              ) ??
+      roleMessages:
+          (map['role_messages'] as Map?)?.map(
+            (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+          ) ??
           const {},
       sortOrder: _toInt(map['sort_order']),
       isActive: map['is_active'] as bool?,
@@ -109,9 +103,7 @@ class Status {
   String toJson() => json.encode(toMap());
 
   factory Status.fromJson(String source) {
-    return Status.fromMap(
-      json.decode(source) as Map<String, dynamic>,
-    );
+    return Status.fromMap(json.decode(source) as Map<String, dynamic>);
   }
 
   @override

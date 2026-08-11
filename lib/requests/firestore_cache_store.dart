@@ -120,6 +120,27 @@ class FirestoreCollectionCache {
     final cachedDocuments = await _store.readDocumentMaps(resourceKey);
     final cachedVersion = await _store.readVersion(resourceKey);
     if (cachedDocuments != null) {
+      if (cachedDocuments.isEmpty) {
+        try {
+          final freshDocuments = await fetchDocuments();
+          final remoteVersion = await _tryReadRemoteVersion(resourceKey);
+          final resolvedVersion =
+              remoteVersion ?? _bootstrapVersion(freshDocuments);
+
+          await Future.wait([
+            _store.writeDocumentMaps(resourceKey, freshDocuments),
+            _store.writeVersion(resourceKey, resolvedVersion),
+          ]);
+
+          if (remoteVersion == null) {
+            await _tryWriteRemoteVersion(resourceKey, resolvedVersion);
+          }
+
+          return freshDocuments;
+        } catch (_) {
+          return cachedDocuments;
+        }
+      }
       unawaited(
         _refreshInBackground(
           resourceKey: resourceKey,
@@ -215,6 +236,22 @@ class FirestoreCollectionCache {
     for (final resourceKey in keys) {
       await touch(resourceKey);
     }
+  }
+
+  Future<List<Map<String, dynamic>>?> readDocuments(String resourceKey) {
+    return _store.readDocumentMaps(resourceKey);
+  }
+
+  Future<void> writeDocuments({
+    required String resourceKey,
+    required List<Map<String, dynamic>> documents,
+  }) {
+    return _writeLocalAndRemoteVersion(
+      resourceKey: resourceKey,
+      documents: documents
+          .map((document) => Map<String, dynamic>.from(document))
+          .toList(),
+    );
   }
 
   Future<void> clearResource(String resourceKey) {

@@ -3,6 +3,7 @@ import 'package:webapp/models/support_thread.dart';
 class SupportMessage {
   const SupportMessage({
     this.id,
+    this.localOrderKey,
     this.threadId,
     this.senderUserId,
     this.senderRole,
@@ -15,6 +16,7 @@ class SupportMessage {
   });
 
   final String? id;
+  final String? localOrderKey;
   final String? threadId;
   final String? senderUserId;
   final String? senderRole;
@@ -27,10 +29,12 @@ class SupportMessage {
 
   bool get hasText => text?.trim().isNotEmpty == true;
   bool get hasAttachments => attachments.isNotEmpty;
+  bool get isPendingUpload => (id?.trim().startsWith('local_') ?? false);
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'local_order_key': localOrderKey,
       'thread_id': threadId,
       'sender_user_id': senderUserId,
       'sender_role': senderRole,
@@ -46,20 +50,20 @@ class SupportMessage {
   factory SupportMessage.fromMap(Map<String, dynamic> map) {
     return SupportMessage(
       id: map['id']?.toString(),
+      localOrderKey: map['local_order_key']?.toString(),
       threadId: map['thread_id']?.toString(),
       senderUserId: map['sender_user_id']?.toString(),
       senderRole: map['sender_role']?.toString(),
       senderName: map['sender_name']?.toString(),
       senderPhoto: map['sender_photo']?.toString(),
       text: map['text']?.toString(),
-      attachments:
-          (map['attachments'] as List<dynamic>? ?? const [])
-              .whereType<Map>()
-              .map(
-                (item) =>
-                    SupportAttachment.fromMap(Map<String, dynamic>.from(item)),
-              )
-              .toList(),
+      attachments: (map['attachments'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) =>
+                SupportAttachment.fromMap(Map<String, dynamic>.from(item)),
+          )
+          .toList(),
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),
     );

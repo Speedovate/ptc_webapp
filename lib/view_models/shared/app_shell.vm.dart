@@ -1,14 +1,17 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
-import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
+import 'package:webapp/services/app_warmup_service.dart';
 
 class AppShellViewModel extends BaseViewModel {
   AppShellViewModel({AuthRepository? repository})
     : _repository = repository ?? AuthRequest.instance;
 
   final AuthRepository _repository;
+  final AppWarmupService _warmupService = AppWarmupService.instance;
 
   bool isLoading = true;
   UserModel? currentUser;
@@ -18,14 +21,11 @@ class AppShellViewModel extends BaseViewModel {
     isLoading = true;
     notifyListeners();
     await _repository.initialize();
-    await AuthRequest.instance.migrateSubClientDataOnce();
-    try {
-      await BookingRequest.instance.getBookings();
-    } catch (_) {}
     currentUser = await _repository.getCurrentUser();
     isQuickLoggedIn = await _repository.hasQuickLoginSource();
     isLoading = false;
     notifyListeners();
+    unawaited(_finishInitializationInBackground());
   }
 
   Future<void> refreshCurrentUser() async {
@@ -35,13 +35,18 @@ class AppShellViewModel extends BaseViewModel {
   }
 
   Future<void> completeAuthentication(UserModel user) async {
+    isLoading = true;
     currentUser = user;
     notifyListeners();
     try {
       isQuickLoggedIn = await _repository.hasQuickLoginSource();
-      notifyListeners();
       await refreshCurrentUser();
+      unawaited(_finishInitializationInBackground(userOverride: user));
     } catch (_) {
+      currentUser = await _repository.getCurrentUser();
+      isQuickLoggedIn = await _repository.hasQuickLoginSource();
+    } finally {
+      isLoading = false;
       notifyListeners();
     }
   }
@@ -54,8 +59,23 @@ class AppShellViewModel extends BaseViewModel {
   }
 
   Future<void> goBackFromQuickLogin() async {
+    isLoading = true;
+    notifyListeners();
     currentUser = await _repository.returnToQuickLoginSource();
     isQuickLoggedIn = await _repository.hasQuickLoginSource();
+    isLoading = false;
     notifyListeners();
+    unawaited(_finishInitializationInBackground());
+  }
+
+  Future<void> _finishInitializationInBackground({
+    UserModel? userOverride,
+  }) async {
+    try {
+      await AuthRequest.instance.migrateSubClientDataOnce();
+    } catch (_) {}
+    try {
+      await _warmupService.warmUpForUser(userOverride ?? currentUser);
+    } catch (_) {}
   }
 }

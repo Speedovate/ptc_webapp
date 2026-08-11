@@ -1,7 +1,6 @@
-import 'dart:typed_data';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
@@ -11,6 +10,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/support.request.dart';
+import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
@@ -106,6 +106,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   final AuthRequest _authRequest = AuthRequest.instance;
   final TextEditingController _messageController = TextEditingController();
   final TextEditingController _adminSearchController = TextEditingController();
+  final ScrollController _chatScrollController = ScrollController();
   String _selectedTopicKey = supportTopicBooking;
   String? _selectedBookingId;
   String? _selectedThreadId;
@@ -115,11 +116,12 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   bool _isLoadingAdminUsers = false;
   bool _isLoadingSupportAgent = false;
   bool _isSending = false;
-  bool _showAdminMobileChat = false;
+  bool _showMobileChat = false;
   List<Booking> _accessibleBookings = const [];
   List<UserModel> _adminUsers = const [];
   List<_PendingSupportAttachment> _pendingAttachments = const [];
   String? _pendingInitialAdminUserId;
+  int _chatScrollRequestTick = 0;
 
   bool get _isAdmin => isBackOfficeRole(widget.user.role);
 
@@ -148,7 +150,17 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   void dispose() {
     _messageController.dispose();
     _adminSearchController.dispose();
+    _chatScrollController.dispose();
     super.dispose();
+  }
+
+  void _requestScrollToLatest() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _chatScrollRequestTick += 1;
+    });
   }
 
   Future<void> _loadAccessibleBookings() async {
@@ -182,7 +194,8 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       setState(() {
         _accessibleBookings = filtered;
         final hasSelectedBooking = filtered.any(
-          (booking) => normalizeId(booking.id) == normalizeId(_selectedBookingId),
+          (booking) =>
+              normalizeId(booking.id) == normalizeId(_selectedBookingId),
         );
         if (!hasSelectedBooking) {
           _selectedBookingId = null;
@@ -218,21 +231,21 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         return;
       }
       final currentUserId = normalizeId(widget.user.id);
-      final filtered = users.where((user) {
-        final userId = normalizeId(user.id);
-        return userId != null && userId != currentUserId;
-      }).toList()
-        ..sort((left, right) {
-          final leftName = (left.name ?? '').trim().toLowerCase();
-          final rightName = (right.name ?? '').trim().toLowerCase();
-          final byName = leftName.compareTo(rightName);
-          if (byName != 0) {
-            return byName;
-          }
-          final leftId = normalizeId(left.id) ?? '';
-          final rightId = normalizeId(right.id) ?? '';
-          return leftId.compareTo(rightId);
-        });
+      final filtered =
+          users.where((user) {
+            final userId = normalizeId(user.id);
+            return userId != null && userId != currentUserId;
+          }).toList()..sort((left, right) {
+            final leftName = (left.name ?? '').trim().toLowerCase();
+            final rightName = (right.name ?? '').trim().toLowerCase();
+            final byName = leftName.compareTo(rightName);
+            if (byName != 0) {
+              return byName;
+            }
+            final leftId = normalizeId(left.id) ?? '';
+            final rightId = normalizeId(right.id) ?? '';
+            return leftId.compareTo(rightId);
+          });
       setState(() {
         _adminUsers = filtered;
       });
@@ -276,7 +289,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       return;
     }
     try {
-      final thread = await _supportRequest.ensureAdminDirectThread(
+      final thread = await _supportRequest.findAdminDirectThread(
         targetUser: targetUser,
       );
       if (!mounted) {
@@ -284,12 +297,13 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         return;
       }
       setState(() {
-        _selectedThreadId = thread.id;
-        _selectedAdminDraftUser = null;
+        _selectedThreadId = thread?.id;
+        _selectedAdminDraftUser = thread == null ? targetUser : null;
         _pendingInitialAdminUserId = null;
-        _showAdminMobileChat = true;
+        _showMobileChat = true;
       });
-    } catch (error) {
+      _requestScrollToLatest();
+    } catch (_) {
       if (!mounted) {
         _pendingInitialAdminUserId = null;
         return;
@@ -298,8 +312,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         _selectedThreadId = null;
         _selectedAdminDraftUser = targetUser;
         _pendingInitialAdminUserId = null;
-        _showAdminMobileChat = true;
+        _showMobileChat = true;
       });
+      _requestScrollToLatest();
     }
   }
 
@@ -389,7 +404,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     }
     setState(() {
       _selectedThreadId = thread.id;
+      _showMobileChat = true;
     });
+    _requestScrollToLatest();
   }
 
   Future<void> _sendMessage() async {
@@ -405,9 +422,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     }
 
     String? threadId = normalizeId(_selectedThreadId);
-    if (_isAdmin &&
-        threadId == null &&
-        _selectedAdminDraftUser != null) {
+    if (_isAdmin && threadId == null && _selectedAdminDraftUser != null) {
       try {
         final thread = await _supportRequest.ensureAdminDirectThread(
           targetUser: _selectedAdminDraftUser!,
@@ -420,6 +435,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
           _selectedAdminDraftUser = null;
         });
         threadId = normalizeId(thread.id);
+        _requestScrollToLatest();
       } catch (error) {
         if (!mounted) {
           return;
@@ -445,38 +461,41 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       return;
     }
 
+    final attachmentsToSend = _pendingAttachments
+        .map(
+          (attachment) => QueuedSupportAttachmentInput(
+            bytes: attachment.bytes,
+            fileName: attachment.fileName,
+            mimeType: attachment.mimeType,
+            size: attachment.size,
+          ),
+        )
+        .toList(growable: false);
+    final shouldLockComposer = currentNetworkStatus();
+
     setState(() {
-      _isSending = true;
+      _isSending = shouldLockComposer;
+      _messageController.clear();
+      _pendingAttachments = const [];
     });
+    _requestScrollToLatest();
     try {
       final queuedForSync = await _supportRequest.sendMessageWithAttachments(
         threadId: threadId,
         sender: widget.user,
         text: trimmedMessage,
-        attachments: _pendingAttachments
-            .map(
-              (attachment) => QueuedSupportAttachmentInput(
-                bytes: attachment.bytes,
-                fileName: attachment.fileName,
-                mimeType: attachment.mimeType,
-                size: attachment.size,
-              ),
-            )
-            .toList(),
+        attachments: attachmentsToSend,
       );
       if (!mounted) {
         return;
       }
-      setState(() {
-        _messageController.clear();
-        _pendingAttachments = const [];
-      });
       if (queuedForSync) {
         AppSnackbar.showSuccess(
           context,
           'Message queued. It will send once your internet is back.',
         );
       }
+      _requestScrollToLatest();
     } catch (error) {
       if (!mounted) {
         return;
@@ -488,8 +507,24 @@ class _SupportCenterViewState extends State<SupportCenterView> {
           fallback: 'We could not send the support message right now.',
         ),
       );
+      setState(() {
+        _messageController.text = trimmedMessage;
+        _messageController.selection = TextSelection.collapsed(
+          offset: _messageController.text.length,
+        );
+        _pendingAttachments = attachmentsToSend
+            .map(
+              (attachment) => _PendingSupportAttachment(
+                bytes: attachment.bytes,
+                fileName: attachment.fileName,
+                mimeType: attachment.mimeType,
+                size: attachment.size,
+              ),
+            )
+            .toList(growable: false);
+      });
     } finally {
-      if (mounted) {
+      if (mounted && shouldLockComposer) {
         setState(() {
           _isSending = false;
         });
@@ -508,16 +543,18 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       setState(() {
         _selectedThreadId = existingThread.id;
         _selectedAdminDraftUser = null;
-        _showAdminMobileChat = true;
+        _showMobileChat = true;
       });
+      _requestScrollToLatest();
       return;
     }
 
     setState(() {
       _selectedThreadId = null;
       _selectedAdminDraftUser = user;
-      _showAdminMobileChat = true;
+      _showMobileChat = true;
     });
+    _requestScrollToLatest();
   }
 
   @override
@@ -526,7 +563,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         ? StreamBuilder<List<SupportThread>>(
             stream: _supportRequest.watchAllThreads(),
             builder: (context, snapshot) {
-              final threads = snapshot.data ?? const <SupportThread>[];
+              final threads = (snapshot.data ?? const <SupportThread>[])
+                  .where((thread) => thread.hasConversation)
+                  .toList();
               _selectedThreadId = _resolvedSelectedThreadId(
                 currentSelectedThreadId: _selectedThreadId,
                 threads: threads,
@@ -585,6 +624,8 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     final selectedThread = threads.where((thread) {
       return normalizeId(thread.id) == normalizeId(_selectedThreadId);
     }).firstOrNull;
+    final hasVisibleChatTarget =
+        selectedThread != null || _selectedAdminDraftUser != null;
     return AppPageLoadingOverlay(
       isVisible: isLoading,
       message: 'Loading, please wait ...',
@@ -614,6 +655,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                           setState(() {
                             _selectedThreadId = thread.id;
                             _selectedAdminDraftUser = null;
+                            _showMobileChat = true;
                           });
                         },
                         onSelectUser: (user) {
@@ -624,6 +666,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                         },
                       )
                     : _UserSupportSidebar(
+                        currentUser: widget.user,
                         threads: threads,
                         selectedThreadId: _selectedThreadId,
                         selectedTopicKey: _selectedTopicKey,
@@ -632,6 +675,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                         onSelectThread: (thread) {
                           setState(() {
                             _selectedThreadId = thread.id;
+                            _showMobileChat = true;
                           });
                         },
                         onTopicChanged: (value) {
@@ -665,7 +709,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                   onBack: _isAdmin
                       ? () {
                           setState(() {
-                            _showAdminMobileChat = false;
+                            _showMobileChat = false;
                           });
                         }
                       : null,
@@ -683,6 +727,8 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                   },
                   onSend: _sendMessage,
                   supportRequest: _supportRequest,
+                  scrollController: _chatScrollController,
+                  scrollRequestTick: _chatScrollRequestTick,
                 );
                 return AdminListItemCard(
                   padding: EdgeInsets.zero,
@@ -693,8 +739,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                     ),
                     child: _isAdmin
                         ? () {
-                            final useMobileLayout =
-                                constraints.maxWidth < 760;
+                            final useMobileLayout = constraints.maxWidth < 760;
                             if (useWideLayout) {
                               return Row(
                                 children: [
@@ -725,21 +770,24 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                                       onRemovePendingAttachment: (index) {
                                         setState(() {
                                           final next =
-                                              List<_PendingSupportAttachment>.from(
-                                                _pendingAttachments,
-                                              )..removeAt(index);
+                                              List<
+                                                  _PendingSupportAttachment
+                                                >.from(_pendingAttachments)
+                                                ..removeAt(index);
                                           _pendingAttachments = next;
                                         });
                                       },
                                       onSend: _sendMessage,
                                       supportRequest: _supportRequest,
+                                      scrollController: _chatScrollController,
+                                      scrollRequestTick: _chatScrollRequestTick,
                                     ),
                                   ),
                                 ],
                               );
                             }
                             if (useMobileLayout) {
-                              return _showAdminMobileChat
+                              return _showMobileChat && hasVisibleChatTarget
                                   ? chatPanel
                                   : _SupportSidebarSurface(child: sidebar);
                             }
@@ -747,9 +795,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                               children: [
                                 SizedBox(
                                   height: 320,
-                                  child: _SupportSidebarSurface(
-                                    child: sidebar,
-                                  ),
+                                  child: _SupportSidebarSurface(child: sidebar),
                                 ),
                                 const Divider(
                                   height: 1,
@@ -808,10 +854,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
 }
 
 class _StandaloneSupportHeader extends StatelessWidget {
-  const _StandaloneSupportHeader({
-    required this.title,
-    required this.onBack,
-  });
+  const _StandaloneSupportHeader({required this.title, required this.onBack});
 
   final String title;
   final VoidCallback onBack;
@@ -857,6 +900,7 @@ class _SupportSidebarSurface extends StatelessWidget {
 
 class _UserSupportSidebar extends StatelessWidget {
   const _UserSupportSidebar({
+    required this.currentUser,
     required this.threads,
     required this.selectedThreadId,
     required this.selectedTopicKey,
@@ -868,6 +912,7 @@ class _UserSupportSidebar extends StatelessWidget {
     required this.onOpenThread,
   });
 
+  final UserModel currentUser;
   final List<SupportThread> threads;
   final String? selectedThreadId;
   final String selectedTopicKey;
@@ -882,9 +927,9 @@ class _UserSupportSidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     final grouped = <String, List<SupportThread>>{};
     for (final thread in threads) {
-      grouped.putIfAbsent(thread.resolvedTopicLabel, () => <SupportThread>[]).add(
-        thread,
-      );
+      grouped
+          .putIfAbsent(thread.resolvedTopicLabel, () => <SupportThread>[])
+          .add(thread);
     }
     final topicKeys = grouped.keys.toList()
       ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
@@ -895,9 +940,7 @@ class _UserSupportSidebar extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
           decoration: const BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: AppColors.primaryBorder),
-            ),
+            border: Border(bottom: BorderSide(color: AppColors.primaryBorder)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -968,7 +1011,9 @@ class _UserSupportSidebar extends StatelessWidget {
                         child: Text(
                           topicKey,
                           style: TextStyle(
-                            color: AppColors.primaryColor.withValues(alpha: 0.72),
+                            color: AppColors.primaryColor.withValues(
+                              alpha: 0.72,
+                            ),
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -982,6 +1027,7 @@ class _UserSupportSidebar extends StatelessWidget {
                                 : 8,
                           ),
                           child: _SupportThreadTile(
+                            currentUser: currentUser,
                             thread: thread,
                             isSelected:
                                 normalizeId(thread.id) ==
@@ -990,7 +1036,8 @@ class _UserSupportSidebar extends StatelessWidget {
                           ),
                         );
                       }),
-                      if (topicKey != topicKeys.last) const SizedBox(height: 14),
+                      if (topicKey != topicKeys.last)
+                        const SizedBox(height: 14),
                     ],
                   ],
                 ),
@@ -1029,7 +1076,8 @@ class _AdminSupportThreadList extends StatelessWidget {
     final latestThreadByUserId = <String, SupportThread>{};
     for (final thread in threads) {
       final requesterId = normalizeId(thread.requesterUserId);
-      if (requesterId == null || latestThreadByUserId.containsKey(requesterId)) {
+      if (requesterId == null ||
+          latestThreadByUserId.containsKey(requesterId)) {
         continue;
       }
       latestThreadByUserId[requesterId] = thread;
@@ -1071,21 +1119,15 @@ class _AdminSupportThreadList extends StatelessWidget {
               ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(18),
-                borderSide: const BorderSide(
-                  color: AppColors.primaryBorder,
-                ),
+                borderSide: const BorderSide(color: AppColors.primaryBorder),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(18),
-                borderSide: const BorderSide(
-                  color: AppColors.primaryBorder,
-                ),
+                borderSide: const BorderSide(color: AppColors.primaryBorder),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(18),
-                borderSide: const BorderSide(
-                  color: AppColors.primaryColor,
-                ),
+                borderSide: const BorderSide(color: AppColors.primaryColor),
               ),
             ),
           ),
@@ -1119,6 +1161,7 @@ class _AdminSupportThreadList extends StatelessWidget {
                               normalizeId(thread.id) ==
                                   normalizeId(selectedThreadId);
                           return _SupportUserThreadTile(
+                            currentUser: currentUser,
                             user: user,
                             thread: thread,
                             isSelected: isSelected,
@@ -1140,6 +1183,7 @@ class _AdminSupportThreadList extends StatelessWidget {
                   itemBuilder: (context, index) {
                     final thread = threads[index];
                     return _SupportThreadTile(
+                      currentUser: currentUser,
                       thread: thread,
                       isSelected:
                           normalizeId(thread.id) ==
@@ -1156,12 +1200,14 @@ class _AdminSupportThreadList extends StatelessWidget {
 
 class _SupportUserThreadTile extends StatelessWidget {
   const _SupportUserThreadTile({
+    required this.currentUser,
     required this.user,
     required this.thread,
     required this.isSelected,
     required this.onTap,
   });
 
+  final UserModel currentUser;
   final UserModel user;
   final SupportThread? thread;
   final bool isSelected;
@@ -1172,17 +1218,29 @@ class _SupportUserThreadTile extends StatelessWidget {
     final title = (user.name ?? '').trim().isNotEmpty
         ? user.name!.trim()
         : 'User';
+    final previewText = thread == null
+        ? null
+        : _supportThreadPreviewText(
+            thread: thread!,
+            currentUserId: normalizeId(currentUser.id),
+          );
     final subtitleParts = <String>[
       humanizeDropdownValue(user.role),
-      if (thread?.lastMessageText?.trim().isNotEmpty == true)
-        thread!.lastMessageText!.trim(),
+      if (previewText?.isNotEmpty == true) previewText!,
     ];
     final subtitle = subtitleParts.join(' • ');
     final trailingTime = thread == null
         ? null
-        : _supportTimeLabel(
+        : _supportThreadListTimestamp(
             thread!.updatedAt ?? thread!.lastMessageAt ?? thread!.createdAt,
           );
+    final showUnreadDot =
+        thread != null &&
+        !isSelected &&
+        _supportThreadHasUnreadLikeState(
+          thread: thread!,
+          currentUserId: normalizeId(currentUser.id),
+        );
     return AppMousePressable(
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
@@ -1226,28 +1284,49 @@ class _SupportUserThreadTile extends StatelessWidget {
                           ),
                         ),
                       ),
+                      if (showUnreadDot) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.primaryColor.withValues(
+                              alpha: 0.72,
+                            ),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                       if (trailingTime != null) ...[
                         const SizedBox(width: 8),
                         Text(
                           trailingTime,
                           style: TextStyle(
-                            color: AppColors.primaryColor.withValues(alpha: 0.6),
+                            color: AppColors.primaryColor.withValues(
+                              alpha: 0.6,
+                            ),
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
                       ],
                     ],
-                  ),
-                  Text(
-                    subtitle,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: AppColors.primaryColor.withValues(alpha: 0.72),
-                      fontWeight: FontWeight.w600,
-                      height: 1.0,
-                    ),
                   ),
                 ],
               ),
@@ -1261,11 +1340,13 @@ class _SupportUserThreadTile extends StatelessWidget {
 
 class _SupportThreadTile extends StatelessWidget {
   const _SupportThreadTile({
+    required this.currentUser,
     required this.thread,
     required this.isSelected,
     required this.onTap,
   });
 
+  final UserModel currentUser;
   final SupportThread thread;
   final bool isSelected;
   final VoidCallback onTap;
@@ -1277,7 +1358,19 @@ class _SupportThreadTile extends StatelessWidget {
         : (thread.bookingLabel?.trim().isNotEmpty == true
               ? thread.bookingLabel!.trim()
               : 'Support Chat');
-    final subtitle = thread.lastMessageText?.trim() ?? '';
+    final subtitle = _supportThreadPreviewText(
+      thread: thread,
+      currentUserId: normalizeId(currentUser.id),
+    );
+    final trailingTime = _supportThreadListTimestamp(
+      thread.updatedAt ?? thread.lastMessageAt ?? thread.createdAt,
+    );
+    final showUnreadDot =
+        !isSelected &&
+        _supportThreadHasUnreadLikeState(
+          thread: thread,
+          currentUserId: normalizeId(currentUser.id),
+        );
     return AppMousePressable(
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
@@ -1320,30 +1413,49 @@ class _SupportThreadTile extends StatelessWidget {
                           ),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        _supportTimeLabel(
-                          thread.updatedAt ??
-                              thread.lastMessageAt ??
-                              thread.createdAt,
+                      if (showUnreadDot) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
                         ),
-                        style: TextStyle(
-                          color: AppColors.primaryColor.withValues(alpha: 0.6),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
+                      ],
                     ],
                   ),
-                  Text(
-                    subtitle,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: AppColors.primaryColor.withValues(alpha: 0.72),
-                      fontWeight: FontWeight.w600,
-                      height: 1.0,
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.primaryColor.withValues(
+                              alpha: 0.72,
+                            ),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (trailingTime.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          trailingTime,
+                          style: TextStyle(
+                            color: AppColors.primaryColor.withValues(
+                              alpha: 0.6,
+                            ),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
@@ -1355,7 +1467,7 @@ class _SupportThreadTile extends StatelessWidget {
   }
 }
 
-class _SupportChatPanel extends StatelessWidget {
+class _SupportChatPanel extends StatefulWidget {
   const _SupportChatPanel({
     super.key,
     required this.currentUser,
@@ -1371,6 +1483,8 @@ class _SupportChatPanel extends StatelessWidget {
     required this.onRemovePendingAttachment,
     required this.onSend,
     required this.supportRequest,
+    required this.scrollController,
+    required this.scrollRequestTick,
   });
 
   final UserModel currentUser;
@@ -1386,24 +1500,79 @@ class _SupportChatPanel extends StatelessWidget {
   final ValueChanged<int> onRemovePendingAttachment;
   final Future<void> Function() onSend;
   final SupportRequest supportRequest;
+  final ScrollController scrollController;
+  final int scrollRequestTick;
+
+  @override
+  State<_SupportChatPanel> createState() => _SupportChatPanelState();
+}
+
+class _SupportChatPanelState extends State<_SupportChatPanel> {
+  int _lastMessageCount = 0;
+  int _lastScrollRequestTick = 0;
+  String? _lastLatestMessageSignature;
+
+  @override
+  void initState() {
+    super.initState();
+    _lastScrollRequestTick = widget.scrollRequestTick;
+  }
+
+  @override
+  void didUpdateWidget(covariant _SupportChatPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.scrollRequestTick != _lastScrollRequestTick) {
+      _lastScrollRequestTick = widget.scrollRequestTick;
+      _scheduleScrollToLatest();
+    }
+  }
+
+  void _scheduleScrollToLatest() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _scrollToLatest();
+      Future<void>.delayed(const Duration(milliseconds: 120), () {
+        if (!mounted) {
+          return;
+        }
+        _scrollToLatest();
+      });
+    });
+  }
+
+  void _scrollToLatest() {
+    if (!widget.scrollController.hasClients) {
+      return;
+    }
+    final position = widget.scrollController.position;
+    widget.scrollController.animateTo(
+      position.maxScrollExtent,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (thread == null && draftUser == null) {
+    final canCompose = !widget.isSending || !currentNetworkStatus();
+    if (widget.thread == null && widget.draftUser == null) {
       return const SizedBox.shrink();
     }
 
-    final activeTitle = counterpartUser?.name?.trim().isNotEmpty == true
-        ? counterpartUser!.name!.trim()
-        : thread != null
-        ? _threadTitle(thread!, currentUser)
-        : ((draftUser?.name ?? '').trim().isNotEmpty
-              ? draftUser!.name!.trim()
+    final activeTitle = widget.counterpartUser?.name?.trim().isNotEmpty == true
+        ? widget.counterpartUser!.name!.trim()
+        : widget.thread != null
+        ? _threadTitle(widget.thread!, widget.currentUser)
+        : ((widget.draftUser?.name ?? '').trim().isNotEmpty
+              ? widget.draftUser!.name!.trim()
               : 'Support Chat');
-    final activeSubtitle = subtitleOverride ??
-        (thread != null
-        ? _threadSubtitle(thread!)
-        : humanizeDropdownValue(draftUser?.role));
+    final activeSubtitle =
+        widget.subtitleOverride ??
+        (widget.thread != null
+            ? _threadSubtitle(widget.thread!)
+            : humanizeDropdownValue(widget.draftUser?.role));
 
     return Container(
       color: Colors.white,
@@ -1419,9 +1588,9 @@ class _SupportChatPanel extends StatelessWidget {
             ),
             child: Row(
               children: [
-                if (onBack != null) ...[
+                if (widget.onBack != null) ...[
                   IconButton(
-                    onPressed: onBack,
+                    onPressed: widget.onBack,
                     icon: const Icon(Icons.arrow_back_rounded),
                     color: AppColors.primaryColor,
                     splashRadius: 20,
@@ -1437,9 +1606,9 @@ class _SupportChatPanel extends StatelessWidget {
                 AppProfileAvatar(
                   radius: 22,
                   photo:
-                      counterpartUser?.photo ??
-                      thread?.requesterPhoto ??
-                      draftUser?.photo,
+                      widget.counterpartUser?.photo ??
+                      widget.thread?.requesterPhoto ??
+                      widget.draftUser?.photo,
                   fallbackText: _supportInitials(activeTitle),
                 ),
                 const SizedBox(width: 14),
@@ -1470,7 +1639,7 @@ class _SupportChatPanel extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: thread == null
+            child: widget.thread == null
                 ? const ColoredBox(
                     color: Color(0xFFF8F7FC),
                     child: Center(
@@ -1481,9 +1650,23 @@ class _SupportChatPanel extends StatelessWidget {
                     ),
                   )
                 : StreamBuilder<List<SupportMessage>>(
-                    stream: supportRequest.watchMessages(thread!.id ?? ''),
+                    key: ValueKey('messages:${widget.thread!.id ?? ''}'),
+                    stream: widget.supportRequest.watchMessages(
+                      widget.thread!.id ?? '',
+                    ),
                     builder: (context, snapshot) {
-                      final messages = snapshot.data ?? const <SupportMessage>[];
+                      final messages =
+                          snapshot.data ?? const <SupportMessage>[];
+                      final latestMessageSignature = messages.isEmpty
+                          ? null
+                          : _supportMessageSignature(messages.last);
+                      if (messages.length != _lastMessageCount ||
+                          latestMessageSignature !=
+                              _lastLatestMessageSignature) {
+                        _lastMessageCount = messages.length;
+                        _lastLatestMessageSignature = latestMessageSignature;
+                        _scheduleScrollToLatest();
+                      }
                       if (messages.isEmpty) {
                         return const Center(
                           child: AdminListStateText(
@@ -1495,19 +1678,41 @@ class _SupportChatPanel extends StatelessWidget {
                       return Container(
                         color: const Color(0xFFF8F7FC),
                         child: ListView.builder(
+                          controller: widget.scrollController,
                           padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
                           itemCount: messages.length,
                           itemBuilder: (context, index) {
                             final message = messages[index];
-                            final isMine = normalizeId(message.senderUserId) ==
-                                normalizeId(currentUser.id);
+                            final isMine =
+                                normalizeId(message.senderUserId) ==
+                                normalizeId(widget.currentUser.id);
                             return Padding(
                               padding: EdgeInsets.only(
                                 bottom: index == messages.length - 1 ? 0 : 12,
                               ),
                               child: _SupportMessageBubble(
+                                currentUser: widget.currentUser,
+                                primaryCounterpartUserId:
+                                    widget.counterpartUser?.id ??
+                                    widget.thread?.requesterUserId ??
+                                    widget.draftUser?.id,
                                 message: message,
                                 isMine: isMine,
+                                showSenderMeta:
+                                    _shouldShowSupportMessageSenderMeta(
+                                      messages: messages,
+                                      index: index,
+                                      currentUser: widget.currentUser,
+                                      primaryCounterpartUserId:
+                                          widget.counterpartUser?.id ??
+                                          widget.thread?.requesterUserId ??
+                                          widget.draftUser?.id,
+                                    ),
+                                showTimestamp:
+                                    _shouldShowSupportMessageTimestamp(
+                                      messages: messages,
+                                      index: index,
+                                    ),
                               ),
                             );
                           },
@@ -1519,21 +1724,22 @@ class _SupportChatPanel extends StatelessWidget {
           Container(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
             decoration: const BoxDecoration(
-              border: Border(
-                top: BorderSide(color: AppColors.primaryBorder),
-              ),
+              border: Border(top: BorderSide(color: AppColors.primaryBorder)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (pendingAttachments.isNotEmpty) ...[
+                if (widget.pendingAttachments.isNotEmpty) ...[
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
-                    children: pendingAttachments.asMap().entries.map((entry) {
+                    children: widget.pendingAttachments.asMap().entries.map((
+                      entry,
+                    ) {
                       return _PendingAttachmentChip(
                         fileName: entry.value.fileName,
-                        onRemove: () => onRemovePendingAttachment(entry.key),
+                        onRemove: () =>
+                            widget.onRemovePendingAttachment(entry.key),
                       );
                     }).toList(),
                   ),
@@ -1543,48 +1749,65 @@ class _SupportChatPanel extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     IconButton(
-                      onPressed: isSending ? null : onPickAttachments,
+                      onPressed: canCompose ? widget.onPickAttachments : null,
                       icon: const Icon(Icons.attach_file_rounded),
                       color: AppColors.primaryColor,
                     ),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: TextField(
-                        controller: messageController,
-                        minLines: 1,
-                        maxLines: 4,
-                        decoration: InputDecoration(
-                          hintText: 'Type your message',
-                          filled: true,
-                          fillColor: AppColors.primarySurface,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(18),
-                            borderSide: const BorderSide(
-                              color: AppColors.primaryBorder,
+                      child: Focus(
+                        onKeyEvent: (node, event) {
+                          final isEnter =
+                              event.logicalKey == LogicalKeyboardKey.enter ||
+                              event.logicalKey ==
+                                  LogicalKeyboardKey.numpadEnter;
+                          if (event is KeyDownEvent &&
+                              isEnter &&
+                              !HardwareKeyboard.instance.isShiftPressed) {
+                            if (canCompose) {
+                              widget.onSend();
+                            }
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
+                        child: TextField(
+                          controller: widget.messageController,
+                          minLines: 1,
+                          maxLines: 4,
+                          decoration: InputDecoration(
+                            hintText: 'Type your message',
+                            filled: true,
+                            fillColor: AppColors.primarySurface,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(18),
+                              borderSide: const BorderSide(
+                                color: AppColors.primaryBorder,
+                              ),
                             ),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(18),
-                            borderSide: const BorderSide(
-                              color: AppColors.primaryBorder,
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(18),
+                              borderSide: const BorderSide(
+                                color: AppColors.primaryBorder,
+                              ),
                             ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(18),
-                            borderSide: const BorderSide(
-                              color: AppColors.primaryColor,
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(18),
+                              borderSide: const BorderSide(
+                                color: AppColors.primaryColor,
+                              ),
                             ),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 16,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 16,
+                            ),
                           ),
                         ),
                       ),
                     ),
                     const SizedBox(width: 10),
                     FilledButton(
-                      onPressed: isSending ? null : onSend,
+                      onPressed: canCompose ? widget.onSend : null,
                       style: FilledButton.styleFrom(
                         backgroundColor: AppColors.primaryColor,
                         foregroundColor: Colors.white,
@@ -1596,7 +1819,7 @@ class _SupportChatPanel extends StatelessWidget {
                           borderRadius: BorderRadius.circular(18),
                         ),
                       ),
-                      child: Text(isSending ? 'Sending ...' : 'Send'),
+                      child: const Text('Send'),
                     ),
                   ],
                 ),
@@ -1610,7 +1833,7 @@ class _SupportChatPanel extends StatelessWidget {
 
   static String _threadTitle(SupportThread thread, UserModel currentUser) {
     final requesterName = thread.requesterName?.trim();
-    if (normalizeRoleKey(currentUser.role) == 'admin' &&
+    if (isBackOfficeRole(currentUser.role) &&
         requesterName != null &&
         requesterName.isNotEmpty) {
       return requesterName;
@@ -1628,12 +1851,20 @@ class _SupportChatPanel extends StatelessWidget {
 
 class _SupportMessageBubble extends StatelessWidget {
   const _SupportMessageBubble({
+    required this.currentUser,
+    required this.primaryCounterpartUserId,
     required this.message,
     required this.isMine,
+    required this.showSenderMeta,
+    required this.showTimestamp,
   });
 
+  final UserModel currentUser;
+  final String? primaryCounterpartUserId;
   final SupportMessage message;
   final bool isMine;
+  final bool showSenderMeta;
+  final bool showTimestamp;
 
   @override
   Widget build(BuildContext context) {
@@ -1649,56 +1880,110 @@ class _SupportMessageBubble extends StatelessWidget {
         .where((attachment) => !attachment.isImage)
         .toList(growable: false);
     final hasBubbleContent = hasText || fileAttachments.isNotEmpty;
+    final timestamp = showTimestamp
+        ? _supportMessageTimestampForBubble(message)
+        : '';
+    final normalizedPrimaryCounterpartId = normalizeId(
+      primaryCounterpartUserId,
+    );
+    final normalizedSenderId = normalizeId(message.senderUserId);
+    final canShowSenderMeta =
+        !isMine &&
+        normalizedSenderId != null &&
+        normalizedPrimaryCounterpartId != null &&
+        normalizedSenderId != normalizedPrimaryCounterpartId;
+    final senderName = (message.senderName?.trim().isNotEmpty == true)
+        ? _supportShortPersonName(message.senderName!)
+        : (() {
+            final fallback = humanizeDropdownValue(message.senderRole);
+            return fallback.trim().isNotEmpty ? fallback : 'Support';
+          })();
+    final senderRoleLabel = humanizeDropdownValue(message.senderRole).trim();
+    final senderMetaLabel = senderRoleLabel.isNotEmpty
+        ? '$senderName | $senderRoleLabel'
+        : senderName;
 
     return Align(
       alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
         child: Column(
-          crossAxisAlignment:
-              isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          crossAxisAlignment: isMine
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
           children: [
-            if (hasBubbleContent)
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: bubbleColor,
-                  borderRadius: BorderRadius.circular(18),
-                  border: isMine
-                      ? null
-                      : Border.all(color: AppColors.primaryBorder),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (hasText)
-                      Text(
-                        message.text!.trim(),
-                        style: TextStyle(
-                          color: textColor,
-                          height: 1.35,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    if (fileAttachments.isNotEmpty) ...[
-                      if (hasText) const SizedBox(height: 10),
-                      ...fileAttachments.asMap().entries.map((entry) {
-                        return Padding(
-                          padding: EdgeInsets.only(
-                            bottom: entry.key == fileAttachments.length - 1
-                                ? 0
-                                : 10,
-                          ),
-                          child: _SupportAttachmentCard(
-                            attachment: entry.value,
-                            lightText: isMine,
-                          ),
-                        );
-                      }),
-                    ],
-                  ],
+            if (canShowSenderMeta && showSenderMeta) ...[
+              Text(
+                senderMetaLabel,
+                style: TextStyle(
+                  color: AppColors.primaryColor.withValues(alpha: 0.82),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
+              const SizedBox(height: 6),
+            ],
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (canShowSenderMeta) ...[
+                  AppProfileAvatar(
+                    radius: 16,
+                    photo: message.senderPhoto,
+                    fallbackText: _supportInitials(senderName),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                if (hasBubbleContent)
+                  Flexible(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: bubbleColor,
+                        borderRadius: BorderRadius.circular(18),
+                        border: isMine
+                            ? null
+                            : Border.all(color: AppColors.primaryBorder),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (hasText)
+                            Text(
+                              message.text!.trim(),
+                              style: TextStyle(
+                                color: textColor,
+                                height: 1.35,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          if (fileAttachments.isNotEmpty) ...[
+                            if (hasText) const SizedBox(height: 10),
+                            ...fileAttachments.asMap().entries.map((entry) {
+                              return Padding(
+                                padding: EdgeInsets.only(
+                                  bottom:
+                                      entry.key == fileAttachments.length - 1
+                                      ? 0
+                                      : 10,
+                                ),
+                                child: _SupportAttachmentCard(
+                                  attachment: entry.value,
+                                  lightText: isMine,
+                                ),
+                              );
+                            }),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
             if (imageAttachments.isNotEmpty) ...[
               if (hasBubbleContent) const SizedBox(height: 10),
               ...imageAttachments.asMap().entries.map((entry) {
@@ -1712,6 +1997,20 @@ class _SupportMessageBubble extends StatelessWidget {
                   ),
                 );
               }),
+            ],
+            if (timestamp.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text(
+                  timestamp,
+                  style: TextStyle(
+                    color: AppColors.primaryColor.withValues(alpha: 0.64),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
             ],
           ],
         ),
@@ -1797,10 +2096,7 @@ class _SupportAttachmentCard extends StatelessWidget {
               attachment.name?.trim().isNotEmpty == true
                   ? attachment.name!.trim()
                   : 'Attachment',
-              style: TextStyle(
-                color: textColor,
-                fontWeight: FontWeight.w700,
-              ),
+              style: TextStyle(color: textColor, fontWeight: FontWeight.w700),
             ),
           ],
         ),
@@ -1921,24 +2217,33 @@ class _SupportBookingDropdown extends StatelessWidget {
   }
 }
 
-List<Booking> _accessibleBookingsForUser(UserModel user, List<Booking> allBookings) {
+List<Booking> _accessibleBookingsForUser(
+  UserModel user,
+  List<Booking> allBookings,
+) {
   final currentUserId = normalizeId(user.id) ?? '';
   final effectiveClientId = isSubClientRole(user.role)
       ? (normalizeId(user.parentClientId) ?? currentUserId)
       : currentUserId;
   return switch (normalizeRoleKey(user.role)) {
-    'client' => allBookings
-        .where((booking) => normalizeId(booking.client?.id) == currentUserId)
-        .toList(),
-    'sub-client' => allBookings
-        .where((booking) => normalizeId(booking.client?.id) == effectiveClientId)
-        .toList(),
-    'driver' => allBookings
-        .where((booking) => normalizeId(booking.driver?.id) == currentUserId)
-        .toList(),
-    'helper' => allBookings
-        .where((booking) => normalizeId(booking.helper?.id) == currentUserId)
-        .toList(),
+    'client' =>
+      allBookings
+          .where((booking) => normalizeId(booking.client?.id) == currentUserId)
+          .toList(),
+    'sub-client' =>
+      allBookings
+          .where(
+            (booking) => normalizeId(booking.client?.id) == effectiveClientId,
+          )
+          .toList(),
+    'driver' =>
+      allBookings
+          .where((booking) => normalizeId(booking.driver?.id) == currentUserId)
+          .toList(),
+    'helper' =>
+      allBookings
+          .where((booking) => normalizeId(booking.helper?.id) == currentUserId)
+          .toList(),
     _ => const <Booking>[],
   };
 }
@@ -1968,6 +2273,98 @@ String _supportInitials(String value) {
   return parts.map((part) => part.substring(0, 1).toUpperCase()).join();
 }
 
+String _supportShortPersonName(String value) {
+  final parts = value
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((part) => part.isNotEmpty)
+      .toList();
+  if (parts.isEmpty) {
+    return 'Support';
+  }
+  if (parts.length == 1) {
+    return toTitleCase(parts.first);
+  }
+  final firstName = toTitleCase(parts.first);
+  final lastInitial = parts.last.substring(0, 1).toUpperCase();
+  return '$firstName $lastInitial.';
+}
+
+String _supportThreadPreviewText({
+  required SupportThread thread,
+  required String? currentUserId,
+}) {
+  final preview = _supportSingleLineText(thread.lastMessageText);
+  if (preview.isEmpty) {
+    return '';
+  }
+  if (normalizeId(thread.lastSenderUserId) == currentUserId) {
+    return 'You: $preview';
+  }
+  return preview;
+}
+
+String _supportSingleLineText(String? value) {
+  if (value == null) {
+    return '';
+  }
+  return value.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+bool _shouldShowSupportMessageTimestamp({
+  required List<SupportMessage> messages,
+  required int index,
+}) {
+  if (index < 0 || index >= messages.length) {
+    return false;
+  }
+  if (messages[index].isPendingUpload) {
+    return true;
+  }
+  final currentLabel = _supportMessageTimestampForBubble(messages[index]);
+  if (currentLabel.isEmpty) {
+    return false;
+  }
+  if (index == messages.length - 1) {
+    return true;
+  }
+  final nextLabel = _supportMessageTimestampForBubble(messages[index + 1]);
+  return currentLabel != nextLabel;
+}
+
+bool _supportThreadHasUnreadLikeState({
+  required SupportThread thread,
+  required String? currentUserId,
+}) {
+  final senderId = normalizeId(thread.lastSenderUserId);
+  return senderId != null &&
+      currentUserId != null &&
+      senderId != currentUserId &&
+      (thread.lastMessageText?.trim().isNotEmpty == true);
+}
+
+bool _shouldShowSupportMessageSenderMeta({
+  required List<SupportMessage> messages,
+  required int index,
+  required UserModel currentUser,
+  required String? primaryCounterpartUserId,
+}) {
+  final message = messages[index];
+  final currentUserId = normalizeId(currentUser.id);
+  final senderId = normalizeId(message.senderUserId);
+  final counterpartId = normalizeId(primaryCounterpartUserId);
+  if (senderId == null ||
+      senderId == currentUserId ||
+      senderId == counterpartId) {
+    return false;
+  }
+  if (index == 0) {
+    return true;
+  }
+  final previousSenderId = normalizeId(messages[index - 1].senderUserId);
+  return previousSenderId != senderId;
+}
+
 String _supportTimeLabel(DateTime? value) {
   if (value == null) {
     return '';
@@ -1977,6 +2374,67 @@ String _supportTimeLabel(DateTime? value) {
   final minute = local.minute.toString().padLeft(2, '0');
   final suffix = local.hour >= 12 ? 'PM' : 'AM';
   return '$hour:$minute $suffix';
+}
+
+String _supportThreadListTimestamp(DateTime? value) {
+  if (value == null) {
+    return '';
+  }
+  return _supportMessageTimestampLabel(value);
+}
+
+String _supportMessageTimestampForBubble(SupportMessage message) {
+  if (message.isPendingUpload) {
+    return 'Sending';
+  }
+  return _supportMessageTimestampLabel(message.createdAt ?? message.updatedAt);
+}
+
+String _supportMessageSignature(SupportMessage message) {
+  return [
+    message.id?.trim() ?? '',
+    message.localOrderKey?.trim() ?? '',
+    message.senderUserId?.trim() ?? '',
+    message.createdAt?.toIso8601String() ?? '',
+    message.updatedAt?.toIso8601String() ?? '',
+    message.text?.trim() ?? '',
+    '${message.attachments.length}',
+  ].join('|');
+}
+
+String _supportMessageTimestampLabel(DateTime? value) {
+  if (value == null) {
+    return '';
+  }
+  final local = value.toLocal();
+  final now = DateTime.now();
+  final localDate = DateTime(local.year, local.month, local.day);
+  final todayDate = DateTime(now.year, now.month, now.day);
+  final difference = todayDate.difference(localDate).inDays;
+  final time = _supportTimeLabel(local);
+  if (difference == 0) {
+    return time;
+  }
+  final month = _monthLabel(local.month);
+  return '$month ${local.day}, ${local.year} $time';
+}
+
+String _monthLabel(int month) {
+  return switch (month) {
+    1 => 'Jan',
+    2 => 'Feb',
+    3 => 'Mar',
+    4 => 'Apr',
+    5 => 'May',
+    6 => 'Jun',
+    7 => 'Jul',
+    8 => 'Aug',
+    9 => 'Sep',
+    10 => 'Oct',
+    11 => 'Nov',
+    12 => 'Dec',
+    _ => '',
+  };
 }
 
 String? _fileMimeTypeFromExtension(String extension) {

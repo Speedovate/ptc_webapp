@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'app_cached_network_image_online_listener.dart';
 
@@ -66,8 +67,13 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
 
   void _handleError(Object error) {
     if (!_hasError && mounted) {
-      setState(() {
-        _hasError = true;
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _hasError) {
+          return;
+        }
+        setState(() {
+          _hasError = true;
+        });
       });
     }
   }

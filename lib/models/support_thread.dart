@@ -136,13 +136,18 @@ class SupportThread {
   final DateTime? updatedAt;
   final bool? isActive;
 
-  String get resolvedTopicLabel =>
-      topicLabel?.trim().isNotEmpty == true
-          ? topicLabel!.trim()
-          : supportTopicLabel(topicKey);
+  String get resolvedTopicLabel => topicLabel?.trim().isNotEmpty == true
+      ? topicLabel!.trim()
+      : supportTopicLabel(topicKey);
 
   bool get isBookingThread =>
       (topicKey ?? '').trim().toLowerCase() == supportTopicBooking;
+
+  bool get hasConversation {
+    return (lastMessageText?.trim().isNotEmpty == true) ||
+        (lastSenderUserId?.trim().isNotEmpty == true) ||
+        (lastMessageAt != null);
+  }
 
   SupportThread copyWith({
     String? id,

@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:webapp/services/image_upload_processor.dart';
+import 'package:webapp/services/network_status_events.dart';
+import 'package:webapp/services/offline_cleanup_queue_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class PhotoStorageService {
@@ -13,6 +15,8 @@ class PhotoStorageService {
   final FirebaseStorage _storage;
   final ImageUploadProcessor _imageUploadProcessor =
       ImageUploadProcessor.instance;
+  final OfflineCleanupQueueService _offlineCleanupQueueService =
+      OfflineCleanupQueueService.instance;
 
   Future<Map<String, dynamic>> uploadBookingPhoto({
     required Uint8List bytes,
@@ -133,12 +137,35 @@ class PhotoStorageService {
     if (normalized == null || normalized.isEmpty) {
       return;
     }
+    if (!currentNetworkStatus()) {
+      await _offlineCleanupQueueService.queueDeleteByPath(normalized);
+      return;
+    }
     try {
       await _storage.ref(normalized).delete();
     } on FirebaseException catch (error) {
-      if (error.code != 'object-not-found') {
-        rethrow;
+      if (error.code == 'object-not-found') {
+        return;
       }
+      final normalizedError = userFacingErrorMessage(
+        error,
+        fallback: 'We could not delete the photo right now.',
+      ).toLowerCase();
+      if (_isRetryableCleanupError(normalizedError)) {
+        await _offlineCleanupQueueService.queueDeleteByPath(normalized);
+        return;
+      }
+      rethrow;
+    } catch (error) {
+      final normalizedError = normalizeUserErrorText(
+        error.toString(),
+        fallback: 'We could not delete the photo right now.',
+      ).toLowerCase();
+      if (_isRetryableCleanupError(normalizedError)) {
+        await _offlineCleanupQueueService.queueDeleteByPath(normalized);
+        return;
+      }
+      rethrow;
     }
   }
 
@@ -147,7 +174,42 @@ class PhotoStorageService {
     if (normalizedUserId == null || normalizedUserId.isEmpty) {
       return;
     }
-    await _deleteFolderRecursively('users/$normalizedUserId');
+    final folderPath = 'users/$normalizedUserId';
+    if (!currentNetworkStatus()) {
+      await _offlineCleanupQueueService.queueDeleteFolder(folderPath);
+      return;
+    }
+    try {
+      await _deleteFolderRecursively(folderPath);
+    } on FirebaseException catch (error) {
+      final normalizedError = userFacingErrorMessage(
+        error,
+        fallback: 'We could not delete the user assets right now.',
+      ).toLowerCase();
+      if (_isRetryableCleanupError(normalizedError)) {
+        await _offlineCleanupQueueService.queueDeleteFolder(folderPath);
+        return;
+      }
+      rethrow;
+    } catch (error) {
+      final normalizedError = normalizeUserErrorText(
+        error.toString(),
+        fallback: 'We could not delete the user assets right now.',
+      ).toLowerCase();
+      if (_isRetryableCleanupError(normalizedError)) {
+        await _offlineCleanupQueueService.queueDeleteFolder(folderPath);
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  bool _isRetryableCleanupError(String message) {
+    final normalized = message.trim().toLowerCase();
+    return normalized.contains('internet connection') ||
+        normalized.contains('temporarily unavailable') ||
+        normalized.contains('request took too long') ||
+        normalized.contains('try again');
   }
 
   Future<void> _deleteFolderRecursively(String storagePath) async {

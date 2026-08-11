@@ -1,47 +1,54 @@
-import 'dart:async';
 import 'dart:ui';
-
-import 'package:firebase_analytics/firebase_analytics.dart';
-import 'package:firebase_core/firebase_core.dart';
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/firebase_options.dart';
-import 'package:webapp/services/booking_offline_upload_queue_service.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/views/shared/app_shell.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/services/firestore_offline_service.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
-import 'package:webapp/views/shared/app_shell.dart';
+import 'package:webapp/services/offline_sync_status_service.dart';
+import 'package:webapp/services/offline_cleanup_queue_service.dart';
+import 'package:webapp/services/offline_mutation_queue_service.dart';
+import 'package:webapp/services/booking_offline_upload_queue_service.dart';
 
 Future<void> main() async {
-  await runZonedGuarded(
-    () async {
-      WidgetsFlutterBinding.ensureInitialized();
-      FlutterError.onError = (details) {
-        FlutterError.presentError(details);
-      };
-      ErrorWidget.builder = (details) => _AppErrorFallback(details: details);
+  WidgetsFlutterBinding.ensureInitialized();
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+  };
+  ErrorWidget.builder = (details) => _AppErrorFallback(details: details);
 
-      PlatformDispatcher.instance.onError = (error, stack) {
-        FlutterError.reportError(
-          FlutterErrorDetails(exception: error, stack: stack),
-        );
-        return true;
-      };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    FlutterError.reportError(
+      FlutterErrorDetails(exception: error, stack: stack),
+    );
+    return true;
+  };
 
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-      await FirestoreOfflineService.initialize();
-      await BookingOfflineUploadQueueService.instance.initialize();
-      await OfflineMediaSyncService.instance.initialize();
-      await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(true);
-      runApp(const MyApp());
-    },
-    (error, stack) {
-      FlutterError.reportError(
-        FlutterErrorDetails(exception: error, stack: stack),
-      );
-    },
-  );
+  final bootstrapFuture = runZonedGuarded<Future<void>>(_bootstrapApplication, (
+    error,
+    stack,
+  ) {
+    FlutterError.reportError(
+      FlutterErrorDetails(exception: error, stack: stack),
+    );
+  });
+
+  runApp(MyApp(bootstrapFuture: bootstrapFuture));
+}
+
+Future<void> _bootstrapApplication() async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await FirestoreOfflineService.initialize();
+  await BookingOfflineUploadQueueService.instance.initialize();
+  await OfflineMediaSyncService.instance.initialize();
+  await OfflineMutationQueueService.instance.initialize();
+  await OfflineCleanupQueueService.instance.initialize();
+  await OfflineSyncStatusService.instance.initialize();
+  await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(true);
 }
 
 TextTheme _withTextHeight(TextTheme textTheme, double height) {
@@ -67,7 +74,10 @@ TextTheme _withTextHeight(TextTheme textTheme, double height) {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({super.key, required this.bootstrapFuture});
+
+  final Future<void>? bootstrapFuture;
+
   @override
   Widget build(BuildContext context) {
     final baseLightTheme = ThemeData.light();
@@ -156,7 +166,60 @@ class MyApp extends StatelessWidget {
           selectionHandleColor: AppColors.primaryColor,
         ),
       ),
-      home: AppShell(),
+      home: _BootstrapGate(bootstrapFuture: bootstrapFuture),
+    );
+  }
+}
+
+class _BootstrapGate extends StatelessWidget {
+  const _BootstrapGate({required this.bootstrapFuture});
+
+  final Future<void>? bootstrapFuture;
+
+  @override
+  Widget build(BuildContext context) {
+    if (bootstrapFuture == null) {
+      return const _AppErrorFallback(
+        details: FlutterErrorDetails(
+          exception: 'Application bootstrap did not start.',
+        ),
+      );
+    }
+
+    return FutureBuilder<void>(
+      future: bootstrapFuture,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _AppErrorFallback(
+            details: FlutterErrorDetails(
+              exception: snapshot.error ?? 'Application bootstrap failed.',
+            ),
+          );
+        }
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const _AppBootstrapLoadingScreen();
+        }
+        return const AppShell();
+      },
+    );
+  }
+}
+
+class _AppBootstrapLoadingScreen extends StatelessWidget {
+  const _AppBootstrapLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF5C33CF),
+      body: SafeArea(
+        child: Center(
+          child: AppPageLoading(
+            message: 'Starting app and loading offline data ...',
+            compact: true,
+          ),
+        ),
+      ),
     );
   }
 }

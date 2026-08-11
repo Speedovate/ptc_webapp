@@ -4,6 +4,8 @@ import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/services/network_status_events.dart';
+import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class StatusRequest implements StatusFormRepository {
@@ -16,6 +18,8 @@ class StatusRequest implements StatusFormRepository {
   static const _statusesResourceKey = 'statuses';
 
   final FirebaseFirestore _firestore;
+  final OfflineMutationQueueService _offlineMutationQueueService =
+      OfflineMutationQueueService.instance;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
@@ -65,7 +69,8 @@ class StatusRequest implements StatusFormRepository {
           return snapshot.docs.map(documentData).toList();
         },
       );
-      return documents.map(Status.fromMap).toList();
+      final statuses = documents.map(Status.fromMap).toList();
+      return statuses;
     }, fallback: 'We could not load the statuses right now.');
   }
 
@@ -91,15 +96,15 @@ class StatusRequest implements StatusFormRepository {
     final forms = await _getHydratedForms();
     final statuses = await getStatuses();
     final normalizedRole = effectiveBackOfficeRoleKey(role);
-    final normalizedCurrentStatusKey = currentStatusKey.trim();
+    final normalizedCurrentStatusKey = currentStatusKey.trim().toLowerCase();
 
     bool isKnownActiveStatus(String? statusKey) {
-      final normalizedStatusKey = statusKey?.trim() ?? '';
+      final normalizedStatusKey = statusKey?.trim().toLowerCase() ?? '';
       if (normalizedStatusKey.isEmpty) {
         return false;
       }
       for (final status in statuses) {
-        if ((status.key?.trim() ?? '') == normalizedStatusKey) {
+        if ((status.key?.trim().toLowerCase() ?? '') == normalizedStatusKey) {
           return status.isActive != false;
         }
       }
@@ -118,7 +123,7 @@ class StatusRequest implements StatusFormRepository {
         .where(
           (form) =>
               form.resolvedRoles.contains(normalizedRole) &&
-              (form.currentStatusKey?.trim() ?? '') ==
+              (form.currentStatusKey?.trim().toLowerCase() ?? '') ==
                   normalizedCurrentStatusKey &&
               isKnownActiveStatus(form.currentStatusKey) &&
               isKnownActiveStatusOrTerminal(form.nextStatusKey),
@@ -152,7 +157,20 @@ class StatusRequest implements StatusFormRepository {
         updatedAt: now,
       );
       final document = _formToFirestoreMap(saved);
-      await _formsCollection.doc(nextId).set(document);
+      final baseUpdatedAtIso = await _cachedUpdatedAt(
+        resourceKey: _statusFormsResourceKey,
+        documentId: nextId,
+      );
+      if (currentNetworkStatus()) {
+        await _formsCollection.doc(nextId).set(document);
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+          collectionKey: _statusFormsResourceKey,
+          documentId: nextId,
+          document: document,
+          baseUpdatedAt: baseUpdatedAtIso,
+        );
+      }
       await _cache.upsertDocument(
         resourceKey: _statusFormsResourceKey,
         document: document,
@@ -163,18 +181,30 @@ class StatusRequest implements StatusFormRepository {
   @override
   Future<void> saveFields(String statusFormId, List<StatusField> fields) async {
     await _runRequest(() async {
-      final doc = await _formsCollection.doc(statusFormId).get();
-      if (!doc.exists) {
+      final forms = await _getHydratedForms();
+      final existingForm = forms
+          .where((form) => form.id == statusFormId)
+          .firstOrNull;
+      if (existingForm == null) {
         return;
       }
-      final form = _formFromFirestoreMap(
-        documentData(doc),
-        fieldsById: {for (final field in fields) field.id ?? '': field},
-      );
       final updatedFormDocument = _formToFirestoreMap(
-        form.copyWith(fields: fields, updatedAt: DateTime.now()),
+        existingForm.copyWith(fields: fields, updatedAt: DateTime.now()),
       );
-      await _formsCollection.doc(statusFormId).set(updatedFormDocument);
+      final baseUpdatedAtIso = await _cachedUpdatedAt(
+        resourceKey: _statusFormsResourceKey,
+        documentId: statusFormId,
+      );
+      if (currentNetworkStatus()) {
+        await _formsCollection.doc(statusFormId).set(updatedFormDocument);
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+          collectionKey: _statusFormsResourceKey,
+          documentId: statusFormId,
+          document: updatedFormDocument,
+          baseUpdatedAt: baseUpdatedAtIso,
+        );
+      }
       await _cache.upsertDocument(
         resourceKey: _statusFormsResourceKey,
         document: updatedFormDocument,
@@ -193,7 +223,20 @@ class StatusRequest implements StatusFormRepository {
         updatedAt: now,
       );
       final document = saved.toMap();
-      await _fieldsCollection.doc(nextId).set(document);
+      final baseUpdatedAtIso = await _cachedUpdatedAt(
+        resourceKey: _statusFieldsResourceKey,
+        documentId: nextId,
+      );
+      if (currentNetworkStatus()) {
+        await _fieldsCollection.doc(nextId).set(document);
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+          collectionKey: _statusFieldsResourceKey,
+          documentId: nextId,
+          document: document,
+          baseUpdatedAt: baseUpdatedAtIso,
+        );
+      }
       await _cache.upsertDocument(
         resourceKey: _statusFieldsResourceKey,
         document: document,
@@ -213,7 +256,20 @@ class StatusRequest implements StatusFormRepository {
         updatedAt: now,
       );
       final document = saved.toMap();
-      await _statusesCollection.doc(nextId).set(document);
+      final baseUpdatedAtIso = await _cachedUpdatedAt(
+        resourceKey: _statusesResourceKey,
+        documentId: nextId,
+      );
+      if (currentNetworkStatus()) {
+        await _statusesCollection.doc(nextId).set(document);
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+          collectionKey: _statusesResourceKey,
+          documentId: nextId,
+          document: document,
+          baseUpdatedAt: baseUpdatedAtIso,
+        );
+      }
       await _cache.upsertDocument(
         resourceKey: _statusesResourceKey,
         document: document,
@@ -228,32 +284,49 @@ class StatusRequest implements StatusFormRepository {
       if (normalized == null) {
         return;
       }
-      await _fieldsCollection.doc(normalized).delete();
+      if (currentNetworkStatus()) {
+        await _fieldsCollection.doc(normalized).delete();
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentDelete(
+          collectionKey: _statusFieldsResourceKey,
+          documentId: normalized,
+        );
+      }
+      await _cache.removeDocument(
+        resourceKey: _statusFieldsResourceKey,
+        documentId: normalized,
+      );
       final forms = await _getHydratedForms();
       for (final form in forms) {
         if (!form.fields.any((field) => field.id == normalized)) {
           continue;
         }
-        await _formsCollection
-            .doc(form.id)
-            .set(
-              _formToFirestoreMap(
-                form.copyWith(
-                  fields: form.fields
-                      .where((field) => field.id != normalized)
-                      .toList(),
-                  fieldOverrides: Map<String, StatusFieldOverride>.from(
-                    form.fieldOverrides,
-                  )..remove(normalized),
-                  updatedAt: DateTime.now(),
-                ),
-              ),
-            );
+        final updatedFormDocument = _formToFirestoreMap(
+          form.copyWith(
+            fields: form.fields
+                .where((field) => field.id != normalized)
+                .toList(),
+            fieldOverrides: Map<String, StatusFieldOverride>.from(
+              form.fieldOverrides,
+            )..remove(normalized),
+            updatedAt: DateTime.now(),
+          ),
+        );
+        if (currentNetworkStatus()) {
+          await _formsCollection.doc(form.id).set(updatedFormDocument);
+        } else {
+          await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+            collectionKey: _statusFormsResourceKey,
+            documentId: form.id ?? '',
+            document: updatedFormDocument,
+            baseUpdatedAt: form.updatedAt?.toUtc().toIso8601String(),
+          );
+        }
+        await _cache.upsertDocument(
+          resourceKey: _statusFormsResourceKey,
+          document: updatedFormDocument,
+        );
       }
-      await _cache.touchMany([
-        _statusFieldsResourceKey,
-        _statusFormsResourceKey,
-      ]);
     }, fallback: 'We could not delete the field right now.');
   }
 
@@ -264,7 +337,14 @@ class StatusRequest implements StatusFormRepository {
       if (normalized == null) {
         return;
       }
-      await _statusesCollection.doc(normalized).delete();
+      if (currentNetworkStatus()) {
+        await _statusesCollection.doc(normalized).delete();
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentDelete(
+          collectionKey: _statusesResourceKey,
+          documentId: normalized,
+        );
+      }
       await _cache.removeDocument(
         resourceKey: _statusesResourceKey,
         documentId: normalized,
@@ -279,7 +359,14 @@ class StatusRequest implements StatusFormRepository {
       if (normalized == null) {
         return;
       }
-      await _formsCollection.doc(normalized).delete();
+      if (currentNetworkStatus()) {
+        await _formsCollection.doc(normalized).delete();
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentDelete(
+          collectionKey: _statusFormsResourceKey,
+          documentId: normalized,
+        );
+      }
       await _cache.removeDocument(
         resourceKey: _statusFormsResourceKey,
         documentId: normalized,
@@ -300,7 +387,16 @@ class StatusRequest implements StatusFormRepository {
           final updatedFormDocument = _formToFirestoreMap(
             form.copyWith(isActive: false, updatedAt: DateTime.now()),
           );
-          await _formsCollection.doc(normalized).set(updatedFormDocument);
+          if (currentNetworkStatus()) {
+            await _formsCollection.doc(normalized).set(updatedFormDocument);
+          } else {
+            await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+              collectionKey: _statusFormsResourceKey,
+              documentId: normalized,
+              document: updatedFormDocument,
+              baseUpdatedAt: form.updatedAt?.toUtc().toIso8601String(),
+            );
+          }
           await _cache.upsertDocument(
             resourceKey: _statusFormsResourceKey,
             document: updatedFormDocument,
@@ -332,19 +428,28 @@ class StatusRequest implements StatusFormRepository {
       for (final doc in snapshots[1])
         doc['id']?.toString() ?? '': StatusField.fromMap(doc),
     };
-    return snapshots[0]
+    final forms = snapshots[0]
         .map((doc) => _formFromFirestoreMap(doc, fieldsById: fieldById))
         .toList();
+    return forms;
   }
 
   StatusForm _formFromFirestoreMap(
     Map<String, dynamic> map, {
     required Map<String, StatusField> fieldsById,
   }) {
-    final fieldIds = (map['field_ids'] as List<dynamic>? ?? const [])
-        .map((item) => item.toString().trim())
-        .where((item) => item.isNotEmpty)
-        .toList();
+    final fieldIds =
+        ((map['field_ids'] as List<dynamic>?) ??
+                (map['fields'] as List<dynamic>? ?? const []).map((item) {
+                  if (item is Map) {
+                    final fieldMap = Map<String, dynamic>.from(item);
+                    return fieldMap['id'] ?? fieldMap['field_id'];
+                  }
+                  return item;
+                }).toList())
+            .map((item) => item.toString().trim())
+            .where((item) => item.isNotEmpty)
+            .toList();
     final fieldOverrides =
         (map['field_overrides'] as Map?)?.map(
           (key, value) => MapEntry(
@@ -374,10 +479,10 @@ class StatusRequest implements StatusFormRepository {
         .toList();
     final dependencyMaps = map['dependencies'] as List<dynamic>? ?? const [];
     final parsedRoles = (map['roles'] as List<dynamic>? ?? const [])
-        .map((item) => item.toString().trim())
+        .map((item) => item.toString().trim().toLowerCase())
         .where((item) => item.isNotEmpty)
         .toList();
-    final parsedRole = map['role']?.toString().trim();
+    final parsedRole = map['role']?.toString().trim().toLowerCase();
     return StatusForm(
       id: map['id']?.toString(),
       role: parsedRole?.isNotEmpty == true ? parsedRole : null,
@@ -385,8 +490,11 @@ class StatusRequest implements StatusFormRepository {
           ? parsedRoles
           : (parsedRole?.isNotEmpty == true ? [parsedRole!] : const []),
       isMainForm: map['is_main_form'] as bool?,
-      currentStatusKey: map['current_status_key']?.toString(),
-      nextStatusKey: map['next_status_key']?.toString(),
+      currentStatusKey: map['current_status_key']
+          ?.toString()
+          .trim()
+          .toLowerCase(),
+      nextStatusKey: map['next_status_key']?.toString().trim().toLowerCase(),
       statusText: map['status_text']?.toString(),
       statusSubtext: map['status_subtext']?.toString(),
       buttonText: map['button_text']?.toString(),
@@ -468,6 +576,22 @@ class StatusRequest implements StatusFormRepository {
       return null;
     }
     return DateTime.tryParse(value.toString());
+  }
+
+  Future<String?> _cachedUpdatedAt({
+    required String resourceKey,
+    required String documentId,
+  }) async {
+    final documents = await _cache.readDocuments(resourceKey);
+    if (documents == null) {
+      return null;
+    }
+    for (final document in documents) {
+      if ((document['id']?.toString().trim() ?? '') == documentId) {
+        return document['updated_at']?.toString();
+      }
+    }
+    return null;
   }
 
   Future<T> _runRequest<T>(

@@ -3,9 +3,12 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/services/booking_offline_upload_queue_service.dart';
+import 'package:webapp/services/network_status_events.dart';
+import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -19,6 +22,7 @@ class BookingRequest implements BookingRepository {
        _vehicleRequest = vehicleRequest ?? VehicleRequest.instance;
 
   static final BookingRequest instance = BookingRequest();
+  static const _bookingsResourceKey = 'bookings';
 
   final FirebaseFirestore _firestore;
   final AuthRequest _authRequest;
@@ -26,6 +30,11 @@ class BookingRequest implements BookingRepository {
   final PhotoStorageService _photoStorageService = PhotoStorageService.instance;
   final BookingOfflineUploadQueueService _offlineUploadQueueService =
       BookingOfflineUploadQueueService.instance;
+  final OfflineMutationQueueService _offlineMutationQueueService =
+      OfflineMutationQueueService.instance;
+  late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
+    firestore: _firestore,
+  );
 
   CollectionReference<Map<String, dynamic>> get _bookingsCollection =>
       _firestore.collection('bookings');
@@ -38,15 +47,26 @@ class BookingRequest implements BookingRepository {
   @override
   Future<List<Booking>> getBookings() async {
     return _runRequest(() async {
-      final snapshot = await _bookingsCollection.get();
-      return _inflateBookings(snapshot.docs.map(documentData).toList());
+      final documents = await _cache.getDocuments(
+        resourceKey: _bookingsResourceKey,
+        fetchDocuments: () async {
+          final snapshot = await _bookingsCollection.get();
+          return snapshot.docs.map(documentData).toList();
+        },
+      );
+      return _inflateBookings(documents);
     }, fallback: 'We could not load the bookings right now.');
   }
 
   @override
   Stream<List<Booking>> watchBookings() {
     return _bookingsCollection.snapshots().asyncMap((snapshot) async {
-      return _inflateBookings(snapshot.docs.map(documentData).toList());
+      final documents = snapshot.docs.map(documentData).toList();
+      await _cache.writeDocuments(
+        resourceKey: _bookingsResourceKey,
+        documents: documents,
+      );
+      return _inflateBookings(documents);
     });
   }
 
@@ -71,7 +91,9 @@ class BookingRequest implements BookingRepository {
       final persistedStatusOutputs = await _persistPhotoFields(
         booking.statusOutputs,
         bookingId: nextId,
-        existingStatusOutputs: _statusOutputsFromFirestoreMap(existingBookingData),
+        existingStatusOutputs: _statusOutputsFromFirestoreMap(
+          existingBookingData,
+        ),
       );
       final saved = booking.copyWith(
         id: nextId,
@@ -80,7 +102,12 @@ class BookingRequest implements BookingRepository {
         statusOutputs: persistedStatusOutputs,
         updatedAt: now,
       );
-      await _bookingsCollection.doc(nextId).set(_toFirestoreMap(saved));
+      final document = _toFirestoreMap(saved);
+      await _bookingsCollection.doc(nextId).set(document);
+      await _cache.upsertDocument(
+        resourceKey: _bookingsResourceKey,
+        document: document,
+      );
       return saved;
     }, fallback: 'We could not save the booking right now.');
   }
@@ -92,21 +119,41 @@ class BookingRequest implements BookingRepository {
       if (normalizedId == null) {
         throw Exception('We could not update the billing status right now.');
       }
+      final existingBookingData = await _getExistingBookingData(normalizedId);
       final normalizedBillingStatus = _normalizedBillingStatus(billingStatus);
-      await _bookingsCollection.doc(normalizedId).update({
-        'billing_status': normalizedBillingStatus,
-      });
+      if (currentNetworkStatus()) {
+        await _bookingsCollection.doc(normalizedId).update({
+          'billing_status': normalizedBillingStatus,
+        });
+      } else {
+        await _offlineMutationQueueService.queueBookingBillingStatusUpdate(
+          bookingId: normalizedId,
+          billingStatus: normalizedBillingStatus,
+          baseUpdatedAt: existingBookingData?['updated_at']?.toString(),
+        );
+      }
+      if (existingBookingData != null) {
+        final updatedDocument = Map<String, dynamic>.from(existingBookingData)
+          ..['billing_status'] = normalizedBillingStatus
+          ..['updated_at'] = DateTime.now().toIso8601String();
+        await _cache.upsertDocument(
+          resourceKey: _bookingsResourceKey,
+          document: updatedDocument,
+        );
+      }
       final bookings = await getBookings();
-      final updated = bookings.where((booking) => booking.id == normalizedId).firstOrNull;
+      final updated = bookings
+          .where((booking) => booking.id == normalizedId)
+          .firstOrNull;
       if (updated != null) {
         return updated;
       }
-      final existingBookingData = await _getExistingBookingData(normalizedId);
-      if (existingBookingData == null) {
+      final refreshedBookingData = await _getExistingBookingData(normalizedId);
+      if (refreshedBookingData == null) {
         throw Exception('We could not update the billing status right now.');
       }
       return _bookingFromFirestoreMap(
-        existingBookingData,
+        refreshedBookingData,
         userById: await _userById(),
         makeById: await _makeById(),
       );
@@ -120,20 +167,64 @@ class BookingRequest implements BookingRepository {
         return;
       }
       final batch = _firestore.batch();
+      final normalizedStatusesByBookingId = <String, String>{};
       for (final entry in statusesByBookingId.entries) {
         final normalizedId = normalizeId(entry.key);
         if (normalizedId == null) {
           continue;
         }
-        batch.update(_bookingsCollection.doc(normalizedId), {
-          'billing_status': _normalizedBillingStatus(entry.value),
-        });
+        normalizedStatusesByBookingId[normalizedId] = _normalizedBillingStatus(
+          entry.value,
+        );
       }
-      await batch.commit();
+      final cachedDocuments = await _cache.readDocuments(_bookingsResourceKey);
+      if (!currentNetworkStatus()) {
+        await _offlineMutationQueueService.queueBookingBillingStatusUpdates(
+          normalizedStatusesByBookingId,
+          baseUpdatedAtByBookingId: {
+            for (final document
+                in cachedDocuments ?? const <Map<String, dynamic>>[])
+              if (normalizeId(document['id']?.toString()) != null)
+                normalizeId(document['id']?.toString())!: document['updated_at']
+                    ?.toString(),
+          },
+        );
+      } else {
+        for (final entry in normalizedStatusesByBookingId.entries) {
+          batch.update(_bookingsCollection.doc(entry.key), {
+            'billing_status': entry.value,
+          });
+        }
+        await batch.commit();
+      }
+      if (cachedDocuments == null) {
+        await _cache.touch(_bookingsResourceKey);
+        return;
+      }
+      final nowIso = DateTime.now().toIso8601String();
+      final updatedDocuments = cachedDocuments.map((document) {
+        final documentId = normalizeId(document['id']?.toString());
+        if (documentId == null) {
+          return Map<String, dynamic>.from(document);
+        }
+        final nextStatus = normalizedStatusesByBookingId[documentId];
+        if (nextStatus == null) {
+          return Map<String, dynamic>.from(document);
+        }
+        return Map<String, dynamic>.from(document)
+          ..['billing_status'] = _normalizedBillingStatus(nextStatus)
+          ..['updated_at'] = nowIso;
+      }).toList();
+      await _cache.writeDocuments(
+        resourceKey: _bookingsResourceKey,
+        documents: updatedDocuments,
+      );
     }, fallback: 'We could not update the billing statuses right now.');
   }
 
-  Future<Map<String, dynamic>?> _getExistingBookingData(String bookingId) async {
+  Future<Map<String, dynamic>?> _getExistingBookingData(
+    String bookingId,
+  ) async {
     final snapshot = await _bookingsCollection.doc(bookingId).get();
     if (!snapshot.exists) {
       return null;
@@ -345,7 +436,9 @@ class BookingRequest implements BookingRepository {
       id: map['id']?.toString(),
       client: userById[map['client_id']?.toString()],
       clientStatus: map['client_status']?.toString(),
-      billingStatus: _normalizedBillingStatus(map['billing_status']?.toString()),
+      billingStatus: _normalizedBillingStatus(
+        map['billing_status']?.toString(),
+      ),
       driverStatus: map['driver_status']?.toString(),
       helperStatus: map['helper_status']?.toString(),
       vehicleMake: makeById[map['vehicle_make_id']?.toString()],

@@ -4,6 +4,8 @@ import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/services/network_status_events.dart';
+import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class VehicleRequest implements VehicleCatalogRepository {
@@ -18,6 +20,8 @@ class VehicleRequest implements VehicleCatalogRepository {
   static List<VehicleCatalogItem> _cachedSizes = const [];
 
   final FirebaseFirestore _firestore;
+  final OfflineMutationQueueService _offlineMutationQueueService =
+      OfflineMutationQueueService.instance;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
@@ -134,8 +138,7 @@ class VehicleRequest implements VehicleCatalogRepository {
     bool preferSlug = false,
   }) {
     final matched = resolveVehicleSize(value);
-    final label =
-        preferSlug && matched?.slug?.trim().isNotEmpty == true
+    final label = preferSlug && matched?.slug?.trim().isNotEmpty == true
         ? matched!.slug!.trim()
         : matched?.name?.trim().isNotEmpty == true
         ? matched!.name!.trim()
@@ -171,10 +174,24 @@ class VehicleRequest implements VehicleCatalogRepository {
         createdAt: make.createdAt ?? now,
         updatedAt: now,
       );
-      await _makesCollection.doc(nextId).set(_toFirestoreMap(saved));
+      final document = _toFirestoreMap(saved);
+      final baseUpdatedAtIso = await _cachedUpdatedAt(
+        resourceKey: _vehicleMakesResourceKey,
+        documentId: nextId,
+      );
+      if (currentNetworkStatus()) {
+        await _makesCollection.doc(nextId).set(document);
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+          collectionKey: _vehicleMakesResourceKey,
+          documentId: nextId,
+          document: document,
+          baseUpdatedAt: baseUpdatedAtIso,
+        );
+      }
       await _cache.upsertDocument(
         resourceKey: _vehicleMakesResourceKey,
-        document: _toFirestoreMap(saved),
+        document: document,
       );
       return saved;
     }, fallback: 'We could not save the vehicle make right now.');
@@ -187,7 +204,14 @@ class VehicleRequest implements VehicleCatalogRepository {
       if (normalized == null) {
         return;
       }
-      await _makesCollection.doc(normalized).delete();
+      if (currentNetworkStatus()) {
+        await _makesCollection.doc(normalized).delete();
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentDelete(
+          collectionKey: _vehicleMakesResourceKey,
+          documentId: normalized,
+        );
+      }
       await _cache.removeDocument(
         resourceKey: _vehicleMakesResourceKey,
         documentId: normalized,
@@ -211,12 +235,21 @@ class VehicleRequest implements VehicleCatalogRepository {
       if (normalized == null) {
         return;
       }
-      await _sizesCollection.doc(normalized).delete();
+      if (currentNetworkStatus()) {
+        await _sizesCollection.doc(normalized).delete();
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentDelete(
+          collectionKey: _vehicleSizesResourceKey,
+          documentId: normalized,
+        );
+      }
       await _cache.removeDocument(
         resourceKey: _vehicleSizesResourceKey,
         documentId: normalized,
       );
-      _cachedSizes = _cachedSizes.where((item) => item.id != normalized).toList();
+      _cachedSizes = _cachedSizes
+          .where((item) => item.id != normalized)
+          .toList();
     }, fallback: 'We could not delete the vehicle size right now.');
   }
 
@@ -236,7 +269,14 @@ class VehicleRequest implements VehicleCatalogRepository {
       if (normalized == null) {
         return;
       }
-      await _typesCollection.doc(normalized).delete();
+      if (currentNetworkStatus()) {
+        await _typesCollection.doc(normalized).delete();
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentDelete(
+          collectionKey: _vehicleTypesResourceKey,
+          documentId: normalized,
+        );
+      }
       await _cache.removeDocument(
         resourceKey: _vehicleTypesResourceKey,
         documentId: normalized,
@@ -257,14 +297,27 @@ class VehicleRequest implements VehicleCatalogRepository {
         createdAt: item.createdAt ?? now,
         updatedAt: now,
       );
-      await collection.doc(nextId).set(saved.toMap());
-      await _cache.upsertDocument(
+      final document = saved.toMap();
+      final baseUpdatedAtIso = await _cachedUpdatedAt(
         resourceKey: resourceKey,
-        document: saved.toMap(),
+        documentId: nextId,
       );
+      if (currentNetworkStatus()) {
+        await collection.doc(nextId).set(document);
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+          collectionKey: resourceKey,
+          documentId: nextId,
+          document: document,
+          baseUpdatedAt: baseUpdatedAtIso,
+        );
+      }
+      await _cache.upsertDocument(resourceKey: resourceKey, document: document);
       if (resourceKey == _vehicleSizesResourceKey) {
         final nextItems = List<VehicleCatalogItem>.from(_cachedSizes);
-        final existingIndex = nextItems.indexWhere((item) => item.id == saved.id);
+        final existingIndex = nextItems.indexWhere(
+          (item) => item.id == saved.id,
+        );
         if (existingIndex >= 0) {
           nextItems[existingIndex] = saved;
         } else {
@@ -368,6 +421,22 @@ class VehicleRequest implements VehicleCatalogRepository {
       return null;
     }
     return DateTime.tryParse(value.toString());
+  }
+
+  Future<String?> _cachedUpdatedAt({
+    required String resourceKey,
+    required String documentId,
+  }) async {
+    final documents = await _cache.readDocuments(resourceKey);
+    if (documents == null) {
+      return null;
+    }
+    for (final document in documents) {
+      if ((document['id']?.toString().trim() ?? '') == documentId) {
+        return document['updated_at']?.toString();
+      }
+    }
+    return null;
   }
 
   double? _toDouble(dynamic value) {

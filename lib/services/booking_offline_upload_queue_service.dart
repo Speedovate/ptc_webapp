@@ -5,6 +5,8 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
+import 'package:webapp/services/network_status_events.dart';
+import 'package:webapp/services/offline_sync_status_service.dart';
 import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -15,7 +17,8 @@ class BookingOfflineUploadQueueService {
     PhotoStorageService? photoStorageService,
   }) : _backend = backend ?? createBookingStorageBackend(),
        _firestore = firestore ?? FirebaseFirestore.instance,
-       _photoStorageService = photoStorageService ?? PhotoStorageService.instance;
+       _photoStorageService =
+           photoStorageService ?? PhotoStorageService.instance;
 
   static final BookingOfflineUploadQueueService instance =
       BookingOfflineUploadQueueService();
@@ -30,17 +33,32 @@ class BookingOfflineUploadQueueService {
   bool _isInitialized = false;
   bool _isFlushing = false;
   Timer? _retryTimer;
+  StreamSubscription<bool>? _networkSubscription;
+  final StreamController<OfflineQueueStatusSnapshot> _statusController =
+      StreamController<OfflineQueueStatusSnapshot>.broadcast();
+  OfflineQueueStatusSnapshot _currentStatus =
+      const OfflineQueueStatusSnapshot.idle();
 
   CollectionReference<Map<String, dynamic>> get _bookingsCollection =>
       _firestore.collection('bookings');
+
+  Stream<OfflineQueueStatusSnapshot> get statusStream =>
+      _statusController.stream;
+  OfflineQueueStatusSnapshot get currentStatus => _currentStatus;
 
   Future<void> initialize() async {
     if (_isInitialized) {
       return;
     }
     await _backend.initialize();
+    await _refreshStatusFromStorage();
     _retryTimer ??= Timer.periodic(_retryInterval, (_) {
       unawaited(flushPendingUploads());
+    });
+    _networkSubscription ??= networkStatusEvents().listen((isOnline) {
+      if (isOnline) {
+        unawaited(flushPendingUploads());
+      }
     });
     _isInitialized = true;
     unawaited(flushPendingUploads());
@@ -74,6 +92,7 @@ class BookingOfflineUploadQueueService {
     final entries = await _readEntries();
     entries.add(entry);
     await _writeEntries(entries);
+    _setStatus(_currentStatus.copyWith(pendingCount: entries.length));
     unawaited(flushPendingUploads());
 
     return {
@@ -94,12 +113,22 @@ class BookingOfflineUploadQueueService {
     _isFlushing = true;
     try {
       var entries = await _readEntries();
+      _setStatus(
+        _currentStatus.copyWith(
+          pendingCount: entries.length,
+          isSyncing: entries.isNotEmpty,
+          processedInBatch: 0,
+          totalInBatch: entries.length,
+          clearLastSyncAt: entries.isNotEmpty,
+        ),
+      );
       if (entries.isEmpty) {
         return;
       }
 
       var mutated = false;
       final remaining = <_PendingBookingUploadEntry>[];
+      var processed = 0;
 
       for (final entry in entries) {
         try {
@@ -151,14 +180,42 @@ class BookingOfflineUploadQueueService {
               mutated = true;
             }
           }
+        } finally {
+          processed++;
+          _setStatus(
+            _currentStatus.copyWith(
+              pendingCount: remaining.length + (entries.length - processed),
+              isSyncing: true,
+              processedInBatch: processed,
+              totalInBatch: entries.length,
+            ),
+          );
         }
       }
 
       if (mutated || remaining.length != entries.length) {
         await _writeEntries(remaining);
       }
+      _setStatus(
+        _currentStatus.copyWith(
+          pendingCount: remaining.length,
+          isSyncing: false,
+          processedInBatch: remaining.isEmpty ? entries.length : 0,
+          totalInBatch: remaining.isEmpty ? entries.length : 0,
+          lastSyncAt: remaining.length < entries.length ? DateTime.now() : null,
+        ),
+      );
     } finally {
       _isFlushing = false;
+      if (_currentStatus.isSyncing) {
+        _setStatus(
+          _currentStatus.copyWith(
+            isSyncing: false,
+            processedInBatch: 0,
+            totalInBatch: 0,
+          ),
+        );
+      }
     }
   }
 
@@ -241,7 +298,21 @@ class BookingOfflineUploadQueueService {
     );
   }
 
-  Map<String, dynamic>? _statusOutputsFromBooking(Map<String, dynamic> booking) {
+  Future<void> _refreshStatusFromStorage() async {
+    final entries = await _readEntries();
+    _setStatus(_currentStatus.copyWith(pendingCount: entries.length));
+  }
+
+  void _setStatus(OfflineQueueStatusSnapshot nextStatus) {
+    _currentStatus = nextStatus;
+    if (!_statusController.isClosed) {
+      _statusController.add(nextStatus);
+    }
+  }
+
+  Map<String, dynamic>? _statusOutputsFromBooking(
+    Map<String, dynamic> booking,
+  ) {
     final rawValue = booking['status_outputs'];
     if (rawValue is Map) {
       return Map<String, dynamic>.from(rawValue);
@@ -288,7 +359,7 @@ class BookingOfflineUploadQueueService {
 
   String _nextEntryId() {
     final timestamp = DateTime.now().toUtc().microsecondsSinceEpoch;
-    final randomSuffix = Random().nextInt(1 << 32).toRadixString(16);
+    final randomSuffix = Random().nextInt(0x100000000).toRadixString(16);
     return 'booking_upload_${timestamp}_$randomSuffix';
   }
 }
@@ -320,10 +391,7 @@ class _PendingBookingUploadEntry {
   final int retryCount;
   final String? lastError;
 
-  _PendingBookingUploadEntry copyWith({
-    int? retryCount,
-    String? lastError,
-  }) {
+  _PendingBookingUploadEntry copyWith({int? retryCount, String? lastError}) {
     return _PendingBookingUploadEntry(
       id: id,
       bookingId: bookingId,
@@ -364,7 +432,9 @@ class _PendingBookingUploadEntry {
       bytesBase64: map['bytes_base64']?.toString() ?? '',
       fileName: map['file_name']?.toString() ?? 'photo',
       mimeType: map['mime_type']?.toString(),
-      size: map['size'] is num ? (map['size'] as num).toInt() : int.tryParse(map['size']?.toString() ?? ''),
+      size: map['size'] is num
+          ? (map['size'] as num).toInt()
+          : int.tryParse(map['size']?.toString() ?? ''),
       createdAtIso: map['created_at']?.toString() ?? '',
       retryCount: map['retry_count'] is num
           ? (map['retry_count'] as num).toInt()
