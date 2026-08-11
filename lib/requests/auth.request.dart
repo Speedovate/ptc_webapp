@@ -123,7 +123,6 @@ class AuthRequest implements AuthRepository {
       }
     }
     await _clearStoredSession();
-    await _cache.clearResource(_usersResourceKey);
     AppSessionReset.clearUserScopedState();
     return null;
   }
@@ -135,7 +134,6 @@ class AuthRequest implements AuthRepository {
   }) async {
     return _runAuthRequest(() async {
       await initialize();
-      await _cache.clearResource(_usersResourceKey);
       AppSessionReset.clearUserScopedState();
       final trimmedIdentifier = identifier.trim();
       final normalizedPhone = normalizePhilippinePhone(trimmedIdentifier);
@@ -170,7 +168,6 @@ class AuthRequest implements AuthRepository {
         ),
       );
       await _storage.writeString(_currentUserIdKey, loggedInUser.id ?? '');
-      await _cache.clearResource(_usersResourceKey);
       AppSessionReset.clearUserScopedState();
       return loggedInUser;
     }, fallback: 'We could not sign you in right now. Please try again.');
@@ -181,7 +178,6 @@ class AuthRequest implements AuthRepository {
     return _runAuthRequest(
       () async {
         await initialize();
-        await _cache.clearResource(_usersResourceKey);
         AppSessionReset.clearUserScopedState();
         final users = await _getUsersFresh();
         final normalizedRole = (user.role ?? '').trim().toLowerCase();
@@ -219,7 +215,10 @@ class AuthRequest implements AuthRepository {
             .doc(savedUser.id)
             .set(_toFirestoreMap(savedUser));
         await _storage.writeString(_currentUserIdKey, savedUser.id ?? '');
-        await _cache.clearResource(_usersResourceKey);
+        await _cache.upsertDocument(
+          resourceKey: _usersResourceKey,
+          document: _toFirestoreMap(savedUser),
+        );
         AppSessionReset.clearUserScopedState();
         return savedUser;
       },
@@ -509,7 +508,6 @@ class AuthRequest implements AuthRepository {
       if (normalized == null) {
         throw const AuthFailure('User ID is required.');
       }
-      await _cache.clearResource(_usersResourceKey);
       final user = await _getFreshUserById(normalized);
       if (user == null) {
         throw const AuthFailure('No account found for that user.');
@@ -540,7 +538,6 @@ class AuthRequest implements AuthRepository {
       if (sourceId == null) {
         return null;
       }
-      await _cache.clearResource(_usersResourceKey);
       final sourceUser = await _getFreshUserById(sourceId);
       if (sourceUser == null) {
         await _storage.remove(_quickLoginSourceUserIdKey);
@@ -566,7 +563,6 @@ class AuthRequest implements AuthRepository {
         );
       }
       await _clearStoredSession();
-      await FirestoreCacheStore.instance.clearAll();
       AppSessionReset.clearUserScopedState();
     }, fallback: 'We could not sign you out right now. Please try again.');
   }
