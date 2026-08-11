@@ -1298,6 +1298,7 @@ class _UsersTable extends StatelessWidget {
       AdminListMeasurements.defaultExtraWidthAllowance;
   static const _maxNameEmailBasisWidth = 170.0;
   static const _maxCreatedBasisWidth = 150.0;
+  static const _actionsLaneMinWidth = 138.0;
 
   @override
   Widget build(BuildContext context) {
@@ -1393,7 +1394,7 @@ class _UsersTable extends StatelessWidget {
           _maxCreatedBasisWidth,
         );
         final actionsWidth = _maxValue(
-          176,
+          _actionsLaneMinWidth,
           _measureTextWidth(context, textScaler, 'Actions', _headerStyle),
         );
         final resolvedIdWidth = _resolvedColumnWidth(idWidth);

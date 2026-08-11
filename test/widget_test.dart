@@ -9,6 +9,9 @@ void main() {
       MyApp(bootstrapFuture: Future<void>.delayed(const Duration(seconds: 1))),
     );
 
-    expect(find.text('Starting app and loading offline data ...'), findsOneWidget);
+    expect(
+      find.text('Starting Paltranco and preparing offline data ...'),
+      findsOneWidget,
+    );
   });
 }

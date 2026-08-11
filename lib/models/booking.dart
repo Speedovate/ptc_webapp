@@ -19,6 +19,7 @@ class Booking {
     this.statusOutputs,
     this.createdAt,
     this.updatedAt,
+    this.localSyncStatus,
   });
 
   final String? id;
@@ -33,6 +34,7 @@ class Booking {
   final Map<String, dynamic>? statusOutputs;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+  final String? localSyncStatus;
 
   Booking copyWith({
     Object? id = _bookingUndefined,
@@ -47,6 +49,7 @@ class Booking {
     Object? statusOutputs = _bookingUndefined,
     Object? createdAt = _bookingUndefined,
     Object? updatedAt = _bookingUndefined,
+    Object? localSyncStatus = _bookingUndefined,
   }) {
     return Booking(
       id: identical(id, _bookingUndefined) ? this.id : id as String?,
@@ -83,6 +86,9 @@ class Booking {
       updatedAt: identical(updatedAt, _bookingUndefined)
           ? this.updatedAt
           : updatedAt as DateTime?,
+      localSyncStatus: identical(localSyncStatus, _bookingUndefined)
+          ? this.localSyncStatus
+          : localSyncStatus as String?,
     );
   }
 
@@ -100,6 +106,7 @@ class Booking {
       'status_outputs': statusOutputs,
       'created_at': createdAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
+      'local_sync_status': localSyncStatus,
     };
   }
 
@@ -119,6 +126,7 @@ class Booking {
           : null,
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),
+      localSyncStatus: map['local_sync_status']?.toString(),
     );
   }
 

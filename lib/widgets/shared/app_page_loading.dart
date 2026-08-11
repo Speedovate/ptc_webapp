@@ -36,13 +36,6 @@ class AppPageLoading extends StatelessWidget {
               color: Colors.white,
               borderRadius: BorderRadius.circular(cardRadius),
               border: Border.all(color: AppColors.primaryBorder),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x120E0A1F),
-                  blurRadius: 28,
-                  offset: Offset(0, 14),
-                ),
-              ],
             ),
             child: Padding(
               padding: EdgeInsets.fromLTRB(

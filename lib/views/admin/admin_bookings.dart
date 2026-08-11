@@ -237,6 +237,7 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
           if (!mounted) {
             return;
           }
+          vm.ingestSubmittedBooking(booking);
           Navigator.of(dialogContext).pop();
           setState(() {
             _selectedBooking = booking;

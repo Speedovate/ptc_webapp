@@ -500,10 +500,9 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
   bool _isSelectingPhoto = false;
 
   FocusNode? get _focusNode => widget.focusNode;
-  String get _placeholder =>
-      widget.placeholder?.trim().isNotEmpty == true
-          ? widget.placeholder!.trim()
-          : adminUploadPlaceholder('Photo');
+  String get _placeholder => widget.placeholder?.trim().isNotEmpty == true
+      ? widget.placeholder!.trim()
+      : adminUploadPlaceholder('Photo');
 
   @override
   void initState() {
@@ -634,7 +633,6 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
     final processingLabel = _isSelectingPhoto
         ? 'Preparing photo ...'
         : 'Processing photo ...';
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

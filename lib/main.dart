@@ -215,7 +215,7 @@ class _AppBootstrapLoadingScreen extends StatelessWidget {
       body: SafeArea(
         child: Center(
           child: AppPageLoading(
-            message: 'Starting app and loading offline data ...',
+            message: 'Starting Paltranco and preparing offline data ...',
             compact: true,
           ),
         ),

@@ -1,5 +1,4 @@
 import 'package:stacked/stacked.dart';
-import 'package:flutter/foundation.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status.dart';
 import 'package:webapp/models/status_form.dart';
@@ -122,9 +121,6 @@ class AdminFlowViewModel extends BaseViewModel {
       statuses = (await _repository.getStatuses())
           .map((status) => status.copyWith())
           .toList();
-      debugPrint(
-        '[AdminFlowViewModel] loaded forms=${forms.length} fieldLibrary=${fieldLibrary.length} statuses=${statuses.length}',
-      );
       _sortFormsLatestFirst();
       _sortFieldsLatestFirst();
       _sortStatusesLatestFirst();
@@ -150,13 +146,9 @@ class AdminFlowViewModel extends BaseViewModel {
       } else if (selectedForm == null) {
         await selectForm(forms.first, notify: false, notifyWhenLoaded: false);
       }
-      debugPrint(
-        '[AdminFlowViewModel] selectedForm=${selectedForm?.id} selectedFields=${fields.length} cachedFormBuckets=${_fieldsByFormId.length}',
-      );
       errorMessage = null;
       _cacheSnapshot();
     } catch (error) {
-      debugPrint('[AdminFlowViewModel] loadForms error=$error');
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the flows right now.',

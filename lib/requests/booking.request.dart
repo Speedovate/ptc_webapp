@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
@@ -35,6 +37,8 @@ class BookingRequest implements BookingRepository {
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
+  final StreamController<void> _bookingCacheUpdates =
+      StreamController<void>.broadcast();
 
   CollectionReference<Map<String, dynamic>> get _bookingsCollection =>
       _firestore.collection('bookings');
@@ -42,6 +46,7 @@ class BookingRequest implements BookingRepository {
   @override
   Future<void> initialize() async {
     await _offlineUploadQueueService.initialize();
+    await _offlineMutationQueueService.initialize();
   }
 
   @override
@@ -60,13 +65,36 @@ class BookingRequest implements BookingRepository {
 
   @override
   Stream<List<Booking>> watchBookings() {
-    return _bookingsCollection.snapshots().asyncMap((snapshot) async {
-      final documents = snapshot.docs.map(documentData).toList();
-      await _cache.writeDocuments(
-        resourceKey: _bookingsResourceKey,
-        documents: documents,
-      );
-      return _inflateBookings(documents);
+    return Stream<List<Booking>>.multi((controller) {
+      Future<void> emitCachedBookings() async {
+        final cachedDocuments = await _cache.readDocuments(_bookingsResourceKey);
+        if (controller.isClosed || cachedDocuments == null) {
+          return;
+        }
+        controller.add(await _inflateBookings(cachedDocuments));
+      }
+
+      unawaited(emitCachedBookings());
+
+      final remoteSubscription = _bookingsCollection.snapshots().listen((
+        snapshot,
+      ) async {
+        final documents = snapshot.docs.map(documentData).toList();
+        await _cache.writeDocuments(
+          resourceKey: _bookingsResourceKey,
+          documents: documents,
+        );
+        _bookingCacheUpdates.add(null);
+      }, onError: (_) {});
+
+      final localSubscription = _bookingCacheUpdates.stream.listen((_) {
+        unawaited(emitCachedBookings());
+      }, onError: (_) {});
+
+      controller.onCancel = () async {
+        await remoteSubscription.cancel();
+        await localSubscription.cancel();
+      };
     });
   }
 
@@ -101,13 +129,26 @@ class BookingRequest implements BookingRepository {
         billingStatus: _normalizedBillingStatus(booking.billingStatus),
         statusOutputs: persistedStatusOutputs,
         updatedAt: now,
+        localSyncStatus: currentNetworkStatus() ? null : 'queued',
       );
       final document = _toFirestoreMap(saved);
-      await _bookingsCollection.doc(nextId).set(document);
+      final cacheDocument = _toCacheDocument(saved);
+      final baseUpdatedAtIso = existingBookingData?['updated_at']?.toString();
+      if (currentNetworkStatus()) {
+        await _bookingsCollection.doc(nextId).set(document);
+      } else {
+        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+          collectionKey: _bookingsResourceKey,
+          documentId: nextId,
+          document: document,
+          baseUpdatedAt: baseUpdatedAtIso,
+        );
+      }
       await _cache.upsertDocument(
         resourceKey: _bookingsResourceKey,
-        document: document,
+        document: cacheDocument,
       );
+      _bookingCacheUpdates.add(null);
       return saved;
     }, fallback: 'We could not save the booking right now.');
   }
@@ -140,6 +181,7 @@ class BookingRequest implements BookingRepository {
           resourceKey: _bookingsResourceKey,
           document: updatedDocument,
         );
+        _bookingCacheUpdates.add(null);
       }
       final bookings = await getBookings();
       final updated = bookings
@@ -219,17 +261,35 @@ class BookingRequest implements BookingRepository {
         resourceKey: _bookingsResourceKey,
         documents: updatedDocuments,
       );
+      _bookingCacheUpdates.add(null);
     }, fallback: 'We could not update the billing statuses right now.');
   }
 
   Future<Map<String, dynamic>?> _getExistingBookingData(
     String bookingId,
   ) async {
+    final cached = await _getCachedBookingData(bookingId);
+    if (!currentNetworkStatus()) {
+      return cached;
+    }
     final snapshot = await _bookingsCollection.doc(bookingId).get();
     if (!snapshot.exists) {
-      return null;
+      return cached;
     }
     return documentData(snapshot);
+  }
+
+  Future<Map<String, dynamic>?> _getCachedBookingData(String bookingId) async {
+    final cachedDocuments = await _cache.readDocuments(_bookingsResourceKey);
+    if (cachedDocuments == null) {
+      return null;
+    }
+    for (final document in cachedDocuments) {
+      if (normalizeId(document['id']?.toString()) == bookingId) {
+        return Map<String, dynamic>.from(document);
+      }
+    }
+    return null;
   }
 
   Map<String, dynamic>? _statusOutputsFromFirestoreMap(
@@ -307,6 +367,18 @@ class BookingRequest implements BookingRepository {
     final mimeType = mapValue['mime_type']?.toString().trim();
     final size = _toInt(mapValue['size']) ?? bytes.length;
     final resolvedFileName = fileName?.isNotEmpty == true ? fileName! : 'photo';
+    if (!currentNetworkStatus()) {
+      final queuedValue = await _offlineUploadQueueService.enqueueBookingPhoto(
+        bytes: bytes,
+        bookingId: bookingId,
+        statusKey: statusKey.trim(),
+        fieldKey: fieldKey.trim(),
+        fileName: resolvedFileName,
+        mimeType: mimeType?.isNotEmpty == true ? mimeType : null,
+        size: size,
+      );
+      return queuedValue;
+    }
     try {
       return await _photoStorageService.uploadBookingPhoto(
         bytes: bytes,
@@ -325,7 +397,7 @@ class BookingRequest implements BookingRepository {
       if (!_isQueueableUploadError(normalizedError)) {
         rethrow;
       }
-      return _offlineUploadQueueService.enqueueBookingPhoto(
+      final queuedValue = await _offlineUploadQueueService.enqueueBookingPhoto(
         bytes: bytes,
         bookingId: bookingId,
         statusKey: statusKey.trim(),
@@ -334,6 +406,7 @@ class BookingRequest implements BookingRepository {
         mimeType: mimeType?.isNotEmpty == true ? mimeType : null,
         size: size,
       );
+      return queuedValue;
     }
   }
 
@@ -427,6 +500,14 @@ class BookingRequest implements BookingRepository {
     };
   }
 
+  Map<String, dynamic> _toCacheDocument(Booking booking) {
+    return {
+      ..._toFirestoreMap(booking),
+      if ((booking.localSyncStatus ?? '').trim().isNotEmpty)
+        'local_sync_status': booking.localSyncStatus,
+    };
+  }
+
   Booking _bookingFromFirestoreMap(
     Map<String, dynamic> map, {
     required Map<String, UserModel> userById,
@@ -449,6 +530,7 @@ class BookingRequest implements BookingRepository {
           : null,
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),
+      localSyncStatus: map['local_sync_status']?.toString(),
     );
   }
 
@@ -468,11 +550,20 @@ class BookingRequest implements BookingRepository {
   }
 
   Future<String> _nextBookingId() async {
+    final cachedDocuments = await _cache.readDocuments(_bookingsResourceKey);
+    final cachedHighest = (cachedDocuments ?? const <Map<String, dynamic>>[])
+        .map((doc) => int.tryParse(doc['id']?.toString() ?? ''))
+        .whereType<int>()
+        .fold<int>(0, (max, value) => value > max ? value : max);
+    if (!currentNetworkStatus()) {
+      return '${cachedHighest + 1}';
+    }
     final snapshot = await _bookingsCollection.get();
-    final highest = snapshot.docs
+    final remoteHighest = snapshot.docs
         .map((doc) => int.tryParse(documentData(doc)['id']?.toString() ?? ''))
         .whereType<int>()
         .fold<int>(0, (max, value) => value > max ? value : max);
+    final highest = remoteHighest > cachedHighest ? remoteHighest : cachedHighest;
     return '${highest + 1}';
   }
 
@@ -509,7 +600,11 @@ class BookingRequest implements BookingRepository {
   bool _isQueueableUploadError(String normalizedError) {
     return normalizedError.contains('internet connection') ||
         normalizedError.contains('temporarily unavailable') ||
-        normalizedError.contains('request took too long');
+        normalizedError.contains('request took too long') ||
+        normalizedError.contains('failed to fetch') ||
+        normalizedError.contains('network error') ||
+        normalizedError.contains('network-request-failed') ||
+        normalizedError.contains('progressevent');
   }
 
   Future<T> _runRequest<T>(

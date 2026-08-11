@@ -27,6 +27,9 @@ class PhotoStorageService {
     String? mimeType,
     int? size,
   }) async {
+    if (!currentNetworkStatus()) {
+      throw Exception('Please check your internet connection and try again.');
+    }
     final processed = await _imageUploadProcessor.prepare(
       bytes: bytes,
       fileName: fileName,
@@ -49,7 +52,6 @@ class PhotoStorageService {
       final reference = _storage.ref(storagePath);
       await reference.putData(processed.bytes, metadata);
       final downloadUrl = await reference.getDownloadURL();
-
       return {
         'name': normalizedFileName,
         'download_url': downloadUrl,
@@ -60,19 +62,14 @@ class PhotoStorageService {
         'height': processed.height,
       };
     } on FirebaseException catch (error) {
-      throw Exception(
-        userFacingErrorMessage(
-          error,
-          fallback: 'We could not upload the photo. Please try again.',
-        ),
+      final normalizedError = userFacingErrorMessage(
+        error,
+        fallback: 'We could not upload the photo. Please try again.',
       );
+      throw Exception(normalizedError);
     } catch (error) {
-      throw Exception(
-        userFacingErrorMessage(
-          error,
-          fallback: 'We could not upload the photo. Please try again.',
-        ),
-      );
+      final normalizedError = _normalizedUploadErrorMessage(error);
+      throw Exception(normalizedError);
     }
   }
 
@@ -84,6 +81,9 @@ class PhotoStorageService {
     String? mimeType,
     int? size,
   }) async {
+    if (!currentNetworkStatus()) {
+      throw Exception('Please check your internet connection and try again.');
+    }
     final processed = await _imageUploadProcessor.prepare(
       bytes: bytes,
       fileName: fileName,
@@ -105,7 +105,6 @@ class PhotoStorageService {
       final reference = _storage.ref(storagePath);
       await reference.putData(processed.bytes, metadata);
       final downloadUrl = await reference.getDownloadURL();
-
       return {
         'name': normalizedFileName,
         'download_url': downloadUrl,
@@ -116,19 +115,14 @@ class PhotoStorageService {
         'height': processed.height,
       };
     } on FirebaseException catch (error) {
-      throw Exception(
-        userFacingErrorMessage(
-          error,
-          fallback: 'We could not upload the photo. Please try again.',
-        ),
+      final normalizedError = userFacingErrorMessage(
+        error,
+        fallback: 'We could not upload the photo. Please try again.',
       );
+      throw Exception(normalizedError);
     } catch (error) {
-      throw Exception(
-        userFacingErrorMessage(
-          error,
-          fallback: 'We could not upload the photo. Please try again.',
-        ),
-      );
+      final normalizedError = _normalizedUploadErrorMessage(error);
+      throw Exception(normalizedError);
     }
   }
 
@@ -210,6 +204,23 @@ class PhotoStorageService {
         normalized.contains('temporarily unavailable') ||
         normalized.contains('request took too long') ||
         normalized.contains('try again');
+  }
+
+  String _normalizedUploadErrorMessage(Object error) {
+    final raw = error.toString().trim().toLowerCase();
+    if (raw.contains('progressevent') ||
+        raw.contains('network-request-failed') ||
+        raw.contains('network error') ||
+        raw.contains('failed to fetch') ||
+        raw.contains('xmlhttprequest') ||
+        raw.contains('clientexception') ||
+        raw.contains('socketexception')) {
+      return 'Please check your internet connection and try again.';
+    }
+    return userFacingErrorMessage(
+      error,
+      fallback: 'We could not upload the photo. Please try again.',
+    );
   }
 
   Future<void> _deleteFolderRecursively(String storagePath) async {

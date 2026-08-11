@@ -622,7 +622,11 @@ class SupportRequest {
   bool _isQueueableUploadError(String normalizedError) {
     return normalizedError.contains('internet connection') ||
         normalizedError.contains('temporarily unavailable') ||
-        normalizedError.contains('request took too long');
+        normalizedError.contains('request took too long') ||
+        normalizedError.contains('failed to fetch') ||
+        normalizedError.contains('network error') ||
+        normalizedError.contains('network-request-failed') ||
+        normalizedError.contains('progressevent');
   }
 
   static int _compareThreadsNewestFirst(

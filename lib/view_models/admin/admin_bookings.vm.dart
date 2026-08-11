@@ -71,6 +71,10 @@ class AdminBookingsViewModel extends BaseViewModel {
   String get busyMessage => _busyMessage;
   List<String> get statusOptions => [
     'All',
+    if (_bookings.any(
+      (booking) => (booking.localSyncStatus ?? '').trim().toLowerCase() == 'queued',
+    ))
+      'Queued',
     ..._statusesByKey.values
         .map((status) => status.label?.trim())
         .whereType<String>()
@@ -131,6 +135,37 @@ class AdminBookingsViewModel extends BaseViewModel {
       ..clear()
       ..addAll(bookings);
     _cachedBookings = List<Booking>.from(_bookings);
+  }
+
+  void ingestSubmittedBooking(Booking booking) {
+    final bookingId = (booking.id ?? '').trim();
+    if (bookingId.isEmpty) {
+      return;
+    }
+    final existingIndex = _bookings.indexWhere(
+      (item) => (item.id ?? '').trim() == bookingId,
+    );
+    if (existingIndex >= 0) {
+      _bookings[existingIndex] = booking;
+    } else {
+      _bookings.insert(0, booking);
+    }
+    _bookings.sort((left, right) {
+      final leftDate = left.updatedAt ?? left.createdAt;
+      final rightDate = right.updatedAt ?? right.createdAt;
+      if (leftDate == null && rightDate == null) {
+        return (right.id ?? '').compareTo(left.id ?? '');
+      }
+      if (leftDate == null) {
+        return 1;
+      }
+      if (rightDate == null) {
+        return -1;
+      }
+      return rightDate.compareTo(leftDate);
+    });
+    _cachedBookings = List<Booking>.from(_bookings);
+    notifyListeners();
   }
 
   void setSearchQuery(String value) {
@@ -274,6 +309,9 @@ class AdminBookingsViewModel extends BaseViewModel {
   }
 
   String clientStatusLabel(Booking booking) {
+    if ((booking.localSyncStatus ?? '').trim().toLowerCase() == 'queued') {
+      return 'Queued';
+    }
     return statusLabelForKey(booking.clientStatus);
   }
 

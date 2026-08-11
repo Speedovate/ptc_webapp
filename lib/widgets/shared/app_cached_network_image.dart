@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'app_cached_network_image_online_listener.dart';
+import '../../services/persistent_image_cache_service.dart';
 
 class AppCachedNetworkImage extends StatefulWidget {
   const AppCachedNetworkImage({
@@ -33,19 +35,23 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   StreamSubscription<void>? _onlineSubscription;
   bool _hasError = false;
   int _reloadToken = 0;
+  String? _cachedImageDataUrl;
+  int _webImageLoadSerial = 0;
 
   @override
   void initState() {
     super.initState();
     if (kIsWeb) {
+      unawaited(_refreshWebImageSource());
       _onlineSubscription = onlineEvents().listen((_) {
-        if (!mounted || !_hasError) {
+        if (!mounted) {
           return;
         }
         setState(() {
           _hasError = false;
           _reloadToken++;
         });
+        unawaited(_refreshWebImageSource(forceRefresh: true));
       });
     }
   }
@@ -56,6 +62,10 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     if (oldWidget.imageUrl != widget.imageUrl) {
       _hasError = false;
       _reloadToken = 0;
+      _cachedImageDataUrl = null;
+      if (kIsWeb) {
+        unawaited(_refreshWebImageSource());
+      }
     }
   }
 
@@ -86,9 +96,74 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     return '${widget.imageUrl}${separator}img_retry=$_reloadToken';
   }
 
+  Future<void> _refreshWebImageSource({bool forceRefresh = false}) async {
+    if (!kIsWeb) {
+      return;
+    }
+    final normalizedUrl = widget.imageUrl.trim();
+    if (normalizedUrl.isEmpty || normalizedUrl.startsWith('data:')) {
+      if (mounted && _cachedImageDataUrl != normalizedUrl) {
+        setState(() {
+          _cachedImageDataUrl = normalizedUrl.isEmpty ? null : normalizedUrl;
+        });
+      }
+      return;
+    }
+    final requestSerial = ++_webImageLoadSerial;
+    final cachedDataUrl = await PersistentImageCacheService.instance
+        .getImageDataUrl(
+          cacheKey: normalizedUrl,
+          fetchUrl: _resolvedImageUrl,
+          forceRefresh: forceRefresh,
+        );
+    if (!mounted || requestSerial != _webImageLoadSerial) {
+      return;
+    }
+    if (_cachedImageDataUrl == cachedDataUrl) {
+      return;
+    }
+    setState(() {
+      _cachedImageDataUrl = cachedDataUrl;
+    });
+  }
+
+  Widget _buildMemoryImage(String dataUrl) {
+    return Image.memory(
+      _decodeDataUrlBytes(dataUrl),
+      key: ValueKey<String>('mem:$dataUrl|${widget.width}|${widget.height}'),
+      width: widget.width,
+      height: widget.height,
+      fit: widget.fit,
+      alignment: widget.alignment,
+      errorBuilder: (context, error, stackTrace) {
+        _handleError(error);
+        if (widget.errorBuilder != null) {
+          return widget.errorBuilder!(context, error);
+        }
+        return const SizedBox.shrink();
+      },
+    );
+  }
+
+  Uint8List _decodeDataUrlBytes(String dataUrl) {
+    final commaIndex = dataUrl.indexOf(',');
+    final encoded = commaIndex >= 0
+        ? dataUrl.substring(commaIndex + 1)
+        : dataUrl;
+    return base64Decode(encoded);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (kIsWeb) {
+      final directDataUrl = widget.imageUrl.trim();
+      if (directDataUrl.startsWith('data:')) {
+        return _buildMemoryImage(directDataUrl);
+      }
+      final cachedImageDataUrl = _cachedImageDataUrl;
+      if (cachedImageDataUrl != null && cachedImageDataUrl.isNotEmpty) {
+        return _buildMemoryImage(cachedImageDataUrl);
+      }
       return Image.network(
         _resolvedImageUrl,
         key: ValueKey<String>(

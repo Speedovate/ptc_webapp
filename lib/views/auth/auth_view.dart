@@ -256,13 +256,6 @@ class _AuthViewState extends State<AuthView> {
                                 border: Border.all(
                                   color: AppColors.primaryBorder,
                                 ),
-                                boxShadow: const [
-                                  BoxShadow(
-                                    color: Color(0x120E0A1F),
-                                    blurRadius: 32,
-                                    offset: Offset(0, 18),
-                                  ),
-                                ],
                               ),
                               child: Opacity(
                                 opacity: isAuthBusy ? 0.5 : 1,
@@ -284,13 +277,6 @@ class _AuthViewState extends State<AuthView> {
                                               borderRadius: BorderRadius.all(
                                                 Radius.circular(18),
                                               ),
-                                              boxShadow: const [
-                                                BoxShadow(
-                                                  color: Color(0x1F5B34D6),
-                                                  blurRadius: 18,
-                                                  offset: Offset(0, 10),
-                                                ),
-                                              ],
                                             ),
                                             child: const Icon(
                                               Icons.local_shipping_rounded,
@@ -720,13 +706,40 @@ class _AuthViewState extends State<AuthView> {
                               Positioned.fill(
                                 child: Container(
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.72),
+                                    color: AppColors.primaryColor,
                                     borderRadius: BorderRadius.circular(24),
                                   ),
-                                  child: AppPageLoading(
-                                    message: _authFlowLoadingMessage,
-                                    compact: true,
+                                  child: Padding(
                                     padding: const EdgeInsets.all(24),
+                                    child: Center(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const SizedBox(
+                                            width: 28,
+                                            height: 28,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 3,
+                                              valueColor:
+                                                  AlwaysStoppedAnimation<Color>(
+                                                    Colors.white,
+                                                  ),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 16),
+                                          Text(
+                                            _authFlowLoadingMessage,
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 15,
+                                              height: 1.25,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),

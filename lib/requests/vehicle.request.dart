@@ -17,6 +17,7 @@ class VehicleRequest implements VehicleCatalogRepository {
   static const _vehicleMakesResourceKey = 'vehicle_makes';
   static const _vehicleTypesResourceKey = 'vehicle_types';
   static const _vehicleSizesResourceKey = 'vehicle_sizes';
+  static List<VehicleCatalogItem> _cachedTypes = const [];
   static List<VehicleCatalogItem> _cachedSizes = const [];
 
   final FirebaseFirestore _firestore;
@@ -160,8 +161,35 @@ class VehicleRequest implements VehicleCatalogRepository {
       );
       final items = documents.map(VehicleCatalogItem.fromMap).toList();
       items.sort(_compareByNewestIdFirst);
+      _cachedTypes = List<VehicleCatalogItem>.from(items);
       return items;
     }, fallback: 'We could not load the vehicle types right now.');
+  }
+
+  Future<Map<String, VehicleCatalogItem>> getTypeByIdCachedFirst() async {
+    if (_cachedTypes.isNotEmpty) {
+      return {
+        for (final item in _cachedTypes)
+          if ((item.id ?? '').trim().isNotEmpty) item.id!.trim(): item,
+      };
+    }
+
+    final cachedDocuments = await _cache.readDocuments(_vehicleTypesResourceKey);
+    if (cachedDocuments != null && cachedDocuments.isNotEmpty) {
+      final items = cachedDocuments.map(VehicleCatalogItem.fromMap).toList()
+        ..sort(_compareByNewestIdFirst);
+      _cachedTypes = List<VehicleCatalogItem>.from(items);
+      return {
+        for (final item in items)
+          if ((item.id ?? '').trim().isNotEmpty) item.id!.trim(): item,
+      };
+    }
+
+    final items = await getTypes();
+    return {
+      for (final item in items)
+        if ((item.id ?? '').trim().isNotEmpty) item.id!.trim(): item,
+    };
   }
 
   @override
@@ -281,6 +309,9 @@ class VehicleRequest implements VehicleCatalogRepository {
         resourceKey: _vehicleTypesResourceKey,
         documentId: normalized,
       );
+      _cachedTypes = _cachedTypes
+          .where((item) => item.id != normalized)
+          .toList();
     }, fallback: 'We could not delete the vehicle type right now.');
   }
 
@@ -313,6 +344,19 @@ class VehicleRequest implements VehicleCatalogRepository {
         );
       }
       await _cache.upsertDocument(resourceKey: resourceKey, document: document);
+      if (resourceKey == _vehicleTypesResourceKey) {
+        final nextItems = List<VehicleCatalogItem>.from(_cachedTypes);
+        final existingIndex = nextItems.indexWhere(
+          (entry) => entry.id == saved.id,
+        );
+        if (existingIndex >= 0) {
+          nextItems[existingIndex] = saved;
+        } else {
+          nextItems.add(saved);
+        }
+        nextItems.sort(_compareByNewestIdFirst);
+        _cachedTypes = nextItems;
+      }
       if (resourceKey == _vehicleSizesResourceKey) {
         final nextItems = List<VehicleCatalogItem>.from(_cachedSizes);
         final existingIndex = nextItems.indexWhere(

@@ -8,9 +8,12 @@ import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/services/app_session_reset.dart';
+import 'package:webapp/services/booking_offline_upload_queue_service.dart';
 import 'package:webapp/services/network_status_events.dart';
+import 'package:webapp/services/offline_cleanup_queue_service.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
+import 'package:webapp/services/offline_sync_status_service.dart';
 import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -24,6 +27,7 @@ class AuthRequest implements AuthRepository {
   static const _currentUserIdKey = 'paltranco_current_user_id';
   static const _quickLoginSourceUserIdKey =
       'paltranco_quick_login_source_user_id';
+  static const _knownSessionUserIdsKey = 'paltranco_known_session_user_ids';
   static const _usersResourceKey = 'users';
   static bool _didRunSubClientMigration = false;
 
@@ -49,6 +53,7 @@ class AuthRequest implements AuthRepository {
   Future<void> initialize() async {
     await _storage.initialize();
     await _offlineMediaSyncService.initialize();
+    await _offlineMutationQueueService.initialize();
   }
 
   Future<void> migrateSubClientDataOnce() async {
@@ -67,15 +72,16 @@ class AuthRequest implements AuthRepository {
   Future<List<UserModel>> getUsers() async {
     return _runAuthRequest(() async {
       await initialize();
-      final types = await _vehicleRequest.getTypes();
-      final typeById = {for (final item in types) item.id ?? '': item};
-      final documents = await _cache.getDocuments(
+      final documentsFuture = _cache.getDocuments(
         resourceKey: _usersResourceKey,
         fetchDocuments: () async {
           final snapshot = await _usersCollection.get();
           return snapshot.docs.map(documentData).toList();
         },
       );
+      final typeByIdFuture = _vehicleRequest.getTypeByIdCachedFirst();
+      final documents = await documentsFuture;
+      final typeById = await typeByIdFuture;
       final users = documents
           .map((doc) => _userFromFirestoreMap(doc, typeById))
           .toList();
@@ -138,21 +144,11 @@ class AuthRequest implements AuthRepository {
       final trimmedIdentifier = identifier.trim();
       final normalizedPhone = normalizePhilippinePhone(trimmedIdentifier);
       final bool isPhoneLogin = normalizedPhone != null;
-      final matches = isPhoneLogin
-          ? await _usersCollection
-                .where('phone', isEqualTo: normalizedPhone)
-                .limit(1)
-                .get()
-          : await _usersCollection
-                .where('email', isEqualTo: trimmedIdentifier.toLowerCase())
-                .limit(1)
-                .get();
-      if (matches.docs.isEmpty) {
-        throw const AuthFailure(
-          'No account found for that email or mobile number.',
-        );
-      }
-      final user = await _inflateUser(matches.docs.first);
+      final user = await _resolveLoginUser(
+        identifier: trimmedIdentifier,
+        normalizedPhone: normalizedPhone,
+        isPhoneLogin: isPhoneLogin,
+      );
       if ((user.password ?? '') != password) {
         throw const AuthFailure('Incorrect password.');
       }
@@ -168,6 +164,8 @@ class AuthRequest implements AuthRepository {
         ),
       );
       await _storage.writeString(_currentUserIdKey, loggedInUser.id ?? '');
+      await _rememberKnownSessionUserId(loggedInUser.id);
+      await _refreshOfflineQueueScopes();
       AppSessionReset.clearUserScopedState();
       return loggedInUser;
     }, fallback: 'We could not sign you in right now. Please try again.');
@@ -215,6 +213,8 @@ class AuthRequest implements AuthRepository {
             .doc(savedUser.id)
             .set(_toFirestoreMap(savedUser));
         await _storage.writeString(_currentUserIdKey, savedUser.id ?? '');
+        await _rememberKnownSessionUserId(savedUser.id);
+        await _refreshOfflineQueueScopes();
         await _cache.upsertDocument(
           resourceKey: _usersResourceKey,
           document: _toFirestoreMap(savedUser),
@@ -299,6 +299,26 @@ class AuthRequest implements AuthRepository {
       if (currentUser == null) {
         throw const AuthFailure('User not found.');
       }
+      if (!currentNetworkStatus()) {
+        final queued = await _offlineMediaSyncService.queueUserPhotoUpload(
+          userId: normalizedUserId,
+          fieldKey: 'profile_photo',
+          bytes: bytes,
+          fileName: fileName,
+          mimeType: mimeType,
+          size: size,
+          originalValue: currentUser.photo,
+        );
+        final queuedUser = currentUser.copyWith(
+          photo: queued.previewUrl,
+          updatedAt: queued.queuedAt,
+        );
+        await _cache.upsertDocument(
+          resourceKey: _usersResourceKey,
+          document: _toFirestoreMap(queuedUser),
+        );
+        return queuedUser;
+      }
       try {
         final upload = await _photoStorageService.uploadUserPhoto(
           bytes: bytes,
@@ -366,6 +386,26 @@ class AuthRequest implements AuthRepository {
         throw const AuthFailure(
           'Only driver accounts can upload license photos.',
         );
+      }
+      if (!currentNetworkStatus()) {
+        final queued = await _offlineMediaSyncService.queueUserPhotoUpload(
+          userId: normalizedUserId,
+          fieldKey: 'license_photo',
+          bytes: bytes,
+          fileName: fileName,
+          mimeType: mimeType,
+          size: size,
+          originalValue: driver.license,
+        );
+        final queuedUser = driver.copyWith(
+          license: queued.previewUrl,
+          updatedAt: queued.queuedAt,
+        );
+        await _cache.upsertDocument(
+          resourceKey: _usersResourceKey,
+          document: _toFirestoreMap(queuedUser),
+        );
+        return queuedUser;
       }
       try {
         final upload = await _photoStorageService.uploadUserPhoto(
@@ -508,7 +548,9 @@ class AuthRequest implements AuthRepository {
       if (normalized == null) {
         throw const AuthFailure('User ID is required.');
       }
-      final user = await _getFreshUserById(normalized);
+      final user = currentNetworkStatus()
+          ? await _getFreshUserById(normalized)
+          : await _getCachedUserById(normalized);
       if (user == null) {
         throw const AuthFailure('No account found for that user.');
       }
@@ -517,6 +559,8 @@ class AuthRequest implements AuthRepository {
         await _storage.writeString(_quickLoginSourceUserIdKey, currentUserId!);
       }
       await _storage.writeString(_currentUserIdKey, normalized);
+      await _rememberKnownSessionUserId(normalized);
+      await _refreshOfflineQueueScopes();
       AppSessionReset.clearUserScopedState();
     }, fallback: 'We could not switch accounts right now. Please try again.');
   }
@@ -538,7 +582,9 @@ class AuthRequest implements AuthRepository {
       if (sourceId == null) {
         return null;
       }
-      final sourceUser = await _getFreshUserById(sourceId);
+      final sourceUser = currentNetworkStatus()
+          ? await _getFreshUserById(sourceId)
+          : await _getCachedUserById(sourceId);
       if (sourceUser == null) {
         await _storage.remove(_quickLoginSourceUserIdKey);
         await _storage.remove(_currentUserIdKey);
@@ -547,6 +593,8 @@ class AuthRequest implements AuthRepository {
       }
       await _storage.writeString(_currentUserIdKey, sourceId);
       await _storage.remove(_quickLoginSourceUserIdKey);
+      await _rememberKnownSessionUserId(sourceId);
+      await _refreshOfflineQueueScopes();
       AppSessionReset.clearUserScopedState();
       return sourceUser;
     }, fallback: 'We could not switch back to the previous account right now.');
@@ -563,6 +611,7 @@ class AuthRequest implements AuthRepository {
         );
       }
       await _clearStoredSession();
+      await _refreshOfflineQueueScopes();
       AppSessionReset.clearUserScopedState();
     }, fallback: 'We could not sign you out right now. Please try again.');
   }
@@ -583,6 +632,27 @@ class AuthRequest implements AuthRepository {
   Future<void> _clearStoredSession() async {
     await _storage.remove(_currentUserIdKey);
     await _storage.remove(_quickLoginSourceUserIdKey);
+  }
+
+  Future<void> _rememberKnownSessionUserId(String? userId) async {
+    final normalizedUserId = normalizeId(userId);
+    if (normalizedUserId == null) {
+      return;
+    }
+    final existing = await _storage.readStringList(_knownSessionUserIdsKey);
+    final next = <String>[
+      normalizedUserId,
+      ...existing.where((item) => normalizeId(item) != normalizedUserId),
+    ];
+    await _storage.writeStringList(_knownSessionUserIdsKey, next);
+  }
+
+  Future<void> _refreshOfflineQueueScopes() async {
+    await _offlineMediaSyncService.initialize();
+    await _offlineMutationQueueService.initialize();
+    await OfflineCleanupQueueService.instance.initialize();
+    await BookingOfflineUploadQueueService.instance.initialize();
+    await OfflineSyncStatusService.instance.initialize();
   }
 
   Future<List<UserModel>> _getUsersFresh() async {
@@ -628,7 +698,9 @@ class AuthRequest implements AuthRepository {
       throw const AuthFailure('User ID is required.');
     }
     final now = DateTime.now();
-    final existing = await _getFreshUserById(normalizedId);
+    final existing = currentNetworkStatus()
+        ? await _getFreshUserById(normalizedId)
+        : await _getCachedUserById(normalizedId);
     final saved = user.copyWith(
       id: normalizedId,
       createdAt: existing?.createdAt ?? user.createdAt ?? now,
@@ -652,6 +724,123 @@ class AuthRequest implements AuthRepository {
       document: document,
     );
     return saved;
+  }
+
+  Future<UserModel> _resolveLoginUser({
+    required String identifier,
+    required String? normalizedPhone,
+    required bool isPhoneLogin,
+  }) async {
+    if (!currentNetworkStatus()) {
+      final offlineUser = await _findCachedUserByIdentifier(
+        identifier: identifier,
+        normalizedPhone: normalizedPhone,
+        isPhoneLogin: isPhoneLogin,
+      );
+      if (offlineUser == null) {
+        throw const AuthFailure(
+          'No cached account found for that email or mobile number.',
+        );
+      }
+      return offlineUser;
+    }
+
+    try {
+      final matches = isPhoneLogin
+          ? await _usersCollection
+                .where('phone', isEqualTo: normalizedPhone)
+                .limit(1)
+                .get()
+          : await _usersCollection
+                .where('email', isEqualTo: identifier.toLowerCase())
+                .limit(1)
+                .get();
+      if (matches.docs.isEmpty) {
+        throw const AuthFailure(
+          'No account found for that email or mobile number.',
+        );
+      }
+      return _inflateUser(matches.docs.first);
+    } catch (error) {
+      if (!_isOfflineAuthLookupError(error)) {
+        rethrow;
+      }
+      final offlineUser = await _findCachedUserByIdentifier(
+        identifier: identifier,
+        normalizedPhone: normalizedPhone,
+        isPhoneLogin: isPhoneLogin,
+      );
+      if (offlineUser == null) {
+        rethrow;
+      }
+      return offlineUser;
+    }
+  }
+
+  Future<UserModel?> _findCachedUserByIdentifier({
+    required String identifier,
+    required String? normalizedPhone,
+    required bool isPhoneLogin,
+  }) async {
+    final users = await _getUsersCachedOnly();
+    if (isPhoneLogin) {
+      for (final user in users) {
+        if (normalizePhilippinePhone(user.phone) == normalizedPhone) {
+          return user;
+        }
+      }
+      return null;
+    }
+    final normalizedEmail = identifier.trim().toLowerCase();
+    for (final user in users) {
+      if ((user.email ?? '').trim().toLowerCase() == normalizedEmail) {
+        return user;
+      }
+    }
+    return null;
+  }
+
+  Future<List<UserModel>> _getUsersCachedOnly() async {
+    final documents =
+        await FirestoreCacheStore.instance.readDocumentMaps(_usersResourceKey) ??
+        const <Map<String, dynamic>>[];
+    final types = await _vehicleRequest.getTypes();
+    final typeById = {for (final item in types) item.id ?? '': item};
+    final users = documents
+        .map((doc) => _userFromFirestoreMap(doc, typeById))
+        .toList();
+    users.sort((a, b) {
+      final aDate = a.updatedAt ?? a.createdAt;
+      final bDate = b.updatedAt ?? b.createdAt;
+      if (aDate == null && bDate == null) {
+        final aId = int.tryParse(a.id ?? '');
+        final bId = int.tryParse(b.id ?? '');
+        if (aId != null && bId != null) {
+          return bId.compareTo(aId);
+        }
+        return (b.id ?? '').compareTo(a.id ?? '');
+      }
+      if (aDate == null) {
+        return 1;
+      }
+      if (bDate == null) {
+        return -1;
+      }
+      return bDate.compareTo(aDate);
+    });
+    return users;
+  }
+
+  bool _isOfflineAuthLookupError(Object error) {
+    final normalized = normalizeUserErrorText(
+      error.toString(),
+      fallback: '',
+    ).toLowerCase();
+    return normalized.contains('offline') ||
+        normalized.contains('internet connection') ||
+        normalized.contains('network') ||
+        normalized.contains('progressEvent'.toLowerCase()) ||
+        normalized.contains('client is offline');
   }
 
   Future<UserModel> _inflateUser(
@@ -817,7 +1006,11 @@ class AuthRequest implements AuthRepository {
   bool _isQueueableUploadError(String normalizedError) {
     return normalizedError.contains('internet connection') ||
         normalizedError.contains('temporarily unavailable') ||
-        normalizedError.contains('request took too long');
+        normalizedError.contains('request took too long') ||
+        normalizedError.contains('failed to fetch') ||
+        normalizedError.contains('network error') ||
+        normalizedError.contains('network-request-failed') ||
+        normalizedError.contains('progressevent');
   }
 
   Future<T> _runAuthRequest<T>(

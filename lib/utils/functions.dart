@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 
@@ -174,10 +176,40 @@ Uint8List? decodePhotoBytes(dynamic value, {String key = 'bytes'}) {
   if (sourceValue is List<int>) {
     return Uint8List.fromList(sourceValue);
   }
+  final downloadUrl = mapValue?['download_url']?.toString().trim();
+  if (downloadUrl != null && downloadUrl.startsWith('data:')) {
+    final commaIndex = downloadUrl.indexOf(',');
+    if (commaIndex >= 0 && commaIndex + 1 < downloadUrl.length) {
+      try {
+        return base64Decode(downloadUrl.substring(commaIndex + 1));
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+  if (value is String) {
+    final trimmed = value.trim();
+    if (trimmed.startsWith('data:')) {
+      final commaIndex = trimmed.indexOf(',');
+      if (commaIndex >= 0 && commaIndex + 1 < trimmed.length) {
+        try {
+          return base64Decode(trimmed.substring(commaIndex + 1));
+        } catch (_) {
+          return null;
+        }
+      }
+    }
+  }
   return null;
 }
 
 String? photoDownloadUrl(dynamic value, {String key = 'download_url'}) {
+  if (value is String) {
+    final directUrl = value.trim();
+    if (directUrl.isNotEmpty) {
+      return directUrl;
+    }
+  }
   final mapValue = value is Map<String, dynamic>
       ? value
       : value is Map

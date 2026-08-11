@@ -71,7 +71,12 @@ class AppShell extends StatelessWidget {
               );
 
         return SelectionArea(
-          child: InAppBrowserGuard(child: AppSyncStatusBanner(child: content)),
+          child: InAppBrowserGuard(
+            child: AppSyncStatusBanner(
+              currentUser: vm.currentUser,
+              child: content,
+            ),
+          ),
         );
       },
     );

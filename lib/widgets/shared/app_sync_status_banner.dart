@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/models/user.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/offline_sync_status_service.dart';
+import 'package:webapp/utils/functions.dart';
 
 class AppSyncStatusBanner extends StatelessWidget {
-  const AppSyncStatusBanner({super.key, required this.child});
+  const AppSyncStatusBanner({
+    super.key,
+    required this.child,
+    this.currentUser,
+  });
 
   final Widget child;
+  final UserModel? currentUser;
 
   @override
   Widget build(BuildContext context) {
@@ -20,6 +27,8 @@ class AppSyncStatusBanner extends StatelessWidget {
             snapshot.hasFailedActions ||
             snapshot.hasPendingActions ||
             snapshot.isSyncing;
+        final anchorToSidebarBottom = isBackOfficeRole(currentUser?.role);
+        final safePadding = MediaQuery.paddingOf(context);
         return Stack(
           children: [
             child,
@@ -27,16 +36,38 @@ class AppSyncStatusBanner extends StatelessWidget {
               ignoring: !showBanner,
               child: SafeArea(
                 child: Align(
-                  alignment: Alignment.topCenter,
+                  alignment: anchorToSidebarBottom
+                      ? Alignment.bottomLeft
+                      : Alignment.bottomCenter,
                   child: AnimatedSlide(
                     duration: const Duration(milliseconds: 220),
-                    offset: showBanner ? Offset.zero : const Offset(0, -1.2),
+                    offset: showBanner
+                        ? Offset.zero
+                        : anchorToSidebarBottom
+                        ? const Offset(-0.12, 1.2)
+                        : const Offset(0, 1.2),
                     child: AnimatedOpacity(
                       duration: const Duration(milliseconds: 180),
                       opacity: showBanner ? 1 : 0,
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                        child: _SyncStatusPill(snapshot: snapshot),
+                        padding: anchorToSidebarBottom
+                            ? EdgeInsets.fromLTRB(
+                                16,
+                                12,
+                                16,
+                                16 + safePadding.bottom,
+                              )
+                            : EdgeInsets.fromLTRB(
+                                16,
+                                12,
+                                16,
+                                16 + safePadding.bottom,
+                              ),
+                        child: _SyncStatusPill(
+                          snapshot: snapshot,
+                          currentUser: currentUser,
+                          maxWidth: anchorToSidebarBottom ? 248 : 720,
+                        ),
                       ),
                     ),
                   ),
@@ -51,13 +82,20 @@ class AppSyncStatusBanner extends StatelessWidget {
 }
 
 class _SyncStatusPill extends StatelessWidget {
-  const _SyncStatusPill({required this.snapshot});
+  const _SyncStatusPill({
+    required this.snapshot,
+    required this.currentUser,
+    required this.maxWidth,
+  });
 
   final OfflineSyncStatusSnapshot snapshot;
+  final UserModel? currentUser;
+  final double maxWidth;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final compactSidebarBanner = isBackOfficeRole(currentUser?.role);
     final bool offlineWithPending =
         !snapshot.isOnline && snapshot.pendingActions > 0;
     final bool syncing = snapshot.isSyncing;
@@ -115,7 +153,7 @@ class _SyncStatusPill extends StatelessWidget {
     }
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 720),
+      constraints: BoxConstraints(maxWidth: maxWidth),
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: backgroundColor,
@@ -158,19 +196,24 @@ class _SyncStatusPill extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: theme.textTheme.bodyLarge?.copyWith(
+                      style: (compactSidebarBanner
+                              ? theme.textTheme.bodyMedium
+                              : theme.textTheme.bodyLarge)
+                          ?.copyWith(
                         fontWeight: FontWeight.w800,
                         color: textColor,
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: textColor.withValues(alpha: 0.9),
-                        fontWeight: FontWeight.w600,
+                    if (!compactSidebarBanner) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: textColor.withValues(alpha: 0.9),
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),

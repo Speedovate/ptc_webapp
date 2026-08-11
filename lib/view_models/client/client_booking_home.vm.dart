@@ -1,5 +1,4 @@
 import 'package:stacked/stacked.dart';
-import 'package:flutter/foundation.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/status.dart';
 import 'package:webapp/models/booking.dart';
@@ -112,10 +111,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
           .where((item) => item.isActive != false && item.resolvedIsMainForm)
           .toList();
       mainForms = loadedMainForms;
-      debugPrint(
-        '[ClientBookingHomeViewModel] user=${clientUser.id} statuses=${statuses.length} members=${members.length} bookForms=${bookForms.length} mainForms=${mainForms.length}',
-      );
-
       form = mainForms.firstOrNull;
       if (form == null) {
         mainForms = [];
@@ -123,7 +118,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         fields = [];
         answers = {};
         errors = {};
-        debugPrint('[ClientBookingHomeViewModel] no main form resolved');
         return;
       }
 
@@ -139,9 +133,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         );
       }
       fields = fieldsForForm(form!);
-      debugPrint(
-        '[ClientBookingHomeViewModel] selectedForm=${form?.id} loadedFieldBuckets=${_fieldsByFormId.length} visibleFields=${fields.length}',
-      );
       _activeClientUser = clientUser;
       blockedMessage = _resolveBlockedMessage(clientUser);
       _cachedMainForms = List<StatusForm>.from(mainForms);
@@ -156,7 +147,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       _cachedBlockedMessage = blockedMessage;
       _cachedActiveClientUser = _activeClientUser;
     } catch (error) {
-      debugPrint('[ClientBookingHomeViewModel] load error=$error');
       loadError = userFacingErrorMessage(
         error,
         fallback: 'We could not load the booking form right now.',

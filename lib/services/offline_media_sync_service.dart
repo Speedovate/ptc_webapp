@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:webapp/models/support_message.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_sync_status_service.dart';
@@ -30,12 +31,15 @@ class OfflineMediaSyncService {
   static final OfflineMediaSyncService instance = OfflineMediaSyncService();
 
   static const _storageKey = 'offline_media_sync_queue_v1';
+  static const _currentUserIdKey = 'paltranco_current_user_id';
+  static const _knownSessionUserIdsKey = 'paltranco_known_session_user_ids';
   static const _retryInterval = Duration(seconds: 20);
 
   final BookingStorageBackend _backend;
   final FirebaseFirestore _firestore;
   final PhotoStorageService _photoStorageService;
   final SupportStorageService _supportStorageService;
+  final AuthStorageBackend _authStorage = createAuthStorageBackend();
 
   bool _isInitialized = false;
   bool _isFlushing = false;
@@ -56,6 +60,33 @@ class OfflineMediaSyncService {
   Stream<OfflineQueueStatusSnapshot> get statusStream =>
       _statusController.stream;
   OfflineQueueStatusSnapshot get currentStatus => _currentStatus;
+
+  Future<Map<String, OfflineQueueStatusSnapshot>> readScopedStatuses({
+    Iterable<String> userIds = const [],
+    bool includeSignedOut = true,
+  }) async {
+    await initialize();
+    final normalizedUserIds = userIds
+        .map(normalizeId)
+        .whereType<String>()
+        .toSet()
+        .toList();
+    final statuses = <String, OfflineQueueStatusSnapshot>{};
+    if (includeSignedOut) {
+      statuses['signed_out'] = await _readStatusForStorageKey(
+        _storageKeyForUserId(null),
+      );
+    }
+    for (final userId in normalizedUserIds) {
+      statuses[userId] = await _readStatusForStorageKey(
+        _storageKeyForUserId(userId),
+      );
+    }
+    debugPrint(
+      '[OfflineQueueScope] media scoped statuses ${statuses.entries.map((entry) => '${entry.key}:${entry.value.pendingCount}/${entry.value.failedCount}').join(', ')}',
+    );
+    return statuses;
+  }
 
   Future<List<Map<String, dynamic>>> readQueuedSupportMessageDocuments({
     String? threadId,
@@ -78,7 +109,14 @@ class OfflineMediaSyncService {
   }
 
   Future<void> initialize() async {
+    await _authStorage.initialize();
     if (_isInitialized) {
+      await _refreshStatusFromStorage();
+      debugPrint(
+        '[OfflineQueueScope] media initialize refresh '
+        'storageKey=${await _resolvedStorageKey()} '
+        'pending=${_currentStatus.pendingCount}',
+      );
       return;
     }
     await _backend.initialize();
@@ -92,6 +130,11 @@ class OfflineMediaSyncService {
       }
     });
     _isInitialized = true;
+    debugPrint(
+      '[OfflineQueueScope] media initialize first-run '
+      'storageKey=${await _resolvedStorageKey()} '
+      'pending=${_currentStatus.pendingCount}',
+    );
     unawaited(flushPendingOperations());
   }
 
@@ -187,6 +230,11 @@ class OfflineMediaSyncService {
     var shouldFlushAgainImmediately = false;
     if (!currentNetworkStatus()) {
       final entries = await _readEntries();
+      debugPrint(
+        '[OfflineQueueScope] media flush skipped '
+        'storageKey=${await _resolvedStorageKey()} '
+        'online=false entries=${entries.length}',
+      );
       _setStatus(
         _currentStatus.copyWith(
           pendingCount: entries.length,
@@ -199,85 +247,21 @@ class OfflineMediaSyncService {
     }
     _isFlushing = true;
     try {
-      final entries = await _readEntries();
-      final originalEntryIds = entries.map((entry) => entry.id).toSet();
-      _setStatus(
-        _currentStatus.copyWith(
-          pendingCount: entries.length,
-          isSyncing: entries.isNotEmpty,
-          processedInBatch: 0,
-          totalInBatch: entries.length,
-          clearLastSyncAt: entries.isNotEmpty,
-        ),
+      final currentStorageKey = await _resolvedStorageKey();
+      final storageKeys = await _allKnownStorageKeys();
+      debugPrint(
+        '[OfflineQueueScope] media flush all '
+        'current=$currentStorageKey storageKeys=$storageKeys',
       );
-      if (entries.isEmpty) {
-        return;
+      for (final storageKey in storageKeys) {
+        final flushed = await _flushPendingOperationsForStorageKey(
+          storageKey,
+          updateStatus: storageKey == currentStorageKey,
+        );
+        shouldFlushAgainImmediately =
+            shouldFlushAgainImmediately || flushed.shouldFlushAgainImmediately;
       }
-
-      final remaining = <_OfflineMediaQueueEntry>[];
-      var processed = 0;
-
-      for (final entry in entries) {
-        try {
-          if (entry.kind == _OfflineMediaQueueKind.userUpload) {
-            final applied = await _flushUserUpload(entry);
-            if (!applied) {
-              continue;
-            }
-          } else if (entry.kind == _OfflineMediaQueueKind.supportMessage) {
-            await _flushSupportMessage(entry);
-          }
-        } catch (error) {
-          final normalizedError = normalizeUserErrorText(
-            error.toString(),
-            fallback: 'Something went wrong. Please try again.',
-          );
-          if (_isRetryable(normalizedError) ||
-              entry.kind == _OfflineMediaQueueKind.supportMessage) {
-            remaining.add(
-              entry.copyWith(
-                retryCount: entry.retryCount + 1,
-                lastError: normalizedError,
-              ),
-            );
-          }
-        } finally {
-          processed++;
-          _setStatus(
-            _currentStatus.copyWith(
-              pendingCount: remaining.length + (entries.length - processed),
-              isSyncing: true,
-              processedInBatch: processed,
-              totalInBatch: entries.length,
-            ),
-          );
-        }
-      }
-
-      await _queueMutationChain;
-      final latestStoredEntries = await _readEntries();
-      final newlyQueuedEntries = latestStoredEntries.where((entry) {
-        return !originalEntryIds.contains(entry.id);
-      }).toList();
-      final nextEntries = <_OfflineMediaQueueEntry>[
-        ...remaining,
-        ...newlyQueuedEntries,
-      ];
-      await _writeEntries(nextEntries);
-      final latestEntries = await _readEntries();
-      shouldFlushAgainImmediately =
-          currentNetworkStatus() &&
-          latestEntries.isNotEmpty &&
-          latestEntries.length < entries.length;
-      _setStatus(
-        _currentStatus.copyWith(
-          pendingCount: latestEntries.length,
-          isSyncing: false,
-          processedInBatch: remaining.isEmpty ? entries.length : 0,
-          totalInBatch: remaining.isEmpty ? entries.length : 0,
-          lastSyncAt: remaining.length < entries.length ? DateTime.now() : null,
-        ),
-      );
+      await _refreshStatusFromStorage();
     } finally {
       _isFlushing = false;
       if (_currentStatus.isSyncing) {
@@ -311,7 +295,6 @@ class OfflineMediaSyncService {
       mimeType: entry.mimeType,
       size: entry.size,
     );
-
     var applied = false;
     await _firestore.runTransaction((transaction) async {
       final userRef = _usersCollection.doc(userId);
@@ -408,17 +391,170 @@ class OfflineMediaSyncService {
   }
 
   Future<List<_OfflineMediaQueueEntry>> _readEntries() async {
-    final rawEntries = await _backend.readStringList(_storageKey);
+    final rawEntries = await _backend.readStringList(await _resolvedStorageKey());
     return rawEntries
         .map((item) => jsonDecode(item) as Map<String, dynamic>)
         .map(_OfflineMediaQueueEntry.fromMap)
         .toList();
   }
 
-  Future<void> _writeEntries(List<_OfflineMediaQueueEntry> entries) {
-    return _backend.writeStringList(
-      _storageKey,
+  Future<void> _writeEntries(List<_OfflineMediaQueueEntry> entries) async {
+    await _backend.writeStringList(
+      await _resolvedStorageKey(),
       entries.map((entry) => jsonEncode(entry.toMap())).toList(),
+    );
+  }
+
+  Future<String> _resolvedStorageKey() async {
+    final normalizedUserId = normalizeId(
+      await _authStorage.readString(_currentUserIdKey),
+    );
+    return _storageKeyForUserId(normalizedUserId);
+  }
+
+  String _storageKeyForUserId(String? userId) {
+    final normalizedUserId = normalizeId(userId);
+    if (normalizedUserId == null) {
+      return '$_storageKey::signed_out';
+    }
+    return '$_storageKey::$normalizedUserId';
+  }
+
+  Future<List<_OfflineMediaQueueEntry>> _readEntriesForStorageKey(
+    String storageKey,
+  ) async {
+    final rawEntries = await _backend.readStringList(storageKey);
+    return rawEntries
+        .map((item) => jsonDecode(item) as Map<String, dynamic>)
+        .map(_OfflineMediaQueueEntry.fromMap)
+        .toList();
+  }
+
+  Future<OfflineQueueStatusSnapshot> _readStatusForStorageKey(
+    String storageKey,
+  ) async {
+    final entries = await _readEntriesForStorageKey(storageKey);
+    return const OfflineQueueStatusSnapshot.idle().copyWith(
+      pendingCount: entries.length,
+      failedCount: 0,
+    );
+  }
+
+  Future<void> _writeEntriesForStorageKey(
+    String storageKey,
+    List<_OfflineMediaQueueEntry> entries,
+  ) async {
+    await _backend.writeStringList(
+      storageKey,
+      entries.map((entry) => jsonEncode(entry.toMap())).toList(),
+    );
+  }
+
+  Future<List<String>> _allKnownStorageKeys() async {
+    final knownUsers = await _authStorage.readStringList(_knownSessionUserIdsKey);
+    final keys = <String>{_storageKeyForUserId(null)};
+    for (final userId in knownUsers) {
+      keys.add(_storageKeyForUserId(userId));
+    }
+    keys.add(await _resolvedStorageKey());
+    return keys.toList(growable: false);
+  }
+
+  Future<_ScopedMediaFlushResult> _flushPendingOperationsForStorageKey(
+    String storageKey, {
+    required bool updateStatus,
+  }) async {
+    final entries = await _readEntriesForStorageKey(storageKey);
+    debugPrint(
+      '[OfflineQueueScope] media flush start '
+      'storageKey=$storageKey entries=${entries.length}',
+    );
+    final originalEntryIds = entries.map((entry) => entry.id).toSet();
+    if (updateStatus) {
+      _setStatus(
+        _currentStatus.copyWith(
+          pendingCount: entries.length,
+          isSyncing: entries.isNotEmpty,
+          processedInBatch: 0,
+          totalInBatch: entries.length,
+          clearLastSyncAt: entries.isNotEmpty,
+        ),
+      );
+    }
+    if (entries.isEmpty) {
+      return const _ScopedMediaFlushResult(shouldFlushAgainImmediately: false);
+    }
+
+    final remaining = <_OfflineMediaQueueEntry>[];
+    var processed = 0;
+
+    for (final entry in entries) {
+      try {
+        if (entry.kind == _OfflineMediaQueueKind.userUpload) {
+          final applied = await _flushUserUpload(entry);
+          if (!applied) {
+            continue;
+          }
+        } else if (entry.kind == _OfflineMediaQueueKind.supportMessage) {
+          await _flushSupportMessage(entry);
+        }
+      } catch (error) {
+        final normalizedError = normalizeUserErrorText(
+          error.toString(),
+          fallback: 'Something went wrong. Please try again.',
+        );
+        if (_isRetryable(normalizedError) ||
+            entry.kind == _OfflineMediaQueueKind.supportMessage) {
+          remaining.add(
+            entry.copyWith(
+              retryCount: entry.retryCount + 1,
+              lastError: normalizedError,
+            ),
+          );
+        }
+      } finally {
+        processed++;
+        if (updateStatus) {
+          _setStatus(
+            _currentStatus.copyWith(
+              pendingCount: remaining.length + (entries.length - processed),
+              isSyncing: true,
+              processedInBatch: processed,
+              totalInBatch: entries.length,
+            ),
+          );
+        }
+      }
+    }
+
+    await _queueMutationChain;
+    final latestStoredEntries = await _readEntriesForStorageKey(storageKey);
+    final newlyQueuedEntries = latestStoredEntries.where((entry) {
+      return !originalEntryIds.contains(entry.id);
+    }).toList();
+    final nextEntries = <_OfflineMediaQueueEntry>[
+      ...remaining,
+      ...newlyQueuedEntries,
+    ];
+    await _writeEntriesForStorageKey(storageKey, nextEntries);
+    final latestEntries = await _readEntriesForStorageKey(storageKey);
+    final shouldFlushAgainImmediately =
+        currentNetworkStatus() &&
+        latestEntries.isNotEmpty &&
+        latestEntries.length < entries.length;
+    if (updateStatus) {
+      _setStatus(
+        _currentStatus.copyWith(
+          pendingCount: latestEntries.length,
+          isSyncing: false,
+          processedInBatch: remaining.isEmpty ? entries.length : 0,
+          totalInBatch: remaining.isEmpty ? entries.length : 0,
+          lastSyncAt: remaining.length < entries.length ? DateTime.now() : null,
+        ),
+      );
+    }
+    return _ScopedMediaFlushResult(
+      shouldFlushAgainImmediately: shouldFlushAgainImmediately,
     );
   }
 
@@ -506,6 +642,12 @@ class QueuedSupportAttachmentInput {
   final String fileName;
   final String? mimeType;
   final int? size;
+}
+
+class _ScopedMediaFlushResult {
+  const _ScopedMediaFlushResult({required this.shouldFlushAgainImmediately});
+
+  final bool shouldFlushAgainImmediately;
 }
 
 class QueuedUserMediaResult {

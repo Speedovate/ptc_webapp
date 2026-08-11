@@ -59,6 +59,10 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   DateTime? get endDate => _endDate;
   List<String> get statusOptions => [
     'All',
+    if (bookings.any(
+      (booking) => (booking.localSyncStatus ?? '').trim().toLowerCase() == 'queued',
+    ))
+      'Queued',
     ..._statusesByKey.values
         .map((status) => status.label?.trim())
         .whereType<String>()
@@ -160,6 +164,9 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   String helperPhone(Booking booking) => _userPhone(booking.helper?.id);
 
   String statusLabelForRole(String? role, Booking booking) {
+    if ((booking.localSyncStatus ?? '').trim().toLowerCase() == 'queued') {
+      return 'Queued';
+    }
     return statusLabelForKey(booking.clientStatus);
   }
 
@@ -276,7 +283,7 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
     return bookings.where((booking) {
       final matchesStatus =
           _statusFilter == 'All' ||
-          statusLabelForKey(booking.clientStatus) == _statusFilter;
+          statusLabelForRole(null, booking) == _statusFilter;
       if (!matchesStatus) {
         return false;
       }

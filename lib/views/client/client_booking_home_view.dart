@@ -775,7 +775,12 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
             if (!context.mounted) {
               return;
             }
-            AppSnackbar.showSuccess(context, 'Booking created.');
+            AppSnackbar.showSuccess(
+              context,
+              (booking.localSyncStatus ?? '').trim().toLowerCase() == 'queued'
+                  ? 'Booking queued. It will sync once your internet is back.'
+                  : 'Booking created.',
+            );
             widget.onBookingSubmitted?.call(booking);
           },
           onClear: () {

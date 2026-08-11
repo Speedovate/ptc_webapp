@@ -62,9 +62,7 @@
     html, body {
       margin: 0;
       min-height: 100%;
-      background:
-        radial-gradient(circle at top, rgba(255, 255, 255, 0.18), transparent 38%),
-        linear-gradient(180deg, #6a3df2 0%, #4b25b6 100%);
+      background: #5c33cf;
       font-family: "Segoe UI", sans-serif;
     }
 
@@ -84,63 +82,47 @@
     }
 
     .bootstrap-card {
-      width: min(420px, 100%);
-      padding: 28px 24px;
-      border-radius: 24px;
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      box-shadow: 0 20px 60px rgba(26, 11, 72, 0.25);
-      backdrop-filter: blur(10px);
+      width: min(260px, 100%);
+      min-height: 72px;
+      padding: 12px 20px;
+      border-radius: 18px;
+      background: #ffffff;
+      border: 1px solid #d7cff7;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }
 
-    .bootstrap-title {
-      margin: 0 0 10px;
-      font-size: 22px;
-      font-weight: 800;
-      letter-spacing: 0.01em;
+    .bootstrap-spinner {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      box-sizing: border-box;
+      border: 3px solid rgba(92, 51, 207, 0.18);
+      border-top-color: #5c33cf;
+      animation: bootstrap-spin 0.85s linear infinite;
+      flex: 0 0 auto;
     }
 
     .bootstrap-copy {
       margin: 0;
-      line-height: 1.5;
-      color: rgba(255, 255, 255, 0.88);
-      font-size: 14px;
-      font-weight: 500;
+      color: #1f2333;
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.25;
     }
 
-    .bootstrap-progress {
-      margin-top: 18px;
-      height: 8px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.14);
-      overflow: hidden;
-      position: relative;
-    }
-
-    .bootstrap-progress::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      width: 42%;
-      border-radius: inherit;
-      background: linear-gradient(90deg, #ffffff 0%, #d8c7ff 100%);
-      animation: bootstrap-slide 1.2s ease-in-out infinite;
-    }
-
-    @keyframes bootstrap-slide {
-      0% { transform: translateX(-115%); }
-      100% { transform: translateX(320%); }
+    @keyframes bootstrap-spin {
+      to { transform: rotate(360deg); }
     }
   </style>
 </head>
 <body>
   <div id="bootstrap-loader" aria-live="polite">
     <div class="bootstrap-card">
-      <h1 class="bootstrap-title">Paltranco Digital Platform</h1>
-      <p class="bootstrap-copy">
-        Starting app and preparing offline data so the web app is ready even when signal is weak.
-      </p>
-      <div class="bootstrap-progress"></div>
+      <div class="bootstrap-spinner" aria-hidden="true"></div>
+      <p class="bootstrap-copy">Starting Paltranco and preparing offline data ...</p>
     </div>
   </div>
   <!--

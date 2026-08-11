@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webapp/services/network_status_events.dart';
 
 class FirestoreCacheStore {
   FirestoreCacheStore._();
@@ -170,7 +171,11 @@ class FirestoreCollectionCache {
   Future<void> touch(String resourceKey) async {
     final nextVersion = DateTime.now().toUtc().toIso8601String();
     await _store.clearResource(resourceKey);
-    await _tryWriteRemoteVersion(resourceKey, nextVersion);
+    if (currentNetworkStatus()) {
+      await _tryWriteRemoteVersion(resourceKey, nextVersion);
+    } else {
+      unawaited(_tryWriteRemoteVersion(resourceKey, nextVersion));
+    }
   }
 
   Future<void> upsertDocument({
@@ -313,7 +318,11 @@ class FirestoreCollectionCache {
       _store.writeDocumentMaps(resourceKey, documents),
       _store.writeVersion(resourceKey, nextVersion),
     ]);
-    await _tryWriteRemoteVersion(resourceKey, nextVersion);
+    if (currentNetworkStatus()) {
+      await _tryWriteRemoteVersion(resourceKey, nextVersion);
+    } else {
+      unawaited(_tryWriteRemoteVersion(resourceKey, nextVersion));
+    }
   }
 
   Future<void> _tryWriteRemoteVersion(

@@ -210,6 +210,9 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
   }
 
   String _headlineStatusLabel(Booking booking) {
+    if ((booking.localSyncStatus ?? '').trim().toLowerCase() == 'queued') {
+      return 'Queued';
+    }
     final role = normalizeRoleKey(widget.user.role);
     final statusKey = switch (role) {
       'driver' => booking.driverStatus ?? booking.clientStatus,
