@@ -32,9 +32,9 @@ class AuthViewModel extends BaseViewModel {
       notifyListeners();
       return null;
     } catch (error) {
-      errorMessage = userFacingErrorMessage(
+      errorMessage = exactUserErrorMessage(
         error,
-        fallback: 'We could not sign you in right now. Please try again.',
+        fallback: 'Sign in failed.',
       );
       notifyListeners();
       return null;

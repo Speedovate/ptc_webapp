@@ -313,6 +313,19 @@ String userFacingErrorMessage(
   return normalizeUserErrorText(error.toString(), fallback: fallback);
 }
 
+String exactUserErrorMessage(
+  Object error, {
+  String fallback = 'Unknown error.',
+}) {
+  if (error is FirebaseException) {
+    return _normalizeRawErrorText(error.message ?? error.code, fallback);
+  }
+  if (error is PlatformException) {
+    return _normalizeRawErrorText(error.message ?? error.code, fallback);
+  }
+  return _normalizeRawErrorText(error.toString(), fallback);
+}
+
 String normalizeUserErrorText(
   String? rawMessage, {
   String fallback = 'Something went wrong. Please try again.',
@@ -344,6 +357,25 @@ String normalizeUserErrorText(
   }
 
   return _sentenceCase(normalized);
+}
+
+String _normalizeRawErrorText(String? rawMessage, String fallback) {
+  final text = (rawMessage ?? '').trim();
+  if (text.isEmpty) {
+    return fallback;
+  }
+
+  final normalized = text
+      .replaceFirst(
+        RegExp(r'^(Exception|Error|StateError|AuthFailure|FirebaseException):\s*'),
+        '',
+      )
+      .replaceFirst(RegExp(r'^\[[^\]]+\]\s*'), '')
+      .trim();
+  if (normalized.isEmpty) {
+    return fallback;
+  }
+  return normalized;
 }
 
 String _sentenceCase(String value) {

@@ -233,7 +233,7 @@ class AuthRequest implements AuthRepository {
     required String identifier,
     required String password,
   }) async {
-    return _runAuthRequest(() async {
+    try {
       await initialize();
       AppSessionReset.clearUserScopedState();
       final trimmedIdentifier = identifier.trim();
@@ -269,7 +269,16 @@ class AuthRequest implements AuthRepository {
       );
       AppSessionReset.clearUserScopedState();
       return bridgedUser;
-    }, fallback: 'We could not sign you in right now. Please try again.');
+    } on AuthFailure {
+      rethrow;
+    } catch (error) {
+      throw AuthFailure(
+        exactUserErrorMessage(
+          error,
+          fallback: 'Sign in failed.',
+        ),
+      );
+    }
   }
 
   @override
