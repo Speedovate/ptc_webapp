@@ -18,7 +18,7 @@ class FirestoreOfflineService {
           persistenceEnabled: true,
           cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
           webExperimentalAutoDetectLongPolling: true,
-          webExperimentalForceLongPolling: true,
+          webExperimentalForceLongPolling: false,
         );
       } else {
         firestore.settings = const Settings(
