@@ -1,7 +1,7 @@
 name: webapp
 description: "Paltranco Web App"
 publish_to: 'none'
-version: 1.0.0+2
+version: 1.0.0+3
 
 environment:
   sdk: ^3.11.5
@@ -36,6 +36,9 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/logo.png
+    - assets/icon.png
+    - assets/sdv_footer_lite.png
     - assets/export_templates/bs-regular.docx
     - assets/export_templates/bs-hustling.docx
     - assets/export_templates/bt-regular.docx

@@ -3,10 +3,12 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/services/app_version_service.dart';
+import 'package:webapp/services/web_app_install_service.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/collapsible_sidebar.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
+import 'package:webapp/widgets/shared/app_snackbar.dart';
 
 class PlatformShell extends StatelessWidget {
   const PlatformShell({
@@ -222,7 +224,67 @@ class PlatformSidebarContainer extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(height: 16),
+          const _PlatformInstallAppButton(),
         ],
+      ),
+    );
+  }
+}
+
+class _PlatformInstallAppButton extends StatelessWidget {
+  const _PlatformInstallAppButton();
+
+  Future<void> _handleInstall(BuildContext context) async {
+    final result = await webAppInstallService.install();
+    if (!context.mounted) {
+      return;
+    }
+    final message = result.message?.trim();
+    if (message == null || message.isEmpty) {
+      return;
+    }
+    if (result.isError) {
+      AppSnackbar.showError(context, message);
+      return;
+    }
+    AppSnackbar.showSuccess(context, message);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppMousePressable(
+      onTap: () => _handleInstall(context),
+      borderRadius: BorderRadius.circular(16),
+      child: Builder(
+        builder: (context) => AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: AppColors.primarySurfaceAlt.withValues(alpha: 0.22),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: AppColors.primarySurfaceAlt.withValues(alpha: 0.32),
+            ),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.download_for_offline_rounded, color: Colors.white),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Install',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -293,7 +355,7 @@ class PlatformSidebarBrandTile extends StatelessWidget {
                           future: AppVersionService.sidebarVersionLabel,
                           builder: (context, snapshot) {
                             final versionLabel =
-                                snapshot.data ?? 'Version 1.0.0 (1)';
+                                snapshot.data ?? 'Version 1.0.0 (3)';
                             return Text(
                               versionLabel,
                               maxLines: 1,
