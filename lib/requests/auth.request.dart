@@ -1355,69 +1355,45 @@ class AuthRequest implements AuthRepository {
       return cachedUser;
     }
 
-    try {
-      final lookupFuture = isPhoneLogin
-          ? _usersCollection
-                .where('phone', isEqualTo: normalizedPhone)
-                .limit(1)
-                .get()
-          : _usersCollection
-                .where('email', isEqualTo: identifier.toLowerCase())
-                .limit(1)
-                .get();
-      final matches = await lookupFuture.timeout(_loginLookupTimeout, onTimeout: () {
-            throw TimeoutException(
-              isPhoneLogin
-                  ? 'login firestore phone lookup timeout'
-                  : 'login firestore email lookup timeout',
-            );
-          });
-      if (matches.docs.isEmpty) {
-        throw const AuthFailure(
-          'No account found for that email or mobile number.',
-        );
-      }
-      return _inflateUser(matches.docs.first);
-    } catch (error) {
-      if (!_isOfflineAuthLookupError(error)) {
-        rethrow;
-      }
-      final offlineUser = await _findCachedUserByIdentifier(
+    final results = await Future.wait<_LoginLookupResult>([
+      _findUserByIdentifierViaFirestoreQuery(
         identifier: identifier,
         normalizedPhone: normalizedPhone,
         isPhoneLogin: isPhoneLogin,
-      );
-      if (offlineUser != null) {
-        return offlineUser;
+      ),
+      _findUserByIdentifierViaDirectoryFetch(
+        identifier: identifier,
+        normalizedPhone: normalizedPhone,
+        isPhoneLogin: isPhoneLogin,
+      ),
+      _findUserByIdentifierViaPublicRestDirectory(
+        identifier: identifier,
+        normalizedPhone: normalizedPhone,
+        isPhoneLogin: isPhoneLogin,
+      ),
+    ]);
+    for (final result in results) {
+      if (result.user != null) {
+        return result.user!;
       }
-      final fallbackResults = await Future.wait<UserModel?>([
-        _findUserByIdentifierViaDirectoryFetch(
-          identifier: identifier,
-          normalizedPhone: normalizedPhone,
-          isPhoneLogin: isPhoneLogin,
-        ).timeout(
-          _loginFallbackLookupTimeout,
-          onTimeout: () => null,
-        ),
-        _findUserByIdentifierViaPublicRestDirectory(
-          identifier: identifier,
-          normalizedPhone: normalizedPhone,
-          isPhoneLogin: isPhoneLogin,
-        ).timeout(
-          _loginFallbackLookupTimeout,
-          onTimeout: () => null,
-        ),
-      ]);
-      final directoryUser = fallbackResults[0];
-      final publicRestUser = fallbackResults[1];
-      if (directoryUser != null) {
-        return directoryUser;
-      }
-      if (publicRestUser != null) {
-        return publicRestUser;
-      }
-      throw _buildLoginLookupFailure(error, isPhoneLogin: isPhoneLogin);
     }
+    if (results.any((result) => result.definitiveMiss)) {
+      throw const AuthFailure(
+        'No account found for that email or mobile number.',
+      );
+    }
+    final firstError = results
+        .map((result) => result.error)
+        .whereType<Object>()
+        .cast<Object?>()
+        .firstWhere((error) => error != null, orElse: () => null);
+    if (firstError != null) {
+      throw _buildLoginLookupFailure(firstError, isPhoneLogin: isPhoneLogin);
+    }
+    throw _buildLoginLookupFailure(
+      StateError('login lookup returned no result'),
+      isPhoneLogin: isPhoneLogin,
+    );
   }
 
   AuthFailure _buildLoginLookupFailure(
@@ -1530,7 +1506,38 @@ class AuthRequest implements AuthRepository {
     return users;
   }
 
-  Future<UserModel?> _findUserByIdentifierViaDirectoryFetch({
+  Future<_LoginLookupResult> _findUserByIdentifierViaFirestoreQuery({
+    required String identifier,
+    required String? normalizedPhone,
+    required bool isPhoneLogin,
+  }) async {
+    try {
+      final lookupFuture = isPhoneLogin
+          ? _usersCollection
+                .where('phone', isEqualTo: normalizedPhone)
+                .limit(1)
+                .get()
+          : _usersCollection
+                .where('email', isEqualTo: identifier.toLowerCase())
+                .limit(1)
+                .get();
+      final matches = await lookupFuture.timeout(_loginFallbackLookupTimeout, onTimeout: () {
+        throw TimeoutException(
+          isPhoneLogin
+              ? 'login firestore phone lookup timeout'
+              : 'login firestore email lookup timeout',
+        );
+      });
+      if (matches.docs.isEmpty) {
+        return const _LoginLookupResult(definitiveMiss: true);
+      }
+      return _LoginLookupResult(user: await _inflateUser(matches.docs.first));
+    } catch (error) {
+      return _LoginLookupResult(error: error);
+    }
+  }
+
+  Future<_LoginLookupResult> _findUserByIdentifierViaDirectoryFetch({
     required String identifier,
     required String? normalizedPhone,
     required bool isPhoneLogin,
@@ -1547,24 +1554,24 @@ class AuthRequest implements AuthRepository {
       if (isPhoneLogin) {
         for (final user in users) {
           if (normalizePhilippinePhone(user.phone) == normalizedPhone) {
-            return user;
+            return _LoginLookupResult(user: user);
           }
         }
-        return null;
+        return const _LoginLookupResult(definitiveMiss: true);
       }
       final normalizedEmail = identifier.trim().toLowerCase();
       for (final user in users) {
         if ((user.email ?? '').trim().toLowerCase() == normalizedEmail) {
-          return user;
+          return _LoginLookupResult(user: user);
         }
       }
-      return null;
+      return const _LoginLookupResult(definitiveMiss: true);
     } catch (error) {
-      return null;
+      return _LoginLookupResult(error: error);
     }
   }
 
-  Future<UserModel?> _findUserByIdentifierViaPublicRestDirectory({
+  Future<_LoginLookupResult> _findUserByIdentifierViaPublicRestDirectory({
     required String identifier,
     required String? normalizedPhone,
     required bool isPhoneLogin,
@@ -1576,27 +1583,27 @@ class AuthRequest implements AuthRepository {
             throw TimeoutException('login public rest users fetch timeout');
           });
       if (documents.isEmpty) {
-        return null;
+        return const _LoginLookupResult(definitiveMiss: true);
       }
       await _writeUsersCacheLocally(documents);
       final users = documents.map(UserModel.fromMap).toList(growable: false);
       if (isPhoneLogin) {
         for (final user in users) {
           if (normalizePhilippinePhone(user.phone) == normalizedPhone) {
-            return user;
+            return _LoginLookupResult(user: user);
           }
         }
-        return null;
+        return const _LoginLookupResult(definitiveMiss: true);
       }
       final normalizedEmail = identifier.trim().toLowerCase();
       for (final user in users) {
         if ((user.email ?? '').trim().toLowerCase() == normalizedEmail) {
-          return user;
+          return _LoginLookupResult(user: user);
         }
       }
-      return null;
+      return const _LoginLookupResult(definitiveMiss: true);
     } catch (error) {
-      return null;
+      return _LoginLookupResult(error: error);
     }
   }
 
@@ -1642,25 +1649,6 @@ class AuthRequest implements AuthRepository {
       nextDocuments.add(Map<String, dynamic>.from(document));
     }
     await _writeUsersCacheLocally(nextDocuments);
-  }
-
-  bool _isOfflineAuthLookupError(Object error) {
-    final normalized = normalizeUserErrorText(
-      error.toString(),
-      fallback: '',
-    ).toLowerCase();
-    return normalized.contains('offline') ||
-        normalized.contains('internet connection') ||
-        normalized.contains('network') ||
-        normalized.contains('timeout') ||
-        normalized.contains('invalid-argument') ||
-        normalized.contains('invalid value') ||
-        normalized.contains('failed-precondition') ||
-        normalized.contains('requires an index') ||
-        normalized.contains('query requires an index') ||
-        normalized.contains('unsupported') ||
-        normalized.contains('progressEvent'.toLowerCase()) ||
-        normalized.contains('client is offline');
   }
 
   Future<UserModel> _inflateUser(
@@ -1917,4 +1905,16 @@ class AuthRequest implements AuthRepository {
       throw AuthFailure(exactUserErrorMessage(error));
     }
   }
+}
+
+class _LoginLookupResult {
+  const _LoginLookupResult({
+    this.user,
+    this.error,
+    this.definitiveMiss = false,
+  });
+
+  final UserModel? user;
+  final Object? error;
+  final bool definitiveMiss;
 }
