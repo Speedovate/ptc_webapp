@@ -263,6 +263,10 @@ class AuthRequest implements AuthRepository {
       await _storage.writeString(_currentUserIdKey, loggedInUser.id ?? '');
       await _writeCurrentSessionSnapshot(bridgedUser);
       await _rememberKnownSessionUserId(bridgedUser.id);
+      final bridgedUserId = normalizeId(bridgedUser.id);
+      if (bridgedUserId != null && currentNetworkStatus()) {
+        unawaited(_validateStoredSessionInBackground(bridgedUserId));
+      }
       unawaited(
         _refreshOfflineQueueScopes().then((_) {
         }),
@@ -1329,18 +1333,26 @@ class AuthRequest implements AuthRepository {
     required String? normalizedPhone,
     required bool isPhoneLogin,
   }) async {
+    final cachedUser = await _findCachedUserByIdentifier(
+      identifier: identifier,
+      normalizedPhone: normalizedPhone,
+      isPhoneLogin: isPhoneLogin,
+    );
     if (!currentNetworkStatus()) {
-      final offlineUser = await _findCachedUserByIdentifier(
-        identifier: identifier,
-        normalizedPhone: normalizedPhone,
-        isPhoneLogin: isPhoneLogin,
-      );
-      if (offlineUser == null) {
+      if (cachedUser == null) {
         throw const AuthFailure(
           'No cached account found for that email or mobile number.',
         );
       }
-      return offlineUser;
+      return cachedUser;
+    }
+
+    if (cachedUser != null) {
+      final cachedUserId = normalizeId(cachedUser.id);
+      if (cachedUserId != null) {
+        unawaited(_refreshLoginUserCacheInBackground(cachedUserId));
+      }
+      return cachedUser;
     }
 
     try {
@@ -1413,6 +1425,24 @@ class AuthRequest implements AuthRepository {
     required bool isPhoneLogin,
   }) {
     return AuthFailure(exactUserErrorMessage(error));
+  }
+
+  Future<void> _refreshLoginUserCacheInBackground(String userId) async {
+    try {
+      final freshUser = await _getFreshUserById(userId).timeout(
+        _loginFallbackLookupTimeout,
+        onTimeout: () => null,
+      );
+      if (freshUser == null) {
+        return;
+      }
+      await _upsertUserCacheLocally(_toFirestoreMap(freshUser)).timeout(
+        _localWriteTimeout,
+        onTimeout: () {},
+      );
+    } catch (_) {
+      // Login should stay instant even if the background refresh fails.
+    }
   }
 
   Future<UserModel?> _findCachedUserByIdentifier({
