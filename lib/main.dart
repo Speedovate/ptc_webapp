@@ -9,6 +9,7 @@ import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/services/firestore_offline_service.dart';
 import 'package:webapp/services/offline_queue_coordinator_service.dart';
+import 'package:webapp/utils/functions.dart';
 
 const Duration _firebaseBootstrapTimeout = Duration(seconds: 6);
 const Duration _firestoreBootstrapTimeout = Duration(seconds: 4);
@@ -351,6 +352,10 @@ class _AppErrorFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final exceptionText = exactUserErrorMessage(
+      details.exception,
+      fallback: details.exceptionAsString(),
+    );
     return Material(
       color: const Color(0xFFF8F7FC),
       child: Center(
@@ -370,21 +375,21 @@ class _AppErrorFallback extends StatelessWidget {
               ),
             ],
           ),
-          child: const Column(
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Something went wrong',
+              const Text(
+                'Application error',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
                   color: AppColors.textPrimary,
                 ),
               ),
-              SizedBox(height: 8),
-              Text(
-                'Please refresh the page and try again.',
+              const SizedBox(height: 8),
+              SelectableText(
+                exceptionText,
                 style: TextStyle(
                   fontSize: 14,
                   color: AppColors.textSecondary,

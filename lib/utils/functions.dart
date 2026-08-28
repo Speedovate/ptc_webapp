@@ -285,32 +285,13 @@ String _titleCasePart(String part) {
 
 String userFacingErrorMessage(
   Object error, {
-  String fallback = 'Something went wrong. Please try again.',
+  String fallback = '',
 }) {
-  if (error is FirebaseException) {
-    final mapped = _firebaseErrorMessage(error.code, fallback: fallback);
-    if (mapped != null) {
-      return mapped;
-    }
-    final fromMessage = normalizeUserErrorText(error.message, fallback: '');
-    if (fromMessage.isNotEmpty) {
-      return fromMessage;
-    }
-    return fallback;
+  final message = exactUserErrorMessage(error, fallback: fallback);
+  if (message.trim().isNotEmpty) {
+    return message.trim();
   }
-
-  if (error is PlatformException) {
-    final mapped = _firebaseErrorMessage(error.code, fallback: fallback);
-    if (mapped != null) {
-      return mapped;
-    }
-    return normalizeUserErrorText(
-      error.message ?? error.code,
-      fallback: fallback,
-    );
-  }
-
-  return normalizeUserErrorText(error.toString(), fallback: fallback);
+  return error.toString().trim();
 }
 
 String exactUserErrorMessage(
@@ -342,7 +323,7 @@ String exactUserErrorMessage(
 
 String normalizeUserErrorText(
   String? rawMessage, {
-  String fallback = 'Something went wrong. Please try again.',
+  String fallback = '',
 }) {
   final text = (rawMessage ?? '').trim();
   if (text.isEmpty) {
@@ -367,7 +348,7 @@ String normalizeUserErrorText(
   }
 
   if (_looksTechnical(lower)) {
-    return fallback;
+    return normalized;
   }
 
   return _sentenceCase(normalized);
