@@ -38,7 +38,7 @@ _flutter.buildConfig = {"engineRevision":"59aa584fdf100e6c78c785d8a5b565d1de4b48
 
 (function () {
   const serviceWorkerVersion =
-    "2913472085" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
+    "2949389509" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
   const swVersionKey = 'paltranco_sw_version';
 
   async function clearStaleWebCachesIfNeeded() {

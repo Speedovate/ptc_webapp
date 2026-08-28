@@ -1612,6 +1612,12 @@ class AuthRequest implements AuthRepository {
         normalized.contains('internet connection') ||
         normalized.contains('network') ||
         normalized.contains('timeout') ||
+        normalized.contains('invalid-argument') ||
+        normalized.contains('invalid value') ||
+        normalized.contains('failed-precondition') ||
+        normalized.contains('requires an index') ||
+        normalized.contains('query requires an index') ||
+        normalized.contains('unsupported') ||
         normalized.contains('progressEvent'.toLowerCase()) ||
         normalized.contains('client is offline');
   }

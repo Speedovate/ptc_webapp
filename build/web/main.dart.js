@@ -124942,7 +124942,7 @@ case 7:p=6
 c=o.pop()
 k=A.ac(c)
 e=A.bc(J.z(k),"").toLowerCase()
-if(!(B.b.p(e,"offline")||B.b.p(e,"internet connection")||B.b.p(e,"network")||B.b.p(e,"timeout")||B.b.p(e,"progressEvent".toLowerCase())||B.b.p(e,"client is offline")))throw c
+if(!(B.b.p(e,"offline")||B.b.p(e,"internet connection")||B.b.p(e,"network")||B.b.p(e,"timeout")||B.b.p(e,"invalid-argument")||B.b.p(e,"invalid value")||B.b.p(e,"failed-precondition")||B.b.p(e,"requires an index")||B.b.p(e,"query requires an index")||B.b.p(e,"unsupported")||B.b.p(e,"progressEvent".toLowerCase())||B.b.p(e,"client is offline")))throw c
 s=11
 return A.b(n.yK(a,b,a0),$async$vt)
 case 11:j=a2
