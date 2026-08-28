@@ -138,7 +138,7 @@ void main() {
 
       await firestore.collection('users').doc('7').set({
         'id': '7',
-        'role': 'sub-client',
+        'role': 'client',
         'name': 'Adryc',
         'photo': 'https://server/old.png',
       });
@@ -181,7 +181,7 @@ void main() {
 
       await firestore.collection('users').doc('7').set({
         'id': '7',
-        'role': 'sub-client',
+        'role': 'client',
         'name': 'Adryc',
         'photo': 'https://server/old.png',
       });
@@ -230,7 +230,7 @@ void main() {
         const SupportThread(
           id: 'thread-1',
           requesterUserId: '7',
-          requesterRole: 'sub-client',
+          requesterRole: 'client',
           requesterName: 'Adryc Allen Catapang',
           requesterPhoto: null,
           topicKey: supportTopicGeneral,

@@ -5,10 +5,10 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/views/client/client_booking_history_view.dart';
 import 'package:webapp/views/client/client_booking_home_view.dart';
-import 'package:webapp/views/client/client_members_view.dart';
 import 'package:webapp/view_models/shared/role_assigned_home.vm.dart';
 import 'package:webapp/view_models/shared/role_platform_home.vm.dart';
 import 'package:webapp/views/shared/profile_view.dart';
@@ -43,6 +43,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
   final RolePlatformHomeViewModel _viewModel = RolePlatformHomeViewModel();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final AuthRepository _authRepository = AuthRequest.instance;
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
   Booking? _selectedHistoryBooking;
   late UserModel _shellUser;
   bool _isUploadingProfilePhoto = false;
@@ -173,6 +174,11 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
     );
   }
 
+  bool get _canUpdateProfile => _roleAccessService.canAccess(
+    'profile.update',
+    role: _shellUser.role,
+  );
+
   Widget _buildSidebar(
     RolePlatformHomeViewModel vm, {
     required bool isCompact,
@@ -200,13 +206,6 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
           icon: Icons.history_rounded,
           isCompact: isCompact,
         ),
-        if (isPrimaryClientRole(widget.user.role))
-          _sectionItem(
-            vm: vm,
-            section: RolePlatformSection.members,
-            icon: Icons.groups_rounded,
-            isCompact: isCompact,
-          ),
         _sectionItem(
           vm: vm,
           section: RolePlatformSection.support,
@@ -284,7 +283,6 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
           _viewModel.selectSection(RolePlatformSection.home);
         },
       ),
-      RolePlatformSection.members => ClientMembersView(clientUser: _shellUser),
       RolePlatformSection.support => SupportCenterView(
         key: ValueKey(
           'support:$_supportViewTick:${_supportInitialTopicKey ?? '-'}:${_supportInitialBookingId ?? '-'}:${_supportInitialUserId ?? '-'}',
@@ -308,7 +306,9 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
               isCurrentUserView: true,
               onLogout: widget.onLogout,
               logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-              onSaveProfileChanges: _saveProfileChanges,
+              onSaveProfileChanges: _canUpdateProfile
+                  ? _saveProfileChanges
+                  : null,
             ),
             const SizedBox(height: 12),
             UserBookingsSection(user: _shellUser),
@@ -347,7 +347,11 @@ class _RoleAssignedHomeSection extends StatelessWidget {
         }
 
         final currentUser = vm.currentUser ?? user;
-        final roleLabel = currentUser.role == 'driver' ? 'Driver' : 'Helper';
+        final roleLabel = RoleAccessService.instance.assignedBookingRoleLabel(
+          currentUser.role,
+        );
+        final showOnlineAvailability = RoleAccessService.instance
+            .isOnlineEligibleRole(currentUser.role);
 
         return AppPageLoadingOverlay(
           isVisible: vm.isBusy,
@@ -358,65 +362,71 @@ class _RoleAssignedHomeSection extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 AppRefreshStrip(isVisible: vm.isBusy),
-                AdminListItemCard(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 16,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '$roleLabel Availability',
-                              style: const TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              (currentUser.isOnline ?? false)
-                                  ? 'You are currently online and assignable.'
-                                  : 'You are currently offline.',
-                              style: TextStyle(
-                                color: AppColors.primaryColor.withValues(
-                                  alpha: 0.72,
+                if (showOnlineAvailability)
+                  AdminListItemCard(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 16,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '$roleLabel Availability',
+                                style: const TextStyle(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
                                 ),
-                                fontWeight: FontWeight.w600,
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 4),
+                              Text(
+                                (currentUser.isOnline ?? false)
+                                    ? 'You are currently online and assignable.'
+                                    : 'You are currently offline.',
+                                style: TextStyle(
+                                  color: AppColors.primaryColor.withValues(
+                                    alpha: 0.72,
+                                  ),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      Switch(
-                        value: currentUser.isOnline ?? false,
-                        trackOutlineColor: WidgetStateProperty.all(
-                          AppColors.primaryColor,
+                        Switch(
+                          value: currentUser.isOnline ?? false,
+                          trackOutlineColor: WidgetStateProperty.all(
+                            AppColors.primaryColor,
+                          ),
+                          inactiveThumbColor: AppColors.primaryColor,
+                          onChanged: vm.isBusy
+                              ? null
+                              : (value) async {
+                                  try {
+                                    final updatedUser = await vm.setOnline(
+                                      value,
+                                    );
+                                    if (updatedUser != null) {
+                                      onUserUpdated(updatedUser);
+                                    }
+                                  } on AuthFailure catch (error) {
+                                    if (!context.mounted) {
+                                      return;
+                                    }
+                                    AppSnackbar.showError(
+                                      context,
+                                      error.message,
+                                    );
+                                  }
+                                },
                         ),
-                        inactiveThumbColor: AppColors.primaryColor,
-                        onChanged: vm.isBusy
-                            ? null
-                            : (value) async {
-                                try {
-                                  final updatedUser = await vm.setOnline(value);
-                                  if (updatedUser != null) {
-                                    onUserUpdated(updatedUser);
-                                  }
-                                } on AuthFailure catch (error) {
-                                  if (!context.mounted) {
-                                    return;
-                                  }
-                                  AppSnackbar.showError(context, error.message);
-                                }
-                              },
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
                 const SizedBox(height: 8),
                 if (vm.errorMessage != null)
                   Padding(

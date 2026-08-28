@@ -1,6 +1,6 @@
+import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
@@ -9,9 +9,11 @@ import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/app_cached_network_image.dart';
+import 'package:webapp/widgets/shared/app_image_source_picker.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_image_viewer.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
@@ -105,6 +107,7 @@ class ProfileView extends StatefulWidget {
 
 class _ProfileViewState extends State<ProfileView> {
   static final Map<String, VehicleMake?> _assignedMakeCacheByDriverId = {};
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
   VehicleMake? _assignedMake;
   bool _isLoadingAssignedMake = true;
   ProfilePendingImageUpload? _pendingPhotoUpload;
@@ -149,6 +152,8 @@ class _ProfileViewState extends State<ProfileView> {
   bool get _hasPendingChanges =>
       _pendingPhotoUpload != null || _pendingLicenseUpload != null;
 
+  bool get _canUpdateProfile => widget.onSaveProfileChanges != null;
+
   Future<void> _loadAssignedMake() async {
     final driverId = widget.user.id?.trim();
     if (widget.user.role != 'driver' || driverId == null || driverId.isEmpty) {
@@ -166,7 +171,10 @@ class _ProfileViewState extends State<ProfileView> {
     });
 
     try {
-      final makes = await _vehicleCatalogRepository.getMakes();
+      final makes = await _vehicleCatalogRepository.getMakes().timeout(
+        const Duration(seconds: 6),
+        onTimeout: () => const <VehicleMake>[],
+      );
       final match = makes.where((item) => item.driver?.id == driverId);
       if (!mounted) {
         return;
@@ -205,37 +213,17 @@ class _ProfileViewState extends State<ProfileView> {
   }
 
   Future<ProfilePendingImageUpload?> _pickImageUpload() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final file = result?.files.singleOrNull;
-    final bytes = file?.bytes;
-    if (file == null || bytes == null) {
+    final image = await showAppImageSourcePicker(context);
+    if (image == null) {
       return null;
     }
 
     return ProfilePendingImageUpload(
-      bytes: bytes,
-      fileName: file.name,
-      size: file.size,
-      mimeType: _resolvedMimeType(file.extension),
+      bytes: image.bytes,
+      fileName: image.fileName,
+      size: image.size,
+      mimeType: image.mimeType,
     );
-  }
-
-  String? _resolvedMimeType(String? extension) {
-    switch ((extension ?? '').trim().toLowerCase()) {
-      case 'png':
-        return 'image/png';
-      case 'webp':
-        return 'image/webp';
-      case 'gif':
-        return 'image/gif';
-      case 'bmp':
-        return 'image/bmp';
-      default:
-        return 'image/jpeg';
-    }
   }
 
   Future<void> _saveProfileChanges() async {
@@ -283,6 +271,13 @@ class _ProfileViewState extends State<ProfileView> {
   }
 
   Future<void> _showChangePasswordDialog() async {
+    if (!_canUpdateProfile) {
+      AppSnackbar.showError(
+        context,
+        'You do not have access to update this profile.',
+      );
+      return;
+    }
     final userId = widget.user.id?.trim();
     if (userId == null || userId.isEmpty) {
       AppSnackbar.showError(context, 'User ID is required.');
@@ -328,7 +323,7 @@ class _ProfileViewState extends State<ProfileView> {
     final hasLicensePreview =
         _pendingLicenseUpload != null ||
         _hasLicensePreviewValue(driver?.license);
-    final showOnlineField = user.role == 'driver' || user.role == 'helper';
+    final showOnlineField = _roleAccessService.isOnlineEligibleRole(user.role);
     final showBusinessSection = isSubClientRole(user.role);
     final joinedLabel = _formatDateTime(user.createdAt);
     final updatedLabel = _formatDateTime(user.updatedAt);
@@ -348,7 +343,7 @@ class _ProfileViewState extends State<ProfileView> {
             onEditPressed: widget.onEditPressed,
             onLogout: widget.onLogout,
             logoutLabel: widget.logoutLabel,
-            onChangePhotoPressed: widget.isCurrentUserView
+            onChangePhotoPressed: widget.isCurrentUserView && _canUpdateProfile
                 ? _pickProfilePhoto
                 : null,
             pendingPhotoBytes: _pendingPhotoUpload?.bytes,
@@ -435,11 +430,6 @@ class _ProfileViewState extends State<ProfileView> {
                   label: 'Vehicle type',
                   value: _valueOrNotSet(driver.vehicleType?.name),
                 ),
-              if (showDriverFields)
-                _InfoRow(
-                  label: 'LatLng',
-                  value: _latLngValue(driver.lat, driver.lng),
-                ),
             ],
           ),
           if (showDriverFields) ...[
@@ -448,10 +438,10 @@ class _ProfileViewState extends State<ProfileView> {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 const Expanded(child: AdminSectionTitle(title: 'License')),
-                if (widget.isCurrentUserView || widget.onEditPressed != null)
+                if (_canUpdateProfile || widget.onEditPressed != null)
                   _LicenseActionButton(
                     hasImage: hasLicensePreview,
-                    onPressed: widget.isCurrentUserView
+                    onPressed: widget.isCurrentUserView && _canUpdateProfile
                         ? _pickLicensePhoto
                         : widget.onEditPressed,
                   ),
@@ -467,7 +457,9 @@ class _ProfileViewState extends State<ProfileView> {
           const AdminSectionTitle(title: 'Security'),
           const SizedBox(height: 10),
           _SecuritySection(onChangePassword: _showChangePasswordDialog),
-          if (widget.isCurrentUserView && _hasPendingChanges) ...[
+          if (widget.isCurrentUserView &&
+              _canUpdateProfile &&
+              _hasPendingChanges) ...[
             const SizedBox(height: 14),
             SizedBox(
               width: double.infinity,
@@ -510,15 +502,6 @@ class _ProfileViewState extends State<ProfileView> {
   static String _valueOrNotSet(String? value) {
     final trimmed = value?.trim() ?? '';
     return trimmed.isEmpty ? 'Not set' : trimmed;
-  }
-
-  static String _latLngValue(double? lat, double? lng) {
-    if (lat == null && lng == null) {
-      return 'Not set';
-    }
-    final latLabel = lat?.toStringAsFixed(4) ?? 'Not set';
-    final lngLabel = lng?.toStringAsFixed(4) ?? 'Not set';
-    return '$latLabel, $lngLabel';
   }
 
   static String _initials(String? value) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
@@ -20,10 +22,11 @@ class AuthViewModel extends BaseViewModel {
     errorMessage = null;
     notifyListeners();
     try {
-      return await _repository.login(
+      final user = await _repository.login(
         identifier: identifier,
         password: password,
       );
+      return user;
     } on AuthFailure catch (error) {
       errorMessage = error.message;
       notifyListeners();
@@ -45,7 +48,8 @@ class AuthViewModel extends BaseViewModel {
     errorMessage = null;
     notifyListeners();
     try {
-      return await _repository.register(user);
+      final registeredUser = await _repository.register(user);
+      return registeredUser;
     } on AuthFailure catch (error) {
       errorMessage = error.message;
       notifyListeners();

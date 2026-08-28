@@ -318,11 +318,7 @@ class FirestoreCollectionCache {
       _store.writeDocumentMaps(resourceKey, documents),
       _store.writeVersion(resourceKey, nextVersion),
     ]);
-    if (currentNetworkStatus()) {
-      await _tryWriteRemoteVersion(resourceKey, nextVersion);
-    } else {
-      unawaited(_tryWriteRemoteVersion(resourceKey, nextVersion));
-    }
+    unawaited(_tryWriteRemoteVersion(resourceKey, nextVersion));
   }
 
   Future<void> _tryWriteRemoteVersion(

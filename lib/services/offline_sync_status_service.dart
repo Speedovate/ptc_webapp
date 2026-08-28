@@ -126,8 +126,11 @@ class OfflineSyncStatusService extends ChangeNotifier {
       const OfflineQueueStatusSnapshot.idle();
   OfflineSyncStatusSnapshot _snapshot =
       const OfflineSyncStatusSnapshot.initial();
+  OfflineSyncStatusSnapshot _knownSessionSnapshot =
+      const OfflineSyncStatusSnapshot.initial();
 
   OfflineSyncStatusSnapshot get snapshot => _snapshot;
+  OfflineSyncStatusSnapshot get knownSessionSnapshot => _knownSessionSnapshot;
 
   Future<void> initialize() async {
     if (_isInitialized) {
@@ -140,25 +143,31 @@ class OfflineSyncStatusService extends ChangeNotifier {
     _mutationStatus = OfflineMutationQueueService.instance.currentStatus;
     _cleanupStatus = OfflineCleanupQueueService.instance.currentStatus;
     _recompute();
+    unawaited(_refreshKnownSessionSnapshot());
     networkStatusEvents().listen((isOnline) {
       _isOnline = isOnline;
       _recompute();
+      unawaited(_refreshKnownSessionSnapshot());
     });
     BookingOfflineUploadQueueService.instance.statusStream.listen((status) {
       _bookingStatus = status;
       _recompute();
+      unawaited(_refreshKnownSessionSnapshot());
     });
     OfflineMediaSyncService.instance.statusStream.listen((status) {
       _mediaStatus = status;
       _recompute();
+      unawaited(_refreshKnownSessionSnapshot());
     });
     OfflineMutationQueueService.instance.statusStream.listen((status) {
       _mutationStatus = status;
       _recompute();
+      unawaited(_refreshKnownSessionSnapshot());
     });
     OfflineCleanupQueueService.instance.statusStream.listen((status) {
       _cleanupStatus = status;
       _recompute();
+      unawaited(_refreshKnownSessionSnapshot());
     });
   }
 
@@ -320,14 +329,29 @@ class OfflineSyncStatusService extends ChangeNotifier {
       mutationStatus: _mutationStatus,
       cleanupStatus: _cleanupStatus,
     );
-    debugPrint(
-      '[OfflineState] '
-      'offline=${!_snapshot.isOnline} '
-      'pending=${_snapshot.pendingActions} '
-      'failed=${_snapshot.failedActions} '
-      'syncing=${_snapshot.isSyncing}',
-    );
     notifyListeners();
+  }
+
+  Future<void> _refreshKnownSessionSnapshot() async {
+    final nextSnapshot = await readKnownSessionSnapshot();
+    if (_sameSnapshot(_knownSessionSnapshot, nextSnapshot)) {
+      return;
+    }
+    _knownSessionSnapshot = nextSnapshot;
+    notifyListeners();
+  }
+
+  bool _sameSnapshot(
+    OfflineSyncStatusSnapshot left,
+    OfflineSyncStatusSnapshot right,
+  ) {
+    return left.isOnline == right.isOnline &&
+        left.pendingActions == right.pendingActions &&
+        left.failedActions == right.failedActions &&
+        left.isSyncing == right.isSyncing &&
+        left.processedActions == right.processedActions &&
+        left.totalActionsInBatch == right.totalActionsInBatch &&
+        left.lastSyncAt == right.lastSyncAt;
   }
 
   OfflineQueueStatusSnapshot _aggregateQueueStatuses(

@@ -12,17 +12,22 @@ class FirestoreOfflineService {
     }
 
     final firestore = FirebaseFirestore.instance;
-
-    if (kIsWeb) {
-      firestore.settings = const Settings(
-        persistenceEnabled: true,
-        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
-      );
-    } else {
-      firestore.settings = const Settings(
-        persistenceEnabled: true,
-        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
-      );
+    try {
+      if (kIsWeb) {
+        firestore.settings = const Settings(
+          persistenceEnabled: true,
+          cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+          webExperimentalAutoDetectLongPolling: true,
+          webExperimentalForceLongPolling: true,
+        );
+      } else {
+        firestore.settings = const Settings(
+          persistenceEnabled: true,
+          cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+        );
+      }
+    } catch (_) {
+      // On web hot restart, Firestore may already be live with existing settings.
     }
 
     _isInitialized = true;

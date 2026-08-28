@@ -2,6 +2,8 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
+import 'package:webapp/models/dispatcher_access_config.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class AdminUsersViewModel extends BaseViewModel {
@@ -14,6 +16,7 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   final AuthRepository _repository;
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
   static List<UserModel> _cachedUsers = const [];
   static UserModel? _cachedCurrentUser;
   static UserModel? _cachedViewedUser;
@@ -49,15 +52,54 @@ class AdminUsersViewModel extends BaseViewModel {
   DateTime? get startDate => _startDate;
   DateTime? get endDate => _endDate;
   String get busyMessage => _busyMessage;
-  bool get canDeleteUsers => canDeleteAdminData(_currentUser?.role);
-  bool get canSignInAsOtherUsers => canImpersonateUsers(_currentUser?.role);
+  bool get canCreateUsers => _roleAccessService.canAccess(
+    DispatcherAccessCapability.usersCreate,
+    role: _currentUser?.role,
+  );
+  bool get canReadUsers => _roleAccessService.canAccess(
+    DispatcherAccessCapability.usersRead,
+    role: _currentUser?.role,
+  );
+  bool get canUpdateUsers => _roleAccessService.canAccess(
+    DispatcherAccessCapability.usersUpdate,
+    role: _currentUser?.role,
+  );
+  bool get canDeleteUsers => _roleAccessService.canAccess(
+    DispatcherAccessCapability.usersDelete,
+    role: _currentUser?.role,
+  );
+  bool get canSignInAsOtherUsers => _roleAccessService.canAccess(
+    DispatcherAccessCapability.usersImpersonate,
+    role: _currentUser?.role,
+  );
+  String? get effectiveCurrentRole =>
+      _roleAccessService.effectiveRoleKey(_currentUser?.role);
+  bool get canCreateAdminUsers {
+    final liveRole = normalizeRoleKey(effectiveCurrentRole);
+    if (liveRole.isNotEmpty) {
+      return liveRole == 'admin';
+    }
+    return normalizeRoleKey(_currentUser?.role) == 'admin';
+  }
 
   Future<void> loadUsers({UserModel? fallbackCurrentUser}) async {
     _busyMessage = 'Loading users ...';
-    setBusy(true);
+    final hasVisiblePrimaryData =
+        _users.isNotEmpty ||
+        _cachedUsers.isNotEmpty ||
+        _currentUser != null ||
+        _cachedCurrentUser != null;
+    final shouldShowLoadingState = !hasVisiblePrimaryData;
+    if (shouldShowLoadingState) {
+      setBusy(true);
+    }
     try {
-      final users = await _repository.getUsers();
-      final currentUser = await _repository.getCurrentUser();
+      final results = await Future.wait([
+        _repository.getUsers(),
+        _repository.getCurrentUser(),
+      ]);
+      final users = results[0] as List<UserModel>;
+      final currentUser = results[1] as UserModel?;
       _users
         ..clear()
         ..addAll(users);
@@ -68,12 +110,17 @@ class AdminUsersViewModel extends BaseViewModel {
       _cachedViewedUser = _viewedUser;
       _cachedViewedUserStack = List<UserModel>.from(_viewedUserStack);
     } finally {
-      setBusy(false);
+      if (shouldShowLoadingState) {
+        setBusy(false);
+      }
       notifyListeners();
     }
   }
 
   Future<UserModel> updateUser(UserModel user) async {
+    if (!canUpdateUsers) {
+      throw const AuthFailure('You do not have access to edit users.');
+    }
     _busyMessage = 'Saving user ...';
     setBusy(true);
     try {
@@ -102,6 +149,12 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<UserModel> addUser(UserModel user) async {
+    if (!canCreateUsers) {
+      throw const AuthFailure('You do not have access to create users.');
+    }
+    if (!canCreateAdminUsers && normalizeRoleKey(user.role) == 'admin') {
+      throw const AuthFailure('Only admin users can create other admin users.');
+    }
     _busyMessage = 'Creating user ...';
     setBusy(true);
     try {
@@ -155,9 +208,17 @@ class AdminUsersViewModel extends BaseViewModel {
     _draftNewUser = null;
   }
 
+  void ensureCurrentUserContext(UserModel user) {
+    if (_currentUser?.id == user.id && _currentUser?.role == user.role) {
+      return;
+    }
+    _currentUser = user;
+    _cachedCurrentUser = user;
+  }
+
   Future<void> deleteUser(UserModel user) async {
     if (!canDeleteUsers) {
-      throw const AuthFailure('Only admins can delete users.');
+      throw const AuthFailure('You do not have access to delete users.');
     }
     _busyMessage = 'Deleting user ...';
     setBusy(true);
@@ -181,13 +242,14 @@ class AdminUsersViewModel extends BaseViewModel {
 
   Future<void> loginAsUser(UserModel user) async {
     if (!canSignInAsOtherUsers) {
-      throw const AuthFailure('Only admins can sign in as other users.');
+      throw const AuthFailure('You do not have access to sign in as other users.');
     }
     final userId = user.id ?? '';
     if (userId.isEmpty) {
       throw const AuthFailure('User ID is required.');
     }
-    _busyMessage = 'Signing in as user ...';
+    final roleLabel = humanizeDropdownValue(user.role).trim();
+    _busyMessage = 'Signing in as ${roleLabel.isEmpty ? 'user' : roleLabel} ...';
     setBusy(true);
     try {
       await _repository.loginAsUser(userId);
@@ -229,6 +291,9 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<void> setUserActive(UserModel user, bool isActive) async {
+    if (!canUpdateUsers) {
+      throw const AuthFailure('You do not have access to update users.');
+    }
     _busyMessage = isActive ? 'Activating user ...' : 'Deactivating user ...';
     await updateUser(
       user.copyWith(
@@ -264,6 +329,7 @@ class AdminUsersViewModel extends BaseViewModel {
   bool matches(UserModel user) {
     final query = _searchQuery.trim().toLowerCase();
     final createdAt = user.createdAt;
+    final isOnlineEligible = _roleAccessService.isOnlineEligibleRole(user.role);
 
     final matchesQuery =
         query.isEmpty ||
@@ -280,7 +346,8 @@ class AdminUsersViewModel extends BaseViewModel {
 
     final matchesOnline =
         _onlineFilter == 'All' ||
-        ((_onlineFilter == 'Online') == (user.isOnline ?? false));
+        ((_onlineFilter == 'Online') ==
+            (isOnlineEligible && (user.isOnline ?? false)));
 
     final matchesStartDate =
         _startDate == null ||
@@ -370,7 +437,9 @@ class AdminUsersViewModel extends BaseViewModel {
   List<UserModel> clientUsers() {
     return _users
         .where(
-          (user) => (user.role ?? '').trim() == 'client' && (user.isActive ?? false),
+          (user) =>
+              normalizeRoleKey(user.role) == 'client' &&
+              (user.isActive ?? false),
         )
         .toList()
       ..sort(

@@ -13,6 +13,7 @@ import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class AdminBookingsViewModel extends BaseViewModel {
@@ -37,6 +38,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   final BookingRepository _bookingRepository;
   final StatusFormRepository _statusRepository;
   final VehicleCatalogRepository _vehicleCatalogRepository;
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
   StreamSubscription<List<Booking>>? _bookingsSubscription;
   static List<Booking> _cachedBookings = const [];
   static Map<String, UserModel> _cachedUsersById = const {};
@@ -84,13 +86,44 @@ class AdminBookingsViewModel extends BaseViewModel {
 
   Future<void> load() async {
     _busyMessage = 'Loading bookings ...';
-    setBusy(true);
+    final hasVisiblePrimaryData =
+        _bookings.isNotEmpty ||
+        _cachedBookings.isNotEmpty ||
+        _usersById.isNotEmpty ||
+        _cachedUsersById.isNotEmpty ||
+        _statusesByKey.isNotEmpty ||
+        _cachedStatusesByKey.isNotEmpty ||
+        _vehicleSizes.isNotEmpty ||
+        _cachedVehicleSizes.isNotEmpty;
+    final shouldShowLoadingState = !hasVisiblePrimaryData;
+    if (shouldShowLoadingState) {
+      setBusy(true);
+    }
     errorMessage = null;
     try {
       await _bookingRepository.initialize();
-      final users = await _authRepository.getUsers();
-      final statuses = await _statusRepository.getStatuses();
-      _vehicleSizes = await _vehicleCatalogRepository.getSizes();
+      final initialBookings = await _bookingRepository.getBookings();
+      _applyBookings(initialBookings);
+      await _bookingsSubscription?.cancel();
+      _bookingsSubscription = _bookingRepository.watchBookings().listen((
+        bookings,
+      ) {
+        _applyBookings(bookings);
+        notifyListeners();
+      });
+      if (shouldShowLoadingState && _bookings.isNotEmpty && isBusy) {
+        setBusy(false);
+        notifyListeners();
+      }
+
+      final results = await Future.wait([
+        _authRepository.getUsers(),
+        _statusRepository.getStatuses(),
+        _vehicleCatalogRepository.getSizes(),
+      ]);
+      final users = results[0] as List<UserModel>;
+      final statuses = results[1] as List<Status>;
+      _vehicleSizes = results[2] as List<VehicleCatalogItem>;
       _usersById
         ..clear()
         ..addEntries(
@@ -105,15 +138,6 @@ class AdminBookingsViewModel extends BaseViewModel {
               .where((status) => (status.key ?? '').isNotEmpty)
               .map((status) => MapEntry(status.key!, status)),
         );
-
-      await _bookingsSubscription?.cancel();
-      _applyBookings(await _bookingRepository.getBookings());
-      _bookingsSubscription = _bookingRepository.watchBookings().listen((
-        bookings,
-      ) {
-        _applyBookings(bookings);
-        notifyListeners();
-      });
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
       _cachedVehicleSizes = List<VehicleCatalogItem>.from(_vehicleSizes);
@@ -125,7 +149,9 @@ class AdminBookingsViewModel extends BaseViewModel {
       );
       _cachedErrorMessage = errorMessage;
     } finally {
-      setBusy(false);
+      if (shouldShowLoadingState) {
+        setBusy(false);
+      }
       notifyListeners();
     }
   }
@@ -333,6 +359,9 @@ class AdminBookingsViewModel extends BaseViewModel {
 
   List<UserModel> roleUsers(String role) {
     final normalizedRole = role.trim().toLowerCase();
+    if (!_roleAccessService.isOnlineEligibleRole(normalizedRole)) {
+      return const [];
+    }
     return _usersById.values
         .where(
           (user) =>
@@ -345,7 +374,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   }
 
   List<VehicleCatalogItem> activeVehicleSizes() {
-    return _vehicleSizes.where((size) => size.isActive ?? false).toList()
+    return _vehicleSizes.where((size) => size.isActive != false).toList()
       ..sort((left, right) => (left.name ?? '').compareTo(right.name ?? ''));
   }
 
@@ -390,26 +419,7 @@ class AdminBookingsViewModel extends BaseViewModel {
     return _usersById.values
         .where(
           (user) =>
-              (user.role ?? '').trim() == 'client' && (user.isActive ?? false),
-        )
-        .toList()
-      ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
-  }
-
-  List<UserModel> clientMembersForBooking(Booking booking) {
-    return clientMembersForClientId(booking.client?.id);
-  }
-
-  List<UserModel> clientMembersForClientId(String? clientId) {
-    final normalizedClientId = clientId?.trim();
-    if (normalizedClientId == null || normalizedClientId.isEmpty) {
-      return const <UserModel>[];
-    }
-    return _usersById.values
-        .where(
-          (user) =>
-              (user.role ?? '').trim() == 'sub-client' &&
-              (user.parentClientId ?? '').trim() == normalizedClientId &&
+              normalizeRoleKey(user.role) == 'client' &&
               (user.isActive ?? false),
         )
         .toList()

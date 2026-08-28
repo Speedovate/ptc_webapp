@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/view_models/shared/app_shell.vm.dart';
-import 'package:webapp/utils/functions.dart';
 import 'package:webapp/views/admin/admin_home.dart';
 import 'package:webapp/views/auth/auth_view.dart';
 import 'package:webapp/views/client/client_home.dart';
-import 'package:webapp/views/driver/driver_home.dart';
-import 'package:webapp/views/helper/helper_home.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_sync_status_banner.dart';
@@ -15,6 +13,8 @@ import 'package:webapp/widgets/shared/in_app_browser_guard.dart';
 
 class AppShell extends StatelessWidget {
   const AppShell({super.key});
+
+  static final RoleAccessService _roleAccessService = RoleAccessService.instance;
 
   @override
   Widget build(BuildContext context) {
@@ -88,36 +88,18 @@ class AppShell extends StatelessWidget {
     required Future<void> Function() onUserUpdated,
     required VoidCallback onLogout,
   }) {
-    final normalizedRole = normalizeRoleKey(user.role);
-    switch (normalizedRole) {
-      case 'admin':
-      case 'dispatcher':
-        return AdminHome(
-          user: user,
-          isQuickLoggedIn: isQuickLoggedIn,
-          onUserUpdated: onUserUpdated,
-          onLogout: onLogout,
-        );
-      case 'driver':
-        return DriverHome(
-          user: user,
-          onLogout: onLogout,
-          isQuickLoggedIn: isQuickLoggedIn,
-        );
-      case 'helper':
-        return HelperHome(
-          user: user,
-          onLogout: onLogout,
-          isQuickLoggedIn: isQuickLoggedIn,
-        );
-      case 'sub-client':
-      case 'client':
-      default:
-        return ClientHome(
-          user: user,
-          onLogout: onLogout,
-          isQuickLoggedIn: isQuickLoggedIn,
-        );
+    if (_roleAccessService.usesAdminShell(role: user.role)) {
+      return AdminHome(
+        user: user,
+        isQuickLoggedIn: isQuickLoggedIn,
+        onUserUpdated: onUserUpdated,
+        onLogout: onLogout,
+      );
     }
+    return ClientHome(
+      user: user,
+      onLogout: onLogout,
+      isQuickLoggedIn: isQuickLoggedIn,
+    );
   }
 }

@@ -74,14 +74,27 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
     if (isLoading) {
       return;
     }
-    isLoading = true;
+    final hasVisiblePrimaryData =
+        bookings.isNotEmpty ||
+        _cachedBookings.isNotEmpty ||
+        _usersById.isNotEmpty ||
+        _cachedUsersById.isNotEmpty ||
+        _statusesByKey.isNotEmpty ||
+        _cachedStatusesByKey.isNotEmpty;
+    isLoading = !hasVisiblePrimaryData;
     errorMessage = null;
     notifyListeners();
 
     try {
       await _bookingRepository.initialize();
-      final users = await _authRepository.getUsers();
-      final statuses = await _statusRepository.getStatuses();
+      final results = await Future.wait([
+        _authRepository.getUsers(),
+        _statusRepository.getStatuses(),
+        _bookingRepository.getBookings(),
+      ]);
+      final users = results[0] as List<UserModel>;
+      final statuses = results[1] as List<Status>;
+      final allBookings = results[2] as List<Booking>;
       _usersById
         ..clear()
         ..addEntries(
@@ -98,7 +111,7 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
         );
 
       await _bookingsSubscription?.cancel();
-      _applyBookingsForUser(user, await _bookingRepository.getBookings());
+      _applyBookingsForUser(user, allBookings);
       _bookingsSubscription = _bookingRepository.watchBookings().listen((
         liveBookings,
       ) {
@@ -122,20 +135,10 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
 
   void _applyBookingsForUser(UserModel user, List<Booking> allBookings) {
     final currentUserId = user.id ?? '';
-    final effectiveClientId =
-        isSubClientRole(user.role)
-            ? (user.parentClientId?.trim().isNotEmpty == true
-                  ? user.parentClientId!.trim()
-                  : currentUserId)
-            : currentUserId;
-    bookings = switch (user.role) {
+    bookings = switch (normalizeRoleKey(user.role)) {
       'client' =>
         allBookings
             .where((booking) => booking.client?.id == currentUserId)
-            .toList(),
-      'sub-client' =>
-        allBookings
-            .where((booking) => booking.client?.id == effectiveClientId)
             .toList(),
       'driver' =>
         allBookings

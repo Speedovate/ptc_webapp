@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/foundation.dart';
 import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
 import 'package:webapp/services/network_status_events.dart';
@@ -63,9 +62,6 @@ class OfflineCleanupQueueService {
         _storageKeyForUserId(userId),
       );
     }
-    debugPrint(
-      '[OfflineQueueScope] cleanup scoped statuses ${statuses.entries.map((entry) => '${entry.key}:${entry.value.pendingCount}/${entry.value.failedCount}').join(', ')}',
-    );
     return statuses;
   }
 
@@ -73,11 +69,6 @@ class OfflineCleanupQueueService {
     await _authStorage.initialize();
     if (_isInitialized) {
       await _refreshStatusFromStorage();
-      debugPrint(
-        '[OfflineQueueScope] cleanup initialize refresh '
-        'storageKey=${await _resolvedStorageKey()} '
-        'pending=${_currentStatus.pendingCount}',
-      );
       return;
     }
     await _backend.initialize();
@@ -91,11 +82,6 @@ class OfflineCleanupQueueService {
       }
     });
     _isInitialized = true;
-    debugPrint(
-      '[OfflineQueueScope] cleanup initialize first-run '
-      'storageKey=${await _resolvedStorageKey()} '
-      'pending=${_currentStatus.pendingCount}',
-    );
     unawaited(flushPendingCleanups());
   }
 
@@ -154,21 +140,12 @@ class OfflineCleanupQueueService {
   Future<void> flushPendingCleanups() async {
     await initialize();
     if (_isFlushing || !currentNetworkStatus()) {
-      debugPrint(
-        '[OfflineQueueScope] cleanup flush skipped '
-        'storageKey=${await _resolvedStorageKey()} '
-        'isFlushing=$_isFlushing online=${currentNetworkStatus()}',
-      );
       return;
     }
     _isFlushing = true;
     try {
       final currentStorageKey = await _resolvedStorageKey();
       final storageKeys = await _allKnownStorageKeys();
-      debugPrint(
-        '[OfflineQueueScope] cleanup flush all '
-        'current=$currentStorageKey storageKeys=$storageKeys',
-      );
       for (final storageKey in storageKeys) {
         await _flushPendingCleanupsForStorageKey(
           storageKey,
@@ -309,10 +286,6 @@ class OfflineCleanupQueueService {
     required bool updateStatus,
   }) async {
     final entries = await _readEntriesForStorageKey(storageKey);
-    debugPrint(
-      '[OfflineQueueScope] cleanup flush start '
-      'storageKey=$storageKey entries=${entries.length}',
-    );
     if (updateStatus) {
       _setStatus(
         _currentStatus.copyWith(

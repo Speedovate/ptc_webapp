@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
@@ -31,10 +33,12 @@ class AdminDashboardViewModel extends BaseViewModel {
   final AuthRepository _authRepository;
   final VehicleCatalogRepository _vehicleRepository;
   final BookingRepository _bookingRepository;
+  StreamSubscription<List<Booking>>? _bookingsSubscription;
   static List<Booking> _cachedCompletedBookings = const [];
   static Map<String, UserModel> _cachedUsersById = const {};
   static UserModel? _cachedCurrentUser;
   static String? _cachedErrorMessage;
+  static const Duration _loadStepTimeout = Duration(seconds: 8);
 
   static void clearCachedState() {
     _cachedCompletedBookings = const [];
@@ -123,20 +127,33 @@ class AdminDashboardViewModel extends BaseViewModel {
 
   Future<void> load() async {
     busyMessage = 'Loading dashboard ...';
-    setBusy(true);
+    final hasVisiblePrimaryData =
+        _completedBookings.isNotEmpty ||
+        _cachedCompletedBookings.isNotEmpty ||
+        _usersById.isNotEmpty ||
+        _cachedUsersById.isNotEmpty;
+    final shouldShowLoadingState = !hasVisiblePrimaryData;
+    if (shouldShowLoadingState) {
+      setBusy(true);
+    }
     errorMessage = null;
     try {
-      await _bookingRepository.initialize();
-      final results = await Future.wait([
-        _authRepository.getCurrentUser(),
-        _authRepository.getUsers(),
-        _bookingRepository.getBookings(),
-        _vehicleRepository.getSizes(),
+      unawaited(
+        _bookingRepository.initialize().then((_) {
+        }).catchError((error, stackTrace) {
+        }),
+      );
+
+      final results = await Future.wait<dynamic>([
+        _loadCurrentUserSafe(),
+        _loadUsersSafe(),
+        _loadBookingsSafe(),
+        _warmVehicleSizesSafe(),
       ]);
       final currentUser = results[0] as UserModel?;
       final users = results[1] as List<UserModel>;
       final bookings = results[2] as List<Booking>;
-      final _ = results[3] as List;
+
       _currentUser = currentUser;
 
       _usersById
@@ -146,29 +163,13 @@ class AdminDashboardViewModel extends BaseViewModel {
               .where((user) => (user.id ?? '').isNotEmpty)
               .map((user) => MapEntry(user.id!, user)),
         );
-
-      _completedBookings
-        ..clear()
-        ..addAll(
-          bookings.where(
-            (booking) => (booking.clientStatus ?? '').trim() == 'delivered',
-          ),
-        );
-
-      _completedBookings.sort((left, right) {
-        final leftDate = deliveredAt(left) ?? left.updatedAt ?? left.createdAt;
-        final rightDate =
-            deliveredAt(right) ?? right.updatedAt ?? right.createdAt;
-        final dateComparison = _compareLatestFirst(leftDate, rightDate);
-        if (dateComparison != 0) {
-          return dateComparison;
-        }
-        final leftId = int.tryParse(left.id ?? '');
-        final rightId = int.tryParse(right.id ?? '');
-        if (leftId != null && rightId != null) {
-          return rightId.compareTo(leftId);
-        }
-        return (right.id ?? '').compareTo(left.id ?? '');
+      _applyCompletedBookings(bookings);
+      await _bookingsSubscription?.cancel();
+      _bookingsSubscription = _bookingRepository.watchBookings().listen((
+        liveBookings,
+      ) {
+        _applyCompletedBookings(liveBookings);
+        notifyListeners();
       });
       _cachedCompletedBookings = List<Booking>.from(_completedBookings);
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
@@ -181,8 +182,85 @@ class AdminDashboardViewModel extends BaseViewModel {
       );
       _cachedErrorMessage = errorMessage;
     } finally {
-      setBusy(false);
+      if (shouldShowLoadingState) {
+        setBusy(false);
+      }
       notifyListeners();
+    }
+  }
+
+  Future<UserModel?> _loadCurrentUserSafe() async {
+    try {
+      final currentUser = await _authRepository
+          .getCurrentUser()
+          .timeout(_loadStepTimeout, onTimeout: () {
+            return _cachedCurrentUser;
+          });
+      return currentUser ?? _cachedCurrentUser;
+    } catch (error) {
+      return _cachedCurrentUser;
+    }
+  }
+
+  Future<List<UserModel>> _loadUsersSafe() async {
+    try {
+      final users = await _authRepository
+          .getUsers()
+          .timeout(_loadStepTimeout, onTimeout: () {
+            return List<UserModel>.from(_cachedUsersById.values);
+          });
+      return users;
+    } catch (error) {
+      return List<UserModel>.from(_cachedUsersById.values);
+    }
+  }
+
+  Future<List<Booking>> _loadBookingsSafe() async {
+    try {
+      final bookings = await _bookingRepository
+          .getBookings()
+          .timeout(_loadStepTimeout, onTimeout: () {
+            return const <Booking>[];
+          });
+      return bookings;
+    } catch (error) {
+      return const <Booking>[];
+    }
+  }
+
+  void _applyCompletedBookings(List<Booking> bookings) {
+    _completedBookings
+      ..clear()
+      ..addAll(
+        bookings.where(
+          (booking) => (booking.clientStatus ?? '').trim() == 'delivered',
+        ),
+      );
+
+    _completedBookings.sort((left, right) {
+      final leftDate = deliveredAt(left) ?? left.updatedAt ?? left.createdAt;
+      final rightDate = deliveredAt(right) ?? right.updatedAt ?? right.createdAt;
+      final dateComparison = _compareLatestFirst(leftDate, rightDate);
+      if (dateComparison != 0) {
+        return dateComparison;
+      }
+      final leftId = int.tryParse(left.id ?? '');
+      final rightId = int.tryParse(right.id ?? '');
+      if (leftId != null && rightId != null) {
+        return rightId.compareTo(leftId);
+      }
+      return (right.id ?? '').compareTo(left.id ?? '');
+    });
+    _cachedCompletedBookings = List<Booking>.from(_completedBookings);
+  }
+
+  Future<void> _warmVehicleSizesSafe() async {
+    try {
+      await _vehicleRepository.getSizes().timeout(_loadStepTimeout, onTimeout: () {
+        return const [];
+      });
+    } catch (error) {
+      // Warm-up should not block dashboard rendering.
     }
   }
 
@@ -448,17 +526,27 @@ class AdminDashboardViewModel extends BaseViewModel {
     return '$month/$day/${value.year}';
   }
 
-  static String origin(Booking booking) =>
-      BookingRecordCard.outputFieldDisplayValue(
-        booking.statusOutputs,
-        'origin',
-      ).toUpperCase();
+  static String origin(Booking booking) => _dashboardRouteDisplayValue(
+    primaryValue: BookingRecordCard.outputFieldDisplayValue(
+      booking.statusOutputs,
+      'origin',
+    ),
+    puertoPrincesaBarangayValue: BookingRecordCard.outputFieldDisplayValue(
+      booking.statusOutputs,
+      'origin_barangay',
+    ),
+  );
 
-  static String destination(Booking booking) =>
-      BookingRecordCard.outputFieldDisplayValue(
-        booking.statusOutputs,
-        'destination',
-      ).toUpperCase();
+  static String destination(Booking booking) => _dashboardRouteDisplayValue(
+    primaryValue: BookingRecordCard.outputFieldDisplayValue(
+      booking.statusOutputs,
+      'destination',
+    ),
+    puertoPrincesaBarangayValue: BookingRecordCard.outputFieldDisplayValue(
+      booking.statusOutputs,
+      'destination_barangay',
+    ),
+  );
 
   DateTime? deliveredAt(Booking booking) {
     final section = booking.statusOutputs?['delivered'];
@@ -513,6 +601,21 @@ class AdminDashboardViewModel extends BaseViewModel {
       uppercase: true,
       preferSlug: true,
     );
+  }
+
+  static String _dashboardRouteDisplayValue({
+    required String primaryValue,
+    required String puertoPrincesaBarangayValue,
+  }) {
+    final normalizedPrimaryValue = primaryValue.trim();
+    final normalizedBarangayValue = puertoPrincesaBarangayValue.trim();
+    final shouldUseBarangay =
+        normalizedPrimaryValue.toLowerCase().contains('puerto princesa') &&
+        normalizedBarangayValue.isNotEmpty;
+    return (shouldUseBarangay
+            ? normalizedBarangayValue
+            : normalizedPrimaryValue)
+        .toUpperCase();
   }
 
   static String amount(Booking booking) =>
@@ -573,5 +676,11 @@ class AdminDashboardViewModel extends BaseViewModel {
     _completedBookings[index] = booking;
     _cachedCompletedBookings = List<Booking>.from(_completedBookings);
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _bookingsSubscription?.cancel();
+    super.dispose();
   }
 }

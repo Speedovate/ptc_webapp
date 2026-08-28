@@ -524,14 +524,17 @@ class AdminModalDropdownField<T> extends StatelessWidget {
       child: AdminDropdownFormField<T>(
         initialValue: initialValue,
         focusNode: focusNode,
-        autoActivateOnFocus: true,
         iconEnabledColor: iconEnabledColor ?? AppColors.primaryColor,
         style: style ?? adminDropdownDisplayTextStyle,
         isExpanded: isExpanded,
-        decoration: adminFormInputDecoration(
-          label,
-          hintText: adminSelectPlaceholder(label, override: hintText),
-        ).copyWith(errorText: errorText),
+        decoration: adminPlainDropdownDecoration(
+          adminSelectPlaceholder(label, override: hintText),
+        ).copyWith(
+          errorText: errorText,
+          constraints: const BoxConstraints(
+            minHeight: adminModalFieldMinHeight,
+          ),
+        ),
         items: items,
         onChanged: (value) {
           onChanged?.call(value);

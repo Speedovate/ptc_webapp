@@ -13,7 +13,7 @@ import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
-import 'package:webapp/widgets/shared/app_page_loading.dart';
+import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
 class UserBookingsSection extends StatefulWidget {
@@ -41,13 +41,14 @@ class UserBookingsSection extends StatefulWidget {
 }
 
 class _UserBookingsSectionState extends State<UserBookingsSection> {
+  static final Map<String, _UserBookingsCacheState> _cacheByUserKey = {};
   final BookingRepository _bookingRepository = BookingRequest.instance;
   final StatusFormRepository _statusRepository = StatusRequest.instance;
 
   StreamSubscription<List<Booking>>? _bookingsSubscription;
   final Map<String, Status> _statusesByKey = {};
   List<Booking> _bookings = const [];
-  bool _isLoading = true;
+  bool _isLoading = false;
   String? _errorMessage;
   String _searchQuery = '';
   String _statusFilter = 'All';
@@ -57,6 +58,15 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
   @override
   void initState() {
     super.initState();
+    final cachedState = _cacheByUserKey[_cacheKey];
+    if (cachedState != null) {
+      _bookings = List<Booking>.from(cachedState.bookings);
+      _statusesByKey
+        ..clear()
+        ..addAll(cachedState.statusesByKey);
+      _errorMessage = cachedState.errorMessage;
+      _isLoading = false;
+    }
     _load();
   }
 
@@ -76,18 +86,26 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
     super.dispose();
   }
 
+  String get _cacheKey => [
+    normalizeRoleKey(widget.user.role),
+    normalizeId(widget.user.id) ?? 'no-user',
+    normalizeId(widget.user.parentClientId) ?? 'no-parent',
+  ].join('|');
+
   Future<void> _load() async {
     await _bookingsSubscription?.cancel();
     if (mounted) {
       setState(() {
-        _isLoading = true;
+        _isLoading = false;
         _errorMessage = null;
       });
     }
-
     try {
       await _bookingRepository.initialize();
-      final statuses = await _statusRepository.getStatuses();
+      final statuses = await _statusRepository.getStatuses().timeout(
+        const Duration(seconds: 6),
+        onTimeout: () => const <Status>[],
+      );
       _statusesByKey
         ..clear()
         ..addEntries(
@@ -95,7 +113,12 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
               .where((item) => (item.key ?? '').trim().isNotEmpty)
               .map((item) => MapEntry(item.key!.trim(), item)),
         );
-      _applyBookings(await _bookingRepository.getBookings());
+      _applyBookings(
+        await _bookingRepository.getBookings().timeout(
+          const Duration(seconds: 6),
+          onTimeout: () => const <Booking>[],
+        ),
+      );
       _bookingsSubscription = _bookingRepository.watchBookings().listen((items) {
         _applyBookings(items);
       });
@@ -110,6 +133,7 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
         );
       });
     } finally {
+      _cacheCurrentState();
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -145,6 +169,15 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
     setState(() {
       _bookings = filtered;
     });
+    _cacheCurrentState();
+  }
+
+  void _cacheCurrentState() {
+    _cacheByUserKey[_cacheKey] = _UserBookingsCacheState(
+      bookings: List<Booking>.from(_bookings),
+      statusesByKey: Map<String, Status>.from(_statusesByKey),
+      errorMessage: _errorMessage,
+    );
   }
 
   bool _matchesUser(Booking booking) {
@@ -155,28 +188,11 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
 
     return switch (normalizeRoleKey(widget.user.role)) {
       'client' => normalizeId(booking.client?.id) == userId,
-      'sub-client' => _matchesSubClientBooking(booking, userId),
       'driver' => normalizeId(booking.driver?.id) == userId,
       'helper' => normalizeId(booking.helper?.id) == userId,
       'admin' => _bookingHasSubmittedBy(booking, userId),
       _ => false,
     };
-  }
-
-  bool _matchesSubClientBooking(Booking booking, String userId) {
-    final memberId = normalizeId(
-      BookingRecordCard.outputFieldValue(
-        booking.statusOutputs,
-        'representative_id',
-      )?.toString(),
-    );
-    if (memberId == userId) {
-      return true;
-    }
-    if (_bookingHasSubmittedBy(booking, userId)) {
-      return true;
-    }
-    return false;
   }
 
   bool _bookingHasSubmittedBy(Booking booking, String userId) {
@@ -749,6 +765,7 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
       children: [
         const AdminSectionTitle(title: 'Bookings'),
         const SizedBox(height: 10),
+        AppRefreshStrip(isVisible: _isLoading),
         if (widget.useAdminListStyle) ...[
           _UserBookingsToolbar(
             searchQuery: _searchQuery,
@@ -802,18 +819,7 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
           ),
           const SizedBox(height: 18),
         ],
-        if (_isLoading && _bookings.isEmpty)
-          const SizedBox(
-            height: 220,
-            child: Center(
-              child: AppPageLoading(
-                message: 'Loading bookings ...',
-                compact: true,
-                padding: EdgeInsets.zero,
-              ),
-            ),
-          )
-        else if (_errorMessage != null)
+        if (_errorMessage != null)
           AdminListItemCard(
             padding: const EdgeInsets.all(24),
             child: AdminListStateText(message: _errorMessage!),
@@ -882,6 +888,18 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
     return Padding(padding: widget.padding, child: content);
   }
 
+}
+
+class _UserBookingsCacheState {
+  const _UserBookingsCacheState({
+    required this.bookings,
+    required this.statusesByKey,
+    required this.errorMessage,
+  });
+
+  final List<Booking> bookings;
+  final Map<String, Status> statusesByKey;
+  final String? errorMessage;
 }
 
 class _UserBookingsToolbar extends StatelessWidget {

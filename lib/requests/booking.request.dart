@@ -1,16 +1,20 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/services/booking_offline_upload_queue_service.dart';
+import 'package:webapp/services/firestore_public_document_fetcher.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
+import 'package:webapp/services/offline_queue_coordinator_service.dart';
 import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -19,16 +23,25 @@ class BookingRequest implements BookingRepository {
     FirebaseFirestore? firestore,
     AuthRequest? authRequest,
     VehicleRequest? vehicleRequest,
+    FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _authRequest = authRequest ?? AuthRequest.instance,
-       _vehicleRequest = vehicleRequest ?? VehicleRequest.instance;
+       _vehicleRequest = vehicleRequest ?? VehicleRequest.instance,
+       _firestorePublicDocumentFetcher =
+           firestorePublicDocumentFetcher ??
+           createFirestorePublicDocumentFetcher();
 
   static final BookingRequest instance = BookingRequest();
   static const _bookingsResourceKey = 'bookings';
+  static const Duration _startupTimeout = Duration(seconds: 6);
+  static const Duration _queuedReadTimeout = Duration(seconds: 1);
+  static bool _didKickOffBackgroundQueueInitialization = false;
+  static List<Booking> _memoryBookings = const [];
 
   final FirebaseFirestore _firestore;
   final AuthRequest _authRequest;
   final VehicleRequest _vehicleRequest;
+  final FirestorePublicDocumentFetcher _firestorePublicDocumentFetcher;
   final PhotoStorageService _photoStorageService = PhotoStorageService.instance;
   final BookingOfflineUploadQueueService _offlineUploadQueueService =
       BookingOfflineUploadQueueService.instance;
@@ -45,21 +58,94 @@ class BookingRequest implements BookingRepository {
 
   @override
   Future<void> initialize() async {
-    await _offlineUploadQueueService.initialize();
-    await _offlineMutationQueueService.initialize();
+    if (_didKickOffBackgroundQueueInitialization) {
+      return;
+    }
+    _didKickOffBackgroundQueueInitialization = true;
+    unawaited(
+      OfflineQueueCoordinatorService.instance.initialize().then((_) {
+      }).catchError((error, stackTrace) {
+      }),
+    );
   }
 
   @override
   Future<List<Booking>> getBookings() async {
     return _runRequest(() async {
-      final documents = await _cache.getDocuments(
-        resourceKey: _bookingsResourceKey,
-        fetchDocuments: () async {
-          final snapshot = await _bookingsCollection.get();
-          return snapshot.docs.map(documentData).toList();
-        },
+      await initialize();
+      if (_memoryBookings.isNotEmpty) {
+        if (currentNetworkStatus()) {
+          unawaited(_refreshBookingsCacheInBackground());
+        }
+        return List<Booking>.from(_memoryBookings);
+      }
+      final cachedDocuments = await _cache.readDocuments(_bookingsResourceKey);
+      if (cachedDocuments != null && cachedDocuments.isNotEmpty) {
+        if (currentNetworkStatus()) {
+          unawaited(_refreshBookingsCacheInBackground());
+        }
+        final queuedDocuments = await _readQueuedBookingDocumentsSafe();
+        final visibleDocuments = _mergeQueuedPendingBookingDocuments(
+          existingDocuments: cachedDocuments,
+          queuedDocuments: queuedDocuments,
+        );
+        return _cacheInflatedBookings(visibleDocuments);
+      }
+      final sdkCachedDocuments = await _readCollectionSdkCacheOnly(
+        _bookingsCollection,
       );
-      return _inflateBookings(documents);
+      if (sdkCachedDocuments.isNotEmpty) {
+        await _cache.writeDocuments(
+          resourceKey: _bookingsResourceKey,
+          documents: sdkCachedDocuments,
+        );
+        _bookingCacheUpdates.add(null);
+        if (currentNetworkStatus()) {
+          unawaited(_refreshBookingsCacheInBackground());
+        }
+        final queuedDocuments = await _readQueuedBookingDocumentsSafe();
+        final visibleDocuments = _mergeQueuedPendingBookingDocuments(
+          existingDocuments: sdkCachedDocuments,
+          queuedDocuments: queuedDocuments,
+        );
+        return _cacheInflatedBookings(visibleDocuments);
+      }
+      List<Map<String, dynamic>> documents;
+      try {
+        final snapshot = await _bookingsCollection.get().timeout(
+          _startupTimeout,
+          onTimeout: () => throw TimeoutException('bookings fetch timeout'),
+        );
+        documents = snapshot.docs.map(documentData).toList(growable: false);
+        await _cache.writeDocuments(
+          resourceKey: _bookingsResourceKey,
+          documents: documents,
+        );
+        _bookingCacheUpdates.add(null);
+      } catch (error) {
+        final lateCachedDocuments = await _cache.readDocuments(
+          _bookingsResourceKey,
+        );
+        if (lateCachedDocuments != null && lateCachedDocuments.isNotEmpty) {
+          documents = lateCachedDocuments;
+        } else {
+          documents = await _fetchCollectionDocumentsViaPublicRest('bookings');
+          if (documents.isEmpty) {
+            rethrow;
+          }
+          await _cache.writeDocuments(
+            resourceKey: _bookingsResourceKey,
+            documents: documents,
+          );
+          _bookingCacheUpdates.add(null);
+        }
+      }
+      final queuedDocuments = await _readQueuedBookingDocumentsSafe();
+      final visibleDocuments = _mergeQueuedPendingBookingDocuments(
+        existingDocuments: documents,
+        queuedDocuments: queuedDocuments,
+      );
+      return _cacheInflatedBookings(visibleDocuments);
     }, fallback: 'We could not load the bookings right now.');
   }
 
@@ -71,7 +157,18 @@ class BookingRequest implements BookingRepository {
         if (controller.isClosed || cachedDocuments == null) {
           return;
         }
-        controller.add(await _inflateBookings(cachedDocuments));
+        final queuedDocuments = await _readQueuedBookingDocumentsSafe();
+        final visibleDocuments = _mergeQueuedPendingBookingDocuments(
+          existingDocuments: cachedDocuments,
+          queuedDocuments: queuedDocuments,
+        );
+        if (!_sameBookingDocumentSet(cachedDocuments, visibleDocuments)) {
+          await _cache.writeDocuments(
+            resourceKey: _bookingsResourceKey,
+            documents: visibleDocuments,
+          );
+        }
+        controller.add(await _cacheInflatedBookings(visibleDocuments));
       }
 
       unawaited(emitCachedBookings());
@@ -80,9 +177,21 @@ class BookingRequest implements BookingRepository {
         snapshot,
       ) async {
         final documents = snapshot.docs.map(documentData).toList();
+        final cachedDocuments =
+            await _cache.readDocuments(_bookingsResourceKey) ??
+            const <Map<String, dynamic>>[];
+        final mergedDocuments = _mergeVisibleBookingDocuments(
+          remoteDocuments: documents,
+          cachedDocuments: cachedDocuments,
+        );
+        final queuedDocuments = await _readQueuedBookingDocumentsSafe();
+        final visibleDocuments = _mergeQueuedPendingBookingDocuments(
+          existingDocuments: mergedDocuments,
+          queuedDocuments: queuedDocuments,
+        );
         await _cache.writeDocuments(
           resourceKey: _bookingsResourceKey,
-          documents: documents,
+          documents: visibleDocuments,
         );
         _bookingCacheUpdates.add(null);
       }, onError: (_) {});
@@ -148,6 +257,7 @@ class BookingRequest implements BookingRepository {
         resourceKey: _bookingsResourceKey,
         document: cacheDocument,
       );
+      await _primeMemoryBookingsFromCache();
       _bookingCacheUpdates.add(null);
       return saved;
     }, fallback: 'We could not save the booking right now.');
@@ -181,6 +291,7 @@ class BookingRequest implements BookingRepository {
           resourceKey: _bookingsResourceKey,
           document: updatedDocument,
         );
+        await _primeMemoryBookingsFromCache();
         _bookingCacheUpdates.add(null);
       }
       final bookings = await getBookings();
@@ -261,6 +372,7 @@ class BookingRequest implements BookingRepository {
         resourceKey: _bookingsResourceKey,
         documents: updatedDocuments,
       );
+      await _primeMemoryBookingsFromCache();
       _bookingCacheUpdates.add(null);
     }, fallback: 'We could not update the billing statuses right now.');
   }
@@ -454,11 +566,63 @@ class BookingRequest implements BookingRepository {
   Future<List<Booking>> _inflateBookings(
     List<Map<String, dynamic>> documents,
   ) async {
-    final users = await _authRequest.getUsers();
-    final makes = await _vehicleRequest.getMakes();
-    await _vehicleRequest.getSizes();
-    final userById = {for (final item in users) item.id ?? '': item};
-    final makeById = {for (final item in makes) item.id ?? '': item};
+    final cachedUserDocuments =
+        await _cache.readDocuments('users') ?? const <Map<String, dynamic>>[];
+    final cachedMakeDocuments =
+        await _cache.readDocuments('vehicle_makes') ??
+        const <Map<String, dynamic>>[];
+    final cachedTypeDocuments =
+        await _cache.readDocuments('vehicle_types') ??
+        const <Map<String, dynamic>>[];
+
+    if (cachedUserDocuments.isEmpty) {
+      unawaited(
+        _authRequest.getUsers().catchError((error, stackTrace) {
+          return const <UserModel>[];
+        }),
+      );
+    }
+    if (cachedMakeDocuments.isEmpty) {
+      unawaited(
+        _vehicleRequest.getMakes().catchError((error, stackTrace) {
+          return const <VehicleMake>[];
+        }),
+      );
+    }
+    if (cachedTypeDocuments.isEmpty) {
+      unawaited(
+        _vehicleRequest.getTypes().catchError((error, stackTrace) {
+          return const <VehicleCatalogItem>[];
+        }),
+      );
+    }
+    unawaited(
+      _vehicleRequest.getSizes().catchError((error, stackTrace) {
+        return const <VehicleCatalogItem>[];
+      }),
+    );
+
+    final userById = <String, UserModel>{
+      for (final document in cachedUserDocuments)
+        if ((document['id']?.toString().trim() ?? '').isNotEmpty)
+          document['id']!.toString().trim(): UserModel.fromMap(document),
+    };
+    final typeById = <String, Map<String, dynamic>>{
+      for (final document in cachedTypeDocuments)
+        if ((document['id']?.toString().trim() ?? '').isNotEmpty)
+          document['id']!.toString().trim(): Map<String, dynamic>.from(document),
+    };
+    final makeById = <String, VehicleMake>{
+      for (final document in cachedMakeDocuments)
+        if ((document['id']?.toString().trim() ?? '').isNotEmpty)
+          document['id']!.toString().trim(): VehicleMake.fromMap({
+            ...document,
+            if (document['type'] == null)
+              'type': typeById[document['type_id']?.toString().trim()],
+            if (document['driver'] == null)
+              'driver': userById[document['driver_id']?.toString().trim()]?.toMap(),
+          }),
+    };
     final bookings = documents
         .map(
           (doc) => _bookingFromFirestoreMap(
@@ -481,6 +645,55 @@ class BookingRequest implements BookingRepository {
       return (b.id ?? '').compareTo(a.id ?? '');
     });
     return bookings;
+  }
+
+  Future<void> _refreshBookingsCacheInBackground() async {
+    try {
+      final snapshot = await _bookingsCollection.get().timeout(
+        _startupTimeout,
+        onTimeout: () => throw TimeoutException('bookings refresh timeout'),
+      );
+      final documents = snapshot.docs.map(documentData).toList(growable: false);
+      await _cache.writeDocuments(
+        resourceKey: _bookingsResourceKey,
+        documents: documents,
+      );
+      await _primeMemoryBookingsFromCache();
+      _bookingCacheUpdates.add(null);
+    } catch (_) {}
+  }
+
+  Future<List<Booking>> _cacheInflatedBookings(
+    List<Map<String, dynamic>> visibleDocuments,
+  ) async {
+    final bookings = await _inflateBookings(visibleDocuments);
+    _memoryBookings = List<Booking>.from(bookings);
+    return bookings;
+  }
+
+  Future<void> _primeMemoryBookingsFromCache() async {
+    final cachedDocuments = await _cache.readDocuments(_bookingsResourceKey);
+    if (cachedDocuments == null || cachedDocuments.isEmpty) {
+      return;
+    }
+    final queuedDocuments = await _readQueuedBookingDocumentsSafe();
+    final visibleDocuments = _mergeQueuedPendingBookingDocuments(
+      existingDocuments: cachedDocuments,
+      queuedDocuments: queuedDocuments,
+    );
+    await _cacheInflatedBookings(visibleDocuments);
+  }
+
+  Future<List<Map<String, dynamic>>> _readQueuedBookingDocumentsSafe() async {
+    try {
+      return await _offlineMutationQueueService
+          .readQueuedCollectionDocuments(collectionKey: _bookingsResourceKey)
+          .timeout(_queuedReadTimeout, onTimeout: () {
+            return const <Map<String, dynamic>>[];
+          });
+    } catch (error) {
+      return const <Map<String, dynamic>>[];
+    }
   }
 
   Map<String, dynamic> _toFirestoreMap(Booking booking) {
@@ -587,6 +800,25 @@ class BookingRequest implements BookingRepository {
     return DateTime.tryParse(value.toString());
   }
 
+  Future<List<Map<String, dynamic>>> _fetchCollectionDocumentsViaPublicRest(
+    String collectionPath,
+  ) async {
+    return _firestorePublicDocumentFetcher.fetchCollectionDocuments(
+      collectionPath,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> _readCollectionSdkCacheOnly(
+    CollectionReference<Map<String, dynamic>> collection,
+  ) async {
+    try {
+      final snapshot = await collection.get(const GetOptions(source: Source.cache));
+      return snapshot.docs.map(documentData).toList(growable: false);
+    } catch (_) {
+      return const <Map<String, dynamic>>[];
+    }
+  }
+
   int? _toInt(dynamic value) {
     if (value == null) {
       return null;
@@ -595,6 +827,86 @@ class BookingRequest implements BookingRepository {
       return value.toInt();
     }
     return int.tryParse(value.toString());
+  }
+
+  List<Map<String, dynamic>> _mergeVisibleBookingDocuments({
+    required List<Map<String, dynamic>> remoteDocuments,
+    required List<Map<String, dynamic>> cachedDocuments,
+  }) {
+    final documentsById = <String, Map<String, dynamic>>{};
+    for (final document in remoteDocuments) {
+      final id = normalizeId(document['id']?.toString());
+      if (id == null) {
+        continue;
+      }
+      documentsById[id] = Map<String, dynamic>.from(document)
+        ..remove('local_sync_status')
+        ..remove('queued_entry_id')
+        ..remove('queued_created_at');
+    }
+    for (final document in cachedDocuments) {
+      final id = normalizeId(document['id']?.toString());
+      if (id == null || documentsById.containsKey(id)) {
+        continue;
+      }
+      final localSyncStatus = document['local_sync_status']?.toString().trim();
+      if (localSyncStatus == 'queued' || localSyncStatus == 'syncing') {
+        documentsById[id] = Map<String, dynamic>.from(document);
+      }
+    }
+    return documentsById.values.toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _mergeQueuedPendingBookingDocuments({
+    required List<Map<String, dynamic>> existingDocuments,
+    required List<Map<String, dynamic>> queuedDocuments,
+  }) {
+    final documentsById = <String, Map<String, dynamic>>{
+      for (final document in existingDocuments)
+        if (normalizeId(document['id']?.toString()) != null)
+          normalizeId(document['id']?.toString())!: Map<String, dynamic>.from(
+            document,
+          ),
+    };
+    for (final document in queuedDocuments) {
+      final id = normalizeId(document['id']?.toString());
+      if (id == null) {
+        continue;
+      }
+      documentsById[id] = Map<String, dynamic>.from(document);
+    }
+    final merged = documentsById.values.toList(growable: false);
+    merged.sort((left, right) {
+      final leftDate = _toDateTime(left['created_at'] ?? left['updated_at']);
+      final rightDate = _toDateTime(right['created_at'] ?? right['updated_at']);
+      final byDate = _compareLatestFirst(leftDate, rightDate);
+      if (byDate != 0) {
+        return byDate;
+      }
+      final leftId = normalizeId(left['id']?.toString()) ?? '';
+      final rightId = normalizeId(right['id']?.toString()) ?? '';
+      return rightId.compareTo(leftId);
+    });
+    return merged;
+  }
+
+  bool _sameBookingDocumentSet(
+    List<Map<String, dynamic>> left,
+    List<Map<String, dynamic>> right,
+  ) {
+    if (identical(left, right)) {
+      return true;
+    }
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      if (mapEquals(left[index], right[index])) {
+        continue;
+      }
+      return false;
+    }
+    return true;
   }
 
   bool _isQueueableUploadError(String normalizedError) {

@@ -1,15 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
-import 'package:webapp/models/client_member.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/user.dart';
-import 'package:webapp/services/status_field_option_resolver.dart';
-import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/client/client_booking_home.vm.dart';
-import 'package:webapp/widgets/admin_form_controls.dart';
+import 'package:webapp/services/local_form_draft_service.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
@@ -86,24 +85,9 @@ class ClientBookingHomeView extends StatefulWidget {
 
 class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
   ClientBookingHomeViewModel? _viewModel;
-  String? _selectedMemberId;
 
   UserModel get _effectiveClientUser {
-    final bookingClientUser = widget.bookingClientUser;
-    if (bookingClientUser != null) {
-      return bookingClientUser;
-    }
-    final parentClientId = widget.user.parentClientId?.trim();
-    if (isSubClientRole(widget.user.role) &&
-        parentClientId != null &&
-        parentClientId.isNotEmpty) {
-      return widget.user.copyWith(
-        id: parentClientId,
-        role: 'client',
-        parentClientId: null,
-      );
-    }
-    return widget.user;
+    return widget.bookingClientUser ?? widget.user;
   }
 
   String get _effectiveSubmittedByUserId =>
@@ -154,9 +138,6 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
     final oldClientUser = oldWidget.bookingClientUser ?? oldWidget.user;
     if (oldClientUser.id != _effectiveClientUser.id ||
         oldClientUser.updatedAt != _effectiveClientUser.updatedAt) {
-      setState(() {
-        _selectedMemberId = null;
-      });
       _viewModel?.syncClient(_effectiveClientUser);
       _viewModel?.load(_effectiveClientUser);
     }
@@ -239,20 +220,6 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
           children: [
             ...vm.mainForms.asMap().entries.map((entry) {
               final activeForm = entry.value;
-              final selectedMember = isSubClientRole(widget.user.role)
-                  ? ClientMember(
-                      id: widget.user.id,
-                      clientId: widget.user.parentClientId,
-                      userId: widget.user.id,
-                      email: widget.user.email,
-                      name: widget.user.name,
-                      phone: widget.user.phone,
-                      position: widget.user.position,
-                      isActive: widget.user.isActive,
-                    )
-                  : vm.activeMembers
-                        .where((member) => member.id == _selectedMemberId)
-                        .firstOrNull;
               return Padding(
                 padding: EdgeInsets.only(
                   bottom: entry.key == vm.mainForms.length - 1 ? 0 : 18,
@@ -264,16 +231,6 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
                   clientUser: _effectiveClientUser,
                   submittedByUserId: _effectiveSubmittedByUserId,
                   submittedByUserRole: _effectiveSubmittedByUserRole,
-                  selectedMember: selectedMember,
-                  showRepresentativePreset:
-                      !isSubClientRole(widget.user.role) &&
-                      vm.activeMembers.isNotEmpty &&
-                      !vm.formUsesMemberSelection(activeForm),
-                  onSelectedMemberChanged: (value) {
-                    setState(() {
-                      _selectedMemberId = value;
-                    });
-                  },
                   submitBlockMessage: widget.submitBlockMessage,
                   onRepresentativeTapWithoutClient:
                       widget.onRepresentativeTapWithoutClient,
@@ -310,9 +267,6 @@ class _ClientBookingFormSection extends StatefulWidget {
     required this.clientUser,
     required this.submittedByUserId,
     required this.submittedByUserRole,
-    required this.selectedMember,
-    required this.showRepresentativePreset,
-    required this.onSelectedMemberChanged,
     required this.onUnfocusWithoutScroll,
     this.submitBlockMessage,
     this.onBookingSubmitted,
@@ -324,9 +278,6 @@ class _ClientBookingFormSection extends StatefulWidget {
   final UserModel clientUser;
   final String submittedByUserId;
   final String? submittedByUserRole;
-  final ClientMember? selectedMember;
-  final bool showRepresentativePreset;
-  final ValueChanged<String?> onSelectedMemberChanged;
   final VoidCallback onUnfocusWithoutScroll;
   final String? Function()? submitBlockMessage;
   final ValueChanged<Booking>? onBookingSubmitted;
@@ -338,28 +289,16 @@ class _ClientBookingFormSection extends StatefulWidget {
 }
 
 class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
+  final LocalFormDraftService _draftService = LocalFormDraftService.instance;
   Map<String, dynamic> _answers = {};
   Map<String, String> _errors = {};
   int _resetTick = 0;
   bool _isSubmitting = false;
+  bool _isHydratingDraft = false;
   final Map<String, FocusNode> _fieldFocusNodes = {};
   final FocusNode _submitFocusNode = FocusNode(
     debugLabel: 'booking_field(__cta__)',
   );
-
-  String? _clientMemberFieldKey(List<StatusField> fields) {
-    for (final field in fields) {
-      final key = (field.key ?? '').trim().toLowerCase();
-      final sourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
-        field,
-      );
-      if (sourceKey == statusFieldOptionSourceClientMembers ||
-          key == 'representative_id') {
-        return (field.key ?? '').trim();
-      }
-    }
-    return null;
-  }
 
   String _focusKeyForField(StatusField field, int index) {
     final key = (field.key ?? '').trim();
@@ -391,21 +330,6 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
     }
   }
 
-  bool _shouldActivateNextField(StatusField? nextField, FocusNode? nextFocus) {
-    if (nextFocus == null) {
-      return false;
-    }
-    if (nextField == null) {
-      return true;
-    }
-    final nextFieldType = (nextField.type ?? '').trim().toLowerCase();
-    return nextFieldType == 'dropdown' ||
-        nextFieldType == 'search_dropdown' ||
-        nextFieldType == 'date' ||
-        nextFieldType == 'time' ||
-        nextFieldType == 'photo';
-  }
-
   void _moveToNextVisibleFieldAfterSelection(
     StatusField currentField,
     dynamic nextValue,
@@ -416,7 +340,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
         if (!mounted) {
           return;
         }
-        FocusScope.of(context).requestFocus(_submitFocusNode);
+        FocusScope.of(context).unfocus();
       });
       return;
     }
@@ -428,56 +352,12 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
       nextAnswers[currentFieldKey] = nextValue;
     }
 
-    final visibleFields = widget.vm.fieldsForForm(widget.form, answers: nextAnswers);
-    final currentIndex = visibleFields.indexWhere((field) {
-      final fieldKey = field.key?.trim();
-      if (fieldKey?.isNotEmpty == true && fieldKey == currentFieldKey) {
-        return true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
       }
-      return field.id != null && field.id == currentField.id;
+      FocusScope.of(context).unfocus();
     });
-    final nextField =
-        currentIndex >= 0 && currentIndex + 1 < visibleFields.length
-        ? visibleFields[currentIndex + 1]
-        : null;
-    final nextFocusKey = nextField == null
-        ? null
-        : _focusKeyForField(nextField, currentIndex + 1);
-
-    void resolveAndAdvance([int remainingAttempts = 3]) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) {
-          return;
-        }
-        final resolvedNextFocusNode = nextField == null
-            ? _submitFocusNode
-            : (nextFocusKey == null ? null : _fieldFocusNodes[nextFocusKey]);
-        if (resolvedNextFocusNode == null) {
-          if (remainingAttempts > 1) {
-            resolveAndAdvance(remainingAttempts - 1);
-            return;
-          }
-          FocusScope.of(context).unfocus();
-          return;
-        }
-        FocusScope.of(context).requestFocus(resolvedNextFocusNode);
-        if (_shouldActivateNextField(nextField, resolvedNextFocusNode)) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) {
-              return;
-            }
-            final primaryFocus = FocusManager.instance.primaryFocus;
-            final targetContext =
-                primaryFocus?.context ?? resolvedNextFocusNode.context;
-            if (targetContext != null) {
-              Actions.maybeInvoke(targetContext, const ActivateIntent());
-            }
-          });
-        }
-      });
-    }
-
-    resolveAndAdvance();
   }
 
   @override
@@ -492,68 +372,63 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
   @override
   void initState() {
     super.initState();
-    _applySelectedMemberAutofill(overwriteExisting: false);
+    unawaited(_restoreDraft());
   }
 
-  @override
-  void didUpdateWidget(covariant _ClientBookingFormSection oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final oldMember = oldWidget.selectedMember;
-    final nextMember = widget.selectedMember;
-    final memberChanged =
-        oldMember?.id != nextMember?.id ||
-        oldMember?.name != nextMember?.name ||
-        oldMember?.phone != nextMember?.phone ||
-        oldMember?.position != nextMember?.position;
-    if (memberChanged && nextMember != null) {
-      _applySelectedMemberAutofill(overwriteExisting: true);
+  String get _draftKey {
+    final formId = widget.form.id?.trim() ?? '';
+    final clientId = widget.clientUser.id?.trim() ?? '';
+    final submittedBy = widget.submittedByUserId.trim();
+    if (formId.isEmpty || submittedBy.isEmpty) {
+      return '';
     }
+    return 'booking_form_draft_v1:$submittedBy:$clientId:$formId';
   }
 
-  void _applySelectedMemberAutofill({required bool overwriteExisting}) {
-    final selectedMember = widget.selectedMember;
-    if (selectedMember == null) {
+  Future<void> _restoreDraft() async {
+    final draftKey = _draftKey;
+    if (draftKey.isEmpty) {
       return;
     }
-    final fields = widget.vm.fieldsForForm(widget.form, answers: _answers);
-    final fieldKeys = fields
-        .map((field) => (field.key ?? '').trim())
-        .where((key) => key.isNotEmpty)
-        .toSet();
-    final memberFieldKey = _clientMemberFieldKey(fields);
-    final nextAnswers = Map<String, dynamic>.from(_answers);
-
-    void applyValue(String key, String? value) {
-      if (!fieldKeys.contains(key)) {
-        return;
-      }
-      final trimmedValue = value?.trim() ?? '';
-      if (trimmedValue.isEmpty) {
-        return;
-      }
-      final currentValue = nextAnswers[key]?.toString().trim() ?? '';
-      if (!overwriteExisting && currentValue.isNotEmpty) {
-        return;
-      }
-      nextAnswers[key] = trimmedValue;
+    final draft = await _draftService.readMap(draftKey);
+    if (!mounted || draft == null) {
+      return;
     }
-
-    if (memberFieldKey != null && memberFieldKey.isNotEmpty) {
-      applyValue(memberFieldKey, selectedMember.id);
+    final answers = draft['answers'];
+    if (answers is! Map) {
+      return;
     }
-
-    if (mounted) {
+    _isHydratingDraft = true;
+    try {
       setState(() {
-        _answers = nextAnswers;
-        if (memberFieldKey != null && memberFieldKey.isNotEmpty) {
-          _errors = Map<String, String>.from(_errors)..remove(memberFieldKey);
-        } else {
-          _errors = Map<String, String>.from(_errors);
-        }
+        _answers = Map<String, dynamic>.from(answers);
+        _errors = {};
       });
-    } else {
-      _answers = nextAnswers;
+    } finally {
+      _isHydratingDraft = false;
     }
+  }
+
+  Future<void> _persistDraft() async {
+    final draftKey = _draftKey;
+    if (draftKey.isEmpty || _isHydratingDraft) {
+      return;
+    }
+    if (_answers.isEmpty) {
+      await _draftService.remove(draftKey);
+      return;
+    }
+    await _draftService.writeMap(draftKey, <String, dynamic>{
+      'answers': _answers,
+    });
+  }
+
+  Future<void> _clearDraft() async {
+    final draftKey = _draftKey;
+    if (draftKey.isEmpty) {
+      return;
+    }
+    await _draftService.remove(draftKey);
   }
 
   @override
@@ -561,8 +436,12 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
     final vm = widget.vm;
     final form = widget.form;
     final fields = vm.fieldsForForm(form, answers: _answers);
-    final memberFieldKey = _clientMemberFieldKey(fields);
-    final memberOptionLabels = vm.memberOptionLabelsForForm(form);
+    final vanSizeField = fields.where((field) {
+      final key = (field.key ?? '').trim().toLowerCase();
+      return key == 'van_size' || key == 'van_size_id' || key == 'vehicle_size';
+    }).firstOrNull;
+    if (vanSizeField != null) {
+    }
     _syncFocusNodes(fields);
     final blockedMessage = vm.blockedMessageForForm(form, widget.clientUser);
     final terminalPalette = form.nextStatusKey == null
@@ -577,14 +456,6 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (widget.showRepresentativePreset) ...[
-          _ClientBookingRepresentativeSelector(
-            members: vm.activeMembers,
-            selectedMemberId: widget.selectedMember?.id,
-            onChanged: widget.onSelectedMemberChanged,
-          ),
-          const SizedBox(height: 18),
-        ],
         BookingFormHeaderCard(
           title: vm.resolvedTitleForForm(form),
           subtitle: vm.resolvedSubtitleForForm(form),
@@ -624,15 +495,17 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
               final nextFieldType = (nextField?.type ?? '').trim().toLowerCase();
               final activateNextFocus =
                   isLastField ||
-                  nextFieldType == 'dropdown' ||
-                  nextFieldType == 'search_dropdown' ||
                   nextFieldType == 'date' ||
                   nextFieldType == 'time' ||
                   nextFieldType == 'photo';
               final fieldKeyValue = (field.key ?? '').trim();
+              final normalizedFieldKey = fieldKeyValue.toLowerCase();
+              if (normalizedFieldKey == 'van_size' ||
+                  normalizedFieldKey == 'van_size_id' ||
+                  normalizedFieldKey == 'vehicle_size') {
+              }
               final shouldRedirectRepresentativeTap =
-                  memberFieldKey != null &&
-                  fieldKeyValue == memberFieldKey &&
+                  fieldKeyValue == ClientBookingHomeViewModel.representativeNameKey &&
                   widget.onRepresentativeTapWithoutClient != null &&
                   (widget.clientUser.id?.trim().isNotEmpty != true);
               return Padding(
@@ -650,11 +523,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                   formTitle: vm.resolvedTitleForForm(form),
                   formButtonText: form.buttonText,
                   formStatusKey: form.currentStatusKey,
-                  optionLabels:
-                      memberFieldKey != null &&
-                          (field.key ?? '').trim() == memberFieldKey
-                      ? memberOptionLabels
-                      : const {},
+                  optionLabels: const {},
                   onDisabledTap: shouldRedirectRepresentativeTap
                       ? () {
                           widget.onRepresentativeTapWithoutClient?.call();
@@ -675,6 +544,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                       _answers = nextAnswers;
                       _errors = Map<String, String>.from(_errors)..remove(key);
                     });
+                    unawaited(_persistDraft());
                   },
                 ),
               );
@@ -763,12 +633,12 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
               }
               return;
             }
+            await _clearDraft();
             setState(() {
               _answers = {};
               _errors = {};
               _resetTick += 1;
             });
-            _applySelectedMemberAutofill(overwriteExisting: true);
             if (!mounted) {
               return;
             }
@@ -790,7 +660,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
               _errors = {};
               _resetTick += 1;
             });
-            _applySelectedMemberAutofill(overwriteExisting: true);
+            unawaited(_clearDraft());
           },
         ),
       ],
@@ -811,105 +681,6 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
       return value.isEmpty;
     }
     return false;
-  }
-}
-
-class _ClientBookingRepresentativeSelector extends StatelessWidget {
-  const _ClientBookingRepresentativeSelector({
-    required this.members,
-    required this.selectedMemberId,
-    required this.onChanged,
-  });
-
-  final List<ClientMember> members;
-  final String? selectedMemberId;
-  final ValueChanged<String?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    if (members.isEmpty) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: AppColors.primaryBorder),
-        ),
-        child: const Text(
-          'Create members from the Members menu to auto-fill representative name, phone, and position while booking.',
-          style: TextStyle(
-            color: AppColors.textSecondary,
-            fontWeight: FontWeight.w600,
-            height: 1.4,
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.primaryBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Representative Preset',
-            style: TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Select a saved member to auto-fill the representative details on this booking.',
-            style: TextStyle(
-              color: AppColors.textSecondary,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 14),
-          AdminDropdownFormField<String>(
-            initialValue: selectedMemberId,
-            isExpanded: true,
-            decoration: adminFormInputDecoration(
-              'Saved Member',
-              hintText: 'Manual entry',
-            ),
-            items: [
-              const DropdownMenuItem<String>(
-                value: null,
-                child: Text('Manual entry'),
-              ),
-              ...members.map((member) {
-                final phone = member.normalizedPhone;
-                final position = member.position?.trim() ?? '';
-                final labelParts = <String>[
-                  member.displayName,
-                  if (phone.isNotEmpty) phone,
-                  if (position.isNotEmpty) position,
-                ];
-                return DropdownMenuItem<String>(
-                  value: member.id,
-                  child: Text(
-                    labelParts.join(' | '),
-                    overflow: TextOverflow.ellipsis,
-                    style: adminDropdownDisplayTextStyle,
-                  ),
-                );
-              }),
-            ],
-            onChanged: onChanged,
-          ),
-        ],
-      ),
-    );
   }
 }
 

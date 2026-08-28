@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
 import 'package:webapp/services/network_status_events.dart';
@@ -63,9 +62,6 @@ class OfflineMutationQueueService {
         _storageKeyForUserId(userId),
       );
     }
-    debugPrint(
-      '[OfflineQueueScope] mutation scoped statuses ${statuses.entries.map((entry) => '${entry.key}:${entry.value.pendingCount}/${entry.value.failedCount}').join(', ')}',
-    );
     return statuses;
   }
 
@@ -126,11 +122,6 @@ class OfflineMutationQueueService {
     await _authStorage.initialize();
     if (_isInitialized) {
       await _refreshStatusFromStorage();
-      debugPrint(
-        '[OfflineQueueScope] mutation initialize refresh '
-        'storageKey=${await _resolvedStorageKey()} '
-        'pending=${_currentStatus.pendingCount}',
-      );
       return;
     }
     await _backend.initialize();
@@ -144,11 +135,6 @@ class OfflineMutationQueueService {
       }
     });
     _isInitialized = true;
-    debugPrint(
-      '[OfflineQueueScope] mutation initialize first-run '
-      'storageKey=${await _resolvedStorageKey()} '
-      'pending=${_currentStatus.pendingCount}',
-    );
     unawaited(flushPendingMutations());
   }
 
@@ -202,6 +188,22 @@ class OfflineMutationQueueService {
     await _writeEntries(entries);
     _setStatus(_snapshotForEntries(entries));
     unawaited(flushPendingMutations());
+  }
+
+  Future<bool> hasPendingUserMutation(String userId) async {
+    await initialize();
+    final normalizedUserId = normalizeId(userId);
+    if (normalizedUserId == null) {
+      return false;
+    }
+    final entries = await _readEntries();
+    return entries.any(
+      (entry) =>
+          !entry.isBlocked &&
+          (entry.kind == _OfflineMutationKind.userUpsert ||
+              entry.kind == _OfflineMutationKind.userDelete) &&
+          entry.targetId == normalizedUserId,
+    );
   }
 
   Future<void> queueBookingBillingStatusUpdate({
@@ -327,14 +329,49 @@ class OfflineMutationQueueService {
     unawaited(flushPendingMutations());
   }
 
+  Future<List<Map<String, dynamic>>> readQueuedCollectionDocuments({
+    required String collectionKey,
+  }) async {
+    await initialize();
+    final normalizedCollectionKey = collectionKey.trim();
+    final entries = await _readEntries();
+    return entries
+        .where((entry) => !entry.isBlocked)
+        .where(
+          (entry) =>
+              entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+              entry.collectionKey == normalizedCollectionKey,
+        )
+        .map((entry) {
+          final document = Map<String, dynamic>.from(entry.payload);
+          document['local_sync_status'] =
+              document['local_sync_status']?.toString().trim().isNotEmpty ==
+                  true
+              ? document['local_sync_status']
+              : 'queued';
+          document['queued_entry_id'] = entry.id;
+          document['queued_created_at'] = entry.createdAtIso;
+          return document;
+        })
+        .toList(growable: false);
+  }
+
+  Future<void> queueRoleAccessUpsert({
+    required String roleKey,
+    required Map<String, dynamic> document,
+    String? baseUpdatedAt,
+  }) {
+    return queueCollectionDocumentUpsert(
+      collectionKey: 'role_access',
+      documentId: roleKey,
+      document: document,
+      baseUpdatedAt: baseUpdatedAt,
+    );
+  }
+
   Future<void> flushPendingMutations() async {
     await initialize();
     if (_isFlushing || !currentNetworkStatus()) {
-      debugPrint(
-        '[OfflineQueueScope] mutation flush skipped '
-        'storageKey=${await _resolvedStorageKey()} '
-        'isFlushing=$_isFlushing online=${currentNetworkStatus()}',
-      );
       return;
     }
 
@@ -342,10 +379,6 @@ class OfflineMutationQueueService {
     try {
       final currentStorageKey = await _resolvedStorageKey();
       final storageKeys = await _allKnownStorageKeys();
-      debugPrint(
-        '[OfflineQueueScope] mutation flush all '
-        'current=$currentStorageKey storageKeys=$storageKeys',
-      );
       for (final storageKey in storageKeys) {
         await _flushPendingMutationsForStorageKey(
           storageKey,
@@ -419,6 +452,7 @@ class OfflineMutationQueueService {
   ) {
     return switch (collectionKey) {
       'bookings' => _bookingsCollection,
+      'role_access' => _firestore.collection('role_access'),
       'vehicle_makes' => _firestore.collection('vehicle_makes'),
       'vehicle_types' => _firestore.collection('vehicle_types'),
       'vehicle_sizes' => _firestore.collection('vehicle_sizes'),
@@ -505,10 +539,6 @@ class OfflineMutationQueueService {
     required bool updateStatus,
   }) async {
     final entries = await _readEntriesForStorageKey(storageKey);
-    debugPrint(
-      '[OfflineQueueScope] mutation flush start '
-      'storageKey=$storageKey entries=${entries.length}',
-    );
     final activeEntries = entries.where((entry) => !entry.isBlocked).toList();
     if (updateStatus) {
       _setStatus(

@@ -7,16 +7,19 @@ import 'package:webapp/services/offline_cleanup_queue_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class PhotoStorageService {
-  PhotoStorageService({FirebaseStorage? storage})
-    : _storage = storage ?? FirebaseStorage.instance;
+  PhotoStorageService({
+    FirebaseStorage? storage,
+    OfflineCleanupQueueService? offlineCleanupQueueService,
+  }) : _storage = storage ?? FirebaseStorage.instance,
+       _offlineCleanupQueueService =
+           offlineCleanupQueueService ?? OfflineCleanupQueueService.instance;
 
   static final PhotoStorageService instance = PhotoStorageService();
 
   final FirebaseStorage _storage;
   final ImageUploadProcessor _imageUploadProcessor =
       ImageUploadProcessor.instance;
-  final OfflineCleanupQueueService _offlineCleanupQueueService =
-      OfflineCleanupQueueService.instance;
+  final OfflineCleanupQueueService _offlineCleanupQueueService;
 
   Future<Map<String, dynamic>> uploadBookingPhoto({
     required Uint8List bytes,

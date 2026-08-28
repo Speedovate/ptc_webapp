@@ -15,6 +15,7 @@ class AppProfileAvatar extends StatelessWidget {
     this.fallbackText,
     this.enablePreview = false,
     this.previewTitle,
+    this.borderColor,
   });
 
   final double radius;
@@ -23,20 +24,23 @@ class AppProfileAvatar extends StatelessWidget {
   final String? fallbackText;
   final bool enablePreview;
   final String? previewTitle;
+  final Color? borderColor;
 
   static const double _borderRatio = 0.16;
 
   @override
   Widget build(BuildContext context) {
     final normalizedPhoto = photo?.trim();
-    final borderColor = AppColors.primarySurfaceAlt;
+    final resolvedBorderColor = borderColor ?? AppColors.primarySurfaceAlt;
     final hasMemoryImage = memoryBytes != null && memoryBytes!.isNotEmpty;
     final hasPhotoValue = normalizedPhoto != null && normalizedPhoto.isNotEmpty;
-    final hasNetworkImage =
+    final hasDisplayablePhoto =
         !hasMemoryImage &&
         normalizedPhoto != null &&
-        normalizedPhoto.startsWith('http');
-    final hasImageError = !hasMemoryImage && hasPhotoValue && !hasNetworkImage;
+        (normalizedPhoto.startsWith('http') ||
+            normalizedPhoto.startsWith('data:'));
+    final hasImageError =
+        !hasMemoryImage && hasPhotoValue && !hasDisplayablePhoto;
 
     final innerBorderWidth = radius * _borderRatio;
     final diameter = radius * 2;
@@ -50,12 +54,12 @@ class AppProfileAvatar extends StatelessWidget {
           CircleAvatar(
             radius: radius,
             backgroundColor: Colors.white,
-            child: ClipOval(
+                child: ClipOval(
               child: SizedBox.expand(
                 child: _buildAvatarContent(
                   memoryBytes: memoryBytes,
                   normalizedPhoto: normalizedPhoto,
-                  hasNetworkImage: hasNetworkImage,
+                  hasDisplayablePhoto: hasDisplayablePhoto,
                   hasImageError: hasImageError,
                 ),
               ),
@@ -65,7 +69,10 @@ class AppProfileAvatar extends StatelessWidget {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: borderColor, width: innerBorderWidth),
+                border: Border.all(
+                  color: resolvedBorderColor,
+                  width: innerBorderWidth,
+                ),
               ),
             ),
           ),
@@ -73,7 +80,7 @@ class AppProfileAvatar extends StatelessWidget {
       ),
     );
 
-    final canPreview = enablePreview && (hasMemoryImage || hasNetworkImage);
+    final canPreview = enablePreview && (hasMemoryImage || hasDisplayablePhoto);
     if (!canPreview) {
       return avatar;
     }
@@ -84,7 +91,7 @@ class AppProfileAvatar extends StatelessWidget {
           context,
           title: previewTitle ?? fallbackText ?? 'Profile Photo',
           memoryBytes: hasMemoryImage ? memoryBytes : null,
-          imageUrl: hasNetworkImage ? normalizedPhoto : null,
+          imageUrl: hasDisplayablePhoto ? normalizedPhoto : null,
         );
       },
       borderRadius: BorderRadius.circular(radius),
@@ -95,14 +102,14 @@ class AppProfileAvatar extends StatelessWidget {
   Widget _buildAvatarContent({
     required Uint8List? memoryBytes,
     required String? normalizedPhoto,
-    required bool hasNetworkImage,
+    required bool hasDisplayablePhoto,
     required bool hasImageError,
   }) {
     if (memoryBytes != null && memoryBytes.isNotEmpty) {
       return Image.memory(memoryBytes, fit: BoxFit.cover);
     }
 
-    if (hasNetworkImage) {
+    if (hasDisplayablePhoto) {
       return AppCachedNetworkImage(
         imageUrl: normalizedPhoto!,
         fit: BoxFit.cover,
@@ -123,6 +130,7 @@ class AppProfileAvatar extends StatelessWidget {
     );
   }
 }
+
 
 class _FallbackAvatarContent extends StatelessWidget {
   const _FallbackAvatarContent({

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
@@ -8,19 +7,21 @@ import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/view_models/admin/admin_users.vm.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/views/admin/admin_bookings.dart';
-import 'package:webapp/views/client/client_members_view.dart';
 import 'package:webapp/views/shared/profile_view.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_image_source_picker.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
+import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/user_bookings_section.dart';
 
 class _PendingImageUpload {
@@ -116,6 +117,7 @@ class AdminUsersView extends StatefulWidget {
     required UserModel viewedUser,
     Future<void> Function()? onCurrentUserUpdated,
     VoidCallback? onLogout,
+    bool isQuickLoggedIn = false,
   }) {
     return showDialog<void>(
       context: context,
@@ -125,6 +127,7 @@ class AdminUsersView extends StatefulWidget {
         onCurrentUserUpdated:
             onCurrentUserUpdated ?? () async {},
         onLogout: onLogout ?? () {},
+        isQuickLoggedIn: isQuickLoggedIn,
       ),
     );
   }
@@ -158,6 +161,11 @@ class _AdminUsersViewState extends State<AdminUsersView> {
   bool _isLaunchingInitialEdit = false;
   bool _isUploadingViewedProfilePhoto = false;
   bool _isUploadingViewedLicensePhoto = false;
+
+  String? _effectiveCurrentRole(AdminUsersViewModel vm) =>
+      RoleAccessService.instance.effectiveRoleKey(
+        vm.currentUser?.role ?? widget.user.role,
+      );
 
   Future<void> _saveViewedUserProfileChanges(
     AdminUsersViewModel vm,
@@ -219,6 +227,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
       viewModelBuilder: AdminUsersViewModel.new,
       onViewModelReady: (vm) => vm.loadUsers(fallbackCurrentUser: widget.user),
       builder: (context, vm, child) {
+        vm.ensureCurrentUserContext(widget.user);
         final filteredUsers = vm.users.where(vm.matches).toList();
         final viewedUser = vm.viewedUser;
         final pendingInitialEditUserId = widget.initialEditUserId;
@@ -294,6 +303,10 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                     onLogout: widget.onLogout,
                     logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
                     onSaveProfileChanges: isViewingCurrentUser
+                        && RoleAccessService.instance.canAccess(
+                          'profile.update',
+                          role: _effectiveCurrentRole(vm),
+                        )
                         ? (changes) => _saveViewedUserProfileChanges(
                             vm,
                             viewedUser,
@@ -305,6 +318,16 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                         : !vm.canSignInAsOtherUsers
                         ? null
                         : () async {
+                            final confirmed = await showAdminActionConfirmation(
+                              context,
+                              title: 'Sign In As User',
+                              message:
+                                  'Continue signing in as ${viewedUser.name ?? 'this user'} (${AdminUsersView.formatRole(viewedUser.role)})?',
+                              confirmLabel: 'Sign In',
+                            );
+                            if (!confirmed || !context.mounted) {
+                              return;
+                            }
                             try {
                               await vm.loginAsUser(viewedUser);
                               if (!context.mounted) {
@@ -324,6 +347,9 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                         ? 'Sign In'
                         : null,
                     onEditPressed: () async {
+                      if (!vm.canUpdateUsers) {
+                        return;
+                      }
                       await AdminUsersView.showEditUserDialog(
                         context,
                         vm,
@@ -332,68 +358,6 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                       );
                     },
                   ),
-                  if ((viewedUser.role ?? '').trim() == 'client') ...[
-                    const SizedBox(height: 18),
-                    ClientMembersView(
-                      clientUser: viewedUser,
-                      scrollable: false,
-                      padding: EdgeInsets.zero,
-                      forceWideLayout: false,
-                      allowDelete: vm.canDeleteUsers,
-                      onViewUser: (memberUser) => vm.openUserView(
-                        memberUser,
-                        preserveCurrent: true,
-                      ),
-                      onViewBooking: (booking) async {
-                        await AdminBookingsView.showBookingDetailDialog(
-                          context,
-                          user: widget.user,
-                          booking: booking,
-                        );
-                      },
-                      onEditBooking: (booking) async {
-                        try {
-                          await AdminBookingsView.showEditBookingDialog(
-                            context,
-                            booking: booking,
-                            currentUser: widget.user,
-                          );
-                        } catch (error) {
-                          if (!context.mounted) {
-                            return;
-                          }
-                          AppSnackbar.showError(
-                            context,
-                            userFacingErrorMessage(
-                              error,
-                              fallback:
-                                  'We could not open the booking editor right now.',
-                            ),
-                          );
-                        }
-                      },
-                      onNewBooking: () async {
-                        try {
-                          await AdminBookingsView.showNewBookingDialog(
-                            context,
-                            currentUser: widget.user,
-                          );
-                        } catch (error) {
-                          if (!context.mounted) {
-                            return;
-                          }
-                          AppSnackbar.showError(
-                            context,
-                            userFacingErrorMessage(
-                              error,
-                              fallback:
-                                  'We could not open the new booking dialog right now.',
-                            ),
-                          );
-                        }
-                      },
-                    ),
-                  ],
                   const SizedBox(height: 18),
                   UserBookingsSection(
                     user: viewedUser,
@@ -407,13 +371,18 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                         booking: booking,
                       );
                     },
-                    onEditBooking: (booking) async {
+                    onEditBooking: !RoleAccessService.instance.canAccess(
+                          'bookings.update',
+                          role: _effectiveCurrentRole(vm),
+                        )
+                        ? null
+                        : (booking) async {
                       try {
-                        await AdminBookingsView.showEditBookingDialog(
-                          context,
-                          booking: booking,
-                          currentUser: widget.user,
-                        );
+                          await AdminBookingsView.showEditBookingDialog(
+                        context,
+                        booking: booking,
+                        currentUser: vm.currentUser ?? widget.user,
+                      );
                       } catch (error) {
                         if (!context.mounted) {
                           return;
@@ -427,11 +396,16 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                         );
                       }
                     },
-                    onNewBooking: () async {
+                    onNewBooking: !RoleAccessService.instance.canAccess(
+                          'bookings.create',
+                          role: _effectiveCurrentRole(vm),
+                        )
+                        ? null
+                        : () async {
                       try {
                         await AdminBookingsView.showNewBookingDialog(
                           context,
-                          currentUser: widget.user,
+                          currentUser: vm.currentUser ?? widget.user,
                         );
                       } catch (error) {
                         if (!context.mounted) {
@@ -442,7 +416,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                           userFacingErrorMessage(
                             error,
                             fallback:
-                                'We could not open the new booking dialog right now.',
+                              'We could not open the new booking dialog right now.',
                           ),
                         );
                       }
@@ -472,7 +446,6 @@ class _AdminUsersViewState extends State<AdminUsersView> {
               final activeFilterCount = [
                 vm.roleFilter != 'All',
                 vm.activeFilter != 'All',
-                vm.onlineFilter != 'All',
                 vm.startDate != null,
                 vm.endDate != null,
               ].where((isActive) => isActive).length;
@@ -658,6 +631,10 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     UserModel user,
     Future<void> Function() onCurrentUserUpdated,
   ) async {
+    if (!vm.canUpdateUsers) {
+      AppSnackbar.showError(context, 'You do not have access to edit users.');
+      return;
+    }
     final editedUser = await showDialog<_UserFormDialogResult>(
       context: context,
       builder: (dialogContext) => _UserFormDialog(
@@ -695,11 +672,16 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     BuildContext context,
     AdminUsersViewModel vm,
   ) async {
+    if (!vm.canCreateUsers) {
+      AppSnackbar.showError(context, 'You do not have access to create users.');
+      return;
+    }
     final newUser = await showDialog<_UserFormDialogResult>(
       context: context,
       builder: (dialogContext) => _UserFormDialog(
         title: _userDialogTitle('New', vm.draftNewUser),
         isEditing: false,
+        canCreateAdminUsers: vm.canCreateAdminUsers,
         initialUser: vm.draftNewUser,
         generatedId: vm.nextUserId,
         onDraftChanged: vm.updateDraftNewUser,
@@ -766,7 +748,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     UserModel user,
   ) async {
     if (!vm.canDeleteUsers) {
-      AppSnackbar.showError(context, 'Only admins can delete users.');
+      AppSnackbar.showError(context, 'You do not have access to delete users.');
       return;
     }
     if (vm.currentUser?.id == user.id) {
@@ -800,6 +782,10 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     AdminUsersViewModel vm,
     UserModel user,
   ) async {
+    if (!vm.canUpdateUsers) {
+      AppSnackbar.showError(context, 'You do not have access to update users.');
+      return;
+    }
     final willBeActive = !(user.isActive ?? false);
     final roleLabel = formatRole(user.role);
     final subjectLabel = roleLabel == '-' ? 'User' : roleLabel;
@@ -898,8 +884,10 @@ class _UsersToolbar extends StatelessWidget {
           roleOptions: roleOptions,
           iconOnly: iconOnly,
         ),
-        onNewPressed: () => AdminUsersView.showNewUserDialog(context, vm),
-      ),
+                  onNewPressed: vm.canCreateUsers
+                      ? () => AdminUsersView.showNewUserDialog(context, vm)
+                      : null,
+                ),
     );
   }
 }
@@ -922,12 +910,10 @@ class _UsersFiltersPanel extends StatefulWidget {
 class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
   final FocusNode _roleFocusNode = FocusNode();
   final FocusNode _activeFocusNode = FocusNode();
-  final FocusNode _onlineFocusNode = FocusNode();
 
   void _unfocusFilterFields() {
     _roleFocusNode.unfocus();
     _activeFocusNode.unfocus();
-    _onlineFocusNode.unfocus();
     FocusScope.of(context).unfocus();
   }
 
@@ -935,7 +921,6 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
   void dispose() {
     _roleFocusNode.dispose();
     _activeFocusNode.dispose();
-    _onlineFocusNode.dispose();
     super.dispose();
   }
 
@@ -992,18 +977,6 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
                       focusNode: _activeFocusNode,
                       items: const ['All', 'Active', 'Inactive'],
                       onChanged: widget.vm.updateActiveFilter,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: itemWidth,
-                    height: AdminUsersView.usersFilterControlHeight,
-                    child: _UsersFilterDropdown(
-                      label: 'Is Online',
-                      value: widget.vm.onlineFilter,
-                      focusNode: _onlineFocusNode,
-                      items: const ['All', 'Online', 'Offline'],
-                      onChanged: widget.vm.updateOnlineFilter,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -1298,7 +1271,7 @@ class _UsersTable extends StatelessWidget {
       AdminListMeasurements.defaultExtraWidthAllowance;
   static const _maxNameEmailBasisWidth = 170.0;
   static const _maxCreatedBasisWidth = 150.0;
-  static const _actionsLaneMinWidth = 138.0;
+  static const _actionsLaneMinWidth = 176.0;
 
   @override
   Widget build(BuildContext context) {
@@ -1502,7 +1475,7 @@ class _UsersTable extends StatelessWidget {
                       trailingPadding: _defaultTrailingPadding,
                     ),
                   ),
-                  _UsersFixedSlot(
+                  AdminListTrailingActionsLane(
                     width: resolvedActionsWidth,
                     child: const _UsersHeader(
                       label: 'Actions',
@@ -1635,6 +1608,10 @@ class _UsersWideRow extends StatelessWidget {
   final double resolvedUpdatedAtWidth;
   final double resolvedActionsWidth;
 
+  bool get _isEligibleAndOnline =>
+      RoleAccessService.instance.isOnlineEligibleRole(user.role) &&
+      (user.isOnline ?? false);
+
   @override
   Widget build(BuildContext context) {
     final idValue = user.id ?? '-';
@@ -1665,7 +1642,7 @@ class _UsersWideRow extends StatelessWidget {
               child: Text(
                 nameValue,
                 style: _UsersTable._nameStyle.copyWith(
-                  color: (user.isOnline ?? false)
+                  color: _isEligibleAndOnline
                       ? _UsersTable._onlineNameColor
                       : AppColors.textPrimary,
                 ),
@@ -1723,7 +1700,7 @@ class _UsersWideRow extends StatelessWidget {
               ),
             ),
           ),
-          _UsersFixedSlot(
+          AdminListTrailingActionsLane(
             width: resolvedActionsWidth,
             child: _UsersCell(
               trailingPadding: 0,
@@ -1740,28 +1717,30 @@ class _UsersWideRow extends StatelessWidget {
                       vm.openUserView(user);
                     },
                   ),
-                  _UserActionButton(
-                    icon: Icons.edit_rounded,
-                    onTap: () {
-                      AdminUsersView.showEditUserDialog(
-                        context,
-                        vm,
-                        user,
-                        onCurrentUserUpdated,
-                      );
-                    },
-                  ),
-                  _UserActionButton(
-                    icon: (user.isActive ?? false)
-                        ? Icons.close_rounded
-                        : Icons.check_rounded,
-                    backgroundColor: (user.isActive ?? false)
-                        ? AppColors.dangerStrong
-                        : const Color(0xFF2EAD62),
-                    onTap: () {
-                      AdminUsersView.handleToggleUserActive(context, vm, user);
-                    },
-                  ),
+                  if (vm.canUpdateUsers)
+                    _UserActionButton(
+                      icon: Icons.edit_rounded,
+                      onTap: () {
+                        AdminUsersView.showEditUserDialog(
+                          context,
+                          vm,
+                          user,
+                          onCurrentUserUpdated,
+                        );
+                      },
+                    ),
+                  if (vm.canUpdateUsers)
+                    _UserActionButton(
+                      icon: (user.isActive ?? false)
+                          ? Icons.close_rounded
+                          : Icons.check_rounded,
+                      backgroundColor: (user.isActive ?? false)
+                          ? AppColors.dangerStrong
+                          : const Color(0xFF2EAD62),
+                      onTap: () {
+                        AdminUsersView.handleToggleUserActive(context, vm, user);
+                      },
+                    ),
                   if (vm.canDeleteUsers)
                     _UserActionButton(
                       icon: Icons.delete_rounded,
@@ -1836,6 +1815,10 @@ class _UsersResponsiveCard extends StatelessWidget {
     color: AppColors.textPrimary,
     fontWeight: FontWeight.w600,
   );
+
+  bool get _isEligibleAndOnline =>
+      RoleAccessService.instance.isOnlineEligibleRole(user.role) &&
+      (user.isOnline ?? false);
 
   @override
   Widget build(BuildContext context) {
@@ -1947,7 +1930,7 @@ class _UsersResponsiveCard extends StatelessWidget {
                     centered: useSingleColumn,
                     valueColor:
                         resolvedFields[index].$1 == 'Name' &&
-                            (user.isOnline ?? false)
+                            _isEligibleAndOnline
                         ? _UsersTable._onlineNameColor
                         : null,
                   ),
@@ -1967,32 +1950,34 @@ class _UsersResponsiveCard extends StatelessWidget {
                         vm.openUserView(user);
                       },
                     ),
-                    _UserActionButton(
-                      icon: Icons.edit_rounded,
-                      onTap: () {
-                        AdminUsersView.showEditUserDialog(
-                          context,
-                          vm,
-                          user,
-                          onCurrentUserUpdated,
-                        );
-                      },
-                    ),
-                    _UserActionButton(
-                      icon: (user.isActive ?? false)
-                          ? Icons.close_rounded
-                          : Icons.check_rounded,
-                      backgroundColor: (user.isActive ?? false)
-                          ? AppColors.dangerStrong
-                          : const Color(0xFF2EAD62),
-                      onTap: () {
-                        AdminUsersView.handleToggleUserActive(
-                          context,
-                          vm,
-                          user,
-                        );
-                      },
-                    ),
+                    if (vm.canUpdateUsers)
+                      _UserActionButton(
+                        icon: Icons.edit_rounded,
+                        onTap: () {
+                          AdminUsersView.showEditUserDialog(
+                            context,
+                            vm,
+                            user,
+                            onCurrentUserUpdated,
+                          );
+                        },
+                      ),
+                    if (vm.canUpdateUsers)
+                      _UserActionButton(
+                        icon: (user.isActive ?? false)
+                            ? Icons.close_rounded
+                            : Icons.check_rounded,
+                        backgroundColor: (user.isActive ?? false)
+                            ? AppColors.dangerStrong
+                            : const Color(0xFF2EAD62),
+                        onTap: () {
+                          AdminUsersView.handleToggleUserActive(
+                            context,
+                            vm,
+                            user,
+                          );
+                        },
+                      ),
                     if (vm.canDeleteUsers)
                       _UserActionButton(
                         icon: Icons.delete_rounded,
@@ -2018,32 +2003,34 @@ class _UsersResponsiveCard extends StatelessWidget {
                         vm.openUserView(user);
                       },
                     ),
-                    _UserActionButton(
-                      icon: Icons.edit_rounded,
-                      onTap: () {
-                        AdminUsersView.showEditUserDialog(
-                          context,
-                          vm,
-                          user,
-                          onCurrentUserUpdated,
-                        );
-                      },
-                    ),
-                    _UserActionButton(
-                      icon: (user.isActive ?? false)
-                          ? Icons.close_rounded
-                          : Icons.check_rounded,
-                      backgroundColor: (user.isActive ?? false)
-                          ? AppColors.dangerStrong
-                          : const Color(0xFF2EAD62),
-                      onTap: () {
-                        AdminUsersView.handleToggleUserActive(
-                          context,
-                          vm,
-                          user,
-                        );
-                      },
-                    ),
+                    if (vm.canUpdateUsers)
+                      _UserActionButton(
+                        icon: Icons.edit_rounded,
+                        onTap: () {
+                          AdminUsersView.showEditUserDialog(
+                            context,
+                            vm,
+                            user,
+                            onCurrentUserUpdated,
+                          );
+                        },
+                      ),
+                    if (vm.canUpdateUsers)
+                      _UserActionButton(
+                        icon: (user.isActive ?? false)
+                            ? Icons.close_rounded
+                            : Icons.check_rounded,
+                        backgroundColor: (user.isActive ?? false)
+                            ? AppColors.dangerStrong
+                            : const Color(0xFF2EAD62),
+                        onTap: () {
+                          AdminUsersView.handleToggleUserActive(
+                            context,
+                            vm,
+                            user,
+                          );
+                        },
+                      ),
                     if (vm.canDeleteUsers)
                       _UserActionButton(
                         icon: Icons.delete_rounded,
@@ -2155,12 +2142,14 @@ class _AdminUserDetailDialog extends StatelessWidget {
     required this.initialViewedUser,
     required this.onCurrentUserUpdated,
     required this.onLogout,
+    required this.isQuickLoggedIn,
   });
 
   final UserModel currentUser;
   final UserModel initialViewedUser;
   final Future<void> Function() onCurrentUserUpdated;
   final VoidCallback onLogout;
+  final bool isQuickLoggedIn;
 
   @override
   Widget build(BuildContext context) {
@@ -2178,6 +2167,7 @@ class _AdminUserDetailDialog extends StatelessWidget {
           initialViewedUser: initialViewedUser,
           onCurrentUserUpdated: onCurrentUserUpdated,
           onLogout: onLogout,
+          isQuickLoggedIn: isQuickLoggedIn,
         ),
       ),
     );
@@ -2190,12 +2180,14 @@ class _AdminUserDetailDialogBody extends StatefulWidget {
     required this.initialViewedUser,
     required this.onCurrentUserUpdated,
     required this.onLogout,
+    required this.isQuickLoggedIn,
   });
 
   final UserModel currentUser;
   final UserModel initialViewedUser;
   final Future<void> Function() onCurrentUserUpdated;
   final VoidCallback onLogout;
+  final bool isQuickLoggedIn;
 
   @override
   State<_AdminUserDetailDialogBody> createState() =>
@@ -2206,6 +2198,11 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
   bool _initializedInitialViewedUser = false;
   bool _isUploadingViewedProfilePhoto = false;
   bool _isUploadingViewedLicensePhoto = false;
+
+  String? _effectiveCurrentRole(AdminUsersViewModel vm) =>
+      RoleAccessService.instance.effectiveRoleKey(
+        vm.currentUser?.role ?? widget.currentUser.role,
+      );
 
   Future<void> _saveViewedUserProfileChanges(
     AdminUsersViewModel vm,
@@ -2277,6 +2274,7 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
         vm.openUserView(matchedUser);
       },
       builder: (context, vm, _) {
+        vm.ensureCurrentUserContext(widget.currentUser);
         final viewedUser = vm.viewedUser;
         if (viewedUser == null) {
           return const Center(child: CircularProgressIndicator());
@@ -2313,8 +2311,12 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
                             ),
                   isCurrentUserView: isViewingCurrentUser,
                   onLogout: widget.onLogout,
-                  logoutLabel: 'Logout',
+                  logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
                   onSaveProfileChanges: isViewingCurrentUser
+                      && RoleAccessService.instance.canAccess(
+                        'profile.update',
+                        role: _effectiveCurrentRole(vm),
+                      )
                       ? (changes) => _saveViewedUserProfileChanges(
                           vm,
                           viewedUser,
@@ -2326,6 +2328,9 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
                       : () => Navigator.of(context).pop(),
                   quickActionLabel: isViewingCurrentUser ? null : 'Close',
                   onEditPressed: () async {
+                    if (!vm.canUpdateUsers) {
+                      return;
+                    }
                     await AdminUsersView.showEditUserDialog(
                       context,
                       vm,
@@ -2334,68 +2339,6 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
                     );
                   },
                 ),
-                if ((viewedUser.role ?? '').trim() == 'client') ...[
-                  const SizedBox(height: 18),
-                    ClientMembersView(
-                      clientUser: viewedUser,
-                      scrollable: false,
-                      padding: EdgeInsets.zero,
-                      forceWideLayout: false,
-                      allowDelete: canDeleteAdminData(widget.currentUser.role),
-                      onViewUser: (memberUser) => vm.openUserView(
-                        memberUser,
-                        preserveCurrent: true,
-                    ),
-                    onViewBooking: (booking) async {
-                      await AdminBookingsView.showBookingDetailDialog(
-                        context,
-                        user: widget.currentUser,
-                        booking: booking,
-                      );
-                    },
-                    onEditBooking: (booking) async {
-                      try {
-                        await AdminBookingsView.showEditBookingDialog(
-                          context,
-                          booking: booking,
-                          currentUser: widget.currentUser,
-                        );
-                      } catch (error) {
-                        if (!context.mounted) {
-                          return;
-                        }
-                        AppSnackbar.showError(
-                          context,
-                          userFacingErrorMessage(
-                            error,
-                            fallback:
-                                'We could not open the booking editor right now.',
-                          ),
-                        );
-                      }
-                    },
-                    onNewBooking: () async {
-                      try {
-                        await AdminBookingsView.showNewBookingDialog(
-                          context,
-                          currentUser: widget.currentUser,
-                        );
-                      } catch (error) {
-                        if (!context.mounted) {
-                          return;
-                        }
-                        AppSnackbar.showError(
-                          context,
-                          userFacingErrorMessage(
-                            error,
-                            fallback:
-                                'We could not open the new booking dialog right now.',
-                          ),
-                        );
-                      }
-                    },
-                  ),
-                ],
                 const SizedBox(height: 18),
                 UserBookingsSection(
                   user: viewedUser,
@@ -2409,12 +2352,17 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
                       booking: booking,
                     );
                   },
-                  onEditBooking: (booking) async {
+                  onEditBooking: !RoleAccessService.instance.canAccess(
+                        'bookings.update',
+                        role: _effectiveCurrentRole(vm),
+                      )
+                      ? null
+                      : (booking) async {
                     try {
                       await AdminBookingsView.showEditBookingDialog(
                         context,
                         booking: booking,
-                        currentUser: widget.currentUser,
+                        currentUser: vm.currentUser ?? widget.currentUser,
                       );
                     } catch (error) {
                       if (!context.mounted) {
@@ -2430,11 +2378,16 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
                       );
                     }
                   },
-                  onNewBooking: () async {
+                  onNewBooking: !RoleAccessService.instance.canAccess(
+                        'bookings.create',
+                        role: _effectiveCurrentRole(vm),
+                      )
+                      ? null
+                      : () async {
                     try {
                       await AdminBookingsView.showNewBookingDialog(
                         context,
-                        currentUser: widget.currentUser,
+                        currentUser: vm.currentUser ?? widget.currentUser,
                       );
                     } catch (error) {
                       if (!context.mounted) {
@@ -2511,6 +2464,7 @@ class _UserFormDialog extends StatefulWidget {
     required this.title,
     required this.isEditing,
     required this.clientOptions,
+    this.canCreateAdminUsers = true,
     this.initialUser,
     this.generatedId,
     this.onDraftChanged,
@@ -2519,6 +2473,7 @@ class _UserFormDialog extends StatefulWidget {
   final String title;
   final bool isEditing;
   final List<UserModel> clientOptions;
+  final bool canCreateAdminUsers;
   final UserModel? initialUser;
   final String? generatedId;
   final ValueChanged<UserModel>? onDraftChanged;
@@ -2528,17 +2483,6 @@ class _UserFormDialog extends StatefulWidget {
 }
 
 class _UserFormDialogState extends State<_UserFormDialog> {
-  static const _roleOptions = [
-    'client',
-    'driver',
-    'admin',
-    'helper',
-    'sub-client',
-    'dispatcher',
-  ];
-
-  late final TextEditingController _latController;
-  late final TextEditingController _lngController;
   late final TextEditingController _emailController;
   late final TextEditingController _nameController;
   late final TextEditingController _photoController;
@@ -2550,13 +2494,9 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   final FocusNode _nameFocusNode = FocusNode();
   final FocusNode _phoneFocusNode = FocusNode();
   final FocusNode _positionFocusNode = FocusNode();
-  final FocusNode _latFocusNode = FocusNode();
-  final FocusNode _lngFocusNode = FocusNode();
   final FocusNode _passwordFocusNode = FocusNode();
-  final FocusNode _clientFocusNode = FocusNode();
 
   late String? _roleValue;
-  late String? _parentClientId;
   late bool _isActive;
   late bool _isOnline;
   String? _vehicleTypeId;
@@ -2569,24 +2509,13 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   _PendingImageUpload? _pendingLicenseUpload;
 
   bool get _isDriverRole => _roleValue == 'driver';
-  bool get _isSubClientRole => _roleValue == 'sub-client';
-
-  List<DropdownMenuItem<String>> _clientDropdownItems() {
-    return widget.clientOptions
-        .where((user) => (user.id?.trim().isNotEmpty ?? false))
-        .map(
-          (user) => DropdownMenuItem<String>(
-            value: user.id!.trim(),
-            child: Text(
-              [
-                if ((user.name ?? '').trim().isNotEmpty) user.name!.trim(),
-                if ((user.id ?? '').trim().isNotEmpty) '(ID ${user.id!.trim()})',
-              ].join(' '),
-              style: adminDropdownDisplayTextStyle,
-            ),
-          ),
-        )
-        .toList();
+  bool get _supportsOnlineRole => _supportsOnlineRoleStatic(_roleValue);
+  List<String> get _roleOptions {
+    final roles = RoleAccessService.instance.adminUserRoleKeys;
+    if (widget.isEditing || widget.canCreateAdminUsers) {
+      return roles;
+    }
+    return roles.where((role) => role != 'admin').toList(growable: false);
   }
 
   List<DropdownMenuItem<String>> _vehicleTypeDropdownItems() {
@@ -2624,12 +2553,6 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     super.initState();
     final user = widget.initialUser ?? const UserModel();
     final driver = user.asDriver;
-    _latController = TextEditingController(
-      text: driver?.lat?.toStringAsFixed(4) ?? '',
-    );
-    _lngController = TextEditingController(
-      text: driver?.lng?.toStringAsFixed(4) ?? '',
-    );
     _emailController = TextEditingController(text: user.email ?? '');
     _nameController = TextEditingController(text: user.name ?? '');
     _photoController = TextEditingController(text: user.photo ?? '');
@@ -2637,11 +2560,16 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     _positionController = TextEditingController(text: user.position ?? '');
     _licenseController = TextEditingController(text: driver?.license ?? '');
     _passwordController = TextEditingController(text: user.password ?? '');
-    _roleValue = _roleOptions.contains(user.role) ? user.role : null;
-    _parentClientId = user.parentClientId;
+    final normalizedInitialRole = normalizeRoleKey(user.role);
+    _roleValue = normalizedInitialRole.isNotEmpty &&
+            _roleOptions.contains(normalizedInitialRole)
+        ? normalizedInitialRole
+        : null;
     _vehicleTypeId = driver?.vehicleType?.id;
     _isActive = widget.isEditing ? (user.isActive ?? false) : true;
-    _isOnline = user.isOnline ?? false;
+    _isOnline = _supportsOnlineRoleStatic(normalizedInitialRole)
+        ? (user.isOnline ?? false)
+        : false;
     _photoValue = user.photo;
     _licenseValue = driver?.license;
     _emailController.addListener(_handleDraftChanged);
@@ -2650,8 +2578,6 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     _phoneController.addListener(_handleDraftChanged);
     _positionController.addListener(_handleDraftChanged);
     _licenseController.addListener(_handleDraftChanged);
-    _latController.addListener(_handleDraftChanged);
-    _lngController.addListener(_handleDraftChanged);
     _passwordController.addListener(_handleDraftChanged);
     _handleDraftChanged();
     _loadVehicleTypes();
@@ -2683,11 +2609,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     _phoneController.removeListener(_handleDraftChanged);
     _positionController.removeListener(_handleDraftChanged);
     _licenseController.removeListener(_handleDraftChanged);
-    _latController.removeListener(_handleDraftChanged);
-    _lngController.removeListener(_handleDraftChanged);
     _passwordController.removeListener(_handleDraftChanged);
-    _latController.dispose();
-    _lngController.dispose();
     _emailController.dispose();
     _nameController.dispose();
     _photoController.dispose();
@@ -2695,13 +2617,10 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     _positionController.dispose();
     _licenseController.dispose();
     _passwordController.dispose();
-    _clientFocusNode.dispose();
     _emailFocusNode.dispose();
     _nameFocusNode.dispose();
     _phoneFocusNode.dispose();
     _positionFocusNode.dispose();
-    _latFocusNode.dispose();
-    _lngFocusNode.dispose();
     _passwordFocusNode.dispose();
     super.dispose();
   }
@@ -2726,6 +2645,15 @@ class _UserFormDialogState extends State<_UserFormDialog> {
       AppSnackbar.showError(context, validationMessage);
       return;
     }
+    if (!widget.isEditing &&
+        !widget.canCreateAdminUsers &&
+        normalizeRoleKey(_roleValue) == 'admin') {
+      AppSnackbar.showError(
+        context,
+        'Only admin users can create other admin users.',
+      );
+      return;
+    }
     final baseUser = widget.initialUser ?? const UserModel();
     final now = DateTime.now();
     final selectedVehicleType = _vehicleTypes.where(
@@ -2737,19 +2665,17 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         user: baseUser.copyWith(
           id: widget.isEditing ? baseUser.id : widget.generatedId,
           role: _roleValue,
-          parentClientId: _isSubClientRole ? _parentClientId : null,
+          parentClientId: null,
           email: _nullIfEmpty(_emailController.text),
           name: _nullIfEmpty(_nameController.text),
           photo: _photoValue,
           phone: normalizePhilippinePhone(_phoneController.text),
-          position: _isSubClientRole ? _nullIfEmpty(_positionController.text) : null,
+          position: null,
           isActive: _isActive,
-          isOnline: _isOnline,
+          isOnline: _supportsOnlineRole ? _isOnline : false,
           password: _nullIfEmpty(_passwordController.text),
           createdAt: widget.isEditing ? baseUser.createdAt : now,
           updatedAt: now,
-          lat: _isDriverRole ? _tryParseDouble(_latController.text) : null,
-          lng: _isDriverRole ? _tryParseDouble(_lngController.text) : null,
           license: _isDriverRole ? _licenseValue : null,
           vehicleType: _isDriverRole
               ? (selectedVehicleType.isNotEmpty
@@ -2814,27 +2740,12 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                           _vehicleTypeId = null;
                           _pendingLicenseUpload = null;
                         }
-                        if (_roleValue != 'sub-client') {
-                          _parentClientId = null;
+                        if (!_supportsOnlineRole) {
+                          _isOnline = false;
                         }
                         _handleDraftChanged();
                       }),
                     ),
-                    if (_isSubClientRole)
-                      AdminModalDropdownField<String>(
-                        label: 'Client',
-                        initialValue: _parentClientId,
-                        focusNode: _clientFocusNode,
-                        iconEnabledColor: AppColors.primaryColor,
-                        bottomPadding: 6,
-                        disabledTapMessage:
-                            'No active client accounts available.',
-                        items: _clientDropdownItems(),
-                        onChanged: (value) => setState(() {
-                          _parentClientId = value;
-                          _handleDraftChanged();
-                        }),
-                      ),
                     if (_isDriverRole)
                       AdminModalDropdownField<String>(
                         label: 'Vehicle Type',
@@ -2886,53 +2797,13 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                           : TextInputAction.next,
                       onSubmitted: (_) => widget.isEditing
                           ? _submitForm()
-                          : _focusNext(
-                              _isSubClientRole
-                                  ? _positionFocusNode
-                                  : _isDriverRole
-                                  ? _latFocusNode
-                                  : _passwordFocusNode,
-                            ),
+                          : _focusNext(_passwordFocusNode),
                     ),
-                    if (_isSubClientRole)
-                      _buildField(
-                        _positionController,
-                        'Position',
-                        focusNode: _positionFocusNode,
-                        textInputAction: TextInputAction.next,
-                        onSubmitted: (_) => widget.isEditing
-                            ? _submitForm()
-                            : _focusNext(_passwordFocusNode),
-                      ),
                     if (_isDriverRole)
                       _buildUploadField(
                         label: 'License',
                         controller: _licenseController,
                         onTap: _pickLicenseFieldImage,
-                      ),
-                    if (_isDriverRole)
-                      _buildField(
-                        _latController,
-                        'Latitude',
-                        focusNode: _latFocusNode,
-                        textInputAction: widget.isEditing
-                            ? TextInputAction.done
-                            : TextInputAction.next,
-                        onSubmitted: (_) => widget.isEditing
-                            ? _submitForm()
-                            : _focusNext(_lngFocusNode),
-                      ),
-                    if (_isDriverRole)
-                      _buildField(
-                        _lngController,
-                        'Longitude',
-                        focusNode: _lngFocusNode,
-                        textInputAction: widget.isEditing
-                            ? TextInputAction.done
-                            : TextInputAction.next,
-                        onSubmitted: (_) => widget.isEditing
-                            ? _submitForm()
-                            : _focusNext(_passwordFocusNode),
                       ),
                     _buildField(
                       _passwordController,
@@ -2957,15 +2828,17 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                     _handleDraftChanged();
                   }),
                 ),
-                const SizedBox(height: 8),
-                _buildToggleRow(
-                  title: 'Online',
-                  value: _isOnline,
-                  onChanged: (value) => setState(() {
-                    _isOnline = value;
-                    _handleDraftChanged();
-                  }),
-                ),
+                if (_supportsOnlineRole) ...[
+                  const SizedBox(height: 8),
+                  _buildToggleRow(
+                    title: 'Online',
+                    value: _isOnline,
+                    onChanged: (value) => setState(() {
+                      _isOnline = value;
+                      _handleDraftChanged();
+                    }),
+                  ),
+                ],
               ],
       ),
     );
@@ -2988,17 +2861,15 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     return baseUser.copyWith(
       id: widget.isEditing ? baseUser.id : widget.generatedId,
       role: _roleValue,
-      parentClientId: _isSubClientRole ? _parentClientId : null,
+      parentClientId: null,
       email: _nullIfEmpty(_emailController.text),
       name: _nullIfEmpty(_nameController.text),
       photo: _photoValue,
       phone: normalizePhilippinePhone(_phoneController.text),
-      position: _isSubClientRole ? _nullIfEmpty(_positionController.text) : null,
+      position: null,
       isActive: _isActive,
-      isOnline: _isOnline,
+      isOnline: _supportsOnlineRole ? _isOnline : false,
       password: _nullIfEmpty(_passwordController.text),
-      lat: _isDriverRole ? _tryParseDouble(_latController.text) : null,
-      lng: _isDriverRole ? _tryParseDouble(_lngController.text) : null,
       license: _isDriverRole ? _licenseValue : null,
       vehicleType: _isDriverRole
           ? (selectedVehicleType.isNotEmpty
@@ -3032,25 +2903,18 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     required TextEditingController controller,
     required ValueChanged<_PendingImageUpload> onSelected,
   }) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final file = result?.files.singleOrNull;
-    final bytes = file?.bytes;
-    if (file == null || bytes == null) {
+    final image = await showAppImageSourcePicker(context);
+    if (image == null) {
       return;
     }
     final upload = _PendingImageUpload(
-      bytes: bytes,
-      fileName: file.name,
-      size: file.size,
-      mimeType: file.extension == null
-          ? null
-          : _resolvedMimeType(file.extension!),
+      bytes: image.bytes,
+      fileName: image.fileName,
+      size: image.size,
+      mimeType: image.mimeType,
     );
     setState(() {
-      controller.text = file.name;
+      controller.text = image.fileName;
       onSelected(upload);
     });
     _handleDraftChanged();
@@ -3144,8 +3008,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     return trimmed.isEmpty ? null : trimmed;
   }
 
-  static bool _supportsOnlineRole(String? role) {
-    return role == 'driver' || role == 'helper';
+  static bool _supportsOnlineRoleStatic(String? role) {
+    return RoleAccessService.instance.isOnlineEligibleRole(role);
   }
 
   String? _validationMessage() {
@@ -3153,9 +3017,6 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         ? 'Role is required.'
         : null;
     return roleMessage ??
-        (_isSubClientRole && (_parentClientId?.trim().isNotEmpty != true)
-            ? 'Client is required.'
-            : null) ??
         (_isDriverRole && (_vehicleTypeId?.trim().isNotEmpty != true)
             ? 'Vehicle type is required.'
             : null) ??
@@ -3165,14 +3026,11 @@ class _UserFormDialogState extends State<_UserFormDialog> {
         _validateName(_nameController.text) ??
         (_pendingPhotoUpload != null ? null : _validatePhoto(_photoValue)) ??
         _validatePhone(_phoneController.text) ??
-        (_isSubClientRole ? _validatePosition(_positionController.text) : null) ??
         (_isDriverRole
             ? (_pendingLicenseUpload != null
                   ? null
                   : _validateLicense(_licenseValue))
             : null) ??
-        (_isDriverRole ? _validateLatitude(_latController.text) : null) ??
-        (_isDriverRole ? _validateLongitude(_lngController.text) : null) ??
         _validatePassword(_passwordController.text);
   }
 
@@ -3187,7 +3045,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     if (!isOnline) {
       return null;
     }
-    if (_supportsOnlineRole(role)) {
+    if (_supportsOnlineRoleStatic(role)) {
       return null;
     }
     return 'Online status is only available for Driver and Helper roles.';
@@ -3229,17 +3087,6 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     return null;
   }
 
-  static String? _validatePosition(String? value) {
-    final trimmed = value?.trim() ?? '';
-    if (trimmed.isEmpty) {
-      return 'Position is required.';
-    }
-    if (trimmed.length < 2) {
-      return 'Position must be at least 2 characters.';
-    }
-    return null;
-  }
-
   static String? _validatePassword(String? value) {
     final trimmed = value?.trim() ?? '';
     if (trimmed.isEmpty) {
@@ -3263,52 +3110,6 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     return null;
   }
 
-  static String? _resolvedMimeType(String extension) {
-    switch (extension.toLowerCase()) {
-      case 'png':
-        return 'image/png';
-      case 'gif':
-        return 'image/gif';
-      case 'webp':
-        return 'image/webp';
-      case 'bmp':
-        return 'image/bmp';
-      default:
-        return 'image/jpeg';
-    }
-  }
-
-  static String? _validateLatitude(String? value) {
-    final trimmed = value?.trim() ?? '';
-    if (trimmed.isEmpty) {
-      return 'Latitude is required.';
-    }
-    final parsed = double.tryParse(trimmed);
-    if (parsed == null || parsed < -90 || parsed > 90) {
-      return 'Latitude must be between -90 and 90.';
-    }
-    return null;
-  }
-
-  static String? _validateLongitude(String? value) {
-    final trimmed = value?.trim() ?? '';
-    if (trimmed.isEmpty) {
-      return 'Longitude is required.';
-    }
-    final parsed = double.tryParse(trimmed);
-    if (parsed == null || parsed < -180 || parsed > 180) {
-      return 'Longitude must be between -180 and 180.';
-    }
-    return null;
-  }
-
-  static double? _tryParseDouble(String value) {
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) {
-      return null;
-    }
-    return double.tryParse(trimmed);
-  }
 }
 
 class _UserActionButton extends StatelessWidget {

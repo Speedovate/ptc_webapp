@@ -1,14 +1,17 @@
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/services/dashboard_export_naming.dart';
 import 'package:webapp/services/dashboard_docx_export_service.dart';
 import 'package:webapp/services/export_file_service.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/view_models/admin/admin_dashboard.vm.dart';
 import 'package:webapp/views/shared/booking_workflow_view.dart';
 import 'package:webapp/views/shared/support_center_view.dart';
@@ -32,14 +35,27 @@ class AdminDashboardView extends StatefulWidget {
 
 class _AdminDashboardViewState extends State<AdminDashboardView> {
   static const double _toolbarSectionGap = 12;
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  final AdminDashboardViewModel _viewModel = AdminDashboardViewModel();
   Booking? _selectedBooking;
   final Set<String> _excludedExportBookingIds = <String>{};
   late final ScrollController _detailScrollController;
+
+  bool _canExport(UserModel? user) => _roleAccessService.canAccess(
+    DispatcherAccessCapability.dashboardExport,
+    role: _roleAccessService.effectiveRoleKey(user?.role),
+  );
+
+  bool _canUpdateBilling(UserModel? user) => _roleAccessService.canAccess(
+    DispatcherAccessCapability.dashboardUpdateBilling,
+    role: _roleAccessService.effectiveRoleKey(user?.role),
+  );
 
   @override
   void initState() {
     super.initState();
     _detailScrollController = ScrollController();
+    unawaited(_viewModel.load());
   }
 
   @override
@@ -51,8 +67,7 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
   @override
   Widget build(BuildContext context) {
     return ViewModelBuilder<AdminDashboardViewModel>.reactive(
-      viewModelBuilder: AdminDashboardViewModel.new,
-      onViewModelReady: (vm) => vm.load(),
+      viewModelBuilder: () => _viewModel,
       builder: (context, vm, child) {
         final selectedBooking = _selectedBooking == null
             ? null
@@ -61,9 +76,14 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                       .firstOrNull ??
                   _selectedBooking;
         final filteredBookings = vm.filteredCompletedBookings();
+        final showInitialLoading =
+            vm.isBusy &&
+            selectedBooking == null &&
+            vm.errorMessage == null &&
+            vm.completedBookings.isEmpty;
         if (selectedBooking != null && vm.currentUser != null) {
           return AppPageLoadingOverlay(
-            isVisible: vm.isBusy,
+            isVisible: false,
             message: vm.busyMessage,
             child: SingleChildScrollView(
               key: PageStorageKey(
@@ -105,7 +125,7 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
         }
         if (vm.errorMessage != null) {
           return AppPageLoadingOverlay(
-            isVisible: vm.isBusy,
+            isVisible: showInitialLoading,
             message: vm.busyMessage,
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
@@ -115,14 +135,16 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                   AppRefreshStrip(isVisible: vm.isBusy),
                   _AdminDashboardToolbar(
                     vm: vm,
-                    onExportPressed: () =>
+                    onExportPressed: _canExport(vm.currentUser)
+                        ? () =>
                         _exportBookings(
                           context,
                           vm,
                           excludedBookingIds: _excludedExportBookingIds,
                           onToggleExcludedSession:
                               _toggleExportExcludedBookingId,
-                        ),
+                        )
+                        : null,
                   ),
                   const SizedBox(height: _toolbarSectionGap),
                   AdminListItemCard(
@@ -137,7 +159,7 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
 
         if (vm.completedBookings.isEmpty) {
           return AppPageLoadingOverlay(
-            isVisible: vm.isBusy,
+            isVisible: showInitialLoading,
             message: vm.busyMessage,
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
@@ -147,14 +169,16 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                   AppRefreshStrip(isVisible: vm.isBusy),
                   _AdminDashboardToolbar(
                     vm: vm,
-                    onExportPressed: () =>
+                    onExportPressed: _canExport(vm.currentUser)
+                        ? () =>
                         _exportBookings(
                           context,
                           vm,
                           excludedBookingIds: _excludedExportBookingIds,
                           onToggleExcludedSession:
                               _toggleExportExcludedBookingId,
-                        ),
+                        )
+                        : null,
                   ),
                   const SizedBox(height: _toolbarSectionGap),
                   AdminListItemCard(
@@ -170,7 +194,7 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
         }
 
         return AppPageLoadingOverlay(
-          isVisible: vm.isBusy,
+          isVisible: showInitialLoading,
           message: vm.busyMessage,
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
@@ -180,14 +204,16 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                 AppRefreshStrip(isVisible: vm.isBusy),
                 _AdminDashboardToolbar(
                   vm: vm,
-                  onExportPressed: () =>
+                  onExportPressed: _canExport(vm.currentUser)
+                      ? () =>
                       _exportBookings(
                         context,
                         vm,
                         excludedBookingIds: _excludedExportBookingIds,
                         onToggleExcludedSession:
                             _toggleExportExcludedBookingId,
-                      ),
+                      )
+                      : null,
                 ),
                 const SizedBox(height: _toolbarSectionGap),
                 if (filteredBookings.isEmpty)
@@ -204,8 +230,9 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                     vm: vm,
                     excludedBookingIds: _excludedExportBookingIds,
                     onToggleExcluded: _toggleExportExcludedBookingId,
-                    onToggleBillingStatus: (booking) =>
-                        _toggleBillingStatus(context, vm, booking),
+                    onToggleBillingStatus: _canUpdateBilling(vm.currentUser)
+                        ? (booking) => _toggleBillingStatus(context, vm, booking)
+                        : (_) {},
                     onView: (booking) {
                       setState(() {
                         _selectedBooking = booking;
@@ -239,6 +266,13 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
     AdminDashboardViewModel vm,
     Booking booking,
   ) async {
+    if (!_canUpdateBilling(vm.currentUser)) {
+      AppSnackbar.showError(
+        context,
+        'You do not have access to update billing status.',
+      );
+      return;
+    }
     final currentStatus = vm.billingStatusValue(booking);
     final nextStatus =
         currentStatus == AdminDashboardViewModel.billingStatusBilled
@@ -407,7 +441,7 @@ class _AdminDashboardToolbar extends StatelessWidget {
   });
 
   final AdminDashboardViewModel vm;
-  final VoidCallback onExportPressed;
+  final VoidCallback? onExportPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1929,10 +1963,14 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
     fontWeight: FontWeight.w600,
     height: 1.35,
   );
+  static const _waybillExtraWidthAllowance = 14.0;
+  static const _clientExtraWidthAllowance = 22.0;
   static const _defaultTrailingPadding =
       AdminListMeasurements.defaultTrailingPadding;
   static const _extraWidthAllowance = 18.0;
-  static const _maxClientBasisWidth = 260.0;
+  static const _maxClientBasisWidth = 380.0;
+  static const _responsiveCardsBreakpoint = 980.0;
+  static const _wideLayoutOverflowTolerance = 48.0;
 
   final List<Booking> bookings;
   final AdminDashboardViewModel vm;
@@ -1973,19 +2011,25 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
             ),
           ),
         );
-        final resolvedWaybillWidth = _resolvedColumnWidth(
-          _maxTextWidth(
-            context,
-            textScaler,
-            'Waybill No.',
-            _longerText(
-              'Waybill No.',
-              _longestText(
-                bookings.map(AdminDashboardViewModel.waybillNumber),
+        final resolvedWaybillWidth =
+            _resolvedColumnWidth(
+              _maxTextWidth(
+                context,
+                textScaler,
+                'Waybill No.',
+                _longerText(
+                  'Waybill No.',
+                  _longestText(
+                    bookings.map(
+                      (booking) => _dashboardDisplayWaybill(
+                        AdminDashboardViewModel.waybillNumber(booking),
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        );
+            ) +
+            _waybillExtraWidthAllowance;
         final resolvedVanNumberWidth = _resolvedColumnWidth(
           _maxTextWidth(
             context,
@@ -2005,26 +2049,28 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
             _longerText('Van Size', _longestText(bookings.map(vm.vanSize))),
           ),
         );
-        final resolvedClientWidth = _resolvedColumnWidth(
-          _cappedBasisWidth(
-            _maxTextWidth(
-              context,
-              textScaler,
-              'Client',
-              _longerText(
-                'Client',
-                _longestText(
-                    bookings.map(
-                      (booking) => _widestRenderedLine(
-                        _displayClientName(vm.client(booking)),
+        final resolvedClientWidth =
+            _resolvedColumnWidth(
+              _cappedBasisWidth(
+                _maxTextWidth(
+                  context,
+                  textScaler,
+                  'Client',
+                  _longerText(
+                    'Client',
+                    _longestText(
+                      bookings.map(
+                        (booking) => _widestRenderedLine(
+                          _displayClientName(vm.client(booking)),
+                        ),
                       ),
                     ),
+                  ),
                 ),
+                _maxClientBasisWidth,
               ),
-            ),
-            _maxClientBasisWidth,
-          ),
-        );
+            ) +
+            _clientExtraWidthAllowance;
         final resolvedAmountWidth = _resolvedColumnWidth(
           _maxTextWidth(
             context,
@@ -2058,7 +2104,10 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
             resolvedAmountWidth +
             resolvedActionWidth +
             40;
-        final useResponsiveCards = totalMeasuredWidth > constraints.maxWidth;
+        final horizontalOverflow = totalMeasuredWidth - constraints.maxWidth;
+        final useResponsiveCards =
+            constraints.maxWidth < _responsiveCardsBreakpoint &&
+            horizontalOverflow > _wideLayoutOverflowTolerance;
         if (useResponsiveCards) {
           return Column(
             children: bookings
@@ -2100,98 +2149,106 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
           );
         }
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AdminListHeaderBar(
-              minHeight: 52,
-              borderRadius: 16,
-              child: Row(
-                children: [
-                  const _DashboardFixedSlot(
-                    width: resolvedExcludeWidth,
-                    child: _DashboardHeaderCell(label: ''),
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            width: totalMeasuredWidth > constraints.maxWidth
+                ? totalMeasuredWidth
+                : constraints.maxWidth,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AdminListHeaderBar(
+                  minHeight: 52,
+                  borderRadius: 16,
+                  child: Row(
+                    children: [
+                      const _DashboardFixedSlot(
+                        width: resolvedExcludeWidth,
+                        child: _DashboardHeaderCell(label: ''),
+                      ),
+                      _DashboardFixedSlot(
+                        width: resolvedDeliveryNumberWidth,
+                        child: const _DashboardHeaderCell(label: 'Dr No.'),
+                      ),
+                      _DashboardFixedSlot(
+                        width: resolvedDateWidth,
+                        child: const _DashboardHeaderCell(label: 'Date'),
+                      ),
+                      _DashboardFixedSlot(
+                        width: resolvedWaybillWidth,
+                        child: const _DashboardHeaderCell(label: 'Waybill No.'),
+                      ),
+                      _DashboardFixedSlot(
+                        width: resolvedVanNumberWidth,
+                        child: const _DashboardHeaderCell(label: 'Van No.'),
+                      ),
+                      _DashboardFixedSlot(
+                        width: resolvedVanSizeWidth,
+                        child: const _DashboardHeaderCell(label: 'Van Size'),
+                      ),
+                      _DashboardFixedSlot(
+                        width: resolvedClientWidth,
+                        child: const _DashboardHeaderCell(label: 'Client'),
+                      ),
+                      _DashboardFixedSlot(
+                        width: resolvedAmountWidth,
+                        child: const _DashboardHeaderCell(label: 'Amount'),
+                      ),
+                      AdminListTrailingActionsLane(
+                        width: resolvedActionWidth,
+                        child: const _DashboardHeaderCell(
+                          label: 'Actions',
+                          trailingPadding: 0,
+                          alignment: Alignment.centerRight,
+                          textAlign: TextAlign.right,
+                        ),
+                      ),
+                    ],
                   ),
-                  _DashboardFixedSlot(
-                    width: resolvedDeliveryNumberWidth,
-                    child: const _DashboardHeaderCell(label: 'Dr No.'),
-                  ),
-                  _DashboardFixedSlot(
-                    width: resolvedDateWidth,
-                    child: const _DashboardHeaderCell(label: 'Date'),
-                  ),
-                  _DashboardFixedSlot(
-                    width: resolvedWaybillWidth,
-                    child: const _DashboardHeaderCell(label: 'Waybill No.'),
-                  ),
-                  _DashboardFixedSlot(
-                    width: resolvedVanNumberWidth,
-                    child: const _DashboardHeaderCell(label: 'Van No.'),
-                  ),
-                  _DashboardFixedSlot(
-                    width: resolvedVanSizeWidth,
-                    child: const _DashboardHeaderCell(label: 'Van Size'),
-                  ),
-                  _DashboardFixedSlot(
-                    width: resolvedClientWidth,
-                    child: const _DashboardHeaderCell(label: 'Client'),
-                  ),
-                  _DashboardFixedSlot(
-                    width: resolvedAmountWidth,
-                    child: const _DashboardHeaderCell(label: 'Amount'),
-                  ),
-                  AdminListTrailingActionsLane(
-                    width: resolvedActionWidth,
-                    child: const _DashboardHeaderCell(
-                      label: 'Actions',
-                      trailingPadding: 0,
-                      alignment: Alignment.centerRight,
-                      textAlign: TextAlign.right,
+                ),
+                const SizedBox(height: _sectionGap),
+                ...bookings.asMap().entries.map(
+                  (entry) => Padding(
+                    padding: EdgeInsets.only(
+                      bottom: entry.key == bookings.length - 1 ? 0 : 12,
+                    ),
+                    child: _AdminDashboardWideRow(
+                      booking: entry.value,
+                      vm: vm,
+                      clientName: vm.client(entry.value),
+                      dateValue:
+                          AdminDashboardViewModel.dropOffDateDisplay(entry.value),
+                      isExcluded: excludedBookingIds.contains(
+                        normalizeId(entry.value.id) ?? '',
+                      ),
+                      resolvedExcludeWidth: resolvedExcludeWidth,
+                      resolvedDeliveryNumberWidth: resolvedDeliveryNumberWidth,
+                      resolvedDateWidth: resolvedDateWidth,
+                      resolvedWaybillWidth: resolvedWaybillWidth,
+                      resolvedVanNumberWidth: resolvedVanNumberWidth,
+                      resolvedVanSizeWidth: resolvedVanSizeWidth,
+                      resolvedClientWidth: resolvedClientWidth,
+                      resolvedAmountWidth: resolvedAmountWidth,
+                      resolvedActionWidth: resolvedActionWidth,
+                      onToggleExcluded: () => onToggleExcluded(entry.value.id ?? ''),
+                      onToggleBillingStatus: () =>
+                          onToggleBillingStatus(entry.value),
+                      onViewPressed: () => onView(entry.value),
+                      onExportPressed: () => _exportBookings(
+                        context,
+                        vm,
+                        bookings: <Booking>[entry.value],
+                        singleItem: true,
+                        excludedBookingIds: excludedBookingIds,
+                        onToggleExcludedSession: onToggleExcluded,
+                      ),
                     ),
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(height: _sectionGap),
-            ...bookings.asMap().entries.map(
-              (entry) => Padding(
-                padding: EdgeInsets.only(
-                  bottom: entry.key == bookings.length - 1 ? 0 : 12,
                 ),
-                child: _AdminDashboardWideRow(
-                  booking: entry.value,
-                  vm: vm,
-                  clientName: vm.client(entry.value),
-                  dateValue:
-                      AdminDashboardViewModel.dropOffDateDisplay(entry.value),
-                  isExcluded: excludedBookingIds.contains(
-                    normalizeId(entry.value.id) ?? '',
-                  ),
-                  resolvedExcludeWidth: resolvedExcludeWidth,
-                  resolvedDeliveryNumberWidth: resolvedDeliveryNumberWidth,
-                  resolvedDateWidth: resolvedDateWidth,
-                  resolvedWaybillWidth: resolvedWaybillWidth,
-                  resolvedVanNumberWidth: resolvedVanNumberWidth,
-                  resolvedVanSizeWidth: resolvedVanSizeWidth,
-                  resolvedClientWidth: resolvedClientWidth,
-                  resolvedAmountWidth: resolvedAmountWidth,
-                  resolvedActionWidth: resolvedActionWidth,
-                  onToggleExcluded: () => onToggleExcluded(entry.value.id ?? ''),
-                  onToggleBillingStatus: () =>
-                      onToggleBillingStatus(entry.value),
-                  onViewPressed: () => onView(entry.value),
-                  onExportPressed: () => _exportBookings(
-                    context,
-                    vm,
-                    bookings: <Booking>[entry.value],
-                    singleItem: true,
-                    excludedBookingIds: excludedBookingIds,
-                    onToggleExcludedSession: onToggleExcluded,
-                  ),
-                ),
-              ),
+              ],
             ),
-          ],
+          ),
         );
       },
     );

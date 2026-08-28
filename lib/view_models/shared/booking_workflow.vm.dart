@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/status.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
@@ -13,6 +14,7 @@ import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/utils/functions.dart';
@@ -95,6 +97,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
   final StatusFormRepository _statusRepository;
   final StatusFormEngine _engine;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
   static final Map<String, _BookingWorkflowCacheSnapshot> _cacheByBookingId =
       {};
 
@@ -189,18 +192,40 @@ class BookingWorkflowViewModel extends BaseViewModel {
     }
     this.user = user;
     this.booking = booking;
-    isBusyLoading = true;
+    final hasVisiblePrimaryData =
+        mainForms.isNotEmpty ||
+        secondaryForms.isNotEmpty ||
+        form != null ||
+        cancelForm != null ||
+        fields.isNotEmpty ||
+        cancelFields.isNotEmpty ||
+        fieldLibrary.isNotEmpty ||
+        cachedSnapshot != null;
+    isBusyLoading = !hasVisiblePrimaryData;
     loadError = null;
     blockedMessage = null;
     notifyListeners();
 
     try {
       await _bookingRepository.initialize();
-      final users = await _authRepository.getUsers();
-      final statuses = await _statusRepository.getStatuses();
-      fieldLibrary = await _optionResolver.hydrateFields(
-        await _statusRepository.getAllFields(),
-      );
+      final currentKey = currentStatusKey;
+      final baseResults = await Future.wait([
+        _authRepository.getUsers(),
+        _statusRepository.getStatuses(),
+        _statusRepository.getAllFields(),
+        if (currentKey != null && currentKey.isNotEmpty)
+          _statusRepository.getStatusFormsByRoleAndStatus(
+            user.role ?? '',
+            currentKey,
+          ),
+      ]);
+      final users = baseResults[0] as List<UserModel>;
+      final statuses = baseResults[1] as List<Status>;
+      final allFields = baseResults[2] as List<StatusField>;
+      final matchingForms = currentKey != null && currentKey.isNotEmpty
+          ? baseResults[3] as List<StatusForm>
+          : const <StatusForm>[];
+      fieldLibrary = await _optionResolver.hydrateFields(allFields);
       _usersById
         ..clear()
         ..addEntries(
@@ -216,7 +241,6 @@ class BookingWorkflowViewModel extends BaseViewModel {
               .map((item) => MapEntry(item.key!, item)),
         );
 
-      final currentKey = currentStatusKey;
       if (currentKey == null || currentKey.isEmpty) {
         form = null;
         cancelForm = null;
@@ -232,12 +256,6 @@ class BookingWorkflowViewModel extends BaseViewModel {
         cancelErrors = {};
         return;
       }
-
-      final matchingForms = await _statusRepository
-          .getStatusFormsByRoleAndStatus(
-            effectiveBackOfficeRoleKey(user.role),
-            currentKey,
-          );
       final loadedForm = matchingForms
           .where((item) => item.resolvedIsMainForm)
           .firstOrNull;
@@ -269,13 +287,20 @@ class BookingWorkflowViewModel extends BaseViewModel {
       form = loadedForm;
       cancelForm = loadedCancelForm;
       _fieldsByFormId.clear();
-      for (final activeForm in matchingForms) {
-        final formId = activeForm.id ?? '';
-        _fieldsByFormId[formId] = formId.isEmpty
-            ? const []
-            : await _optionResolver.hydrateFields(
-                await _statusRepository.getFields(formId),
-              );
+      final fieldEntries = await Future.wait(
+        matchingForms.map((activeForm) async {
+          final formId = activeForm.id ?? '';
+          if (formId.isEmpty) {
+            return MapEntry(formId, const <StatusField>[]);
+          }
+          final hydratedFields = await _optionResolver.hydrateFields(
+            await _statusRepository.getFields(formId),
+          );
+          return MapEntry(formId, hydratedFields);
+        }),
+      );
+      for (final entry in fieldEntries) {
+        _fieldsByFormId[entry.key] = entry.value;
       }
       answers = loadedForm == null
           ? {}
@@ -375,8 +400,8 @@ class BookingWorkflowViewModel extends BaseViewModel {
 
   String? roleGuidanceMessage() {
     final key = currentStatusKey?.trim();
-    final role = effectiveBackOfficeRoleKey(user?.role);
-    if (key == null || key.isEmpty || role.isEmpty) {
+    final resolvedRoles = _roleAccessService.workflowResolutionRoles(user?.role);
+    if (key == null || key.isEmpty || resolvedRoles.isEmpty) {
       return null;
     }
     final status = _statusesByKey[key];
@@ -384,11 +409,16 @@ class BookingWorkflowViewModel extends BaseViewModel {
       return null;
     }
     if (status.applicableRoles.isNotEmpty &&
-        !status.applicableRoles.contains(role)) {
+        !resolvedRoles.any(status.applicableRoles.contains)) {
       return null;
     }
-    final message = status.roleMessages[role]?.trim();
-    return message?.isNotEmpty == true ? message : null;
+    for (final role in resolvedRoles) {
+      final message = status.roleMessages[role]?.trim();
+      if (message?.isNotEmpty == true) {
+        return message;
+      }
+    }
+    return null;
   }
 
   void updateAnswer(String key, dynamic value) {
@@ -443,8 +473,18 @@ class BookingWorkflowViewModel extends BaseViewModel {
     return hasNextStatus || fields.isNotEmpty;
   }
 
+  bool get hasWorkflowAdminScope =>
+      _roleAccessService.hasWorkflowAdminScope(role: user?.role);
+
+  bool get canUpdateBooking => _roleAccessService.canAccess(
+    DispatcherAccessCapability.bookingsUpdate,
+    role: user?.role,
+  );
+
   bool get supportsAdditionalFields =>
-      isBackOfficeRole(user?.role) && hasActionablePrimaryForm;
+      hasWorkflowAdminScope && hasActionablePrimaryForm;
+
+  bool get canViewWorkflowAdminDetails => hasWorkflowAdminScope;
 
   List<StatusField> fieldsForForm(
     StatusForm activeForm, {
@@ -778,6 +818,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
     if (currentUser == null || currentBooking == null || activeForm == null) {
       return null;
     }
+    if (!canUpdateBooking) {
+      return null;
+    }
     if (!validateForSubmit()) {
       return null;
     }
@@ -822,6 +865,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
     final currentUser = user;
     final currentBooking = booking;
     if (currentUser == null || currentBooking == null) {
+      return null;
+    }
+    if (!canUpdateBooking) {
       return null;
     }
 
@@ -876,6 +922,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
     final currentBooking = booking;
     final activeForm = cancelForm;
     if (currentUser == null || currentBooking == null || activeForm == null) {
+      return null;
+    }
+    if (!canUpdateBooking) {
       return null;
     }
 
@@ -947,6 +996,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
 
   List<UserModel> roleUsers(String role) {
     final normalizedRole = role.trim().toLowerCase();
+    if (!RoleAccessService.instance.isOnlineEligibleRole(normalizedRole)) {
+      return const [];
+    }
     return _usersById.values
         .where(
           (item) =>
@@ -959,34 +1011,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   Map<String, String> memberOptionLabelsForCurrentBooking() {
-    final clientId = normalizeId(booking?.client?.id);
-    if (clientId == null) {
-      return const {};
-    }
-
-    final members = _usersById.values.where((item) {
-      return isSubClientRole(item.role) &&
-          (item.isActive ?? true) &&
-          normalizeId(item.parentClientId) == clientId;
-    }).toList()
-      ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
-
-    final labels = <String, String>{};
-    for (final member in members) {
-      final id = normalizeId(member.id);
-      if (id == null) {
-        continue;
-      }
-      final parts = <String>[
-        if ((member.name?.trim() ?? '').isNotEmpty) member.name!.trim() else 'Unnamed Member',
-        if ((member.phone?.trim() ?? '').isNotEmpty)
-          normalizePhilippinePhone(member.phone) ?? member.phone!.trim(),
-        if ((member.position?.trim() ?? '').isNotEmpty) member.position!.trim(),
-      ];
-      labels[id] = parts.join(' | ');
-    }
-
-    return labels;
+    return const {};
   }
 
   String roleUserLabel(String userId, {required String fallbackRole}) {

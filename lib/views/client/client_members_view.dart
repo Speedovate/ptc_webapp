@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/client_member.dart';
@@ -19,6 +18,7 @@ import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
+import 'package:webapp/widgets/shared/app_image_source_picker.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/views/shared/profile_view.dart';
@@ -102,7 +102,7 @@ class _ClientMembersViewState extends State<ClientMembersView> {
         if (viewedMember != null) {
           final viewedUser = UserModel(
             id: viewedMember.id,
-            role: 'sub-client',
+            role: 'client',
             parentClientId: viewedMember.clientId,
             email: viewedMember.email,
             name: viewedMember.name,
@@ -261,7 +261,7 @@ class _ClientMembersViewState extends State<ClientMembersView> {
       final savedUser = await _authRepository.saveUser(
         UserModel(
           id: existingLinkedUser?.id ?? existingMember?.userId,
-          role: 'sub-client',
+          role: 'client',
           parentClientId: clientId,
           email: result.email,
           name: result.member.name,
@@ -337,7 +337,7 @@ class _ClientMembersViewState extends State<ClientMembersView> {
       onViewUser(
         UserModel(
           id: member.id,
-          role: 'sub-client',
+          role: 'client',
           parentClientId: member.clientId,
           email: member.email,
           name: member.name,
@@ -1412,23 +1412,18 @@ class _ClientMemberDialogState extends State<_ClientMemberDialog> {
   }
 
   Future<void> _pickPhoto({FocusNode? nextFocusNode}) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final file = result?.files.singleOrNull;
-    final bytes = file?.bytes;
-    if (file == null || bytes == null) {
+    final image = await showAppImageSourcePicker(context);
+    if (image == null) {
       return;
     }
     setState(() {
       _pendingPhotoUpload = _PendingMemberImageUpload(
-        bytes: bytes,
-        fileName: file.name,
-        size: file.size,
-        mimeType: file.extension == null ? null : 'image/${file.extension}',
+        bytes: image.bytes,
+        fileName: image.fileName,
+        size: image.size,
+        mimeType: image.mimeType,
       );
-      _photoController.text = file.name;
+      _photoController.text = image.fileName;
     });
     if (!mounted || nextFocusNode == null) {
       return;

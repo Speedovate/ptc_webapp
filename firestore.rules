@@ -1,0 +1,138 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function authLinkDoc() {
+      return get(/databases/$(database)/documents/user_auth_links/$(request.auth.uid));
+    }
+
+    function hasAuthLink() {
+      return isSignedIn() && authLinkDoc().data != null;
+    }
+
+    function currentUserId() {
+      return hasAuthLink() ? authLinkDoc().data.user_id : null;
+    }
+
+    function currentRole() {
+      return hasAuthLink() ? authLinkDoc().data.role : null;
+    }
+
+    function roleAccessDoc() {
+      return currentRole() == null
+          ? null
+          : get(/databases/$(database)/documents/role_access/$(currentRole()));
+    }
+
+    function roleCapabilityEnabled(capabilityKey) {
+      return currentRole() == 'admin' ||
+          (
+            roleAccessDoc() != null &&
+            roleAccessDoc().data != null &&
+            roleAccessDoc().data.capabilities[capabilityKey] == true
+          );
+    }
+
+    function isCurrentUserDocument(userId) {
+      return currentUserId() != null && currentUserId() == userId;
+    }
+
+    function canReadOwnOrAdminUser(userId) {
+      return isCurrentUserDocument(userId) ||
+          roleCapabilityEnabled('users.read');
+    }
+
+    match /user_auth_links/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /role_access/{roleId} {
+      allow read: if isSignedIn() && roleCapabilityEnabled('role_access.read');
+      allow write: if isSignedIn() && roleCapabilityEnabled('role_access.update');
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && canReadOwnOrAdminUser(userId);
+      allow create: if isSignedIn() && roleCapabilityEnabled('users.create');
+      allow update: if isSignedIn() &&
+          (
+            (isCurrentUserDocument(userId) && roleCapabilityEnabled('profile.update')) ||
+            roleCapabilityEnabled('users.update')
+          );
+      allow delete: if isSignedIn() && roleCapabilityEnabled('users.delete');
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isSignedIn() && roleCapabilityEnabled('bookings.read');
+      allow create: if isSignedIn() && roleCapabilityEnabled('bookings.create');
+      allow update: if isSignedIn() && roleCapabilityEnabled('bookings.update');
+      allow delete: if false;
+    }
+
+    match /vehicle_makes/{docId} {
+      allow read: if isSignedIn() && roleCapabilityEnabled('vehicle_makes.read');
+      allow create: if isSignedIn() && roleCapabilityEnabled('vehicle_makes.create');
+      allow update: if isSignedIn() && roleCapabilityEnabled('vehicle_makes.update');
+      allow delete: if isSignedIn() && roleCapabilityEnabled('vehicle_makes.delete');
+    }
+
+    match /vehicle_types/{docId} {
+      allow read: if isSignedIn() && roleCapabilityEnabled('vehicle_types.read');
+      allow create: if isSignedIn() && roleCapabilityEnabled('vehicle_types.create');
+      allow update: if isSignedIn() && roleCapabilityEnabled('vehicle_types.update');
+      allow delete: if isSignedIn() && roleCapabilityEnabled('vehicle_types.delete');
+    }
+
+    match /vehicle_sizes/{docId} {
+      allow read: if isSignedIn() && roleCapabilityEnabled('vehicle_sizes.read');
+      allow create: if isSignedIn() && roleCapabilityEnabled('vehicle_sizes.create');
+      allow update: if isSignedIn() && roleCapabilityEnabled('vehicle_sizes.update');
+      allow delete: if isSignedIn() && roleCapabilityEnabled('vehicle_sizes.delete');
+    }
+
+    match /statuses/{docId} {
+      allow read: if isSignedIn() && roleCapabilityEnabled('statuses.read');
+      allow create: if isSignedIn() && roleCapabilityEnabled('statuses.create');
+      allow update: if isSignedIn() && roleCapabilityEnabled('statuses.update');
+      allow delete: if isSignedIn() && roleCapabilityEnabled('statuses.delete');
+    }
+
+    match /status_forms/{docId} {
+      allow read: if isSignedIn() && roleCapabilityEnabled('forms.read');
+      allow create: if isSignedIn() && roleCapabilityEnabled('forms.create');
+      allow update: if isSignedIn() && roleCapabilityEnabled('forms.update');
+      allow delete: if isSignedIn() && roleCapabilityEnabled('forms.delete');
+    }
+
+    match /status_fields/{docId} {
+      allow read: if isSignedIn() && roleCapabilityEnabled('fields.read');
+      allow create: if isSignedIn() && roleCapabilityEnabled('fields.create');
+      allow update: if isSignedIn() && roleCapabilityEnabled('fields.update');
+      allow delete: if isSignedIn() && roleCapabilityEnabled('fields.delete');
+    }
+
+    match /support/{threadId} {
+      allow read: if isSignedIn() && roleCapabilityEnabled('support.read');
+      allow create: if isSignedIn() && roleCapabilityEnabled('support.create');
+      allow update: if isSignedIn() && roleCapabilityEnabled('support.update');
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn() && roleCapabilityEnabled('support.read');
+        allow create: if isSignedIn() && roleCapabilityEnabled('support.update');
+        allow update: if false;
+        allow delete: if false;
+      }
+    }
+
+    match /app_cache_versions/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+  }
+}

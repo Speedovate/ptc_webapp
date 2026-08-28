@@ -5,31 +5,24 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/status_field.dart';
-import 'package:webapp/models/client_member.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/requests/booking.request.dart';
-import 'package:webapp/services/status_form_engine.dart';
-import 'package:webapp/requests/client_member.request.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
+import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
-import 'package:webapp/repositories/interfaces/client_member_repository.dart';
 
 class ClientBookingHomeViewModel extends BaseViewModel {
   ClientBookingHomeViewModel({
     StatusFormRepository? statusRepository,
     BookingRepository? bookingRepository,
-    ClientMemberRepository? clientMemberRepository,
   }) : _statusRepository = statusRepository ?? StatusRequest.instance,
        _bookingRepository = bookingRepository ?? BookingRequest.instance,
-       _clientMemberRepository =
-           clientMemberRepository ?? ClientMemberRequest.instance,
        _engine = StatusFormEngine(statusRepository ?? StatusRequest.instance) {
     mainForms = List<StatusForm>.from(_cachedMainForms);
     form = _cachedForm;
     fields = List<StatusField>.from(_cachedFields);
     statuses = List<Status>.from(_cachedStatuses);
-    members = List<ClientMember>.from(_cachedMembers);
     _fieldsByFormId.addAll(
       _cachedFieldsByFormId.map(
         (key, value) => MapEntry(key, List<StatusField>.from(value)),
@@ -42,7 +35,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
   final StatusFormRepository _statusRepository;
   final BookingRepository _bookingRepository;
-  final ClientMemberRepository _clientMemberRepository;
   final StatusFormEngine _engine;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
   static List<StatusForm> _cachedMainForms = const [];
@@ -50,7 +42,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   static StatusForm? _cachedForm;
   static List<StatusField> _cachedFields = const [];
   static List<Status> _cachedStatuses = const [];
-  static List<ClientMember> _cachedMembers = const [];
   static String? _cachedLoadError;
   static String? _cachedBlockedMessage;
   static UserModel? _cachedActiveClientUser;
@@ -61,7 +52,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     _cachedForm = null;
     _cachedFields = const [];
     _cachedStatuses = const [];
-    _cachedMembers = const [];
     _cachedLoadError = null;
     _cachedBlockedMessage = null;
     _cachedActiveClientUser = null;
@@ -72,7 +62,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   StatusForm? form;
   List<StatusField> fields = [];
   List<Status> statuses = [];
-  List<ClientMember> members = [];
   Map<String, dynamic> answers = {};
   Map<String, String> errors = {};
   String? loadError;
@@ -82,7 +71,8 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   int resetTick = 0;
   UserModel? _activeClientUser;
   UserModel? _pendingClientUser;
-  static const representativeIdKey = 'representative_id';
+  static const representativeNameKey = 'representative_name';
+  static const representativePhoneKey = 'representative_phone';
 
   Future<void> load(UserModel clientUser) async {
     if (isBusyLoading) {
@@ -90,23 +80,29 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       return;
     }
 
-    isBusyLoading = true;
+    final hasVisiblePrimaryData =
+        mainForms.isNotEmpty ||
+        form != null ||
+        fields.isNotEmpty ||
+        _cachedMainForms.isNotEmpty ||
+        _cachedForm != null ||
+        _cachedFields.isNotEmpty;
+    isBusyLoading = !hasVisiblePrimaryData;
     loadError = null;
     blockedMessage = null;
     notifyListeners();
 
     try {
-      await _bookingRepository.initialize();
-      await _clientMemberRepository.initialize();
+      await Future.wait([
+        _bookingRepository.initialize(),
+      ]);
 
-      statuses = await _statusRepository.getStatuses();
-      members = await _clientMemberRepository.getMembersForClient(
-        clientUser.id ?? '',
-      );
-      final bookForms = await _statusRepository.getStatusFormsByRoleAndStatus(
-        'client',
-        'book',
-      );
+      final results = await Future.wait([
+        _statusRepository.getStatuses(),
+        _statusRepository.getStatusFormsByRoleAndStatus('client', 'book'),
+      ]);
+      statuses = results[0] as List<Status>;
+      final bookForms = results[1] as List<StatusForm>;
       final loadedMainForms = bookForms
           .where((item) => item.isActive != false && item.resolvedIsMainForm)
           .toList();
@@ -122,15 +118,20 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       }
 
       _fieldsByFormId.clear();
-      for (final loadedForm in mainForms) {
-        final formId = loadedForm.id ?? '';
-        if (formId.isEmpty) {
-          _fieldsByFormId[formId] = const [];
-          continue;
-        }
-        _fieldsByFormId[formId] = await _optionResolver.hydrateFields(
-          await _statusRepository.getFields(formId),
-        );
+      final fieldEntries = await Future.wait(
+        mainForms.map((loadedForm) async {
+          final formId = loadedForm.id ?? '';
+          if (formId.isEmpty) {
+            return MapEntry(formId, const <StatusField>[]);
+          }
+          final resolvedFields = await _optionResolver.hydrateFields(
+            await _statusRepository.getFields(formId),
+          );
+          return MapEntry(formId, resolvedFields);
+        }),
+      );
+      for (final entry in fieldEntries) {
+        _fieldsByFormId[entry.key] = entry.value;
       }
       fields = fieldsForForm(form!);
       _activeClientUser = clientUser;
@@ -142,7 +143,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       _cachedForm = form;
       _cachedFields = List<StatusField>.from(fields);
       _cachedStatuses = List<Status>.from(statuses);
-      _cachedMembers = List<ClientMember>.from(members);
       _cachedLoadError = null;
       _cachedBlockedMessage = blockedMessage;
       _cachedActiveClientUser = _activeClientUser;
@@ -177,33 +177,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     resetTick += 1;
     blockedMessage = _resolveBlockedMessage(clientUser);
     notifyListeners();
-  }
-
-  List<ClientMember> get activeMembers =>
-      members.where((member) => member.isActive ?? true).toList();
-
-  bool formUsesMemberSelection(StatusForm activeForm) {
-    return fieldsForForm(activeForm).any(_isMemberField);
-  }
-
-  Map<String, String> memberOptionLabelsForForm(StatusForm activeForm) {
-    if (!formUsesMemberSelection(activeForm)) {
-      return const {};
-    }
-    final labels = <String, String>{};
-    for (final member in activeMembers) {
-      final id = (member.id ?? '').trim();
-      if (id.isEmpty) {
-        continue;
-      }
-      final parts = <String>[
-        member.displayName,
-        if (member.normalizedPhone.isNotEmpty) member.normalizedPhone,
-        if ((member.position?.trim() ?? '').isNotEmpty) member.position!.trim(),
-      ];
-      labels[id] = parts.join(' | ');
-    }
-    return labels;
   }
 
   void updateAnswer(String key, dynamic value) {
@@ -241,10 +214,11 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       );
     }).toList();
 
-    return StatusFormEngine.visibleFields(
+    final visibleFields = StatusFormEngine.visibleFields(
       resolvedFields,
       answers ?? this.answers,
     );
+    return visibleFields;
   }
 
   Map<String, String> validateAnswersForForm(
@@ -275,7 +249,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
     try {
       final now = DateTime.now();
-      final normalizedAnswers = _answersWithMemberSnapshot(formAnswers);
+      final normalizedAnswers = _normalizeRepresentativeAnswers(formAnswers);
       final baseBooking = Booking(
         client: clientUser,
         clientStatus: activeForm.currentStatusKey,
@@ -318,7 +292,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
     try {
       final now = DateTime.now();
-      final normalizedAnswers = _answersWithMemberSnapshot(answers);
+      final normalizedAnswers = _normalizeRepresentativeAnswers(answers);
       final baseBooking = Booking(
         client: clientUser,
         clientStatus: activeForm.currentStatusKey,
@@ -448,29 +422,24 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     return _engine.getBlockedMessage(dependencyCheckBooking, activeForm);
   }
 
-  bool _isMemberField(StatusField field) {
-    final key = (field.key ?? '').trim().toLowerCase();
-    final sourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(field);
-    return key == representativeIdKey ||
-        sourceKey == statusFieldOptionSourceClientMembers;
-  }
-
-  Map<String, dynamic> _answersWithMemberSnapshot(
+  Map<String, dynamic> _normalizeRepresentativeAnswers(
     Map<String, dynamic> answers,
   ) {
-    final memberId = normalizeId(answers[representativeIdKey]?.toString());
-    if (memberId == null) {
-      return answers;
-    }
-    final matchedMember = activeMembers
-        .where((member) => member.id == memberId)
-        .firstOrNull;
-    if (matchedMember == null) {
-      return answers;
-    }
-
     final nextAnswers = Map<String, dynamic>.from(answers);
-    nextAnswers[representativeIdKey] = memberId;
+    final representativeName =
+        nextAnswers[representativeNameKey]?.toString().trim() ?? '';
+    if (representativeName.isNotEmpty) {
+      nextAnswers[representativeNameKey] = representativeName;
+    }
+    final representativePhone =
+        normalizePhilippinePhone(
+          nextAnswers[representativePhoneKey]?.toString(),
+        ) ??
+        nextAnswers[representativePhoneKey]?.toString().trim() ??
+        '';
+    if (representativePhone.isNotEmpty) {
+      nextAnswers[representativePhoneKey] = representativePhone;
+    }
     return nextAnswers;
   }
 }

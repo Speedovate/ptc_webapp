@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
+import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/requests/status.request.dart';
+import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/utils/functions.dart';
@@ -20,6 +25,7 @@ class AdminFlowViewModel extends BaseViewModel {
     errorMessage = _cachedErrorMessage;
     successMessage = _cachedSuccessMessage;
     isPreviewVisible = _cachedIsPreviewVisible;
+    _hasLoadedOnce = _cachedHasLoadedOnce;
     _fieldsByFormId.addAll(
       _cachedFieldsByFormId.map(
         (key, value) => MapEntry(key, List<StatusField>.from(value)),
@@ -29,6 +35,7 @@ class AdminFlowViewModel extends BaseViewModel {
 
   final StatusFormRepository _repository;
   final StatusFormEngine _engine;
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
   static List<StatusForm> _cachedForms = const [];
   static StatusForm? _cachedSelectedForm;
@@ -39,6 +46,7 @@ class AdminFlowViewModel extends BaseViewModel {
   static String? _cachedErrorMessage;
   static String? _cachedSuccessMessage;
   static bool _cachedIsPreviewVisible = true;
+  static bool _cachedHasLoadedOnce = false;
 
   static void clearCachedState() {
     _cachedForms = const [];
@@ -50,9 +58,11 @@ class AdminFlowViewModel extends BaseViewModel {
     _cachedErrorMessage = null;
     _cachedSuccessMessage = null;
     _cachedIsPreviewVisible = true;
+    _cachedHasLoadedOnce = false;
   }
 
-  static const roleOptions = ['client', 'driver', 'admin', 'helper'];
+  static List<String> get roleOptions =>
+      RoleAccessService.instance.workflowRoleKeys;
   static const dependencyStatusTypes = ['client_status'];
   static const formStatusOrder = [
     'book',
@@ -81,7 +91,6 @@ class AdminFlowViewModel extends BaseViewModel {
     statusFieldOptionSourceAdmins,
     statusFieldOptionSourceDrivers,
     statusFieldOptionSourceHelpers,
-    statusFieldOptionSourceClientMembers,
     statusFieldOptionSourceVehicleMakes,
     statusFieldOptionSourceVehicleTypes,
     statusFieldOptionSourceVehicleSizes,
@@ -101,14 +110,194 @@ class AdminFlowViewModel extends BaseViewModel {
   Status? draftNewStatus;
   final Map<String, List<StatusField>> _fieldsByFormId = {};
   bool isLoading = false;
+  bool _hasLoadedOnce = false;
   String? errorMessage;
   String? successMessage;
   bool isPreviewVisible = true;
   String busyMessage = 'Loading, please wait ...';
+  bool get canReadForms => _roleAccessService.canAccess(
+    DispatcherAccessCapability.formsRead,
+  );
+  bool get canCreateForms => _roleAccessService.canAccess(
+    DispatcherAccessCapability.formsCreate,
+  );
+  bool get canUpdateForms => _roleAccessService.canAccess(
+    DispatcherAccessCapability.formsUpdate,
+  );
+  bool get canDeleteForms => _roleAccessService.canAccess(
+    DispatcherAccessCapability.formsDelete,
+  );
+  bool get canReadFields => _roleAccessService.canAccess(
+    DispatcherAccessCapability.fieldsRead,
+  );
+  bool get canCreateFields => _roleAccessService.canAccess(
+    DispatcherAccessCapability.fieldsCreate,
+  );
+  bool get canUpdateFields => _roleAccessService.canAccess(
+    DispatcherAccessCapability.fieldsUpdate,
+  );
+  bool get canDeleteFields => _roleAccessService.canAccess(
+    DispatcherAccessCapability.fieldsDelete,
+  );
+  bool get canReadStatuses => _roleAccessService.canAccess(
+    DispatcherAccessCapability.statusesRead,
+  );
+  bool get canCreateStatuses => _roleAccessService.canAccess(
+    DispatcherAccessCapability.statusesCreate,
+  );
+  bool get canUpdateStatuses => _roleAccessService.canAccess(
+    DispatcherAccessCapability.statusesUpdate,
+  );
+  bool get canDeleteStatuses => _roleAccessService.canAccess(
+    DispatcherAccessCapability.statusesDelete,
+  );
+  bool get canReadAnyFlowAdminData =>
+      canReadForms || canReadFields || canReadStatuses;
+
+  Future<void> loadFormsPage() async {
+    if (!canReadForms) {
+      errorMessage = 'You do not have access to view forms.';
+      notifyListeners();
+      return;
+    }
+    busyMessage = 'Loading forms ...';
+    final hasVisiblePrimaryData = forms.isNotEmpty || _cachedForms.isNotEmpty;
+    final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
+    if (shouldShowLoadingState) {
+      isLoading = true;
+      notifyListeners();
+    }
+    try {
+      forms = await _repository.getStatusForms();
+      _sortFormsLatestFirst();
+      if (forms.isEmpty) {
+        selectedForm = null;
+        fields = [];
+      } else {
+        selectedForm ??= forms.first;
+      }
+      errorMessage = null;
+      _cachedForms = List<StatusForm>.from(forms);
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
+      if (shouldShowLoadingState) {
+        isLoading = false;
+      }
+      notifyListeners();
+      unawaited(_hydrateFormsSupportingDataInBackground());
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load the forms right now.',
+      );
+      _cachedErrorMessage = errorMessage;
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
+      if (shouldShowLoadingState) {
+        isLoading = false;
+      }
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadFieldsPage() async {
+    if (!canReadFields) {
+      errorMessage = 'You do not have access to view fields.';
+      notifyListeners();
+      return;
+    }
+    busyMessage = 'Loading fields ...';
+    final hasVisiblePrimaryData =
+        fieldLibrary.isNotEmpty || _cachedFieldLibrary.isNotEmpty;
+    final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
+    if (shouldShowLoadingState) {
+      isLoading = true;
+      notifyListeners();
+    }
+    try {
+      fieldLibrary = (await _repository.getAllFields())
+          .map((field) => field.copyWith())
+          .toList();
+      _sortFieldsLatestFirst();
+      errorMessage = null;
+      _cachedFieldLibrary = List<StatusField>.from(fieldLibrary);
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load the fields right now.',
+      );
+      _cachedErrorMessage = errorMessage;
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
+    } finally {
+      if (shouldShowLoadingState) {
+        isLoading = false;
+      }
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadStatusesPage() async {
+    if (!canReadStatuses) {
+      errorMessage = 'You do not have access to view statuses.';
+      notifyListeners();
+      return;
+    }
+    busyMessage = 'Loading statuses ...';
+    final hasVisiblePrimaryData =
+        statuses.isNotEmpty || _cachedStatuses.isNotEmpty;
+    final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
+    if (shouldShowLoadingState) {
+      isLoading = true;
+      notifyListeners();
+    }
+    try {
+      statuses = (await _repository.getStatuses())
+          .map((status) => status.copyWith())
+          .toList();
+      _sortStatusesLatestFirst();
+      errorMessage = null;
+      _cachedStatuses = List<Status>.from(statuses);
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
+    } catch (error) {
+      errorMessage = userFacingErrorMessage(
+        error,
+        fallback: 'We could not load the statuses right now.',
+      );
+      _cachedErrorMessage = errorMessage;
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
+    } finally {
+      if (shouldShowLoadingState) {
+        isLoading = false;
+      }
+      notifyListeners();
+    }
+  }
 
   Future<void> loadForms() async {
+    if (!canReadAnyFlowAdminData) {
+      errorMessage = 'You do not have access to view flows.';
+      notifyListeners();
+      return;
+    }
     busyMessage = 'Loading flows ...';
-    isLoading = true;
+    final hasVisiblePrimaryData =
+        forms.isNotEmpty ||
+        _cachedForms.isNotEmpty ||
+        fields.isNotEmpty ||
+        _cachedFields.isNotEmpty ||
+        fieldLibrary.isNotEmpty ||
+        _cachedFieldLibrary.isNotEmpty ||
+        statuses.isNotEmpty ||
+        _cachedStatuses.isNotEmpty;
+    final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
+    if (shouldShowLoadingState) {
+      isLoading = true;
+    }
     notifyListeners();
 
     try {
@@ -148,15 +337,65 @@ class AdminFlowViewModel extends BaseViewModel {
       }
       errorMessage = null;
       _cacheSnapshot();
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
     } catch (error) {
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the flows right now.',
       );
       _cachedErrorMessage = errorMessage;
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
     } finally {
-      isLoading = false;
+      if (shouldShowLoadingState) {
+        isLoading = false;
+      }
       notifyListeners();
+    }
+  }
+
+  Future<void> _hydrateFormsSupportingDataInBackground() async {
+    try {
+      fieldLibrary = await _optionResolver.hydrateFields(
+        (await _repository.getAllFields())
+            .map((field) => field.copyWith())
+            .toList(),
+      );
+      statuses = (await _repository.getStatuses())
+          .map((status) => status.copyWith())
+          .toList();
+      _sortFieldsLatestFirst();
+      _sortStatusesLatestFirst();
+      final nextFieldsByFormId = <String, List<StatusField>>{};
+      final loadFieldsTasks = forms.map((form) async {
+        final formId = form.id ?? '';
+        if (formId.isEmpty) {
+          return;
+        }
+        final loadedFields = await _repository.getFields(formId);
+        nextFieldsByFormId[formId] = await _optionResolver.hydrateFields(
+          loadedFields.map((field) => field.copyWith()).toList(),
+        );
+      });
+      await Future.wait(loadFieldsTasks);
+      _fieldsByFormId
+        ..clear()
+        ..addAll(nextFieldsByFormId);
+      if (forms.isNotEmpty) {
+        selectedForm ??= forms.first;
+      }
+      if (forms.isNotEmpty && selectedForm != null) {
+        final selectedId = selectedForm?.id ?? '';
+        final selectedFields = _fieldsByFormId[selectedId];
+        if (selectedFields != null) {
+          fields = selectedFields.map((field) => field.copyWith()).toList();
+        }
+      }
+      _cacheSnapshot();
+      notifyListeners();
+    } catch (error) {
+      // Keep the currently visible cached form/field data if refresh fails.
     }
   }
 
@@ -220,6 +459,9 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   void createNewForm({bool notify = true}) {
+    if (!canCreateForms) {
+      throw const AuthFailure('You do not have access to create flows.');
+    }
     final now = DateTime.now();
     selectedForm = StatusForm(
       id: _nextFormId(),
@@ -556,6 +798,10 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> saveLibraryField(StatusField field) async {
+    final isExisting = _loadedLibraryFieldById(field.id) != null;
+    if (isExisting ? !canUpdateFields : !canCreateFields) {
+      throw const AuthFailure('You do not have access to save fields.');
+    }
     final existingField = _loadedLibraryFieldById(field.id);
     final now = DateTime.now();
     final normalizedField = field.copyWith(
@@ -586,6 +832,9 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> deleteLibraryField(StatusField field) async {
+    if (!canDeleteFields) {
+      throw const AuthFailure('You do not have access to delete fields.');
+    }
     final fieldId = field.id ?? '';
     if (fieldId.isEmpty) {
       return;
@@ -605,6 +854,9 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> setLibraryFieldActive(StatusField field, bool isActive) async {
+    if (!canUpdateFields) {
+      throw const AuthFailure('You do not have access to update fields.');
+    }
     final fieldId = field.id ?? '';
     if (fieldId.isEmpty) {
       return;
@@ -631,6 +883,10 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> saveStatus(Status status) async {
+    final isExisting = _loadedStatusById(status.id) != null;
+    if (isExisting ? !canUpdateStatuses : !canCreateStatuses) {
+      throw const AuthFailure('You do not have access to save statuses.');
+    }
     final existingStatus = _loadedStatusById(status.id);
     final now = DateTime.now();
     final normalizedStatus = status.copyWith(
@@ -661,6 +917,9 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> deleteStatus(Status status) async {
+    if (!canDeleteStatuses) {
+      throw const AuthFailure('You do not have access to delete statuses.');
+    }
     final statusId = status.id ?? '';
     if (statusId.isEmpty) {
       return;
@@ -680,6 +939,9 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> setStatusActive(Status status, bool isActive) async {
+    if (!canUpdateStatuses) {
+      throw const AuthFailure('You do not have access to update statuses.');
+    }
     final statusId = status.id ?? '';
     if (statusId.isEmpty) {
       return;
@@ -708,6 +970,9 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Status createDraftStatus() {
+    if (!canCreateStatuses) {
+      throw const AuthFailure('You do not have access to create statuses.');
+    }
     final now = DateTime.now();
     final nextId =
         statuses
@@ -958,6 +1223,10 @@ class AdminFlowViewModel extends BaseViewModel {
     if (form == null || !validateBeforeSave()) {
       return;
     }
+    final isExisting = _loadedFormById(form.id) != null;
+    if (isExisting ? !canUpdateForms : !canCreateForms) {
+      throw const AuthFailure('You do not have access to save flows.');
+    }
 
     busyMessage = 'Saving flow ...';
     isLoading = true;
@@ -1009,6 +1278,9 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> deleteForm(StatusForm form) async {
+    if (!canDeleteForms) {
+      throw const AuthFailure('You do not have access to delete flows.');
+    }
     busyMessage = 'Deleting flow ...';
     isLoading = true;
     notifyListeners();
@@ -1036,6 +1308,9 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> deactivateForm(StatusForm form) async {
+    if (!canUpdateForms) {
+      throw const AuthFailure('You do not have access to update flows.');
+    }
     busyMessage = 'Deactivating flow ...';
     isLoading = true;
     notifyListeners();

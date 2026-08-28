@@ -31,6 +31,14 @@ String humanizeDropdownValue(String? value) {
     return '';
   }
 
+  final normalizedRole = normalizeRoleKey(normalized);
+  if (normalizedRole == 'client' &&
+      (normalized.toLowerCase() == 'sub-client' ||
+          normalized.toLowerCase() == 'sub_client' ||
+          normalized.toLowerCase() == 'member')) {
+    return 'Client';
+  }
+
   return normalized
       .split(RegExp(r'[_\s]+'))
       .where((part) => part.isNotEmpty)
@@ -40,6 +48,9 @@ String humanizeDropdownValue(String? value) {
 
 String normalizeRoleKey(String? value) {
   final normalized = (value ?? '').trim().toLowerCase().replaceAll('_', '-');
+  if (normalized == 'sub-client' || normalized == 'member') {
+    return 'client';
+  }
   return normalized;
 }
 
@@ -48,27 +59,12 @@ bool isAdminRole(String? role) {
 }
 
 bool isDispatcherRole(String? role) {
-  return normalizeRoleKey(role) == 'dispatcher';
+  final normalized = normalizeRoleKey(role);
+  return normalized == 'dispatcher' || normalized == 'manager';
 }
 
 bool isBackOfficeRole(String? role) {
   return isAdminRole(role) || isDispatcherRole(role);
-}
-
-bool canImpersonateUsers(String? role) {
-  return isAdminRole(role);
-}
-
-bool canDeleteAdminData(String? role) {
-  return isAdminRole(role);
-}
-
-bool canAccessVehicleAdmin(String? role) {
-  return isAdminRole(role);
-}
-
-bool canAccessFlowAdmin(String? role) {
-  return isAdminRole(role);
 }
 
 String effectiveBackOfficeRoleKey(String? role) {
@@ -80,11 +76,11 @@ bool isPrimaryClientRole(String? role) {
 }
 
 bool isSubClientRole(String? role) {
-  return normalizeRoleKey(role) == 'sub-client';
+  return false;
 }
 
 bool isClientScopedRole(String? role) {
-  return isPrimaryClientRole(role) || isSubClientRole(role);
+  return isPrimaryClientRole(role);
 }
 
 String toTitleCase(String value) {

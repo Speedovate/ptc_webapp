@@ -1,10 +1,10 @@
 import 'dart:typed_data';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/app_cached_network_image.dart';
+import 'package:webapp/widgets/shared/app_image_source_picker.dart';
 
 const Color bookingFormDangerStripColor = AppColors.dangerStrong;
 const double bookingFormContentHorizontalPadding = 18;
@@ -543,34 +543,29 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
     if (_isProcessing) {
       return;
     }
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final file = result?.files.singleOrNull;
-    final bytes = file?.bytes;
-    if (file == null || bytes == null) {
+    final image = await showAppImageSourcePicker(context);
+    if (image == null) {
       return;
     }
     setState(() {
       _isProcessing = true;
       _isSelectingPhoto = true;
-      _photo = {'name': file.name, 'size': file.size};
-      _previewBytes = bytes;
+      _photo = {'name': image.fileName, 'size': image.size};
+      _previewBytes = image.bytes;
     });
     await Future<void>.delayed(_minimumProcessingIndicatorDuration);
     if (!mounted) {
       return;
     }
     final nextPhoto = <String, dynamic>{
-      'name': file.name,
-      'bytes': bytes,
-      'size': file.size,
-      'mime_type': _resolvedMimeType(file),
+      'name': image.fileName,
+      'bytes': image.bytes,
+      'size': image.size,
+      'mime_type': image.mimeType,
     };
     setState(() {
       _photo = nextPhoto;
-      _previewBytes = bytes;
+      _previewBytes = image.bytes;
       _previewUrl = null;
       _isProcessing = false;
       _isSelectingPhoto = false;
@@ -762,28 +757,6 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                   textAlign: TextAlign.center,
                 ),
               const SizedBox(height: 12),
-              if (_isProcessing)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2.2),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        processingLabel,
-                        style: TextStyle(
-                          color: widget.palette.accentMuted,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               Wrap(
                 spacing: 10,
                 runSpacing: 10,
@@ -847,14 +820,6 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
       ],
     );
   }
-}
-
-String? _resolvedMimeType(PlatformFile file) {
-  final extension = file.extension?.trim().toLowerCase();
-  if (extension == null || extension.isEmpty) {
-    return null;
-  }
-  return 'image/$extension';
 }
 
 class _BookingPhotoPreviewFallback extends StatelessWidget {

@@ -1,25 +1,51 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:webapp/models/status.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/services/firestore_public_document_fetcher.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
+import 'package:webapp/services/offline_queue_coordinator_service.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class StatusRequest implements StatusFormRepository {
-  StatusRequest({FirebaseFirestore? firestore})
-    : _firestore = firestore ?? FirebaseFirestore.instance;
+  StatusRequest({
+    FirebaseFirestore? firestore,
+    FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _firestorePublicDocumentFetcher =
+           firestorePublicDocumentFetcher ??
+           createFirestorePublicDocumentFetcher();
 
   static final StatusRequest instance = StatusRequest();
   static const _statusFormsResourceKey = 'status_forms';
   static const _statusFieldsResourceKey = 'status_fields';
   static const _statusesResourceKey = 'statuses';
+  static const Duration _startupTimeout = Duration(seconds: 6);
+  static bool _didStartBackgroundOfflineQueueInitialization = false;
+
+  void _writeDocumentsInBackground({
+    required String resourceKey,
+    required List<Map<String, dynamic>> documents,
+  }) {
+    unawaited(
+      _cache.writeDocuments(
+        resourceKey: resourceKey,
+        documents: documents,
+      ).catchError((error, stackTrace) {}),
+    );
+  }
 
   final FirebaseFirestore _firestore;
+  final FirestorePublicDocumentFetcher _firestorePublicDocumentFetcher;
   final OfflineMutationQueueService _offlineMutationQueueService =
       OfflineMutationQueueService.instance;
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
@@ -31,9 +57,23 @@ class StatusRequest implements StatusFormRepository {
   CollectionReference<Map<String, dynamic>> get _statusesCollection =>
       _firestore.collection('statuses');
 
+  Future<void> initialize() async {
+    if (_didStartBackgroundOfflineQueueInitialization) {
+      return;
+    }
+    _didStartBackgroundOfflineQueueInitialization = true;
+    unawaited(
+      OfflineQueueCoordinatorService.instance.initialize().catchError((
+        error,
+        stackTrace,
+      ) {}),
+    );
+  }
+
   @override
   Future<List<StatusForm>> getStatusForms() async {
     return _runRequest(() async {
+      initialize();
       final forms = await _getHydratedForms();
       forms.sort(_compareFormsForStatus);
       return forms;
@@ -43,34 +83,128 @@ class StatusRequest implements StatusFormRepository {
   @override
   Future<List<StatusField>> getAllFields() async {
     return _runRequest(() async {
-      final documents = await _cache.getDocuments(
-        resourceKey: _statusFieldsResourceKey,
-        fetchDocuments: () async {
-          final snapshot = await _fieldsCollection.get();
-          return snapshot.docs.map(documentData).toList();
-        },
+      initialize();
+      final cachedDocuments = await _cache.readDocuments(_statusFieldsResourceKey);
+      if (cachedDocuments != null && cachedDocuments.isNotEmpty) {
+        if (currentNetworkStatus()) {
+          unawaited(_refreshStatusCachesInBackground());
+        }
+        final fields = cachedDocuments.map(StatusField.fromMap).toList();
+        fields.sort(
+          (a, b) =>
+              (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+        );
+        return fields;
+      }
+      final sdkCachedDocuments = await _readCollectionSdkCacheOnly(
+        _fieldsCollection,
       );
-      final fields = documents.map(StatusField.fromMap).toList();
-      fields.sort(
-        (a, b) =>
-            (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
-      );
-      return fields;
+      if (sdkCachedDocuments.isNotEmpty) {
+        _writeDocumentsInBackground(
+          resourceKey: _statusFieldsResourceKey,
+          documents: sdkCachedDocuments,
+        );
+        if (currentNetworkStatus()) {
+          unawaited(_refreshStatusCachesInBackground());
+        }
+        final fields = sdkCachedDocuments.map(StatusField.fromMap).toList();
+        fields.sort(
+          (a, b) =>
+              (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+        );
+        return fields;
+      }
+      try {
+        final snapshot = await _fieldsCollection.get().timeout(
+          _startupTimeout,
+          onTimeout: () => throw TimeoutException('status fields fetch timeout'),
+        );
+        final documents = snapshot.docs.map(documentData).toList(growable: false);
+        _writeDocumentsInBackground(
+          resourceKey: _statusFieldsResourceKey,
+          documents: documents,
+        );
+        final fields = documents.map(StatusField.fromMap).toList();
+        fields.sort(
+          (a, b) =>
+              (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+        );
+        return fields;
+      } catch (error) {
+        final documents = await _fetchCollectionDocumentsViaPublicRest(
+          'status_fields',
+        );
+        if (documents.isEmpty) {
+          rethrow;
+        }
+        _writeDocumentsInBackground(
+          resourceKey: _statusFieldsResourceKey,
+          documents: documents,
+        );
+        final fields = documents.map(StatusField.fromMap).toList();
+        fields.sort(
+          (a, b) =>
+              (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+        );
+        return fields;
+      }
     }, fallback: 'We could not load the fields right now.');
   }
 
   @override
   Future<List<Status>> getStatuses() async {
     return _runRequest(() async {
-      final documents = await _cache.getDocuments(
-        resourceKey: _statusesResourceKey,
-        fetchDocuments: () async {
-          final snapshot = await _statusesCollection.get();
-          return snapshot.docs.map(documentData).toList();
-        },
+      initialize();
+      final cachedDocuments = await _cache.readDocuments(_statusesResourceKey);
+      if (cachedDocuments != null && cachedDocuments.isNotEmpty) {
+        if (currentNetworkStatus()) {
+          unawaited(_refreshStatusCachesInBackground());
+        }
+        final statuses = cachedDocuments.map(Status.fromMap).toList(growable: false);
+        return statuses;
+      }
+      final sdkCachedDocuments = await _readCollectionSdkCacheOnly(
+        _statusesCollection,
       );
-      final statuses = documents.map(Status.fromMap).toList();
-      return statuses;
+      if (sdkCachedDocuments.isNotEmpty) {
+        _writeDocumentsInBackground(
+          resourceKey: _statusesResourceKey,
+          documents: sdkCachedDocuments,
+        );
+        if (currentNetworkStatus()) {
+          unawaited(_refreshStatusCachesInBackground());
+        }
+        final statuses = sdkCachedDocuments
+            .map(Status.fromMap)
+            .toList(growable: false);
+        return statuses;
+      }
+      try {
+        final snapshot = await _statusesCollection.get().timeout(
+          _startupTimeout,
+          onTimeout: () => throw TimeoutException('statuses fetch timeout'),
+        );
+        final documents = snapshot.docs.map(documentData).toList(growable: false);
+        _writeDocumentsInBackground(
+          resourceKey: _statusesResourceKey,
+          documents: documents,
+        );
+        final statuses = documents.map(Status.fromMap).toList();
+        return statuses;
+      } catch (error) {
+        final documents = await _fetchCollectionDocumentsViaPublicRest(
+          'statuses',
+        );
+        if (documents.isEmpty) {
+          rethrow;
+        }
+        _writeDocumentsInBackground(
+          resourceKey: _statusesResourceKey,
+          documents: documents,
+        );
+        final statuses = documents.map(Status.fromMap).toList();
+        return statuses;
+      }
     }, fallback: 'We could not load the statuses right now.');
   }
 
@@ -95,7 +229,7 @@ class StatusRequest implements StatusFormRepository {
   ) async {
     final forms = await _getHydratedForms();
     final statuses = await getStatuses();
-    final normalizedRole = effectiveBackOfficeRoleKey(role);
+    final resolvedRoles = _roleAccessService.workflowResolutionRoles(role);
     final normalizedCurrentStatusKey = currentStatusKey.trim().toLowerCase();
 
     bool isKnownActiveStatus(String? statusKey) {
@@ -122,7 +256,7 @@ class StatusRequest implements StatusFormRepository {
     final matchingForms = forms
         .where(
           (form) =>
-              form.resolvedRoles.contains(normalizedRole) &&
+              resolvedRoles.any(form.resolvedRoles.contains) &&
               (form.currentStatusKey?.trim().toLowerCase() ?? '') ==
                   normalizedCurrentStatusKey &&
               isKnownActiveStatus(form.currentStatusKey) &&
@@ -138,9 +272,16 @@ class StatusRequest implements StatusFormRepository {
     final forms = await _getHydratedForms();
     for (final form in forms) {
       if (form.id == statusFormId) {
-        return form.fields
+        final fields = form.fields
             .map((field) => field.copyWith(statusForm: form.toReferenceForm()))
             .toList();
+        for (final field in fields) {
+          final type = (field.type ?? '').trim().toLowerCase();
+          if (type != 'dropdown' && type != 'search_dropdown') {
+            continue;
+          }
+        }
+        return fields;
       }
     }
     return [];
@@ -284,6 +425,7 @@ class StatusRequest implements StatusFormRepository {
       if (normalized == null) {
         return;
       }
+      final forms = await _getHydratedForms();
       if (currentNetworkStatus()) {
         await _fieldsCollection.doc(normalized).delete();
       } else {
@@ -296,36 +438,25 @@ class StatusRequest implements StatusFormRepository {
         resourceKey: _statusFieldsResourceKey,
         documentId: normalized,
       );
-      final forms = await _getHydratedForms();
       for (final form in forms) {
-        if (!form.fields.any((field) => field.id == normalized)) {
+        final nextFields = form.fields
+            .where((field) => normalizeId(field.id) != normalized)
+            .toList(growable: false);
+        final nextOverrides = Map<String, StatusFieldOverride>.from(
+          form.fieldOverrides,
+        )..remove(normalized);
+        final didChange =
+            nextFields.length != form.fields.length ||
+            nextOverrides.length != form.fieldOverrides.length;
+        if (!didChange || (form.id?.trim().isEmpty ?? true)) {
           continue;
         }
-        final updatedFormDocument = _formToFirestoreMap(
-          form.copyWith(
-            fields: form.fields
-                .where((field) => field.id != normalized)
-                .toList(),
-            fieldOverrides: Map<String, StatusFieldOverride>.from(
-              form.fieldOverrides,
-            )..remove(normalized),
-            updatedAt: DateTime.now(),
-          ),
+        final updatedForm = form.copyWith(
+          fields: nextFields,
+          fieldOverrides: nextOverrides,
+          updatedAt: DateTime.now(),
         );
-        if (currentNetworkStatus()) {
-          await _formsCollection.doc(form.id).set(updatedFormDocument);
-        } else {
-          await _offlineMutationQueueService.queueCollectionDocumentUpsert(
-            collectionKey: _statusFormsResourceKey,
-            documentId: form.id ?? '',
-            document: updatedFormDocument,
-            baseUpdatedAt: form.updatedAt?.toUtc().toIso8601String(),
-          );
-        }
-        await _cache.upsertDocument(
-          resourceKey: _statusFormsResourceKey,
-          document: updatedFormDocument,
-        );
+        await _upsertFormDocument(updatedForm);
       }
     }, fallback: 'We could not delete the field right now.');
   }
@@ -337,6 +468,15 @@ class StatusRequest implements StatusFormRepository {
       if (normalized == null) {
         return;
       }
+      final statuses = await getStatuses();
+      final targetStatus = statuses.cast<Status?>().firstWhere(
+        (status) => normalizeId(status?.id) == normalized,
+        orElse: () => null,
+      );
+      final targetKey = targetStatus?.key?.trim().toLowerCase();
+      final forms = targetKey == null || targetKey.isEmpty
+          ? const <StatusForm>[]
+          : await _getHydratedForms();
       if (currentNetworkStatus()) {
         await _statusesCollection.doc(normalized).delete();
       } else {
@@ -349,6 +489,35 @@ class StatusRequest implements StatusFormRepository {
         resourceKey: _statusesResourceKey,
         documentId: normalized,
       );
+      if (targetKey == null || targetKey.isEmpty) {
+        return;
+      }
+      for (final form in forms) {
+        final currentStatusMatches =
+            form.currentStatusKey?.trim().toLowerCase() == targetKey;
+        final nextStatusMatches =
+            form.nextStatusKey?.trim().toLowerCase() == targetKey;
+        final nextDependencies = form.dependencies
+            .where(
+              (dependency) =>
+                  dependency.statusKey?.trim().toLowerCase() != targetKey,
+            )
+            .toList(growable: false);
+        final dependenciesChanged =
+            nextDependencies.length != form.dependencies.length;
+        if (!currentStatusMatches &&
+            !nextStatusMatches &&
+            !dependenciesChanged) {
+          continue;
+        }
+        final updatedForm = form.copyWith(
+          currentStatusKey: currentStatusMatches ? null : form.currentStatusKey,
+          nextStatusKey: nextStatusMatches ? null : form.nextStatusKey,
+          dependencies: nextDependencies,
+          updatedAt: DateTime.now(),
+        );
+        await _upsertFormDocument(updatedForm);
+      }
     }, fallback: 'We could not delete the status right now.');
   }
 
@@ -359,6 +528,7 @@ class StatusRequest implements StatusFormRepository {
       if (normalized == null) {
         return;
       }
+      final fields = await getAllFields();
       if (currentNetworkStatus()) {
         await _formsCollection.doc(normalized).delete();
       } else {
@@ -371,7 +541,70 @@ class StatusRequest implements StatusFormRepository {
         resourceKey: _statusFormsResourceKey,
         documentId: normalized,
       );
+      for (final field in fields) {
+        if (normalizeId(field.statusForm?.id) != normalized ||
+            (field.id?.trim().isEmpty ?? true)) {
+          continue;
+        }
+        final updatedField = field.copyWith(
+          statusForm: null,
+          updatedAt: DateTime.now(),
+        );
+        await _upsertFieldDocument(updatedField);
+      }
     }, fallback: 'We could not delete the flow right now.');
+  }
+
+  Future<void> _upsertFormDocument(StatusForm form) async {
+    final formId = normalizeId(form.id);
+    if (formId == null) {
+      return;
+    }
+    final document = _formToFirestoreMap(form.copyWith(id: formId));
+    final baseUpdatedAtIso = await _cachedUpdatedAt(
+      resourceKey: _statusFormsResourceKey,
+      documentId: formId,
+    );
+    if (currentNetworkStatus()) {
+      await _formsCollection.doc(formId).set(document);
+    } else {
+      await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+        collectionKey: _statusFormsResourceKey,
+        documentId: formId,
+        document: document,
+        baseUpdatedAt: baseUpdatedAtIso,
+      );
+    }
+    await _cache.upsertDocument(
+      resourceKey: _statusFormsResourceKey,
+      document: document,
+    );
+  }
+
+  Future<void> _upsertFieldDocument(StatusField field) async {
+    final fieldId = normalizeId(field.id);
+    if (fieldId == null) {
+      return;
+    }
+    final document = field.copyWith(id: fieldId).toMap();
+    final baseUpdatedAtIso = await _cachedUpdatedAt(
+      resourceKey: _statusFieldsResourceKey,
+      documentId: fieldId,
+    );
+    if (currentNetworkStatus()) {
+      await _fieldsCollection.doc(fieldId).set(document);
+    } else {
+      await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+        collectionKey: _statusFieldsResourceKey,
+        documentId: fieldId,
+        document: document,
+        baseUpdatedAt: baseUpdatedAtIso,
+      );
+    }
+    await _cache.upsertDocument(
+      resourceKey: _statusFieldsResourceKey,
+      document: document,
+    );
   }
 
   @override
@@ -408,30 +641,158 @@ class StatusRequest implements StatusFormRepository {
   }
 
   Future<List<StatusForm>> _getHydratedForms() async {
-    final snapshots = await Future.wait([
-      _cache.getDocuments(
+    final cachedForms = await _cache.readDocuments(_statusFormsResourceKey);
+    final cachedFields = await _cache.readDocuments(_statusFieldsResourceKey);
+    if (cachedForms != null && cachedForms.isNotEmpty) {
+      if (currentNetworkStatus()) {
+        unawaited(_refreshStatusCachesInBackground());
+      }
+      final forms = _inflateForms(
+        formDocuments: cachedForms,
+        fieldDocuments: cachedFields ?? const <Map<String, dynamic>>[],
+      );
+      return forms;
+    }
+    final sdkCachedForms = await _readCollectionSdkCacheOnly(_formsCollection);
+    if (sdkCachedForms.isNotEmpty) {
+      final sdkCachedFields =
+          cachedFields ?? await _readCollectionSdkCacheOnly(_fieldsCollection);
+      _writeDocumentsInBackground(
         resourceKey: _statusFormsResourceKey,
-        fetchDocuments: () async {
-          final snapshot = await _formsCollection.get();
-          return snapshot.docs.map(documentData).toList();
-        },
-      ),
-      _cache.getDocuments(
+        documents: sdkCachedForms,
+      );
+      if (sdkCachedFields.isNotEmpty) {
+        _writeDocumentsInBackground(
+          resourceKey: _statusFieldsResourceKey,
+          documents: sdkCachedFields,
+        );
+      }
+      if (currentNetworkStatus()) {
+        unawaited(_refreshStatusCachesInBackground());
+      }
+      final forms = _inflateForms(
+        formDocuments: sdkCachedForms,
+        fieldDocuments: sdkCachedFields,
+      );
+      return forms;
+    }
+    try {
+      final results = await Future.wait([
+        _formsCollection.get().timeout(
+          _startupTimeout,
+          onTimeout: () => throw TimeoutException('status forms fetch timeout'),
+        ),
+        _fieldsCollection.get().timeout(
+          _startupTimeout,
+          onTimeout: () => throw TimeoutException('status fields fetch timeout'),
+        ),
+      ]);
+      final formsSnapshot = results[0];
+      final fieldsSnapshot = results[1];
+      final formDocuments = formsSnapshot.docs.map(documentData).toList(growable: false);
+      final fieldDocuments = fieldsSnapshot.docs.map(documentData).toList(growable: false);
+      _writeDocumentsInBackground(
+        resourceKey: _statusFormsResourceKey,
+        documents: formDocuments,
+      );
+      _writeDocumentsInBackground(
         resourceKey: _statusFieldsResourceKey,
-        fetchDocuments: () async {
-          final snapshot = await _fieldsCollection.get();
-          return snapshot.docs.map(documentData).toList();
-        },
-      ),
-    ]);
+        documents: fieldDocuments,
+      );
+      final forms = _inflateForms(
+        formDocuments: formDocuments,
+        fieldDocuments: fieldDocuments,
+      );
+      return forms;
+    } catch (error) {
+      final results = await Future.wait([
+        _fetchCollectionDocumentsViaPublicRest('status_forms'),
+        _fetchCollectionDocumentsViaPublicRest('status_fields'),
+      ]);
+      final formDocuments = results[0];
+      final fieldDocuments = results[1];
+      if (formDocuments.isEmpty) {
+        rethrow;
+      }
+      _writeDocumentsInBackground(
+        resourceKey: _statusFormsResourceKey,
+        documents: formDocuments,
+      );
+      if (fieldDocuments.isNotEmpty) {
+        _writeDocumentsInBackground(
+          resourceKey: _statusFieldsResourceKey,
+          documents: fieldDocuments,
+        );
+      }
+      final forms = _inflateForms(
+        formDocuments: formDocuments,
+        fieldDocuments: fieldDocuments,
+      );
+      return forms;
+    }
+  }
+
+  List<StatusForm> _inflateForms({
+    required List<Map<String, dynamic>> formDocuments,
+    required List<Map<String, dynamic>> fieldDocuments,
+  }) {
     final fieldById = {
-      for (final doc in snapshots[1])
+      for (final doc in fieldDocuments)
         doc['id']?.toString() ?? '': StatusField.fromMap(doc),
     };
-    final forms = snapshots[0]
+    final forms = formDocuments
         .map((doc) => _formFromFirestoreMap(doc, fieldsById: fieldById))
-        .toList();
+        .toList(growable: false);
     return forms;
+  }
+
+  Future<void> _refreshStatusCachesInBackground() async {
+    try {
+      final results = await Future.wait([
+        _formsCollection.get().timeout(_startupTimeout),
+        _fieldsCollection.get().timeout(_startupTimeout),
+        _statusesCollection.get().timeout(_startupTimeout),
+      ]);
+      final formsSnapshot = results[0];
+      final fieldsSnapshot = results[1];
+      final statusesSnapshot = results[2];
+      await _cache.writeDocuments(
+        resourceKey: _statusFormsResourceKey,
+        documents: formsSnapshot.docs.map(documentData).toList(growable: false),
+      );
+      await _cache.writeDocuments(
+        resourceKey: _statusFieldsResourceKey,
+        documents: fieldsSnapshot.docs.map(documentData).toList(growable: false),
+      );
+      await _cache.writeDocuments(
+        resourceKey: _statusesResourceKey,
+        documents: statusesSnapshot.docs.map(documentData).toList(growable: false),
+      );
+    } catch (_) {}
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchCollectionDocumentsViaPublicRest(
+    String collectionPath,
+  ) async {
+    final documents = await _firestorePublicDocumentFetcher
+        .fetchCollectionDocuments(collectionPath)
+        .timeout(_startupTimeout, onTimeout: () {
+          throw TimeoutException('public rest $collectionPath fetch timeout');
+        });
+    return documents;
+  }
+
+  Future<List<Map<String, dynamic>>> _readCollectionSdkCacheOnly(
+    CollectionReference<Map<String, dynamic>> collection,
+  ) async {
+    try {
+      final snapshot = await collection
+          .get(const GetOptions(source: Source.cache))
+          .timeout(const Duration(seconds: 1));
+      return snapshot.docs.map(documentData).toList(growable: false);
+    } catch (_) {
+      return const <Map<String, dynamic>>[];
+    }
   }
 
   StatusForm _formFromFirestoreMap(

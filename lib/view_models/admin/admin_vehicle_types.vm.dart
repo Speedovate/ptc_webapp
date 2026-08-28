@@ -1,7 +1,13 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
+import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/vehicle.request.dart';
+import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/services/network_status_events.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class AdminVehicleTypesViewModel extends BaseViewModel {
@@ -9,46 +15,114 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
     : _repository = repository ?? VehicleRequest.instance {
     _types = List<VehicleCatalogItem>.from(_cachedTypes);
     _errorMessage = _cachedErrorMessage;
+    _hasLoadedOnce = _cachedHasLoadedOnce;
   }
 
   final VehicleCatalogRepository _repository;
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
   static List<VehicleCatalogItem> _cachedTypes = const [];
   static String? _cachedErrorMessage;
+  static bool _cachedHasLoadedOnce = false;
 
   static void clearCachedState() {
     _cachedTypes = const [];
     _cachedErrorMessage = null;
+    _cachedHasLoadedOnce = false;
   }
 
   List<VehicleCatalogItem> _types = const [];
   String? _errorMessage;
   String _busyMessage = 'Loading, please wait ...';
+  bool _hasLoadedOnce = false;
+  bool _didScheduleWarmRetry = false;
 
   List<VehicleCatalogItem> get types => _types;
   String? get errorMessage => _errorMessage;
   String get busyMessage => _busyMessage;
+  bool get canReadTypes => _roleAccessService.canAccess(
+    DispatcherAccessCapability.vehicleTypesRead,
+  );
+  bool get canCreateTypes => _roleAccessService.canAccess(
+    DispatcherAccessCapability.vehicleTypesCreate,
+  );
+  bool get canUpdateTypes => _roleAccessService.canAccess(
+    DispatcherAccessCapability.vehicleTypesUpdate,
+  );
+  bool get canDeleteTypes => _roleAccessService.canAccess(
+    DispatcherAccessCapability.vehicleTypesDelete,
+  );
 
   Future<void> load() async {
+    if (!canReadTypes) {
+      _errorMessage = 'You do not have access to view vehicle types.';
+      notifyListeners();
+      return;
+    }
     _busyMessage = 'Loading vehicle types ...';
-    setBusy(true);
+    final hasVisiblePrimaryData = _types.isNotEmpty || _cachedTypes.isNotEmpty;
+    final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
+    if (shouldShowLoadingState) {
+      setBusy(true);
+    }
     _errorMessage = null;
     try {
       _types = await _repository.getTypes();
       _sortTypes();
       _cachedTypes = List<VehicleCatalogItem>.from(_types);
       _cachedErrorMessage = null;
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
+      notifyListeners();
+      _scheduleWarmRetryIfNeeded();
     } catch (error) {
       _errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the vehicle types right now.',
       );
       _cachedErrorMessage = _errorMessage;
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
+      notifyListeners();
     } finally {
-      setBusy(false);
+      if (shouldShowLoadingState) {
+        setBusy(false);
+      }
     }
   }
 
+  void _scheduleWarmRetryIfNeeded() {
+    if (_didScheduleWarmRetry ||
+        !currentNetworkStatus() ||
+        _types.isNotEmpty ||
+        _cachedTypes.isNotEmpty) {
+      return;
+    }
+    _didScheduleWarmRetry = true;
+    unawaited(_retryLoadAfterWarmup());
+  }
+
+  Future<void> _retryLoadAfterWarmup() async {
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    try {
+      final refreshedTypes = await _repository.getTypes();
+      if (refreshedTypes.isEmpty) {
+        return;
+      }
+      _types = refreshedTypes;
+      _sortTypes();
+      _cachedTypes = List<VehicleCatalogItem>.from(_types);
+      _cachedErrorMessage = null;
+      notifyListeners();
+    } catch (_) {}
+  }
+
   Future<VehicleCatalogItem> saveType(VehicleCatalogItem type) async {
+    final isExisting = (type.id ?? '').trim().isNotEmpty;
+    if (isExisting ? !canUpdateTypes : !canCreateTypes) {
+      throw const AuthFailure(
+        'You do not have access to save vehicle types.',
+      );
+    }
     _busyMessage = 'Saving vehicle type ...';
     setBusy(true);
     try {
@@ -69,6 +143,11 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
   }
 
   Future<void> deleteType(VehicleCatalogItem type) async {
+    if (!canDeleteTypes) {
+      throw const AuthFailure(
+        'You do not have access to delete vehicle types.',
+      );
+    }
     final typeId = type.id;
     if (typeId == null || typeId.isEmpty) {
       return;
@@ -89,6 +168,11 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
     VehicleCatalogItem type,
     bool isActive,
   ) {
+    if (!canUpdateTypes) {
+      throw const AuthFailure(
+        'You do not have access to update vehicle types.',
+      );
+    }
     _busyMessage = isActive
         ? 'Activating vehicle type ...'
         : 'Deactivating vehicle type ...';

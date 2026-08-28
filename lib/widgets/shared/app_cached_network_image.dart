@@ -34,6 +34,7 @@ class AppCachedNetworkImage extends StatefulWidget {
 class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   StreamSubscription<void>? _onlineSubscription;
   bool _hasError = false;
+  bool _isRecoveringCachedImage = false;
   int _reloadToken = 0;
   String? _cachedImageDataUrl;
   int _webImageLoadSerial = 0;
@@ -61,6 +62,7 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.imageUrl != widget.imageUrl) {
       _hasError = false;
+      _isRecoveringCachedImage = false;
       _reloadToken = 0;
       _cachedImageDataUrl = null;
       if (kIsWeb) {
@@ -76,6 +78,9 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   }
 
   void _handleError(Object error) {
+    if (kIsWeb) {
+      unawaited(_recoverCachedImageAfterError());
+    }
     if (!_hasError && mounted) {
       SchedulerBinding.instance.addPostFrameCallback((_) {
         if (!mounted || _hasError) {
@@ -94,6 +99,31 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     }
     final separator = widget.imageUrl.contains('?') ? '&' : '?';
     return '${widget.imageUrl}${separator}img_retry=$_reloadToken';
+  }
+
+  Future<void> _recoverCachedImageAfterError() async {
+    if (!kIsWeb || _isRecoveringCachedImage) {
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _isRecoveringCachedImage = true;
+      });
+    } else {
+      _isRecoveringCachedImage = true;
+    }
+    try {
+      await _refreshWebImageSource();
+    } finally {
+      final isMounted = mounted;
+      if (!isMounted) {
+        _isRecoveringCachedImage = false;
+      } else {
+        setState(() {
+          _isRecoveringCachedImage = false;
+        });
+      }
+    }
   }
 
   Future<void> _refreshWebImageSource({bool forceRefresh = false}) async {
@@ -176,6 +206,13 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
         webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
         errorBuilder: (context, error, stackTrace) {
           _handleError(error);
+          final recoveredDataUrl = _cachedImageDataUrl;
+          if (recoveredDataUrl != null && recoveredDataUrl.isNotEmpty) {
+            return _buildMemoryImage(recoveredDataUrl);
+          }
+          if (_isRecoveringCachedImage) {
+            return const SizedBox.shrink();
+          }
           if (widget.errorBuilder != null) {
             return widget.errorBuilder!(context, error);
           }

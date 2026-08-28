@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 
@@ -35,6 +38,20 @@ const adminFieldHelperTextStyle = TextStyle(
 );
 const double adminModalFieldMinHeight = 56;
 const double adminFilterFieldMinHeight = 52;
+
+InputDecoration _normalizeCollapsedSelectionDecoration(
+  InputDecoration baseDecoration,
+) {
+  final normalizedHintText =
+      baseDecoration.hintText?.trim().isNotEmpty == true
+      ? baseDecoration.hintText
+      : baseDecoration.labelText;
+  return baseDecoration.copyWith(
+    labelText: '',
+    floatingLabelBehavior: FloatingLabelBehavior.never,
+    hintText: normalizedHintText,
+  );
+}
 
 Color appFieldInteractiveFillColor(BuildContext context) {
   return AppColors.primarySurfaceAlt;
@@ -103,7 +120,6 @@ class AdminDropdownFormField<T> extends StatefulWidget {
     this.initialValue,
     this.focusNode,
     this.onFocusChanged,
-    this.autoActivateOnFocus = false,
     this.unfocusOnDismissWithoutSelection = true,
     this.iconEnabledColor,
     this.style,
@@ -118,7 +134,6 @@ class AdminDropdownFormField<T> extends StatefulWidget {
   final T? initialValue;
   final FocusNode? focusNode;
   final ValueChanged<bool>? onFocusChanged;
-  final bool autoActivateOnFocus;
   final bool unfocusOnDismissWithoutSelection;
   final Color? iconEnabledColor;
   final TextStyle? style;
@@ -135,15 +150,12 @@ class AdminDropdownFormField<T> extends StatefulWidget {
 }
 
 class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
+  final GlobalKey _fieldKey = GlobalKey();
   late final FocusNode _focusNode;
   late final bool _ownsFocusNode;
   T? _selectedValue;
   bool _isHovered = false;
   bool _isPressed = false;
-  int _menuWatchToken = 0;
-  bool _selectionMadeWhileMenuOpen = false;
-  bool _suppressFocusActivationOnce = false;
-  BuildContext? _dropdownContext;
 
   void _dismissActiveMenu() {
     if (!mounted) {
@@ -200,77 +212,90 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
 
   void _handleFocusChanged() {
     widget.onFocusChanged?.call(_focusNode.hasFocus);
-    if (!_focusNode.hasFocus) {
-      _suppressFocusActivationOnce = false;
-      return;
-    }
-    if (!widget.autoActivateOnFocus || _suppressFocusActivationOnce) {
-      _suppressFocusActivationOnce = false;
-      return;
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_focusNode.hasFocus) {
-        return;
-      }
-      final targetContext = _dropdownContext ?? _focusNode.context;
-      if (targetContext != null) {
-        Actions.maybeInvoke(targetContext, const ActivateIntent());
-      }
-    });
   }
 
   void _handleMenuOpened() {
-    if (widget.unfocusOnDismissWithoutSelection == false) {
-      AdminDropdownMenuCoordinator.registerActiveDismissCallback(
-        _dismissActiveMenu,
-      );
-    } else {
-      AdminDropdownMenuCoordinator.registerActiveDismissCallback(
-        _dismissActiveMenu,
-      );
-    }
-    final route = ModalRoute.of(context);
-    if (route == null) {
-      return;
-    }
-    _selectionMadeWhileMenuOpen = false;
-    final watchToken = ++_menuWatchToken;
-    _watchMenuDismiss(route, watchToken);
+    AdminDropdownMenuCoordinator.registerActiveDismissCallback(
+      _dismissActiveMenu,
+    );
   }
 
-  Future<void> _watchMenuDismiss(
-    ModalRoute<dynamic> route,
-    int watchToken,
-  ) async {
-    var sawPopupRoute = false;
-    for (var index = 0; index < 180; index++) {
-      await Future<void>.delayed(const Duration(milliseconds: 16));
-      if (!mounted || watchToken != _menuWatchToken) {
-        return;
-      }
-      final isCurrent = route.isCurrent;
-      if (!sawPopupRoute) {
-        if (!isCurrent) {
-          sawPopupRoute = true;
-        }
-        continue;
-      }
-      if (!isCurrent) {
-        continue;
-      }
+  Future<void> _openMenu() async {
+    final items = widget.items ?? <DropdownMenuItem<T>>[];
+    if (items.isEmpty || widget.onChanged == null) {
+      return;
+    }
+    _handleMenuOpened();
+    final fieldContext = _fieldKey.currentContext;
+    if (fieldContext == null) {
       AdminDropdownMenuCoordinator.unregisterActiveDismissCallback(
         _dismissActiveMenu,
       );
-      if (!_selectionMadeWhileMenuOpen && _focusNode.hasFocus) {
+      return;
+    }
+    final fieldBox = fieldContext.findRenderObject() as RenderBox?;
+    final overlayBox =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (fieldBox == null || overlayBox == null) {
+      AdminDropdownMenuCoordinator.unregisterActiveDismissCallback(
+        _dismissActiveMenu,
+      );
+      return;
+    }
+    final topLeft = fieldBox.localToGlobal(Offset.zero, ancestor: overlayBox);
+    final rect = topLeft & fieldBox.size;
+    final result = await showMenu<T>(
+      context: context,
+      position: RelativeRect.fromRect(
+        rect,
+        Offset.zero & overlayBox.size,
+      ),
+      constraints: BoxConstraints.tightFor(width: rect.width),
+      color: Colors.white,
+      surfaceTintColor: Colors.white,
+      shadowColor: const Color(0x3D1A1333),
+      elevation: 18,
+      menuPadding: EdgeInsets.zero,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+      items: items
+          .map(
+            (item) => PopupMenuItem<T>(
+                  value: item.value,
+                  enabled: item.enabled,
+                  padding: EdgeInsets.zero,
+                  child: _AdminDropdownMenuOption(
+                    child: DefaultTextStyle.merge(
+                      style: widget.style ?? adminDropdownDisplayTextStyle,
+                      child: item.child,
+                    ),
+                  ),
+                ),
+              )
+              .toList(growable: false),
+    );
+    AdminDropdownMenuCoordinator.unregisterActiveDismissCallback(
+      _dismissActiveMenu,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (result == null) {
+      if (_focusNode.hasFocus) {
         _focusNode.unfocus();
       }
       return;
     }
+    setState(() {
+      _selectedValue = result;
+    });
+    widget.onChanged?.call(result);
+    _focusNode.unfocus();
   }
 
   @override
   Widget build(BuildContext context) {
-    final decoration = widget.decoration ?? const InputDecoration();
+    final baseDecoration = widget.decoration ?? const InputDecoration();
+    final decoration = _normalizeCollapsedSelectionDecoration(baseDecoration);
     final errorText = decoration.errorText?.trim();
     final helperText = decoration.helperText?.trim();
     final neutralBorder = decoration.enabledBorder ?? decoration.border;
@@ -304,76 +329,85 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
         adminFieldHintTextStyle.copyWith(
           color: AppColors.primaryColor.withValues(alpha: 0.72),
         );
-    final hintWidget = hintText?.isNotEmpty == true
-        ? Text(hintText!, overflow: TextOverflow.ellipsis, style: hintStyle)
-        : null;
     final disabledTapMessage = _disabledTapMessage(fieldDecoration, hasItems);
-    final menuInteractiveColor = AppColors.primarySurfaceAlt;
-    final itemSignature =
-        widget.items
-            ?.map((item) => item.value?.toString() ?? '-')
-            .join('|') ??
-        '-';
-    final dropdown = Theme(
-      data: Theme.of(context).copyWith(
-        hoverColor: menuInteractiveColor,
-        highlightColor: Colors.transparent,
-        splashColor: menuInteractiveColor,
-      ),
-      child: Builder(
-        builder: (dropdownContext) {
-          _dropdownContext = dropdownContext;
-          return DropdownButtonFormField<T>(
-            key: ValueKey<String>(
-              '${_selectedValue?.toString() ?? '-'}::$itemSignature',
+    final selectedItem = (widget.items ?? <DropdownMenuItem<T>>[])
+        .cast<DropdownMenuItem<T>?>()
+        .firstWhere(
+          (item) => item?.value == _selectedValue,
+          orElse: () => null,
+        );
+    final selectedLabel = selectedItem == null
+        ? null
+        : _collapsedDropdownLabel(selectedItem.child);
+    final hasSelectedLabel = selectedLabel?.trim().isNotEmpty == true;
+    final displayText = hasSelectedLabel ? selectedLabel!.trim() : (hintText ?? '');
+    final displayStyle = hasSelectedLabel
+        ? (widget.style ?? adminFieldValueTextStyle)
+        : hintStyle;
+    final dropdown = Builder(
+      builder: (dropdownContext) {
+        return FocusableActionDetector(
+          focusNode: _focusNode,
+          actions: <Type, Action<Intent>>{
+            ActivateIntent: CallbackAction<ActivateIntent>(
+              onInvoke: (intent) {
+                if (!isDisabled) {
+                  unawaited(_openMenu());
+                }
+                return null;
+              },
             ),
-            initialValue: _selectedValue,
-            focusNode: _focusNode,
-            autofocus: false,
-            isDense: true,
-            iconEnabledColor: widget.iconEnabledColor,
-            style: widget.style,
-            decoration: fieldDecoration.copyWith(
-              fillColor: _isHovered || _isPressed
-                  ? activeFillColor
-                  : (fieldDecoration.fillColor ?? AppColors.primarySurface),
-              contentPadding: contentPadding,
-              focusedBorder: neutralBorder,
-              focusColor: Colors.transparent,
-              hoverColor: Colors.transparent,
-            ),
-            hint: hintWidget,
-            disabledHint: hintWidget,
-            items: widget.items,
-            selectedItemBuilder: widget.items == null
+          },
+          shortcuts: <ShortcutActivator, Intent>{
+            const SingleActivator(LogicalKeyboardKey.enter):
+                const ActivateIntent(),
+            const SingleActivator(LogicalKeyboardKey.numpadEnter):
+                const ActivateIntent(),
+            const SingleActivator(LogicalKeyboardKey.space):
+                const ActivateIntent(),
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: isDisabled
                 ? null
-                : (context) => widget.items!.map((item) {
-                    return Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        _collapsedDropdownLabel(item.child),
-                        style: widget.style ?? adminFieldValueTextStyle,
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    );
-                  }).toList(),
-            isExpanded: widget.isExpanded,
-            onTap: isDisabled ? null : _handleMenuOpened,
-            onChanged: isDisabled
-                ? null
-                : (value) {
-                    _selectionMadeWhileMenuOpen = true;
-                    setState(() {
-                      _selectedValue = value;
-                    });
-                    widget.onChanged?.call(value);
-                    _focusNode.unfocus();
+                : () {
+                    unawaited(_openMenu());
                   },
-          );
-        },
-      ),
+            child: InputDecorator(
+              key: _fieldKey,
+              isFocused: _focusNode.hasFocus,
+              isEmpty: !hasSelectedLabel,
+              decoration: fieldDecoration.copyWith(
+                labelText: '',
+                hintText: null,
+                floatingLabelBehavior:
+                    fieldDecoration.floatingLabelBehavior,
+                fillColor: _isHovered || _isPressed
+                    ? activeFillColor
+                    : (fieldDecoration.fillColor ?? AppColors.primarySurface),
+                contentPadding: contentPadding,
+                focusedBorder: neutralBorder,
+                focusColor: Colors.transparent,
+                hoverColor: Colors.transparent,
+                suffixIcon: Icon(
+                  Icons.arrow_drop_down_rounded,
+                  color: widget.iconEnabledColor,
+                ),
+              ),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  displayText,
+                  style: displayStyle,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
 
     final interactiveDropdown = MouseRegion(
@@ -386,7 +420,6 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
       child: Listener(
         onPointerDown: (_) {
           if (!isDisabled) {
-            _suppressFocusActivationOnce = true;
             setState(() => _isPressed = true);
           }
         },
@@ -492,7 +525,6 @@ class AdminSearchSelectFormField extends StatefulWidget {
     this.initialValue,
     this.focusNode,
     this.onFocusChanged,
-    this.autoActivateOnFocus = false,
     this.decoration,
     this.enabled = true,
     this.dialogTitle,
@@ -503,7 +535,6 @@ class AdminSearchSelectFormField extends StatefulWidget {
   final String? initialValue;
   final FocusNode? focusNode;
   final ValueChanged<bool>? onFocusChanged;
-  final bool autoActivateOnFocus;
   final InputDecoration? decoration;
   final bool enabled;
   final String? dialogTitle;
@@ -519,7 +550,6 @@ class _AdminSearchSelectFormFieldState
   late final bool _ownsFocusNode;
   late final TextEditingController _controller;
   String? _selectedValue;
-  bool _suppressFocusActivationOnce = false;
 
   @override
   void initState() {
@@ -570,20 +600,6 @@ class _AdminSearchSelectFormFieldState
 
   void _handleFocusChanged() {
     widget.onFocusChanged?.call(_focusNode.hasFocus);
-    if (!_focusNode.hasFocus) {
-      _suppressFocusActivationOnce = false;
-      return;
-    }
-    if (!widget.autoActivateOnFocus || _suppressFocusActivationOnce) {
-      _suppressFocusActivationOnce = false;
-      return;
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_focusNode.hasFocus) {
-        return;
-      }
-      _openPicker();
-    });
   }
 
   Future<void> _openPicker() async {
@@ -648,7 +664,8 @@ class _AdminSearchSelectFormFieldState
 
   @override
   Widget build(BuildContext context) {
-    final decoration = widget.decoration ?? const InputDecoration();
+    final baseDecoration = widget.decoration ?? const InputDecoration();
+    final decoration = _normalizeCollapsedSelectionDecoration(baseDecoration);
     final errorText = decoration.errorText?.trim();
     final helperText = decoration.helperText?.trim();
     final activeFillColor = appFieldInteractiveFillColor(context);
@@ -693,7 +710,6 @@ class _AdminSearchSelectFormFieldState
           onTap: !widget.enabled
               ? null
               : () {
-                  _suppressFocusActivationOnce = true;
                   if (!_focusNode.hasFocus) {
                     _focusNode.requestFocus();
                   }
@@ -706,6 +722,7 @@ class _AdminSearchSelectFormFieldState
               isFocused: _focusNode.hasFocus,
               isEmpty: !hasSelection,
               decoration: fieldDecoration.copyWith(
+                labelText: '',
                 hintText: null,
                 fillColor: fieldDecoration.fillColor ?? activeFillColor,
                 contentPadding: contentPadding,
@@ -827,11 +844,20 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
                         ),
                       )
                     : ListView.separated(
+                        padding: EdgeInsets.zero,
                         itemCount: filtered.length,
                         separatorBuilder: (_, _) => const Divider(height: 1),
                         itemBuilder: (context, index) {
                           final item = filtered[index];
                           return ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                            ),
+                            minVerticalPadding: 0,
+                            visualDensity: const VisualDensity(
+                              horizontal: 0,
+                              vertical: -2,
+                            ),
                             title: Text(
                               item,
                               style: adminFieldValueTextStyle,
@@ -843,6 +869,53 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminDropdownMenuOption extends StatefulWidget {
+  const _AdminDropdownMenuOption({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_AdminDropdownMenuOption> createState() =>
+      _AdminDropdownMenuOptionState();
+}
+
+class _AdminDropdownMenuOptionState extends State<_AdminDropdownMenuOption> {
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundColor = _isPressed
+        ? AppColors.primarySurfaceAlt
+        : _isHovered
+        ? AppColors.primarySurface
+        : Colors.white;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() {
+        _isHovered = false;
+        _isPressed = false;
+      }),
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: (_) => setState(() => _isPressed = true),
+        onPointerUp: (_) => setState(() => _isPressed = false),
+        onPointerCancel: (_) => setState(() => _isPressed = false),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          width: double.infinity,
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          constraints: const BoxConstraints(minHeight: 48),
+          color: backgroundColor,
+          child: widget.child,
         ),
       ),
     );

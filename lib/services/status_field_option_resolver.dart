@@ -9,6 +9,8 @@ import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/services/role_access_service.dart';
+import 'package:webapp/utils/functions.dart';
 
 class StatusFieldOptionResolver {
   StatusFieldOptionResolver({
@@ -27,26 +29,83 @@ class StatusFieldOptionResolver {
   final VehicleCatalogRepository _vehicleCatalogRepository;
   final StatusFormRepository _statusFormRepository;
   final BookingRepository _bookingRepository;
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
 
   Future<List<StatusField>> hydrateFields(List<StatusField> fields) async {
-    final results = await Future.wait([
-      _authRepository.getUsers(),
-      _vehicleCatalogRepository.getMakes(),
-      _vehicleCatalogRepository.getTypes(),
-      _vehicleCatalogRepository.getSizes(),
-      _statusFormRepository.getStatuses(),
-      _statusFormRepository.getStatusForms(),
-      _statusFormRepository.getAllFields(),
-      _bookingRepository.getBookings(),
-    ]);
-    final users = results[0] as List<dynamic>;
-    final makes = results[1] as List<dynamic>;
-    final types = results[2] as List<dynamic>;
-    final sizes = results[3] as List<dynamic>;
-    final statuses = results[4] as List<dynamic>;
-    final forms = results[5] as List<StatusForm>;
-    final fieldLibrary = results[6] as List<StatusField>;
-    final bookings = results[7] as List<dynamic>;
+    final sourceKeys = fields
+        .map(_resolvedOptionSourceKey)
+        .whereType<String>()
+        .toSet();
+
+    List<dynamic> users = const [];
+    List<dynamic> makes = const [];
+    List<dynamic> types = const [];
+    List<dynamic> sizes = const [];
+    List<dynamic> statuses = const [];
+    List<StatusForm> forms = const [];
+    List<StatusField> fieldLibrary = const [];
+    List<dynamic> bookings = const [];
+
+    final tasks = <Future<void>>[];
+    if (_needsUsers(sourceKeys)) {
+      tasks.add(
+        _authRepository.getUsers().then((value) {
+          users = value;
+        }),
+      );
+    }
+    if (sourceKeys.contains(statusFieldOptionSourceVehicleMakes)) {
+      tasks.add(
+        _vehicleCatalogRepository.getMakes().then((value) {
+          makes = value;
+        }),
+      );
+    }
+    if (sourceKeys.contains(statusFieldOptionSourceVehicleTypes)) {
+      tasks.add(
+        _vehicleCatalogRepository.getTypes().then((value) {
+          types = value;
+        }),
+      );
+    }
+    if (sourceKeys.contains(statusFieldOptionSourceVehicleSizes)) {
+      tasks.add(
+        _vehicleCatalogRepository.getSizes().then((value) {
+          sizes = value;
+        }),
+      );
+    }
+    if (sourceKeys.contains(statusFieldOptionSourceStatuses)) {
+      tasks.add(
+        _statusFormRepository.getStatuses().then((value) {
+          statuses = value;
+        }),
+      );
+    }
+    if (sourceKeys.contains(statusFieldOptionSourceForms)) {
+      tasks.add(
+        _statusFormRepository.getStatusForms().then((value) {
+          forms = value;
+        }),
+      );
+    }
+    if (sourceKeys.contains(statusFieldOptionSourceFields)) {
+      tasks.add(
+        _statusFormRepository.getAllFields().then((value) {
+          fieldLibrary = value;
+        }),
+      );
+    }
+    if (sourceKeys.contains(statusFieldOptionSourceBookings)) {
+      tasks.add(
+        _bookingRepository.getBookings().then((value) {
+          bookings = value;
+        }),
+      );
+    }
+    if (tasks.isNotEmpty) {
+      await Future.wait(tasks);
+    }
 
     final userOptions = _uniqueSortedOptions(
       users
@@ -56,20 +115,27 @@ class StatusFieldOptionResolver {
     );
     final clientOptions = _uniqueSortedOptions(
       users
-          .where((item) => item.role == 'client' && item.isActive != false)
+          .where(
+            (item) =>
+                isPrimaryClientRole(item.role) && item.isActive != false,
+          )
           .map(_userDisplay)
           .whereType<String>(),
     );
     final adminOptions = _uniqueSortedOptions(
       users
-          .where((item) => item.role == 'admin' && item.isActive != false)
+          .where(
+            (item) =>
+                _roleAccessService.usesAdminShell(role: item.role) &&
+                item.isActive != false,
+          )
           .map(_userDisplay)
           .whereType<String>(),
     );
     final driverOptions = users
         .where(
           (item) =>
-              (item.role ?? '').trim().toLowerCase() == 'driver' &&
+              normalizeRoleKey(item.role) == 'driver' &&
               item.isActive != false &&
               item.isOnline == true,
         )
@@ -80,7 +146,7 @@ class StatusFieldOptionResolver {
     final helperOptions = users
         .where(
           (item) =>
-              (item.role ?? '').trim().toLowerCase() == 'helper' &&
+              normalizeRoleKey(item.role) == 'helper' &&
               item.isActive != false &&
               item.isOnline == true,
         )
@@ -135,7 +201,7 @@ class StatusFieldOptionResolver {
       puertoPrincesaBarangayOptions,
     );
 
-    return fields.map((field) {
+    final resolved = fields.map((field) {
       final sourceKey = _resolvedOptionSourceKey(field);
       final resolvedOptions = switch (sourceKey) {
         statusFieldOptionSourceUsers => userOptions,
@@ -143,7 +209,7 @@ class StatusFieldOptionResolver {
         statusFieldOptionSourceAdmins => adminOptions,
         statusFieldOptionSourceDrivers => driverOptions,
         statusFieldOptionSourceHelpers => helperOptions,
-        statusFieldOptionSourceClientMembers => field.options,
+        statusFieldOptionSourceClientMembers => clientOptions,
         statusFieldOptionSourceVehicleMakes => makeOptions,
         statusFieldOptionSourceVehicleTypes => typeOptions,
         statusFieldOptionSourceVehicleSizes => sizeOptions,
@@ -157,6 +223,15 @@ class StatusFieldOptionResolver {
       };
       return field.copyWith(options: resolvedOptions);
     }).toList();
+    return resolved;
+  }
+
+  bool _needsUsers(Set<String> sourceKeys) {
+    return sourceKeys.contains(statusFieldOptionSourceUsers) ||
+        sourceKeys.contains(statusFieldOptionSourceClients) ||
+        sourceKeys.contains(statusFieldOptionSourceAdmins) ||
+        sourceKeys.contains(statusFieldOptionSourceDrivers) ||
+        sourceKeys.contains(statusFieldOptionSourceHelpers);
   }
 
   static String? resolvedOptionSourceKey(StatusField field) {
@@ -175,7 +250,6 @@ class StatusFieldOptionResolver {
       'admin_id' => statusFieldOptionSourceAdmins,
       'driver_id' => statusFieldOptionSourceDrivers,
       'helper_id' => statusFieldOptionSourceHelpers,
-      'representative_id' => statusFieldOptionSourceClientMembers,
       'vehicle_make_id' => statusFieldOptionSourceVehicleMakes,
       'vehicle_type_id' => statusFieldOptionSourceVehicleTypes,
       'van_size' => statusFieldOptionSourceVehicleSizes,

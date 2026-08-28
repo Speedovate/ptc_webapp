@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/offline_sync_status_service.dart';
-import 'package:webapp/utils/functions.dart';
 
 class AppSyncStatusBanner extends StatelessWidget {
   const AppSyncStatusBanner({
@@ -18,16 +18,34 @@ class AppSyncStatusBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final service = OfflineSyncStatusService.instance;
+    final canReadSync = currentUser == null
+        ? true
+        : RoleAccessService.instance.canAccess(
+            'sync.read',
+            role: currentUser?.role,
+          );
+    if (!canReadSync) {
+      return child;
+    }
+    final usesAdminShell = RoleAccessService.instance.usesAdminShell(
+      role: currentUser?.role,
+    );
     return AnimatedBuilder(
       animation: service,
       builder: (context, _) {
-        final snapshot = service.snapshot;
+        final primarySnapshot = usesAdminShell
+            ? service.knownSessionSnapshot
+            : service.snapshot;
+        final fallbackSnapshot = service.snapshot;
+        final snapshot =
+            usesAdminShell &&
+                !_shouldShowBannerFor(primarySnapshot) &&
+                _shouldShowBannerFor(fallbackSnapshot)
+            ? fallbackSnapshot
+            : primarySnapshot;
         final showBanner =
-            !snapshot.isOnline ||
-            snapshot.hasFailedActions ||
-            snapshot.hasPendingActions ||
-            snapshot.isSyncing;
-        final anchorToSidebarBottom = isBackOfficeRole(currentUser?.role);
+            _shouldShowBannerFor(snapshot);
+        final anchorToSidebarBottom = usesAdminShell;
         final safePadding = MediaQuery.paddingOf(context);
         return Stack(
           children: [
@@ -79,6 +97,13 @@ class AppSyncStatusBanner extends StatelessWidget {
       },
     );
   }
+
+  bool _shouldShowBannerFor(OfflineSyncStatusSnapshot snapshot) {
+    return !snapshot.isOnline ||
+        snapshot.hasFailedActions ||
+        snapshot.hasPendingActions ||
+        snapshot.isSyncing;
+  }
 }
 
 class _SyncStatusPill extends StatelessWidget {
@@ -95,7 +120,9 @@ class _SyncStatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final compactSidebarBanner = isBackOfficeRole(currentUser?.role);
+    final compactSidebarBanner = RoleAccessService.instance.usesAdminShell(
+      role: currentUser?.role,
+    );
     final bool offlineWithPending =
         !snapshot.isOnline && snapshot.pendingActions > 0;
     final bool syncing = snapshot.isSyncing;

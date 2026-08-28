@@ -8,11 +8,10 @@ import 'package:webapp/views/shared/app_shell.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/services/firestore_offline_service.dart';
-import 'package:webapp/services/offline_media_sync_service.dart';
-import 'package:webapp/services/offline_sync_status_service.dart';
-import 'package:webapp/services/offline_cleanup_queue_service.dart';
-import 'package:webapp/services/offline_mutation_queue_service.dart';
-import 'package:webapp/services/booking_offline_upload_queue_service.dart';
+import 'package:webapp/services/offline_queue_coordinator_service.dart';
+
+const Duration _firebaseBootstrapTimeout = Duration(seconds: 6);
+const Duration _firestoreBootstrapTimeout = Duration(seconds: 4);
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,14 +40,37 @@ Future<void> main() async {
 }
 
 Future<void> _bootstrapApplication() async {
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  await FirestoreOfflineService.initialize();
-  await BookingOfflineUploadQueueService.instance.initialize();
-  await OfflineMediaSyncService.instance.initialize();
-  await OfflineMutationQueueService.instance.initialize();
-  await OfflineCleanupQueueService.instance.initialize();
-  await OfflineSyncStatusService.instance.initialize();
-  await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(true);
+  try {
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      ).timeout(_firebaseBootstrapTimeout);
+    }
+  } catch (error) {
+    // Ignore bootstrap init failures here; the app handles degraded startup.
+  }
+  try {
+    await FirestoreOfflineService.initialize().timeout(
+      _firestoreBootstrapTimeout,
+    );
+  } catch (error) {
+    // Ignore offline bootstrap failures here; runtime requests can still recover.
+  }
+  unawaited(
+    () async {
+      try {
+        await OfflineQueueCoordinatorService.instance.initialize();
+      } catch (error) {
+        // Ignore background queue bootstrap failures here.
+      }
+    }(),
+  );
+  unawaited(
+    FirebaseAnalytics.instance
+        .setAnalyticsCollectionEnabled(true)
+        .then((_) {})
+        .catchError((error, stackTrace) {}),
+  );
 }
 
 TextTheme _withTextHeight(TextTheme textTheme, double height) {
@@ -129,6 +151,104 @@ class MyApp extends StatelessWidget {
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.white,
         ),
+        datePickerTheme: DatePickerThemeData(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
+          headerBackgroundColor: Colors.white,
+          headerForegroundColor: AppColors.textPrimary,
+          weekdayStyle: const TextStyle(color: AppColors.textSecondary),
+          dayForegroundColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return Colors.white;
+            }
+            return AppColors.textPrimary;
+          }),
+          dayBackgroundColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return AppColors.primaryColor;
+            }
+            return Colors.white;
+          }),
+          todayForegroundColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return Colors.white;
+            }
+            return AppColors.primaryColor;
+          }),
+          todayBackgroundColor: WidgetStateProperty.all(Colors.white),
+          yearForegroundColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return Colors.white;
+            }
+            return AppColors.textPrimary;
+          }),
+          yearBackgroundColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return AppColors.primaryColor;
+            }
+            return Colors.white;
+          }),
+          rangeSelectionBackgroundColor: AppColors.primaryColor.withValues(
+            alpha: 0.12,
+          ),
+          rangeSelectionOverlayColor: WidgetStateProperty.all(
+            Colors.transparent,
+          ),
+          cancelButtonStyle: TextButton.styleFrom(
+            foregroundColor: AppColors.textPrimary,
+          ),
+          confirmButtonStyle: TextButton.styleFrom(
+            foregroundColor: AppColors.primaryColor,
+          ),
+          dividerColor: AppColors.primaryBorder,
+        ),
+        timePickerTheme: TimePickerThemeData(
+          backgroundColor: Colors.white,
+          dialBackgroundColor: const Color(0xFFF7F4FF),
+          hourMinuteColor: const Color(0xFFF7F4FF),
+          hourMinuteTextColor: AppColors.textPrimary,
+          dayPeriodColor: WidgetStateColor.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return AppColors.primaryColor;
+            }
+            return Colors.white;
+          }),
+          dayPeriodTextColor: WidgetStateColor.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return Colors.white;
+            }
+            return AppColors.textPrimary;
+          }),
+          dialHandColor: AppColors.primaryColor,
+          dialTextColor: WidgetStateColor.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return Colors.white;
+            }
+            return AppColors.textPrimary;
+          }),
+          entryModeIconColor: AppColors.primaryColor,
+          helpTextStyle: const TextStyle(
+            color: AppColors.textSecondary,
+            fontWeight: FontWeight.w600,
+          ),
+          hourMinuteTextStyle: const TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w700,
+          ),
+          dayPeriodTextStyle: const TextStyle(
+            fontWeight: FontWeight.w700,
+          ),
+          inputDecorationTheme: const InputDecorationTheme(
+            filled: true,
+            fillColor: Colors.white,
+          ),
+          cancelButtonStyle: TextButton.styleFrom(
+            foregroundColor: AppColors.textPrimary,
+          ),
+          confirmButtonStyle: TextButton.styleFrom(
+            foregroundColor: AppColors.primaryColor,
+          ),
+        ),
         filledButtonTheme: FilledButtonThemeData(
           style: ButtonStyle(
             overlayColor: WidgetStateProperty.all(Colors.transparent),
@@ -160,9 +280,9 @@ class MyApp extends StatelessWidget {
           ),
           actionTextColor: Colors.white,
         ),
-        textSelectionTheme: const TextSelectionThemeData(
+        textSelectionTheme: TextSelectionThemeData(
           cursorColor: AppColors.primaryColor,
-          selectionColor: AppColors.primaryBorder,
+          selectionColor: AppColors.primaryColor.withValues(alpha: 0.32),
           selectionHandleColor: AppColors.primaryColor,
         ),
       ),

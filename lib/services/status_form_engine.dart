@@ -64,7 +64,6 @@ class StatusFormEngine {
       final usesIdBackedDynamicSelection =
           normalizedKey == 'driver_id' ||
           normalizedKey == 'helper_id' ||
-          normalizedKey == 'representative_id' ||
           (isIdKey && usesDynamicSource) ||
           optionSourceKey == statusFieldOptionSourceDrivers ||
           optionSourceKey == statusFieldOptionSourceHelpers ||

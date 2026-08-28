@@ -3,9 +3,9 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
-import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_home.vm.dart';
 import 'package:webapp/views/admin/admin_bookings.dart';
+import 'package:webapp/views/admin/admin_access.dart';
 import 'package:webapp/views/admin/admin_dashboard.dart';
 import 'package:webapp/views/admin/admin_fields.dart';
 import 'package:webapp/views/admin/admin_forms.dart';
@@ -22,6 +22,8 @@ import 'package:webapp/widgets/shared/platform_shell.dart';
 import 'package:webapp/widgets/shared/support_section_navigation_scope.dart';
 import 'package:webapp/widgets/shared/user_bookings_section.dart';
 import 'package:webapp/widgets/sidebar_menu_item.dart';
+import 'package:webapp/models/dispatcher_access_config.dart';
+import 'package:webapp/services/role_access_service.dart';
 
 class AdminHome extends StatefulWidget {
   const AdminHome({
@@ -45,6 +47,7 @@ class _AdminHomeState extends State<AdminHome> {
   final AdminHomeViewModel _viewModel = AdminHomeViewModel();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final AuthRepository _authRepository = AuthRequest.instance;
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
   late UserModel _shellUser;
   bool _isUploadingProfilePhoto = false;
   String? _supportInitialTopicKey;
@@ -109,70 +112,188 @@ class _AdminHomeState extends State<AdminHome> {
 
   @override
   Widget build(BuildContext context) {
-    return ViewModelBuilder<AdminHomeViewModel>.reactive(
-      viewModelBuilder: () => _viewModel,
-      builder: (context, vm, _) {
-        final width = MediaQuery.of(context).size.width;
-        final isCompact = width < 1100;
-        final showRail = !isCompact && vm.showDrawer;
-        final overlayVisible = _isUploadingProfilePhoto;
+    return AnimatedBuilder(
+      animation: _roleAccessService,
+      builder: (context, _) {
+        return ViewModelBuilder<AdminHomeViewModel>.reactive(
+          viewModelBuilder: () => _viewModel,
+          builder: (context, vm, _) {
+            final width = MediaQuery.of(context).size.width;
+            final isCompact = width < 1100;
+            final showRail = !isCompact && vm.showDrawer;
+            final overlayVisible = _isUploadingProfilePhoto;
 
-        return PlatformShell(
-          scaffoldKey: _scaffoldKey,
-          user: _shellUser,
-          title: _selectedSectionTitle(vm),
-          isCompact: isCompact,
-          showRail: showRail,
-          onToggleNavigation: vm.toggleDrawer,
-          onProfile: () => vm.selectSection(AdminSection.profile),
-          onLogout: widget.onLogout,
-          logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-          sidebar: _buildSidebar(vm, isCompact: isCompact),
-          body: SupportSectionNavigationScope(
-            onOpenSupport: ({
-              String? initialTopicKey,
-              String? initialBookingId,
-              String? initialUserId,
-            }) {
-              setState(() {
-                _supportInitialTopicKey = initialTopicKey;
-                _supportInitialBookingId = initialBookingId;
-                _supportInitialUserId = initialUserId;
-                _supportViewTick++;
-              });
-              vm.selectSection(AdminSection.support);
-            },
-            child: AppPageLoadingOverlay(
-              isVisible: overlayVisible,
-              message: 'Uploading profile photo ...',
-              child: KeyedSubtree(
-                key: ValueKey(
-                  '${vm.selectedSection}:${vm.selectedSettingsSection}',
-                ),
-                child: AdminShellLayoutScope(
-                  filtersRightGap: showRail ? 44 : 24,
-                  child: _buildSelectedSection(vm.selectedSection),
+            return PlatformShell(
+              scaffoldKey: _scaffoldKey,
+              user: _shellUser,
+              title: _selectedSectionTitle(vm),
+              isCompact: isCompact,
+              showRail: showRail,
+              onToggleNavigation: vm.toggleDrawer,
+              onProfile: () => vm.selectSection(AdminSection.profile),
+              onLogout: widget.onLogout,
+              logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
+              sidebar: _buildSidebar(vm, isCompact: isCompact),
+              body: SupportSectionNavigationScope(
+                onOpenSupport: ({
+                  String? initialTopicKey,
+                  String? initialBookingId,
+                  String? initialUserId,
+                }) {
+                  setState(() {
+                    _supportInitialTopicKey = initialTopicKey;
+                    _supportInitialBookingId = initialBookingId;
+                    _supportInitialUserId = initialUserId;
+                    _supportViewTick++;
+                  });
+                  vm.selectSection(AdminSection.support);
+                },
+                child: AppPageLoadingOverlay(
+                  isVisible: overlayVisible,
+                  message: 'Uploading profile photo ...',
+                  child: KeyedSubtree(
+                    key: ValueKey(
+                      '${vm.selectedSection}:${vm.selectedSettingsSection}',
+                    ),
+                    child: AdminShellLayoutScope(
+                      filtersRightGap: showRail ? 44 : 24,
+                      child: _buildSelectedSection(vm.selectedSection),
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
   }
 
-  bool get _canAccessVehicles => canAccessVehicleAdmin(_shellUser.role);
+  bool get _canReadDashboard => _roleAccessService.canAccess(
+    DispatcherAccessCapability.dashboardRead,
+    role: _shellUser.role,
+  );
 
-  bool get _canAccessFlows => canAccessFlowAdmin(_shellUser.role);
+  bool get _canReadBookings => _roleAccessService.canAccess(
+    DispatcherAccessCapability.bookingsRead,
+    role: _shellUser.role,
+  );
+
+  bool get _canReadUsers => _roleAccessService.canAccess(
+    DispatcherAccessCapability.usersRead,
+    role: _shellUser.role,
+  );
+
+  bool get _canReadSupport => _roleAccessService.canAccess(
+    DispatcherAccessCapability.supportRead,
+    role: _shellUser.role,
+  );
+
+  bool get _canReadProfile => _roleAccessService.canAccess(
+    DispatcherAccessCapability.profileRead,
+    role: _shellUser.role,
+  );
+
+  bool get _canUpdateProfile => _roleAccessService.canAccess(
+    DispatcherAccessCapability.profileUpdate,
+    role: _shellUser.role,
+  );
+
+  bool get _canReadRoles => _roleAccessService.canAccess(
+    DispatcherAccessCapability.roleAccessRead,
+    role: _shellUser.role,
+  );
+
+  bool get _canAccessVehicles => _roleAccessService.hasAnyAccess(
+    const [
+      DispatcherAccessCapability.vehicleMakesRead,
+      DispatcherAccessCapability.vehicleTypesRead,
+      DispatcherAccessCapability.vehicleSizesRead,
+    ],
+    role: _shellUser.role,
+  );
+
+  bool get _canReadVehicleMakes => _roleAccessService.canAccess(
+    DispatcherAccessCapability.vehicleMakesRead,
+    role: _shellUser.role,
+  );
+
+  bool get _canReadVehicleTypes => _roleAccessService.canAccess(
+    DispatcherAccessCapability.vehicleTypesRead,
+    role: _shellUser.role,
+  );
+
+  bool get _canReadVehicleSizes => _roleAccessService.canAccess(
+    DispatcherAccessCapability.vehicleSizesRead,
+    role: _shellUser.role,
+  );
+
+  bool get _canAccessFlows => _roleAccessService.hasAnyAccess(
+    const [
+      DispatcherAccessCapability.statusesRead,
+      DispatcherAccessCapability.formsRead,
+      DispatcherAccessCapability.fieldsRead,
+    ],
+    role: _shellUser.role,
+  );
+
+  bool get _canReadStatuses => _roleAccessService.canAccess(
+    DispatcherAccessCapability.statusesRead,
+    role: _shellUser.role,
+  );
+
+  bool get _canReadForms => _roleAccessService.canAccess(
+    DispatcherAccessCapability.formsRead,
+    role: _shellUser.role,
+  );
+
+  bool get _canReadFields => _roleAccessService.canAccess(
+    DispatcherAccessCapability.fieldsRead,
+    role: _shellUser.role,
+  );
 
   AdminSection _resolvedSection(AdminSection section) {
+    if (section == AdminSection.dashboard && !_canReadDashboard) {
+      return _fallbackSection();
+    }
+    if (section == AdminSection.bookings && !_canReadBookings) {
+      return _fallbackSection();
+    }
     if (section == AdminSection.vehicles && !_canAccessVehicles) {
-      return AdminSection.dashboard;
+      return _fallbackSection();
     }
     if (section == AdminSection.settings && !_canAccessFlows) {
-      return AdminSection.dashboard;
+      return _fallbackSection();
+    }
+    if (section == AdminSection.users && !_canReadUsers) {
+      return _fallbackSection();
+    }
+    if (section == AdminSection.support && !_canReadSupport) {
+      return _fallbackSection();
+    }
+    if (section == AdminSection.profile && !_canReadProfile) {
+      return _fallbackSection();
+    }
+    if (section == AdminSection.access && !_canReadRoles) {
+      return _fallbackSection();
     }
     return section;
+  }
+
+  AdminSection _fallbackSection() {
+    if (_canReadDashboard) {
+      return AdminSection.dashboard;
+    }
+    if (_canReadBookings) {
+      return AdminSection.bookings;
+    }
+    if (_canReadSupport) {
+      return AdminSection.support;
+    }
+    if (_canReadUsers) {
+      return AdminSection.users;
+    }
+    return AdminSection.profile;
   }
 
   Widget _buildSidebar(AdminHomeViewModel vm, {required bool isCompact}) {
@@ -184,28 +305,30 @@ class _AdminHomeState extends State<AdminHome> {
         }
       },
       children: [
-        SidebarMenuItem(
-          label: AdminSection.dashboard.title,
-          icon: _menuIcon(AdminSection.dashboard),
-          isSelected: vm.selectedSection == AdminSection.dashboard,
-          onTap: () {
-            vm.selectSection(AdminSection.dashboard);
-            if (isCompact) {
-              Navigator.of(context).pop();
-            }
-          },
-        ),
-        SidebarMenuItem(
-          label: AdminSection.bookings.title,
-          icon: _menuIcon(AdminSection.bookings),
-          isSelected: vm.selectedSection == AdminSection.bookings,
-          onTap: () {
-            vm.selectSection(AdminSection.bookings);
-            if (isCompact) {
-              Navigator.of(context).pop();
-            }
-          },
-        ),
+        if (_canReadDashboard)
+          SidebarMenuItem(
+            label: AdminSection.dashboard.title,
+            icon: _menuIcon(AdminSection.dashboard),
+            isSelected: vm.selectedSection == AdminSection.dashboard,
+            onTap: () {
+              vm.selectSection(AdminSection.dashboard);
+              if (isCompact) {
+                Navigator.of(context).pop();
+              }
+            },
+          ),
+        if (_canReadBookings)
+          SidebarMenuItem(
+            label: AdminSection.bookings.title,
+            icon: _menuIcon(AdminSection.bookings),
+            isSelected: vm.selectedSection == AdminSection.bookings,
+            onTap: () {
+              vm.selectSection(AdminSection.bookings);
+              if (isCompact) {
+                Navigator.of(context).pop();
+              }
+            },
+          ),
         if (_canAccessVehicles)
           SidebarMenuItem(
             label: AdminSection.vehicles.title,
@@ -221,65 +344,81 @@ class _AdminHomeState extends State<AdminHome> {
             onTap: vm.toggleVehiclesExpanded,
             children: vm.isVehiclesExpanded
                 ? [
-                    SidebarMenuItem(
-                      label: AdminVehiclesSection.makes.title,
-                      icon: Icons.directions_car_filled,
-                      isChild: true,
-                      isSelected:
-                          vm.selectedSection == AdminSection.vehicles &&
-                          vm.selectedVehiclesSection ==
-                              AdminVehiclesSection.makes,
-                      onTap: () {
-                        vm.selectVehiclesSection(AdminVehiclesSection.makes);
-                        if (isCompact) {
-                          Navigator.of(context).pop();
-                        }
-                      },
-                    ),
-                    SidebarMenuItem(
-                      label: AdminVehiclesSection.types.title,
-                      icon: Icons.category_rounded,
-                      isChild: true,
-                      isSelected:
-                          vm.selectedSection == AdminSection.vehicles &&
-                          vm.selectedVehiclesSection ==
-                              AdminVehiclesSection.types,
-                      onTap: () {
-                        vm.selectVehiclesSection(AdminVehiclesSection.types);
-                        if (isCompact) {
-                          Navigator.of(context).pop();
-                        }
-                      },
-                    ),
-                    SidebarMenuItem(
-                      label: AdminVehiclesSection.sizes.title,
-                      icon: Icons.crop_16_9_rounded,
-                      isChild: true,
-                      isSelected:
-                          vm.selectedSection == AdminSection.vehicles &&
-                          vm.selectedVehiclesSection ==
-                              AdminVehiclesSection.sizes,
-                      onTap: () {
-                        vm.selectVehiclesSection(AdminVehiclesSection.sizes);
-                        if (isCompact) {
-                          Navigator.of(context).pop();
-                        }
-                      },
-                    ),
+                    if (_canReadVehicleMakes)
+                      SidebarMenuItem(
+                        label: AdminVehiclesSection.makes.title,
+                        icon: Icons.directions_car_filled,
+                        isChild: true,
+                        isSelected:
+                            vm.selectedSection == AdminSection.vehicles &&
+                            vm.selectedVehiclesSection ==
+                                AdminVehiclesSection.makes,
+                        onTap: () {
+                          vm.selectVehiclesSection(AdminVehiclesSection.makes);
+                          if (isCompact) {
+                            Navigator.of(context).pop();
+                          }
+                        },
+                      ),
+                    if (_canReadVehicleTypes)
+                      SidebarMenuItem(
+                        label: AdminVehiclesSection.types.title,
+                        icon: Icons.category_rounded,
+                        isChild: true,
+                        isSelected:
+                            vm.selectedSection == AdminSection.vehicles &&
+                            vm.selectedVehiclesSection ==
+                                AdminVehiclesSection.types,
+                        onTap: () {
+                          vm.selectVehiclesSection(AdminVehiclesSection.types);
+                          if (isCompact) {
+                            Navigator.of(context).pop();
+                          }
+                        },
+                      ),
+                    if (_canReadVehicleSizes)
+                      SidebarMenuItem(
+                        label: AdminVehiclesSection.sizes.title,
+                        icon: Icons.crop_16_9_rounded,
+                        isChild: true,
+                        isSelected:
+                            vm.selectedSection == AdminSection.vehicles &&
+                            vm.selectedVehiclesSection ==
+                                AdminVehiclesSection.sizes,
+                        onTap: () {
+                          vm.selectVehiclesSection(AdminVehiclesSection.sizes);
+                          if (isCompact) {
+                            Navigator.of(context).pop();
+                          }
+                        },
+                      ),
                   ]
                 : const [],
           ),
-        SidebarMenuItem(
-          label: AdminSection.support.title,
-          icon: _menuIcon(AdminSection.support),
-          isSelected: vm.selectedSection == AdminSection.support,
-          onTap: () {
-            vm.selectSection(AdminSection.support);
-            if (isCompact) {
-              Navigator.of(context).pop();
-            }
-          },
-        ),
+        if (_canReadSupport)
+          SidebarMenuItem(
+            label: AdminSection.support.title,
+            icon: _menuIcon(AdminSection.support),
+            isSelected: vm.selectedSection == AdminSection.support,
+            onTap: () {
+              vm.selectSection(AdminSection.support);
+              if (isCompact) {
+                Navigator.of(context).pop();
+              }
+            },
+          ),
+        if (_canReadRoles)
+          SidebarMenuItem(
+            label: AdminSection.access.title,
+            icon: _menuIcon(AdminSection.access),
+            isSelected: vm.selectedSection == AdminSection.access,
+            onTap: () {
+              vm.selectSection(AdminSection.access);
+              if (isCompact) {
+                Navigator.of(context).pop();
+              }
+            },
+          ),
         if (_canAccessFlows)
           SidebarMenuItem(
             label: AdminSection.settings.title,
@@ -295,76 +434,83 @@ class _AdminHomeState extends State<AdminHome> {
             onTap: vm.toggleSettingsExpanded,
             children: vm.isSettingsExpanded
                 ? [
-                    SidebarMenuItem(
-                      label: AdminSettingsSection.statuses.title,
-                      icon: Icons.flag_rounded,
-                      isChild: true,
-                      isSelected:
-                          vm.selectedSection == AdminSection.settings &&
-                          vm.selectedSettingsSection ==
-                              AdminSettingsSection.statuses,
-                      onTap: () {
-                        vm.selectSettingsSection(AdminSettingsSection.statuses);
-                        if (isCompact) {
-                          Navigator.of(context).pop();
-                        }
-                      },
-                    ),
-                    SidebarMenuItem(
-                      label: AdminSettingsSection.forms.title,
-                      icon: Icons.description_rounded,
-                      isChild: true,
-                      isSelected:
-                          vm.selectedSection == AdminSection.settings &&
-                          vm.selectedSettingsSection ==
-                              AdminSettingsSection.forms,
-                      onTap: () {
-                        vm.selectSettingsSection(AdminSettingsSection.forms);
-                        if (isCompact) {
-                          Navigator.of(context).pop();
-                        }
-                      },
-                    ),
-                    SidebarMenuItem(
-                      label: AdminSettingsSection.fields.title,
-                      icon: Icons.list_alt_rounded,
-                      isChild: true,
-                      isSelected:
-                          vm.selectedSection == AdminSection.settings &&
-                          vm.selectedSettingsSection ==
-                              AdminSettingsSection.fields,
-                      onTap: () {
-                        vm.selectSettingsSection(AdminSettingsSection.fields);
-                        if (isCompact) {
-                          Navigator.of(context).pop();
-                        }
-                      },
-                    ),
+                    if (_canReadStatuses)
+                      SidebarMenuItem(
+                        label: AdminSettingsSection.statuses.title,
+                        icon: Icons.flag_rounded,
+                        isChild: true,
+                        isSelected:
+                            vm.selectedSection == AdminSection.settings &&
+                            vm.selectedSettingsSection ==
+                                AdminSettingsSection.statuses,
+                        onTap: () {
+                          vm.selectSettingsSection(
+                            AdminSettingsSection.statuses,
+                          );
+                          if (isCompact) {
+                            Navigator.of(context).pop();
+                          }
+                        },
+                      ),
+                    if (_canReadForms)
+                      SidebarMenuItem(
+                        label: AdminSettingsSection.forms.title,
+                        icon: Icons.description_rounded,
+                        isChild: true,
+                        isSelected:
+                            vm.selectedSection == AdminSection.settings &&
+                            vm.selectedSettingsSection ==
+                                AdminSettingsSection.forms,
+                        onTap: () {
+                          vm.selectSettingsSection(AdminSettingsSection.forms);
+                          if (isCompact) {
+                            Navigator.of(context).pop();
+                          }
+                        },
+                      ),
+                    if (_canReadFields)
+                      SidebarMenuItem(
+                        label: AdminSettingsSection.fields.title,
+                        icon: Icons.list_alt_rounded,
+                        isChild: true,
+                        isSelected:
+                            vm.selectedSection == AdminSection.settings &&
+                            vm.selectedSettingsSection ==
+                                AdminSettingsSection.fields,
+                        onTap: () {
+                          vm.selectSettingsSection(AdminSettingsSection.fields);
+                          if (isCompact) {
+                            Navigator.of(context).pop();
+                          }
+                        },
+                      ),
                   ]
                 : const [],
           ),
-        SidebarMenuItem(
-          label: AdminSection.users.title,
-          icon: _menuIcon(AdminSection.users),
-          isSelected: vm.selectedSection == AdminSection.users,
-          onTap: () {
-            vm.selectSection(AdminSection.users);
-            if (isCompact) {
-              Navigator.of(context).pop();
-            }
-          },
-        ),
-        SidebarMenuItem(
-          label: AdminSection.profile.title,
-          icon: _menuIcon(AdminSection.profile),
-          isSelected: vm.selectedSection == AdminSection.profile,
-          onTap: () {
-            vm.selectSection(AdminSection.profile);
-            if (isCompact) {
-              Navigator.of(context).pop();
-            }
-          },
-        ),
+        if (_canReadUsers)
+          SidebarMenuItem(
+            label: AdminSection.users.title,
+            icon: _menuIcon(AdminSection.users),
+            isSelected: vm.selectedSection == AdminSection.users,
+            onTap: () {
+              vm.selectSection(AdminSection.users);
+              if (isCompact) {
+                Navigator.of(context).pop();
+              }
+            },
+          ),
+        if (_canReadProfile)
+          SidebarMenuItem(
+            label: AdminSection.profile.title,
+            icon: _menuIcon(AdminSection.profile),
+            isSelected: vm.selectedSection == AdminSection.profile,
+            onTap: () {
+              vm.selectSection(AdminSection.profile);
+              if (isCompact) {
+                Navigator.of(context).pop();
+              }
+            },
+          ),
       ],
     );
   }
@@ -374,12 +520,12 @@ class _AdminHomeState extends State<AdminHome> {
     return switch (resolvedSection) {
       AdminSection.dashboard => const AdminDashboardView(),
       AdminSection.bookings => AdminBookingsView(user: widget.user),
-      AdminSection.vehicles => switch (_viewModel.selectedVehiclesSection) {
+      AdminSection.vehicles => switch (_resolvedVehiclesSection()) {
         AdminVehiclesSection.makes => const AdminVehicleMakesView(),
         AdminVehiclesSection.sizes => const AdminVehicleSizesView(),
         AdminVehiclesSection.types => const AdminVehicleTypesView(),
       },
-      AdminSection.settings => switch (_viewModel.selectedSettingsSection) {
+      AdminSection.settings => switch (_resolvedSettingsSection()) {
         AdminSettingsSection.forms => const AdminFormsView(),
         AdminSettingsSection.fields => const AdminFieldsView(),
         AdminSettingsSection.statuses => const AdminStatusesView(),
@@ -392,6 +538,7 @@ class _AdminHomeState extends State<AdminHome> {
         initialEditUserId: _viewModel.pendingEditUserId,
         onInitialEditHandled: _viewModel.clearPendingEditUser,
       ),
+      AdminSection.access => const AdminAccessView(),
       AdminSection.support => SupportCenterView(
         key: ValueKey(
           'support:$_supportViewTick:${_supportInitialTopicKey ?? '-'}:${_supportInitialBookingId ?? '-'}:${_supportInitialUserId ?? '-'}',
@@ -415,7 +562,9 @@ class _AdminHomeState extends State<AdminHome> {
               isCurrentUserView: true,
               onLogout: widget.onLogout,
               logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-              onSaveProfileChanges: _saveProfileChanges,
+              onSaveProfileChanges: _canUpdateProfile
+                  ? _saveProfileChanges
+                  : null,
               onEditPressed: () {
                 _viewModel.openUsersForEdit(_shellUser.id);
               },
@@ -426,6 +575,46 @@ class _AdminHomeState extends State<AdminHome> {
         ),
       ),
     };
+  }
+
+  AdminVehiclesSection _resolvedVehiclesSection() {
+    final selected = _viewModel.selectedVehiclesSection;
+    if (selected == AdminVehiclesSection.makes && _canReadVehicleMakes) {
+      return selected;
+    }
+    if (selected == AdminVehiclesSection.types && _canReadVehicleTypes) {
+      return selected;
+    }
+    if (selected == AdminVehiclesSection.sizes && _canReadVehicleSizes) {
+      return selected;
+    }
+    if (_canReadVehicleMakes) {
+      return AdminVehiclesSection.makes;
+    }
+    if (_canReadVehicleTypes) {
+      return AdminVehiclesSection.types;
+    }
+    return AdminVehiclesSection.sizes;
+  }
+
+  AdminSettingsSection _resolvedSettingsSection() {
+    final selected = _viewModel.selectedSettingsSection;
+    if (selected == AdminSettingsSection.statuses && _canReadStatuses) {
+      return selected;
+    }
+    if (selected == AdminSettingsSection.forms && _canReadForms) {
+      return selected;
+    }
+    if (selected == AdminSettingsSection.fields && _canReadFields) {
+      return selected;
+    }
+    if (_canReadStatuses) {
+      return AdminSettingsSection.statuses;
+    }
+    if (_canReadForms) {
+      return AdminSettingsSection.forms;
+    }
+    return AdminSettingsSection.fields;
   }
 
   String _selectedSectionTitle(AdminHomeViewModel vm) {
@@ -446,6 +635,7 @@ class _AdminHomeState extends State<AdminHome> {
       AdminSection.vehicles => Icons.local_shipping,
       AdminSection.settings => Icons.alt_route_rounded,
       AdminSection.users => Icons.people_alt_rounded,
+      AdminSection.access => Icons.manage_accounts_rounded,
       AdminSection.support => Icons.support_agent_rounded,
       AdminSection.profile => Icons.account_circle_rounded,
     };

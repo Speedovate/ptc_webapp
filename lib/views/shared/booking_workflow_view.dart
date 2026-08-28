@@ -4,11 +4,13 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/constants/palawan_locations.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/vehicle.request.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/utils/functions.dart';
@@ -55,15 +57,22 @@ class BookingWorkflowView extends StatefulWidget {
 }
 
 String? _supportTargetUserIdForBooking(UserModel currentUser, Booking booking) {
-  if (!isBackOfficeRole(currentUser.role)) {
+  final effectiveRole = RoleAccessService.instance.effectiveRoleKey(
+    currentUser.role,
+  );
+  final canOpenRequesterSupport =
+      RoleAccessService.instance.canAccess(
+        DispatcherAccessCapability.supportRead,
+        role: effectiveRole,
+      ) &&
+      RoleAccessService.instance.canAccess(
+        DispatcherAccessCapability.usersRead,
+        role: effectiveRole,
+      );
+  if (!canOpenRequesterSupport) {
     return null;
   }
-  return normalizeId(
-    BookingRecordCard.outputFieldValue(
-      booking.statusOutputs,
-      'representative_id',
-    )?.toString(),
-  );
+  return normalizeId(booking.client?.id);
 }
 
 class _WorkflowHeaderPalette {
@@ -469,6 +478,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
     String? statusDescription,
     String? guidanceMessage,
   ) {
+    final canUpdateBooking = vm.canUpdateBooking;
     final resolvedPrimaryFields = vm.form == null
         ? vm.fields
         : vm.fieldsForForm(vm.form!, answers: vm.answers);
@@ -569,7 +579,10 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                     onTapDown: (_) => _unfocusWithoutScroll(context),
                     child: FilledButton(
                       focusNode: _primaryActionFocusNode,
-                      onPressed: vm.isSubmitting || vm.blockedMessage != null
+                      onPressed:
+                          !canUpdateBooking ||
+                                  vm.isSubmitting ||
+                                  vm.blockedMessage != null
                           ? null
                           : () async {
                               final scrollSnapshot = _captureScrollSnapshot(
@@ -667,7 +680,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                       behavior: HitTestBehavior.opaque,
                       onTapDown: (_) => _unfocusWithoutScroll(context),
                       child: TextButton(
-                        onPressed: vm.isSubmitting
+                        onPressed: !canUpdateBooking || vm.isSubmitting
                             ? null
                             : () {
                                 _unfocusWithoutScroll(context);
@@ -713,7 +726,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
           headlineStatusLabel: currentStatusLabel,
           statusLabelForKey: vm.statusLabelForKey,
           showStatusSubmissions: false,
-          showAllDetails: isBackOfficeRole(widget.user.role),
+          showAllDetails: vm.canViewWorkflowAdminDetails,
           originValue: BookingRecordCard.outputFieldDisplayValue(
             currentBooking.statusOutputs,
             'origin',
@@ -743,7 +756,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             );
           },
         ),
-        if (!isBackOfficeRole(widget.user.role)) ...[
+        if (!vm.canViewWorkflowAdminDetails) ...[
           Builder(
             builder: (context) {
               final waybillPhotoValue = BookingRecordCard.outputFieldValue(
@@ -761,7 +774,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             },
           ),
         ],
-        if (isBackOfficeRole(widget.user.role) &&
+        if (vm.canViewWorkflowAdminDetails &&
             (currentBooking.statusOutputs ?? const {}).isNotEmpty) ...[
           const SizedBox(height: 18),
           const AdminSectionTitle(title: 'Statuses'),
@@ -867,7 +880,8 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                     onTapDown: (_) => _unfocusWithoutScroll(context),
                     child: _nonFocusable(
                       FilledButton(
-                        onPressed: vm.isCancelSubmitting
+                        onPressed:
+                            !canUpdateBooking || vm.isCancelSubmitting
                             ? null
                             : () async {
                                 final scrollSnapshot = _captureScrollSnapshot(
@@ -941,7 +955,8 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                     behavior: HitTestBehavior.opaque,
                     onTapDown: (_) => _unfocusWithoutScroll(context),
                     child: TextButton(
-                      onPressed: vm.isCancelSubmitting
+                      onPressed:
+                          !canUpdateBooking || vm.isCancelSubmitting
                           ? null
                           : () {
                               _unfocusWithoutScroll(context);
@@ -1169,6 +1184,7 @@ class _WorkflowInteractiveFormSectionState
   @override
   Widget build(BuildContext context) {
     final vm = widget.vm;
+    final canUpdateBooking = vm.canUpdateBooking;
     final form = widget.form;
     final fields = vm.fieldsForForm(form, answers: _answers);
     final blockedMessage = widget.isDanger
@@ -1254,7 +1270,7 @@ class _WorkflowInteractiveFormSectionState
               onTapDown: (_) => widget.onUnfocusWithoutScroll(),
               child: FilledButton(
                 focusNode: _submitFocusNode,
-                onPressed: _isSubmitting
+                onPressed: !canUpdateBooking || _isSubmitting
                     ? null
                     : () async {
                         final validationErrors = vm.validateAnswersForForm(
@@ -1352,7 +1368,7 @@ class _WorkflowInteractiveFormSectionState
               behavior: HitTestBehavior.opaque,
               onTapDown: (_) => widget.onUnfocusWithoutScroll(),
               child: TextButton(
-                onPressed: _isSubmitting
+                onPressed: !canUpdateBooking || _isSubmitting
                     ? null
                     : () {
                         widget.onUnfocusWithoutScroll();
@@ -1476,19 +1492,6 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
     return StatusFormEngine.visibleFields(ordered, widget.answers);
   }
 
-  List<StatusField> _visibleFieldsForAnswers(Map<String, dynamic> answers) {
-    final ordered = <StatusField>[...widget.fields];
-    if (widget.allowAdditionalFields) {
-      ordered.addAll(
-        widget.vm.additionalFields.where((field) {
-          final key = field.key?.trim();
-          return key != null && key.isNotEmpty;
-        }),
-      );
-    }
-    return StatusFormEngine.visibleFields(ordered, answers);
-  }
-
   void _syncFocusNodes(List<StatusField> fields) {
     final activeKeys = <String>{};
     for (var index = 0; index < fields.length; index++) {
@@ -1508,77 +1511,26 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
     }
   }
 
-  bool _shouldActivateNextField(StatusField? nextField, FocusNode? nextFocus) {
-    if (nextFocus == null) {
-      return false;
-    }
-    if (nextField == null) {
-      return true;
-    }
-    final type = (nextField.type ?? '').trim().toLowerCase();
-    return type == 'dropdown' ||
-        type == 'search_dropdown' ||
-        type == 'date' ||
-        type == 'time' ||
-        type == 'photo';
-  }
-
   void _moveToNextVisibleFieldAfterSelection(
     StatusField currentField,
     dynamic nextValue,
   ) {
     final currentFieldKey = currentField.key?.trim();
     if (currentFieldKey == null || currentFieldKey.isEmpty) {
-      final submitFocusNode = widget.submitFocusNode;
-      if (submitFocusNode == null) {
-        return;
-      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
           return;
         }
-        FocusScope.of(context).requestFocus(submitFocusNode);
+        FocusScope.of(context).unfocus();
       });
       return;
     }
 
-    final nextAnswers = Map<String, dynamic>.from(widget.answers)
-      ..[currentFieldKey] = nextValue;
-    final visibleFields = _visibleFieldsForAnswers(nextAnswers);
-    final currentIndex = visibleFields.indexWhere((field) {
-      final fieldKey = field.key?.trim();
-      if (fieldKey?.isNotEmpty == true && fieldKey == currentFieldKey) {
-        return true;
-      }
-      return field.id != null && field.id == currentField.id;
-    });
-    final nextField = currentIndex >= 0 && currentIndex + 1 < visibleFields.length
-        ? visibleFields[currentIndex + 1]
-        : null;
-    final nextFocusNode = nextField == null
-        ? widget.submitFocusNode
-        : _fieldFocusNodes[_focusKeyForField(
-            nextField,
-            currentIndex + 1,
-          )];
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
       }
-      final resolvedNextFocusNode = nextFocusNode;
-      if (resolvedNextFocusNode == null) {
-        FocusScope.of(context).unfocus();
-        return;
-      }
-      FocusScope.of(context).requestFocus(resolvedNextFocusNode);
-      if (_shouldActivateNextField(nextField, resolvedNextFocusNode)) {
-        final primaryFocus = FocusManager.instance.primaryFocus;
-        final targetContext =
-            primaryFocus?.context ?? resolvedNextFocusNode.context;
-        if (targetContext != null) {
-          Actions.maybeInvoke(targetContext, const ActivateIntent());
-        }
-      }
+      FocusScope.of(context).unfocus();
     });
   }
 
@@ -1670,10 +1622,7 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
                 field: field,
                 focusNode: _fieldFocusNodes[focusKey],
                 nextFocusNode: nextFocusNode,
-                activateNextFocus: _shouldActivateNextField(
-                  nextField,
-                  nextFocusNode,
-                ),
+                activateNextFocus: false,
                 onAdvanceAfterSelection: (value) =>
                     _moveToNextVisibleFieldAfterSelection(field, value),
                 errorText: widget.errors[fieldKey],
@@ -1734,10 +1683,7 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
                 field: field,
                 focusNode: _fieldFocusNodes[focusKey],
                 nextFocusNode: nextFocusNode,
-                activateNextFocus: _shouldActivateNextField(
-                  nextField,
-                  nextFocusNode,
-                ),
+                activateNextFocus: false,
                 onAdvanceAfterSelection: (value) =>
                     _moveToNextVisibleFieldAfterSelection(field, value),
                 initialValue: widget.answers[field.key],
@@ -2206,7 +2152,6 @@ class _WorkflowFieldCard extends StatelessWidget {
       return AdminSearchSelectFormField(
         initialValue: initialValue?.toString(),
         focusNode: focusNode,
-        autoActivateOnFocus: activateNextFocus,
         decoration: _bookingDropdownDecoration(
           (field.required ?? false)
               ? adminSelectPlaceholder(fieldLabel, override: placeholder)
@@ -2217,34 +2162,16 @@ class _WorkflowFieldCard extends StatelessWidget {
         onChanged: (value) {
           onChanged(value);
           final handleAdvance = onAdvanceAfterSelection;
-          if (handleAdvance != null) {
-            handleAdvance(value);
-            return;
-          }
-          final resolvedNextFocusNode = nextFocusNode;
-          if (resolvedNextFocusNode != null) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!context.mounted) {
-                return;
-              }
-              FocusScope.of(context).requestFocus(resolvedNextFocusNode);
-              if (activateNextFocus) {
-                final primaryFocus = FocusManager.instance.primaryFocus;
-                final targetContext =
-                    primaryFocus?.context ?? resolvedNextFocusNode.context;
-                if (targetContext != null) {
-                  Actions.maybeInvoke(targetContext, const ActivateIntent());
-                }
-              }
-            });
-          } else {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!context.mounted) {
-                return;
-              }
-              FocusScope.of(context).unfocus();
-            });
-          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!context.mounted) {
+              return;
+            }
+            if (handleAdvance != null) {
+              handleAdvance(value);
+              return;
+            }
+            FocusScope.of(context).unfocus();
+          });
         },
       );
     }
@@ -2254,7 +2181,6 @@ class _WorkflowFieldCard extends StatelessWidget {
         return AdminSearchSelectFormField(
           initialValue: initialValue?.toString(),
           focusNode: focusNode,
-          autoActivateOnFocus: activateNextFocus,
           decoration: _bookingDropdownDecoration(
             (field.required ?? false)
                 ? adminSelectPlaceholder(fieldLabel, override: placeholder)
@@ -2265,36 +2191,18 @@ class _WorkflowFieldCard extends StatelessWidget {
           ).copyWith(errorText: errorText),
           options: field.options,
           onChanged: (value) {
-          onChanged(value);
-          final handleAdvance = onAdvanceAfterSelection;
-          if (handleAdvance != null) {
-            handleAdvance(value);
-            return;
-          }
-          final resolvedNextFocusNode = nextFocusNode;
-          if (resolvedNextFocusNode != null) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!context.mounted) {
-                  return;
-                }
-                FocusScope.of(context).requestFocus(resolvedNextFocusNode);
-                if (activateNextFocus) {
-                  final primaryFocus = FocusManager.instance.primaryFocus;
-                  final targetContext =
-                      primaryFocus?.context ?? resolvedNextFocusNode.context;
-                  if (targetContext != null) {
-                    Actions.maybeInvoke(targetContext, const ActivateIntent());
-                  }
-                }
-              });
-            } else {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!context.mounted) {
-                  return;
-                }
-                FocusScope.of(context).unfocus();
-              });
-            }
+            onChanged(value);
+            final handleAdvance = onAdvanceAfterSelection;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!context.mounted) {
+                return;
+              }
+              if (handleAdvance != null) {
+                handleAdvance(value);
+                return;
+              }
+              FocusScope.of(context).unfocus();
+            });
           },
         );
       case 'number':
@@ -2369,8 +2277,7 @@ class _WorkflowFieldCard extends StatelessWidget {
         final optionSourceKey =
             StatusFieldOptionResolver.resolvedOptionSourceKey(field);
         final memberOptionLabels =
-            optionSourceKey == statusFieldOptionSourceClientMembers ||
-                fieldKey == 'representative_id'
+            optionSourceKey == statusFieldOptionSourceClientMembers
             ? vm.memberOptionLabelsForCurrentBooking()
             : const <String, String>{};
         final effectiveOptions = field.options.isNotEmpty
@@ -2402,37 +2309,19 @@ class _WorkflowFieldCard extends StatelessWidget {
               ),
             );
           }).toList(),
-        onChanged: (value) {
-          onChanged(value);
-          final handleAdvance = onAdvanceAfterSelection;
-          if (handleAdvance != null) {
-            handleAdvance(value);
-            return;
-          }
-          final resolvedNextFocusNode = nextFocusNode;
-          if (resolvedNextFocusNode != null) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!context.mounted) {
-                  return;
-                }
-                FocusScope.of(context).requestFocus(resolvedNextFocusNode);
-                if (activateNextFocus) {
-                  final primaryFocus = FocusManager.instance.primaryFocus;
-                  final targetContext =
-                      primaryFocus?.context ?? resolvedNextFocusNode.context;
-                  if (targetContext != null) {
-                    Actions.maybeInvoke(targetContext, const ActivateIntent());
-                  }
-                }
-              });
-            } else {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!context.mounted) {
-                  return;
-                }
-                FocusScope.of(context).unfocus();
-              });
-            }
+          onChanged: (value) {
+            onChanged(value);
+            final handleAdvance = onAdvanceAfterSelection;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!context.mounted) {
+                return;
+              }
+              if (handleAdvance != null) {
+                handleAdvance(value);
+                return;
+              }
+              FocusScope.of(context).unfocus();
+            });
           },
         );
       case 'checkbox':

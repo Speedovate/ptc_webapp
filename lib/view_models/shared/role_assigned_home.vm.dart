@@ -10,6 +10,7 @@ import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class RoleAssignedHomeViewModel extends BaseViewModel {
@@ -30,6 +31,7 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   final AuthRepository _authRepository;
   final BookingRepository _bookingRepository;
   final StatusFormRepository _statusRepository;
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
   StreamSubscription<List<Booking>>? _bookingsSubscription;
   static List<Booking> _cachedAssignedBookings = const [];
   static UserModel? _cachedCurrentUser;
@@ -55,13 +57,30 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
 
   Future<void> load(UserModel user) async {
     busyMessage = 'Loading assigned bookings ...';
-    setBusy(true);
+    final hasVisiblePrimaryData =
+        assignedBookings.isNotEmpty ||
+        _cachedAssignedBookings.isNotEmpty ||
+        currentUser != null ||
+        _cachedCurrentUser != null ||
+        _usersById.isNotEmpty ||
+        _cachedUsersById.isNotEmpty ||
+        _statusesByKey.isNotEmpty ||
+        _cachedStatusesByKey.isNotEmpty;
+    final shouldShowLoadingState = !hasVisiblePrimaryData;
+    if (shouldShowLoadingState) {
+      setBusy(true);
+    }
     errorMessage = null;
     try {
       await _bookingRepository.initialize();
-      final users = await _authRepository.getUsers();
-      final statuses = await _statusRepository.getStatuses();
-      final bookings = await _bookingRepository.getBookings();
+      final results = await Future.wait([
+        _authRepository.getUsers(),
+        _statusRepository.getStatuses(),
+        _bookingRepository.getBookings(),
+      ]);
+      final users = results[0] as List<UserModel>;
+      final statuses = results[1] as List<Status>;
+      final bookings = results[2] as List<Booking>;
 
       _usersById
         ..clear()
@@ -98,17 +117,22 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       );
       _cachedErrorMessage = errorMessage;
     } finally {
-      setBusy(false);
+      if (shouldShowLoadingState) {
+        setBusy(false);
+      }
       notifyListeners();
     }
   }
 
   void _applyAssignedBookings(List<Booking> bookings) {
     final currentUserId = currentUser?.id ?? '';
-    final normalizedRole = (currentUser?.role ?? '').trim().toLowerCase();
+    final normalizedRole = normalizeRoleKey(currentUser?.role);
     assignedBookings = bookings.where((booking) {
       final statusKey = (booking.clientStatus ?? '').trim().toLowerCase();
       if (statusKey == 'cancelled' || statusKey == 'delivered') {
+        return false;
+      }
+      if (!_roleAccessService.isAssignedBookingRole(normalizedRole)) {
         return false;
       }
       return switch (normalizedRole) {
@@ -138,6 +162,11 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
     final user = currentUser;
     if (user == null) {
       return null;
+    }
+    if (!_roleAccessService.isOnlineEligibleRole(user.role)) {
+      throw const AuthFailure(
+        'Online availability is only available for Driver and Helper roles.',
+      );
     }
     busyMessage = isOnline
         ? 'Turning availability on ...'

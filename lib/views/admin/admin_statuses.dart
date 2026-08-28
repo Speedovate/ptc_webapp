@@ -23,6 +23,9 @@ class AdminStatusesView extends StatelessWidget {
     AdminFlowViewModel vm,
     Status status,
   ) async {
+    if (!vm.canUpdateStatuses) {
+      return;
+    }
     final willBeActive = !(status.isActive ?? false);
     final label = status.label?.trim().isNotEmpty == true
         ? status.label!.trim()
@@ -53,6 +56,9 @@ class AdminStatusesView extends StatelessWidget {
     AdminFlowViewModel vm,
     Status status,
   ) async {
+    if (!vm.canDeleteStatuses) {
+      return;
+    }
     final label = status.label?.trim().isNotEmpty == true
         ? status.label!.trim()
         : 'this status';
@@ -93,7 +99,7 @@ class AdminStatusesView extends StatelessWidget {
   Widget build(BuildContext context) {
     return ViewModelBuilder<AdminFlowViewModel>.reactive(
       viewModelBuilder: AdminFlowViewModel.new,
-      onViewModelReady: (vm) => vm.loadForms(),
+      onViewModelReady: (vm) => vm.loadStatusesPage(),
       builder: (context, vm, child) {
         return AppPageLoadingOverlay(
           isVisible: vm.isLoading,
@@ -119,6 +125,10 @@ class AdminStatusesView extends StatelessWidget {
     required String title,
     bool readOnly = false,
   }) async {
+    if (!readOnly &&
+        !(initialStatus == null ? vm.canCreateStatuses : vm.canUpdateStatuses)) {
+      return;
+    }
     final savedStatus = await showDialog<Status>(
       context: context,
       builder: (dialogContext) => _StatusEditorDialog(
@@ -232,12 +242,14 @@ class _StatusesContentState extends State<_StatusesContent> {
                 onRoleChanged: (value) => setState(() => _roleFilter = value),
                 onActiveChanged: (value) =>
                     setState(() => _activeFilter = value),
-                onNewPressed: () => AdminStatusesView.openStatusDialog(
-                  context,
-                  widget.vm,
-                  initialStatus: widget.vm.createDraftStatus(),
-                  title: 'New Status',
-                ),
+                onNewPressed: widget.vm.canCreateStatuses
+                    ? () => AdminStatusesView.openStatusDialog(
+                        context,
+                        widget.vm,
+                        initialStatus: widget.vm.createDraftStatus(),
+                        title: 'New Status',
+                      )
+                    : null,
               ),
               const SizedBox(height: AdminStatusesView.toolbarSectionGap),
               if (isNarrow)
@@ -294,7 +306,7 @@ class _StatusesToolbar extends StatelessWidget {
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<String> onRoleChanged;
   final ValueChanged<String> onActiveChanged;
-  final VoidCallback onNewPressed;
+  final VoidCallback? onNewPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -606,9 +618,6 @@ class _StatusesTable extends StatelessWidget {
               ),
             )
             .fold<String>('-', _longerText);
-        final sampleActive = statuses
-            .map((status) => (status.isActive ?? false) ? 'Active' : 'Inactive')
-            .fold<String>('Inactive', _longerText);
         final sampleCreated = statuses
             .map((status) => AdminUsersView.formatCreatedAt(status.createdAt))
             .fold<String>('-', _longerText);
@@ -656,14 +665,6 @@ class _StatusesTable extends StatelessWidget {
           sampleDescription,
           _valueStyle,
         );
-        final activeWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Active',
-          _headerStyle,
-          sampleActive,
-          _valueStyle,
-        );
         final createdWidth = _maxTextWidth(
           context,
           textScaler,
@@ -690,7 +691,6 @@ class _StatusesTable extends StatelessWidget {
         final resolvedLabelWidth = _resolvedColumnWidth(labelWidth);
         final resolvedDescriptionWidth = _resolvedColumnWidth(descriptionWidth);
         final resolvedRolesWidth = _resolvedColumnWidth(rolesWidth);
-        final resolvedActiveWidth = _resolvedColumnWidth(activeWidth) + 12;
         final resolvedCreatedWidth = _resolvedColumnWidth(createdWidth);
         final resolvedUpdatedWidth = _resolvedColumnWidth(updatedWidth);
         final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
@@ -698,7 +698,6 @@ class _StatusesTable extends StatelessWidget {
         final fixedWidthTotal =
             resolvedIdWidth +
             resolvedKeyWidth +
-            resolvedActiveWidth +
             resolvedCreatedWidth +
             resolvedUpdatedWidth +
             resolvedActionsWidth +
@@ -752,10 +751,6 @@ class _StatusesTable extends StatelessWidget {
                     child: const _StatusesHeaderCell(label: 'Roles'),
                   ),
                   _StatusesFixedSlot(
-                    width: resolvedActiveWidth,
-                    child: const _StatusesHeaderCell(label: 'Active'),
-                  ),
-                  _StatusesFixedSlot(
                     width: resolvedCreatedWidth,
                     child: const _StatusesHeaderCell(label: 'Created'),
                   ),
@@ -792,7 +787,6 @@ class _StatusesTable extends StatelessWidget {
                     resolvedLabelWidth: effectiveLabelWidth,
                     resolvedDescriptionWidth: effectiveDescriptionWidth,
                     resolvedRolesWidth: effectiveRolesWidth,
-                    resolvedActiveWidth: resolvedActiveWidth,
                     resolvedCreatedWidth: resolvedCreatedWidth,
                     resolvedUpdatedWidth: resolvedUpdatedWidth,
                     resolvedActionsWidth: resolvedActionsWidth,
@@ -860,7 +854,6 @@ class _StatusTableRow extends StatelessWidget {
     required this.resolvedLabelWidth,
     required this.resolvedDescriptionWidth,
     required this.resolvedRolesWidth,
-    required this.resolvedActiveWidth,
     required this.resolvedCreatedWidth,
     required this.resolvedUpdatedWidth,
     required this.resolvedActionsWidth,
@@ -873,7 +866,6 @@ class _StatusTableRow extends StatelessWidget {
   final double resolvedLabelWidth;
   final double resolvedDescriptionWidth;
   final double resolvedRolesWidth;
-  final double resolvedActiveWidth;
   final double resolvedCreatedWidth;
   final double resolvedUpdatedWidth;
   final double resolvedActionsWidth;
@@ -929,15 +921,6 @@ class _StatusTableRow extends StatelessWidget {
             ),
           ),
           _StatusesFixedSlot(
-            width: resolvedActiveWidth,
-            child: _StatusesBodyCell(
-              child: _metaPill(
-                (status.isActive ?? false) ? 'Active' : 'Inactive',
-                isFilled: status.isActive ?? false,
-              ),
-            ),
-          ),
-          _StatusesFixedSlot(
             width: resolvedCreatedWidth,
             child: _StatusesBodyCell(
               child: Text(
@@ -977,40 +960,44 @@ class _StatusTableRow extends StatelessWidget {
                       readOnly: true,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  _MiniActionButton(
-                    icon: Icons.edit_rounded,
-                    onTap: () => AdminStatusesView.openStatusDialog(
-                      context,
-                      vm,
-                      initialStatus: status,
-                      title: 'Edit Status',
+                  if (vm.canUpdateStatuses) ...[
+                    const SizedBox(width: 8),
+                    _MiniActionButton(
+                      icon: Icons.edit_rounded,
+                      onTap: () => AdminStatusesView.openStatusDialog(
+                        context,
+                        vm,
+                        initialStatus: status,
+                        title: 'Edit Status',
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  _MiniActionButton(
-                    icon: (status.isActive ?? false)
-                        ? Icons.close_rounded
-                        : Icons.check_rounded,
-                    backgroundColor: (status.isActive ?? false)
-                        ? AppColors.dangerStrong
-                        : const Color(0xFF2EAD62),
-                    onTap: () => AdminStatusesView.confirmToggleStatusActive(
-                      context,
-                      vm,
-                      status,
+                    const SizedBox(width: 8),
+                    _MiniActionButton(
+                      icon: (status.isActive ?? false)
+                          ? Icons.close_rounded
+                          : Icons.check_rounded,
+                      backgroundColor: (status.isActive ?? false)
+                          ? AppColors.dangerStrong
+                          : const Color(0xFF2EAD62),
+                      onTap: () => AdminStatusesView.confirmToggleStatusActive(
+                        context,
+                        vm,
+                        status,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  _MiniActionButton(
-                    icon: Icons.delete_rounded,
-                    backgroundColor: AppColors.dangerStrong,
-                    onTap: () => AdminStatusesView.confirmDeleteStatus(
-                      context,
-                      vm,
-                      status,
+                  ],
+                  if (vm.canDeleteStatuses) ...[
+                    const SizedBox(width: 8),
+                    _MiniActionButton(
+                      icon: Icons.delete_rounded,
+                      backgroundColor: AppColors.dangerStrong,
+                      onTap: () => AdminStatusesView.confirmDeleteStatus(
+                        context,
+                        vm,
+                        status,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -1075,22 +1062,9 @@ class _StatusResponsiveCard extends StatelessWidget {
                 ? CrossAxisAlignment.center
                 : CrossAxisAlignment.start,
             children: [
-              if (showTopActionsRow && stackTopActions)
-                Column(
-                  children: [
-                    _metaPill(
-                      (status.isActive ?? false) ? 'Active' : 'Inactive',
-                      isFilled: status.isActive ?? false,
-                    ),
-                  ],
-                )
-              else
+              if (!stackTopActions)
                 Row(
                   children: [
-                    _metaPill(
-                      (status.isActive ?? false) ? 'Active' : 'Inactive',
-                      isFilled: status.isActive ?? false,
-                    ),
                     const Spacer(),
                     Wrap(
                       alignment: WrapAlignment.end,
@@ -1145,30 +1119,33 @@ class _StatusResponsiveCard extends StatelessWidget {
         readOnly: true,
       ),
     ),
-    _ActionButton(
-      icon: Icons.edit_outlined,
-      onTap: () => AdminStatusesView.openStatusDialog(
-        context,
-        vm,
-        initialStatus: status,
-        title: 'Edit Status',
+    if (vm.canUpdateStatuses)
+      _ActionButton(
+        icon: Icons.edit_outlined,
+        onTap: () => AdminStatusesView.openStatusDialog(
+          context,
+          vm,
+          initialStatus: status,
+          title: 'Edit Status',
+        ),
       ),
-    ),
-    _ActionButton(
-      icon: (status.isActive ?? false)
-          ? Icons.close_rounded
-          : Icons.check_rounded,
-      backgroundColor: (status.isActive ?? false)
-          ? AppColors.dangerStrong
-          : const Color(0xFF2EAD62),
-      onTap: () =>
-          AdminStatusesView.confirmToggleStatusActive(context, vm, status),
-    ),
-    _ActionButton(
-      icon: Icons.delete_outline_rounded,
-      backgroundColor: AppColors.dangerStrong,
-      onTap: () => AdminStatusesView.confirmDeleteStatus(context, vm, status),
-    ),
+    if (vm.canUpdateStatuses)
+      _ActionButton(
+        icon: (status.isActive ?? false)
+            ? Icons.close_rounded
+            : Icons.check_rounded,
+        backgroundColor: (status.isActive ?? false)
+            ? AppColors.dangerStrong
+            : const Color(0xFF2EAD62),
+        onTap: () =>
+            AdminStatusesView.confirmToggleStatusActive(context, vm, status),
+      ),
+    if (vm.canDeleteStatuses)
+      _ActionButton(
+        icon: Icons.delete_outline_rounded,
+        backgroundColor: AppColors.dangerStrong,
+        onTap: () => AdminStatusesView.confirmDeleteStatus(context, vm, status),
+      ),
   ];
 }
 
@@ -1646,8 +1623,4 @@ class _MiniActionButton extends StatelessWidget {
       borderRadius: 12,
     );
   }
-}
-
-Widget _metaPill(String label, {bool isFilled = false}) {
-  return adminMetaPill(label, isFilled: isFilled);
 }

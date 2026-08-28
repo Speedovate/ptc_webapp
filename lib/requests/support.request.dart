@@ -1,7 +1,7 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/support_message.dart';
 import 'package:webapp/models/support_thread.dart';
@@ -19,6 +19,7 @@ class SupportRequest {
 
   static final SupportRequest instance = SupportRequest();
   static const _supportThreadsResourceKey = 'support_threads_all';
+  static const Duration _queuedSupportReadTimeout = Duration(seconds: 1);
 
   final FirebaseFirestore _firestore;
   final SupportStorageService _storage;
@@ -27,6 +28,22 @@ class SupportRequest {
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
+  final Map<String, Map<String, dynamic>> _volatileThreadDocumentsById =
+      <String, Map<String, dynamic>>{};
+  final Map<String, Map<String, Map<String, dynamic>>>
+  _volatileMessageDocumentsByThreadId =
+      <String, Map<String, Map<String, dynamic>>>{};
+  final Map<String, StreamController<List<SupportMessage>>>
+  _messageWatchControllersByThreadId =
+      <String, StreamController<List<SupportMessage>>>{};
+  final Map<String, StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>
+  _messageRemoteSubscriptionsByThreadId =
+      <String, StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>{};
+  final Map<String, StreamSubscription<String>>
+  _messageLocalSubscriptionsByThreadId =
+      <String, StreamSubscription<String>>{};
+  final Map<String, List<SupportMessage>> _lastVisibleMessagesByThreadId =
+      <String, List<SupportMessage>>{};
   final StreamController<void> _threadCacheUpdates =
       StreamController<void>.broadcast();
   final StreamController<String> _messageCacheUpdates =
@@ -34,6 +51,13 @@ class SupportRequest {
 
   CollectionReference<Map<String, dynamic>> get _supportCollection =>
       _firestore.collection('support');
+
+  CollectionReference<Map<String, dynamic>> _threadReadCollection(
+    String userId,
+  ) => _firestore
+      .collection('support_thread_reads')
+      .doc(userId)
+      .collection('threads');
 
   Future<List<SupportThread>> prefetchAllThreads() async {
     final snapshot = await _supportCollection.get();
@@ -70,7 +94,6 @@ class SupportRequest {
     final snapshot = await _supportCollection
         .doc(normalizedThreadId)
         .collection('messages')
-        .orderBy('created_at')
         .get();
     final documents = snapshot.docs.map(documentData).toList();
     await _cache.writeDocuments(
@@ -92,11 +115,134 @@ class SupportRequest {
     }
   }
 
+  Future<Map<String, String>> readThreadReadMarkers(String userId) async {
+    final normalizedUserId = normalizeId(userId);
+    if (normalizedUserId == null) {
+      return const <String, String>{};
+    }
+    final localDocuments =
+        await FirestoreCacheStore.instance.readDocumentMaps(
+          _threadReadMarkersResourceKey(normalizedUserId),
+        ) ??
+        const <Map<String, dynamic>>[];
+    final mergedDocuments = <String, Map<String, dynamic>>{};
+    for (final document in localDocuments) {
+      final threadId =
+          normalizeId(document['thread_id']) ?? normalizeId(document['id']);
+      if (threadId == null) {
+        continue;
+      }
+      mergedDocuments[threadId] = Map<String, dynamic>.from(document);
+    }
+    if (currentNetworkStatus()) {
+      try {
+        final snapshot = await _threadReadCollection(normalizedUserId).get();
+        for (final document in snapshot.docs) {
+          final data = documentData(document);
+          final threadId =
+              normalizeId(data['thread_id']) ?? normalizeId(data['id']);
+          if (threadId == null) {
+            continue;
+          }
+          final existing = mergedDocuments[threadId];
+          if (existing == null ||
+              _documentUpdatedAt(data).isAfter(_documentUpdatedAt(existing))) {
+            mergedDocuments[threadId] = data;
+          }
+        }
+        await FirestoreCacheStore.instance.writeDocumentMaps(
+          _threadReadMarkersResourceKey(normalizedUserId),
+          mergedDocuments.values.toList(growable: false),
+        );
+      } on FirebaseException {
+        // Keep support UI responsive offline or under weak signal.
+      }
+    }
+    final markers = <String, String>{};
+    for (final document in mergedDocuments.values) {
+      final threadId =
+          normalizeId(document['thread_id']) ?? normalizeId(document['id']);
+      final marker = document['marker']?.toString().trim() ?? '';
+      if (threadId == null || marker.isEmpty) {
+        continue;
+      }
+      markers[threadId] = marker;
+    }
+    return markers;
+  }
+
+  Future<void> markThreadRead({
+    required String userId,
+    required String threadId,
+    required String marker,
+  }) async {
+    final normalizedUserId = normalizeId(userId);
+    final normalizedThreadId = normalizeId(threadId);
+    final normalizedMarker = marker.trim();
+    if (normalizedUserId == null ||
+        normalizedThreadId == null ||
+        normalizedMarker.isEmpty) {
+      return;
+    }
+    final resourceKey = _threadReadMarkersResourceKey(normalizedUserId);
+    final existing =
+        await FirestoreCacheStore.instance.readDocumentMaps(resourceKey) ??
+        const <Map<String, dynamic>>[];
+    final next = existing
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: true);
+    final nextDocument = <String, dynamic>{
+      'id': normalizedThreadId,
+      'thread_id': normalizedThreadId,
+      'marker': normalizedMarker,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    };
+    final existingIndex = next.indexWhere(
+      (item) => normalizeId(item['thread_id']) == normalizedThreadId,
+    );
+    if (existingIndex >= 0) {
+      next[existingIndex] = nextDocument;
+    } else {
+      next.add(nextDocument);
+    }
+    await FirestoreCacheStore.instance.writeDocumentMaps(resourceKey, next);
+    final remoteWrite = _threadReadCollection(normalizedUserId)
+        .doc(normalizedThreadId)
+        .set(nextDocument, SetOptions(merge: true));
+    if (currentNetworkStatus()) {
+      try {
+        await remoteWrite.timeout(const Duration(seconds: 6));
+      } on TimeoutException {
+        unawaited(remoteWrite);
+      } on FirebaseException {
+        unawaited(remoteWrite);
+      }
+    } else {
+      unawaited(remoteWrite);
+    }
+  }
+
+  List<SupportMessage>? peekLastVisibleMessages(String threadId) {
+    final normalizedThreadId = normalizeId(threadId);
+    if (normalizedThreadId == null) {
+      return null;
+    }
+    final messages = _lastVisibleMessagesByThreadId[normalizedThreadId];
+    if (messages == null) {
+      return null;
+    }
+    return List<SupportMessage>.from(messages);
+  }
+
   Stream<List<SupportThread>> watchAllThreads() {
     return Stream<List<SupportThread>>.multi((controller) {
       Future<void> emitCachedThreads() async {
-        final cached = await _cache.readDocuments(_supportThreadsResourceKey);
-        if (controller.isClosed || cached == null) {
+        final cached = await _readVisibleThreadDocuments();
+        if (controller.isClosed) {
+          return;
+        }
+        if (cached.isEmpty) {
+          controller.add(const <SupportThread>[]);
           return;
         }
         final cachedThreads = cached.map(SupportThread.fromMap).toList()
@@ -147,8 +293,12 @@ class SupportRequest {
     }
     return Stream<List<SupportThread>>.multi((controller) {
       Future<void> emitCachedThreads() async {
-        final cached = await _cache.readDocuments(_supportThreadsResourceKey);
-        if (controller.isClosed || cached == null) {
+        final cached = await _readVisibleThreadDocuments();
+        if (controller.isClosed) {
+          return;
+        }
+        if (cached.isEmpty) {
+          controller.add(const <SupportThread>[]);
           return;
         }
         final cachedThreads =
@@ -202,84 +352,113 @@ class SupportRequest {
     if (normalizedThreadId == null) {
       return Stream<List<SupportMessage>>.value(const <SupportMessage>[]);
     }
-    return Stream<List<SupportMessage>>.multi((controller) {
-      Future<void> emitCachedMessages() async {
-        final cached =
-            await _cache.readDocuments(
-              _messageResourceKey(normalizedThreadId),
-            ) ??
-            const <Map<String, dynamic>>[];
-        final queuedDocuments = await _offlineMediaSyncService
-            .readQueuedSupportMessageDocuments(threadId: normalizedThreadId);
-        final visibleDocuments = _mergeQueuedPendingMessageDocuments(
-          existingDocuments: cached,
-          queuedDocuments: queuedDocuments,
-        );
-        if (controller.isClosed || visibleDocuments.isEmpty && cached.isEmpty) {
+    final existingController =
+        _messageWatchControllersByThreadId[normalizedThreadId];
+    if (existingController != null && !existingController.isClosed) {
+      return existingController.stream;
+    }
+
+    late final StreamController<List<SupportMessage>> controller;
+    controller = StreamController<List<SupportMessage>>.broadcast(
+      onListen: () {
+        final lastMessages = _lastVisibleMessagesByThreadId[normalizedThreadId];
+        if (lastMessages != null && !controller.isClosed) {
+          controller.add(List<SupportMessage>.from(lastMessages));
+        }
+      },
+      onCancel: () async {
+        if (controller.hasListener) {
           return;
         }
-        if (!_sameMessageDocumentSet(cached, visibleDocuments)) {
+        await _messageRemoteSubscriptionsByThreadId.remove(normalizedThreadId)
+            ?.cancel();
+        await _messageLocalSubscriptionsByThreadId.remove(normalizedThreadId)
+            ?.cancel();
+        _messageWatchControllersByThreadId.remove(normalizedThreadId);
+      },
+    );
+    _messageWatchControllersByThreadId[normalizedThreadId] = controller;
+
+    Future<void> emitCachedMessages() async {
+      final cached = await _readVisibleMessageDocuments(normalizedThreadId);
+      final queuedDocuments = await _readQueuedSupportMessageDocumentsSafe(
+        normalizedThreadId,
+      );
+      final visibleDocuments = _mergeQueuedPendingMessageDocuments(
+        existingDocuments: cached,
+        queuedDocuments: queuedDocuments,
+      );
+      if (controller.isClosed) {
+        return;
+      }
+      if (visibleDocuments.isEmpty && cached.isEmpty) {
+        _lastVisibleMessagesByThreadId[normalizedThreadId] =
+            const <SupportMessage>[];
+        controller.add(const <SupportMessage>[]);
+        return;
+      }
+      if (!_sameMessageDocumentSet(cached, visibleDocuments)) {
+        await _cache.writeDocuments(
+          resourceKey: _messageResourceKey(normalizedThreadId),
+          documents: visibleDocuments,
+        );
+      }
+      final messages = visibleDocuments.map(SupportMessage.fromMap).toList()
+        ..sort(_compareMessagesOldestFirst);
+      _lastVisibleMessagesByThreadId[normalizedThreadId] = List<SupportMessage>.from(
+        messages,
+      );
+      controller.add(messages);
+    }
+
+    unawaited(emitCachedMessages());
+
+    final remoteSubscription = _supportCollection
+        .doc(normalizedThreadId)
+        .collection('messages')
+        .snapshots()
+        .listen((snapshot) async {
+          final documents = snapshot.docs.map(documentData).toList();
+          final cachedDocuments = await _readVisibleMessageDocuments(
+            normalizedThreadId,
+          );
+          final mergedDocuments = _mergeVisibleMessageDocuments(
+            remoteDocuments: documents,
+            cachedDocuments: cachedDocuments,
+          );
+          final queuedDocuments = await _readQueuedSupportMessageDocumentsSafe(
+            normalizedThreadId,
+          );
+          final visibleDocuments = _mergeQueuedPendingMessageDocuments(
+            existingDocuments: mergedDocuments,
+            queuedDocuments: queuedDocuments,
+          );
           await _cache.writeDocuments(
             resourceKey: _messageResourceKey(normalizedThreadId),
             documents: visibleDocuments,
           );
-        }
-        final messages = visibleDocuments.map(SupportMessage.fromMap).toList()
-          ..sort(_compareMessagesOldestFirst);
-        controller.add(messages);
+          if (controller.isClosed) {
+            return;
+          }
+          final messages = visibleDocuments.map(SupportMessage.fromMap).toList()
+            ..sort(_compareMessagesOldestFirst);
+          _lastVisibleMessagesByThreadId[normalizedThreadId] =
+              List<SupportMessage>.from(messages);
+          controller.add(messages);
+        }, onError: controller.addError);
+    _messageRemoteSubscriptionsByThreadId[normalizedThreadId] =
+        remoteSubscription;
+
+    final localSubscription = _messageCacheUpdates.stream.listen((threadId) {
+      if (normalizeId(threadId) != normalizedThreadId) {
+        return;
       }
-
       unawaited(emitCachedMessages());
+    }, onError: controller.addError);
+    _messageLocalSubscriptionsByThreadId[normalizedThreadId] =
+        localSubscription;
 
-      final remoteSubscription = _supportCollection
-          .doc(normalizedThreadId)
-          .collection('messages')
-          .orderBy('created_at')
-          .snapshots()
-          .listen((snapshot) async {
-            final documents = snapshot.docs.map(documentData).toList();
-            final cachedDocuments =
-                await _cache.readDocuments(
-                  _messageResourceKey(normalizedThreadId),
-                ) ??
-                const <Map<String, dynamic>>[];
-            final mergedDocuments = _mergeVisibleMessageDocuments(
-              remoteDocuments: documents,
-              cachedDocuments: cachedDocuments,
-            );
-            final queuedDocuments = await _offlineMediaSyncService
-                .readQueuedSupportMessageDocuments(
-                  threadId: normalizedThreadId,
-                );
-            final visibleDocuments = _mergeQueuedPendingMessageDocuments(
-              existingDocuments: mergedDocuments,
-              queuedDocuments: queuedDocuments,
-            );
-            await _cache.writeDocuments(
-              resourceKey: _messageResourceKey(normalizedThreadId),
-              documents: visibleDocuments,
-            );
-            if (controller.isClosed) {
-              return;
-            }
-            final messages =
-                visibleDocuments.map(SupportMessage.fromMap).toList()
-                  ..sort(_compareMessagesOldestFirst);
-            controller.add(messages);
-          }, onError: controller.addError);
-
-      final localSubscription = _messageCacheUpdates.stream.listen((threadId) {
-        if (normalizeId(threadId) != normalizedThreadId) {
-          return;
-        }
-        unawaited(emitCachedMessages());
-      }, onError: controller.addError);
-
-      controller.onCancel = () async {
-        await remoteSubscription.cancel();
-        await localSubscription.cancel();
-      };
-    });
+    return controller.stream;
   }
 
   Future<SupportThread> ensureThread({
@@ -309,55 +488,12 @@ class SupportRequest {
         booking: booking,
       );
     }
-
-    final existingSnapshot = await _supportCollection
-        .where('requester_user_id', isEqualTo: requesterId)
-        .get();
-    for (final doc in existingSnapshot.docs) {
-      final thread = SupportThread.fromMap(documentData(doc));
-      if ((thread.topicKey ?? '').trim().toLowerCase() != normalizedTopicKey) {
-        continue;
-      }
-      if (normalizeId(thread.bookingId) != normalizedBookingId) {
-        continue;
-      }
-      if (thread.isActive == false) {
-        continue;
-      }
-      return thread;
-    }
-
-    final threadDoc = _supportCollection.doc();
-    final now = DateTime.now().toUtc();
-    final bookingLabel = normalizedBookingId == null
-        ? null
-        : _bookingLabel(booking ?? Booking(id: normalizedBookingId));
-    final thread = SupportThread(
-      id: threadDoc.id,
-      requesterUserId: requesterId,
-      requesterRole: requester.role,
-      requesterName: requester.name,
-      requesterPhoto: requester.photo,
-      requesterParentClientId: requester.parentClientId,
+    return _createLocalThread(
+      requester: requester,
       topicKey: normalizedTopicKey,
-      topicLabel: supportTopicLabel(normalizedTopicKey),
-      bookingId: normalizedBookingId,
-      bookingLabel: bookingLabel,
-      lastMessageText: null,
-      lastMessageAt: now,
-      lastSenderUserId: null,
-      lastSenderRole: null,
-      createdAt: now,
-      updatedAt: now,
-      isActive: true,
+      booking: booking,
+      preferredThreadId: _supportCollection.doc().id,
     );
-    await threadDoc.set(thread.toMap());
-    await _cache.upsertDocument(
-      resourceKey: _supportThreadsResourceKey,
-      document: thread.toMap(),
-    );
-    _emitThreadCacheUpdate();
-    return thread;
   }
 
   Future<SupportThread> ensureAdminDirectThread({
@@ -376,35 +512,19 @@ class SupportRequest {
     if (!currentNetworkStatus()) {
       return _createLocalAdminDirectThread(targetUser: targetUser);
     }
+    return _createLocalAdminDirectThread(
+      targetUser: targetUser,
+      preferredThreadId: _supportCollection.doc().id,
+    );
+  }
 
-    final threadDoc = _supportCollection.doc();
-    final now = DateTime.now().toUtc();
-    final thread = SupportThread(
-      id: threadDoc.id,
-      requesterUserId: requesterId,
-      requesterRole: targetUser.role,
-      requesterName: targetUser.name,
-      requesterPhoto: targetUser.photo,
-      requesterParentClientId: targetUser.parentClientId,
-      topicKey: supportTopicGeneral,
-      topicLabel: supportTopicLabel(supportTopicGeneral),
-      bookingId: null,
-      bookingLabel: null,
-      lastMessageText: null,
-      lastMessageAt: null,
-      lastSenderUserId: null,
-      lastSenderRole: null,
-      createdAt: now,
-      updatedAt: now,
-      isActive: true,
+  Future<SupportThread> createLocalAdminDirectThreadForSend({
+    required UserModel targetUser,
+  }) {
+    return _createLocalAdminDirectThread(
+      targetUser: targetUser,
+      preferredThreadId: _supportCollection.doc().id,
     );
-    await threadDoc.set(thread.toMap());
-    await _cache.upsertDocument(
-      resourceKey: _supportThreadsResourceKey,
-      document: thread.toMap(),
-    );
-    _emitThreadCacheUpdate();
-    return thread;
   }
 
   Future<SupportThread?> findAdminDirectThread({
@@ -475,6 +595,8 @@ class SupportRequest {
     required UserModel sender,
     String? text,
     List<SupportAttachment> attachments = const [],
+    String? pendingMessageId,
+    String? pendingLocalOrderKey,
   }) async {
     final normalizedThreadId = normalizeId(threadId);
     final normalizedSenderId = normalizeId(sender.id);
@@ -489,8 +611,10 @@ class SupportRequest {
     final threadDoc = _supportCollection.doc(normalizedThreadId);
     final messageDoc = threadDoc.collection('messages').doc();
     final now = DateTime.now().toUtc();
+    final existingThread = await _findThreadById(normalizedThreadId);
     final message = SupportMessage(
       id: messageDoc.id,
+      localOrderKey: pendingLocalOrderKey,
       threadId: normalizedThreadId,
       senderUserId: normalizedSenderId,
       senderRole: sender.role,
@@ -503,8 +627,9 @@ class SupportRequest {
     );
     final messageMap = message.toMap();
     await messageDoc.set(message.toMap());
-    await _cache.upsertDocument(
-      resourceKey: _messageResourceKey(normalizedThreadId),
+    await _replaceCachedMessageDocument(
+      threadId: normalizedThreadId,
+      pendingMessageId: pendingMessageId,
       document: messageMap,
     );
     _emitMessageCacheUpdate(normalizedThreadId);
@@ -515,10 +640,24 @@ class SupportRequest {
         ? 'Sent an attachment'
         : 'Sent ${attachments.length} attachments';
     final threadPatch = {
+      'requester_user_id':
+          normalizeId(existingThread?.requesterUserId) ?? normalizedSenderId,
+      'requester_role': existingThread?.requesterRole ?? sender.role,
+      'requester_name': existingThread?.requesterName ?? sender.name,
+      'requester_photo': existingThread?.requesterPhoto ?? sender.photo,
+      'requester_parent_client_id': existingThread?.requesterParentClientId,
+      'topic_key': existingThread?.topicKey ?? supportTopicGeneral,
+      'topic_label':
+          existingThread?.topicLabel ??
+          supportTopicLabel(existingThread?.topicKey ?? supportTopicGeneral),
+      'booking_id': normalizeId(existingThread?.bookingId),
+      'booking_label': existingThread?.bookingLabel,
       'last_message_text': lastPreview,
       'last_message_at': now.toIso8601String(),
       'last_sender_user_id': normalizedSenderId,
       'last_sender_role': sender.role,
+      'created_at':
+          existingThread?.createdAt?.toIso8601String() ?? now.toIso8601String(),
       'updated_at': now.toIso8601String(),
       'is_active': true,
     };
@@ -526,11 +665,22 @@ class SupportRequest {
     await _upsertThreadPatch(
       threadId: normalizedThreadId,
       patch: {
-        'requester_user_id': normalizedSenderId,
-        'requester_role': sender.role,
-        'requester_name': sender.name,
-        'requester_photo': sender.photo,
-        'requester_parent_client_id': sender.parentClientId,
+        'requester_user_id':
+            normalizeId(existingThread?.requesterUserId) ?? normalizedSenderId,
+        'requester_role': existingThread?.requesterRole ?? sender.role,
+        'requester_name': existingThread?.requesterName ?? sender.name,
+        'requester_photo': existingThread?.requesterPhoto ?? sender.photo,
+        'requester_parent_client_id':
+            existingThread?.requesterParentClientId ?? sender.parentClientId,
+        'topic_key': existingThread?.topicKey ?? supportTopicGeneral,
+        'topic_label':
+            existingThread?.topicLabel ??
+            supportTopicLabel(existingThread?.topicKey ?? supportTopicGeneral),
+        'booking_id': normalizeId(existingThread?.bookingId),
+        'booking_label': existingThread?.bookingLabel,
+        'created_at':
+            existingThread?.createdAt?.toIso8601String() ??
+            now.toIso8601String(),
         'last_message_text': lastPreview,
         'last_message_at': now.toIso8601String(),
         'last_sender_user_id': normalizedSenderId,
@@ -551,23 +701,23 @@ class SupportRequest {
     if ((trimmedText == null || trimmedText.isEmpty) && attachments.isEmpty) {
       return false;
     }
+    final localQueuedMessage = await _cacheQueuedMessage(
+      threadId: threadId,
+      sender: sender,
+      text: trimmedText,
+      attachments: attachments,
+    );
 
     if (!currentNetworkStatus()) {
       final thread = await _findThreadById(threadId);
-      final queuedMessage = await _cacheQueuedMessage(
-        threadId: threadId,
-        sender: sender,
-        text: trimmedText,
-        attachments: attachments,
-      );
       await _offlineMediaSyncService.queueSupportMessage(
         threadId: threadId,
         sender: sender,
         text: trimmedText,
         attachments: attachments,
         thread: thread,
-        localOrderKey: queuedMessage?.localOrderKey,
-        localCreatedAtIso: queuedMessage?.createdAt?.toIso8601String(),
+        localOrderKey: localQueuedMessage?.localOrderKey,
+        localCreatedAtIso: localQueuedMessage?.createdAt?.toIso8601String(),
       );
       return true;
     }
@@ -590,6 +740,8 @@ class SupportRequest {
         sender: sender,
         text: trimmedText,
         attachments: uploadedAttachments,
+        pendingMessageId: localQueuedMessage?.id,
+        pendingLocalOrderKey: localQueuedMessage?.localOrderKey,
       );
       return false;
     } catch (error) {
@@ -600,20 +752,14 @@ class SupportRequest {
       if (!_isQueueableUploadError(normalizedError)) {
         rethrow;
       }
-      final queuedMessage = await _cacheQueuedMessage(
-        threadId: threadId,
-        sender: sender,
-        text: trimmedText,
-        attachments: attachments,
-      );
       await _offlineMediaSyncService.queueSupportMessage(
         threadId: threadId,
         sender: sender,
         text: trimmedText,
         attachments: attachments,
         thread: await _findThreadById(threadId),
-        localOrderKey: queuedMessage?.localOrderKey,
-        localCreatedAtIso: queuedMessage?.createdAt?.toIso8601String(),
+        localOrderKey: localQueuedMessage?.localOrderKey,
+        localCreatedAtIso: localQueuedMessage?.createdAt?.toIso8601String(),
       );
       return true;
     }
@@ -667,6 +813,7 @@ class SupportRequest {
       return null;
     }
     final now = DateTime.now().toUtc();
+    final existingThread = await _findThreadById(normalizedThreadId);
     final messageId = 'local_${now.microsecondsSinceEpoch}';
     final localOrderKey = '$messageId|${now.toIso8601String()}';
     final message = SupportMessage(
@@ -690,6 +837,10 @@ class SupportRequest {
       createdAt: now,
       updatedAt: now,
     );
+    _storeVolatileMessageDocument(
+      normalizedThreadId,
+      message.toMap(),
+    );
     await _cache.upsertDocument(
       resourceKey: _messageResourceKey(normalizedThreadId),
       document: message.toMap(),
@@ -703,18 +854,26 @@ class SupportRequest {
     await _upsertThreadPatch(
       threadId: normalizedThreadId,
       patch: {
-        'requester_user_id': normalizedSenderId,
-        'requester_role': sender.role,
-        'requester_name': sender.name,
-        'requester_photo': sender.photo,
-        'requester_parent_client_id': sender.parentClientId,
-        'topic_key': supportTopicGeneral,
-        'topic_label': supportTopicLabel(supportTopicGeneral),
+        'requester_user_id':
+            normalizeId(existingThread?.requesterUserId) ?? normalizedSenderId,
+        'requester_role': existingThread?.requesterRole ?? sender.role,
+        'requester_name': existingThread?.requesterName ?? sender.name,
+        'requester_photo': existingThread?.requesterPhoto ?? sender.photo,
+        'requester_parent_client_id':
+            existingThread?.requesterParentClientId ?? sender.parentClientId,
+        'topic_key': existingThread?.topicKey ?? supportTopicGeneral,
+        'topic_label':
+            existingThread?.topicLabel ??
+            supportTopicLabel(existingThread?.topicKey ?? supportTopicGeneral),
+        'booking_id': normalizeId(existingThread?.bookingId),
+        'booking_label': existingThread?.bookingLabel,
         'last_message_text': lastPreview,
         'last_message_at': now.toIso8601String(),
         'last_sender_user_id': normalizedSenderId,
         'last_sender_role': sender.role,
-        'created_at': now.toIso8601String(),
+        'created_at':
+            existingThread?.createdAt?.toIso8601String() ??
+            now.toIso8601String(),
         'updated_at': now.toIso8601String(),
         'is_active': true,
       },
@@ -727,10 +886,7 @@ class SupportRequest {
     if (normalizedThreadId == null) {
       return null;
     }
-    final existing = await _cache.readDocuments(_supportThreadsResourceKey);
-    if (existing == null) {
-      return null;
-    }
+    final existing = await _readVisibleThreadDocuments();
     for (final document in existing) {
       if (normalizeId(document['id']?.toString()) == normalizedThreadId) {
         return SupportThread.fromMap(document);
@@ -744,8 +900,8 @@ class SupportRequest {
     required String topicKey,
     required String? bookingId,
   }) async {
-    final existing = await _cache.readDocuments(_supportThreadsResourceKey);
-    if (existing == null) {
+    final existing = await _readVisibleThreadDocuments();
+    if (existing.isEmpty) {
       return null;
     }
     final threads = existing.map(SupportThread.fromMap).where((thread) {
@@ -758,8 +914,8 @@ class SupportRequest {
   }
 
   Future<SupportThread?> _findCachedDirectThread(String requesterId) async {
-    final existing = await _cache.readDocuments(_supportThreadsResourceKey);
-    if (existing == null) {
+    final existing = await _readVisibleThreadDocuments();
+    if (existing.isEmpty) {
       return null;
     }
     final threads = existing.map(SupportThread.fromMap).where((thread) {
@@ -775,10 +931,14 @@ class SupportRequest {
     required UserModel requester,
     required String topicKey,
     Booking? booking,
+    String? preferredThreadId,
   }) async {
     final now = DateTime.now().toUtc();
     final thread = SupportThread(
-      id: 'local_thread_${now.microsecondsSinceEpoch}',
+      id:
+          preferredThreadId?.trim().isNotEmpty == true
+              ? preferredThreadId!.trim()
+              : 'local_thread_${now.microsecondsSinceEpoch}',
       requesterUserId: normalizeId(requester.id),
       requesterRole: requester.role,
       requesterName: requester.name,
@@ -796,9 +956,12 @@ class SupportRequest {
       updatedAt: now,
       isActive: true,
     );
-    await _cache.upsertDocument(
-      resourceKey: _supportThreadsResourceKey,
-      document: thread.toMap(),
+    _storeVolatileThreadDocument(thread.toMap());
+    unawaited(
+      _cache.upsertDocument(
+        resourceKey: _supportThreadsResourceKey,
+        document: thread.toMap(),
+      ),
     );
     _emitThreadCacheUpdate();
     return thread;
@@ -806,10 +969,14 @@ class SupportRequest {
 
   Future<SupportThread> _createLocalAdminDirectThread({
     required UserModel targetUser,
+    String? preferredThreadId,
   }) async {
     final now = DateTime.now().toUtc();
     final thread = SupportThread(
-      id: 'local_thread_${now.microsecondsSinceEpoch}',
+      id:
+          preferredThreadId?.trim().isNotEmpty == true
+              ? preferredThreadId!.trim()
+              : 'local_thread_${now.microsecondsSinceEpoch}',
       requesterUserId: normalizeId(targetUser.id),
       requesterRole: targetUser.role,
       requesterName: targetUser.name,
@@ -827,12 +994,42 @@ class SupportRequest {
       updatedAt: now,
       isActive: true,
     );
-    await _cache.upsertDocument(
-      resourceKey: _supportThreadsResourceKey,
-      document: thread.toMap(),
+    _storeVolatileThreadDocument(thread.toMap());
+    unawaited(
+      _cache.upsertDocument(
+        resourceKey: _supportThreadsResourceKey,
+        document: thread.toMap(),
+      ),
     );
     _emitThreadCacheUpdate();
     return thread;
+  }
+
+  Future<List<Map<String, dynamic>>> _readVisibleThreadDocuments() async {
+    final cached =
+        await _cache.readDocuments(_supportThreadsResourceKey) ??
+        const <Map<String, dynamic>>[];
+    if (_volatileThreadDocumentsById.isEmpty) {
+      return cached
+          .map((document) => Map<String, dynamic>.from(document))
+          .toList(growable: false);
+    }
+    final mergedById = <String, Map<String, dynamic>>{
+      for (final document in cached)
+        document['id']?.toString() ?? '': Map<String, dynamic>.from(document),
+    };
+    for (final entry in _volatileThreadDocumentsById.entries) {
+      mergedById[entry.key] = Map<String, dynamic>.from(entry.value);
+    }
+    return mergedById.values.toList(growable: false);
+  }
+
+  void _storeVolatileThreadDocument(Map<String, dynamic> document) {
+    final id = document['id']?.toString().trim() ?? '';
+    if (id.isEmpty) {
+      return;
+    }
+    _volatileThreadDocumentsById[id] = Map<String, dynamic>.from(document);
   }
 
   Future<void> _mergeThreadsIntoCache(
@@ -864,6 +1061,150 @@ class SupportRequest {
   }
 
   String _messageResourceKey(String threadId) => 'support_messages:$threadId';
+
+  String threadReadMarkerForThread(SupportThread thread) {
+    final timestamp =
+        thread.lastMessageAt?.toUtc().toIso8601String() ??
+        thread.updatedAt?.toUtc().toIso8601String() ??
+        '';
+    final senderId = normalizeId(thread.lastSenderUserId) ?? '';
+    final text = _supportMarkerToken(thread.lastMessageText);
+    return '$timestamp|$senderId|$text';
+  }
+
+  String threadReadMarkerForMessage(SupportMessage message) {
+    final timestamp =
+        message.createdAt?.toUtc().toIso8601String() ??
+        message.updatedAt?.toUtc().toIso8601String() ??
+        '';
+    final senderId = normalizeId(message.senderUserId) ?? '';
+    final text = _supportMarkerToken(_supportThreadPreviewTokenForMessage(message));
+    return '$timestamp|$senderId|$text';
+  }
+
+  String _threadReadMarkersResourceKey(String userId) =>
+      'support_thread_reads:$userId';
+
+  String _supportMarkerToken(String? value) {
+    final normalized = value?.replaceAll(RegExp(r'\s+'), ' ').trim() ?? '';
+    if (normalized.isEmpty) {
+      return '';
+    }
+    return normalized.length <= 120
+        ? normalized
+        : normalized.substring(0, 120);
+  }
+
+  String _supportThreadPreviewTokenForMessage(SupportMessage message) {
+    final trimmedText = message.text?.trim() ?? '';
+    if (trimmedText.isNotEmpty) {
+      return trimmedText;
+    }
+    final attachmentCount = message.attachments.length;
+    if (attachmentCount <= 0) {
+      return '';
+    }
+    if (attachmentCount == 1) {
+      return 'Sent an attachment';
+    }
+    return 'Sent $attachmentCount attachments';
+  }
+
+  DateTime _documentUpdatedAt(Map<String, dynamic> document) {
+    final value = document['updated_at'];
+    if (value is Timestamp) {
+      return value.toDate().toUtc();
+    }
+    final parsed = DateTime.tryParse(value?.toString() ?? '');
+    return parsed?.toUtc() ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+  }
+
+  Future<void> _replaceCachedMessageDocument({
+    required String threadId,
+    required String? pendingMessageId,
+    required Map<String, dynamic> document,
+  }) async {
+    final resourceKey = _messageResourceKey(threadId);
+    final existing = await _readVisibleMessageDocuments(threadId);
+    final nextDocuments = <Map<String, dynamic>>[];
+    for (final item in existing) {
+      final itemId = item['id']?.toString().trim() ?? '';
+      if (pendingMessageId != null && itemId == pendingMessageId) {
+        continue;
+      }
+      if ((document['id']?.toString().trim() ?? '') == itemId) {
+        continue;
+      }
+      nextDocuments.add(Map<String, dynamic>.from(item));
+    }
+    nextDocuments.add(Map<String, dynamic>.from(document));
+    _replaceVolatileMessageDocuments(
+      threadId: threadId,
+      pendingMessageId: pendingMessageId,
+      documents: nextDocuments,
+    );
+    await _cache.writeDocuments(resourceKey: resourceKey, documents: nextDocuments);
+  }
+
+  Future<List<Map<String, dynamic>>> _readVisibleMessageDocuments(
+    String threadId,
+  ) async {
+    final cached =
+        await _cache.readDocuments(_messageResourceKey(threadId)) ??
+        const <Map<String, dynamic>>[];
+    final volatileDocumentsById = _volatileMessageDocumentsByThreadId[threadId];
+    if (volatileDocumentsById == null || volatileDocumentsById.isEmpty) {
+      return cached
+          .map((document) => Map<String, dynamic>.from(document))
+          .toList(growable: false);
+    }
+    final mergedById = <String, Map<String, dynamic>>{
+      for (final document in cached)
+        document['id']?.toString() ?? '': Map<String, dynamic>.from(document),
+    };
+    for (final entry in volatileDocumentsById.entries) {
+      mergedById[entry.key] = Map<String, dynamic>.from(entry.value);
+    }
+    return mergedById.values.toList(growable: false);
+  }
+
+  void _storeVolatileMessageDocument(
+    String threadId,
+    Map<String, dynamic> document,
+  ) {
+    final documentId = document['id']?.toString().trim() ?? '';
+    if (documentId.isEmpty) {
+      return;
+    }
+    final documentsById = _volatileMessageDocumentsByThreadId.putIfAbsent(
+      threadId,
+      () => <String, Map<String, dynamic>>{},
+    );
+    documentsById[documentId] = Map<String, dynamic>.from(document);
+  }
+
+  void _replaceVolatileMessageDocuments({
+    required String threadId,
+    required String? pendingMessageId,
+    required List<Map<String, dynamic>> documents,
+  }) {
+    final nextById = <String, Map<String, dynamic>>{};
+    for (final document in documents) {
+      final documentId = document['id']?.toString().trim() ?? '';
+      if (documentId.isEmpty) {
+        continue;
+      }
+      if (pendingMessageId != null && documentId == pendingMessageId) {
+        continue;
+      }
+      nextById[documentId] = Map<String, dynamic>.from(document);
+    }
+    if (nextById.isEmpty) {
+      _volatileMessageDocumentsByThreadId.remove(threadId);
+      return;
+    }
+    _volatileMessageDocumentsByThreadId[threadId] = nextById;
+  }
 
   Future<void> _upsertThreadPatch({
     required String threadId,
@@ -1169,5 +1510,19 @@ class SupportRequest {
       message.text?.trim() ?? '',
       '${message.attachments.length}',
     ].join('|');
+  }
+
+  Future<List<Map<String, dynamic>>> _readQueuedSupportMessageDocumentsSafe(
+    String threadId,
+  ) async {
+    try {
+      return await _offlineMediaSyncService
+          .readQueuedSupportMessageDocuments(threadId: threadId)
+          .timeout(_queuedSupportReadTimeout);
+    } on TimeoutException {
+      return const <Map<String, dynamic>>[];
+    } catch (error) {
+      return const <Map<String, dynamic>>[];
+    }
   }
 }

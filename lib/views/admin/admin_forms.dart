@@ -30,7 +30,7 @@ class AdminFormsView extends StatelessWidget {
   Widget build(BuildContext context) {
     return ViewModelBuilder<AdminFlowViewModel>.reactive(
       viewModelBuilder: AdminFlowViewModel.new,
-      onViewModelReady: (vm) => vm.loadForms(),
+      onViewModelReady: (vm) => vm.loadFormsPage(),
       builder: (context, vm, _) {
         return AppPageLoadingOverlay(
           isVisible: vm.isLoading,
@@ -123,6 +123,9 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
   }
 
   Future<void> _openNewFormDialog() async {
+    if (!widget.vm.canCreateForms) {
+      return;
+    }
     widget.vm.ensureNewFormDraft();
     if (!mounted) {
       return;
@@ -189,6 +192,9 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
   }
 
   Future<void> _openEditFormDialog(StatusForm form) async {
+    if (!widget.vm.canUpdateForms) {
+      return;
+    }
     widget.vm.selectForm(form, notify: false);
     if (!mounted) {
       return;
@@ -240,28 +246,9 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
               ],
               child: Builder(
                 builder: (context) {
-                  Future<void> submitEditForm() async {
-                    await widget.vm.saveForm();
-                    final errorMessage = widget.vm.errorMessage;
-                    if (!dialogContext.mounted) {
-                      return;
-                    }
-                    if (errorMessage == null) {
-                      AppSnackbar.showSuccess(
-                        dialogContext,
-                        _formEditMessage(),
-                      );
-                      widget.vm.clearSelection();
-                      Navigator.of(dialogContext).pop();
-                    } else {
-                      AppSnackbar.showError(dialogContext, errorMessage);
-                    }
-                  }
-
                   return _InlineEditorContent(
                     vm: widget.vm,
                     form: selected,
-                    onSubmit: submitEditForm,
                     onClose: () {
                       widget.vm.clearSelection();
                       Navigator.of(dialogContext).pop();
@@ -351,6 +338,9 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
   }
 
   Future<void> _confirmDeleteForm(StatusForm form) async {
+    if (!widget.vm.canDeleteForms) {
+      return;
+    }
     final confirmed = await showAdminActionConfirmation(
       context,
       title: 'Delete Form ${form.id ?? '-'}',
@@ -383,7 +373,9 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
               onSearchChanged: (value) => setState(() => _searchQuery = value),
               onRoleChanged: (value) => setState(() => _roleFilter = value),
               onActiveChanged: (value) => setState(() => _activeFilter = value),
-              onNewPressed: _openNewFormDialog,
+              onNewPressed: widget.vm.canCreateForms
+                  ? _openNewFormDialog
+                  : null,
             ),
             const SizedBox(height: AdminFormsView.toolbarSectionGap),
             ListenableBuilder(
@@ -411,12 +403,15 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
                                 vm: widget.vm,
                                 onViewPressed: () =>
                                     _openPreviewFormDialog(entry.value),
-                                onEditPressed: () =>
-                                    _openEditFormDialog(entry.value),
-                                onDeactivatePressed: () =>
-                                    _confirmDeactivateForm(entry.value),
-                                onDeletePressed: () =>
-                                    _confirmDeleteForm(entry.value),
+                                onEditPressed: widget.vm.canUpdateForms
+                                    ? () => _openEditFormDialog(entry.value)
+                                    : null,
+                                onDeactivatePressed: widget.vm.canUpdateForms
+                                    ? () => _confirmDeactivateForm(entry.value)
+                                    : null,
+                                onDeletePressed: widget.vm.canDeleteForms
+                                    ? () => _confirmDeleteForm(entry.value)
+                                    : null,
                               ),
                             ),
                           ),
@@ -431,9 +426,15 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
                     emptyMessage: _emptyMessage,
                     vm: widget.vm,
                     onViewPressed: _openPreviewFormDialog,
-                    onEditPressed: _openEditFormDialog,
-                    onDeactivatePressed: _confirmDeactivateForm,
-                    onDeletePressed: _confirmDeleteForm,
+                    onEditPressed: widget.vm.canUpdateForms
+                        ? _openEditFormDialog
+                        : null,
+                    onDeactivatePressed: widget.vm.canUpdateForms
+                        ? _confirmDeactivateForm
+                        : null,
+                    onDeletePressed: widget.vm.canDeleteForms
+                        ? _confirmDeleteForm
+                        : null,
                   ),
                 );
               },
@@ -462,7 +463,7 @@ class _StatusFormsToolbar extends StatelessWidget {
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<String> onRoleChanged;
   final ValueChanged<String> onActiveChanged;
-  final VoidCallback onNewPressed;
+  final VoidCallback? onNewPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -726,18 +727,18 @@ class _StatusFormsTable extends StatelessWidget {
     required this.emptyMessage,
     required this.vm,
     required this.onViewPressed,
-    required this.onEditPressed,
-    required this.onDeactivatePressed,
-    required this.onDeletePressed,
+    this.onEditPressed,
+    this.onDeactivatePressed,
+    this.onDeletePressed,
   });
 
   final List<StatusForm> forms;
   final String emptyMessage;
   final AdminFlowViewModel vm;
   final Future<void> Function(StatusForm form) onViewPressed;
-  final Future<void> Function(StatusForm form) onEditPressed;
-  final Future<void> Function(StatusForm form) onDeactivatePressed;
-  final Future<void> Function(StatusForm form) onDeletePressed;
+  final Future<void> Function(StatusForm form)? onEditPressed;
+  final Future<void> Function(StatusForm form)? onDeactivatePressed;
+  final Future<void> Function(StatusForm form)? onDeletePressed;
 
   static const _headerStyle = TextStyle(
     color: AppColors.textSecondary,
@@ -834,23 +835,12 @@ class _StatusFormsTable extends StatelessWidget {
           sampleNext,
           _valueStyle,
         );
-        final sampleActive = forms
-            .map((form) => (form.isActive ?? false) ? 'Active' : 'Inactive')
-            .fold<String>('Inactive', _longerText);
         final sampleCreated = forms
             .map((form) => AdminUsersView.formatCreatedAt(form.createdAt))
             .fold<String>('-', _longerText);
         final sampleUpdated = forms
             .map((form) => AdminUsersView.formatUpdatedAt(form.updatedAt))
             .fold<String>('-', _longerText);
-        final activeWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Active',
-          _headerStyle,
-          sampleActive,
-          _valueStyle,
-        );
         final createdWidth = _maxTextWidth(
           context,
           textScaler,
@@ -878,7 +868,6 @@ class _StatusFormsTable extends StatelessWidget {
         final resolvedStatusWidth = _resolvedColumnWidth(statusWidth);
         final resolvedButtonWidth = _resolvedColumnWidth(buttonWidth);
         final resolvedNextWidth = _resolvedColumnWidth(nextWidth);
-        final resolvedActiveWidth = _resolvedColumnWidth(activeWidth) + 12;
         final resolvedCreatedWidth = _resolvedColumnWidth(createdWidth);
         final resolvedUpdatedWidth = _resolvedColumnWidth(updatedWidth);
         final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
@@ -890,7 +879,6 @@ class _StatusFormsTable extends StatelessWidget {
             resolvedStatusWidth +
             resolvedButtonWidth +
             resolvedNextWidth +
-            resolvedActiveWidth +
             resolvedCreatedWidth +
             resolvedUpdatedWidth +
             resolvedActionsWidth +
@@ -919,9 +907,15 @@ class _StatusFormsTable extends StatelessWidget {
                       form: form,
                       vm: vm,
                       onViewPressed: () => onViewPressed(form),
-                      onEditPressed: () => onEditPressed(form),
-                      onDeactivatePressed: () => onDeactivatePressed(form),
-                      onDeletePressed: () => onDeletePressed(form),
+                      onEditPressed: onEditPressed == null
+                          ? null
+                          : () => onEditPressed!(form),
+                      onDeactivatePressed: onDeactivatePressed == null
+                          ? null
+                          : () => onDeactivatePressed!(form),
+                      onDeletePressed: onDeletePressed == null
+                          ? null
+                          : () => onDeletePressed!(form),
                     ),
                   ),
                 )
@@ -965,10 +959,6 @@ class _StatusFormsTable extends StatelessWidget {
                     child: const _HeaderCell(label: 'Next'),
                   ),
                   _FixedSlot(
-                    width: resolvedActiveWidth,
-                    child: const _HeaderCell(label: 'Active'),
-                  ),
-                  _FixedSlot(
                     width: resolvedCreatedWidth,
                     child: const _HeaderCell(label: 'Created'),
                   ),
@@ -1001,9 +991,15 @@ class _StatusFormsTable extends StatelessWidget {
                     form: entry.value,
                     vm: vm,
                     onViewPressed: () => onViewPressed(entry.value),
-                    onEditPressed: () => onEditPressed(entry.value),
-                    onDeactivatePressed: () => onDeactivatePressed(entry.value),
-                    onDeletePressed: () => onDeletePressed(entry.value),
+                    onEditPressed: onEditPressed == null
+                        ? null
+                        : () => onEditPressed!(entry.value),
+                    onDeactivatePressed: onDeactivatePressed == null
+                        ? null
+                        : () => onDeactivatePressed!(entry.value),
+                    onDeletePressed: onDeletePressed == null
+                        ? null
+                        : () => onDeletePressed!(entry.value),
                     shouldFlexRoles: shouldFlexRoles,
                     resolvedIdWidth: resolvedIdWidth,
                     resolvedRoleWidth: resolvedRoleWidth,
@@ -1011,7 +1007,6 @@ class _StatusFormsTable extends StatelessWidget {
                     resolvedStatusWidth: resolvedStatusWidth,
                     resolvedButtonWidth: resolvedButtonWidth,
                     resolvedNextWidth: resolvedNextWidth,
-                    resolvedActiveWidth: resolvedActiveWidth,
                     resolvedCreatedWidth: resolvedCreatedWidth,
                     resolvedUpdatedWidth: resolvedUpdatedWidth,
                     resolvedActionsWidth: resolvedActionsWidth,
@@ -1077,9 +1072,9 @@ class _StatusFormsTableRow extends StatelessWidget {
     required this.form,
     required this.vm,
     required this.onViewPressed,
-    required this.onEditPressed,
-    required this.onDeactivatePressed,
-    required this.onDeletePressed,
+    this.onEditPressed,
+    this.onDeactivatePressed,
+    this.onDeletePressed,
     required this.shouldFlexRoles,
     required this.resolvedIdWidth,
     required this.resolvedRoleWidth,
@@ -1087,7 +1082,6 @@ class _StatusFormsTableRow extends StatelessWidget {
     required this.resolvedStatusWidth,
     required this.resolvedButtonWidth,
     required this.resolvedNextWidth,
-    required this.resolvedActiveWidth,
     required this.resolvedCreatedWidth,
     required this.resolvedUpdatedWidth,
     required this.resolvedActionsWidth,
@@ -1096,9 +1090,9 @@ class _StatusFormsTableRow extends StatelessWidget {
   final StatusForm form;
   final AdminFlowViewModel vm;
   final VoidCallback onViewPressed;
-  final VoidCallback onEditPressed;
-  final VoidCallback onDeactivatePressed;
-  final VoidCallback onDeletePressed;
+  final VoidCallback? onEditPressed;
+  final VoidCallback? onDeactivatePressed;
+  final VoidCallback? onDeletePressed;
   final bool shouldFlexRoles;
   final double resolvedIdWidth;
   final double resolvedRoleWidth;
@@ -1106,7 +1100,6 @@ class _StatusFormsTableRow extends StatelessWidget {
   final double resolvedStatusWidth;
   final double resolvedButtonWidth;
   final double resolvedNextWidth;
-  final double resolvedActiveWidth;
   final double resolvedCreatedWidth;
   final double resolvedUpdatedWidth;
   final double resolvedActionsWidth;
@@ -1213,15 +1206,6 @@ class _StatusFormsTableRow extends StatelessWidget {
             ),
           ),
           _FixedSlot(
-            width: resolvedActiveWidth,
-            child: _BodyCell(
-              child: _metaPill(
-                (form.isActive ?? false) ? 'Active' : 'Inactive',
-                isFilled: form.isActive ?? false,
-              ),
-            ),
-          ),
-          _FixedSlot(
             width: resolvedCreatedWidth,
             child: _BodyCell(
               child: Text(
@@ -1260,23 +1244,29 @@ class _StatusFormsTableRow extends StatelessWidget {
                     backgroundColor: Colors.yellow.shade900,
                     onTap: onViewPressed,
                   ),
-                  const SizedBox(width: 8),
-                  _MiniActionButton(
-                    icon: Icons.edit_rounded,
-                    onTap: onEditPressed,
-                  ),
-                  const SizedBox(width: 8),
-                  _MiniActionButton(
-                    icon: Icons.close_rounded,
-                    backgroundColor: AppColors.dangerStrong,
-                    onTap: onDeactivatePressed,
-                  ),
-                  const SizedBox(width: 8),
-                  _MiniActionButton(
-                    icon: Icons.delete_rounded,
-                    onTap: onDeletePressed,
-                    isDanger: true,
-                  ),
+                  if (onEditPressed != null) ...[
+                    const SizedBox(width: 8),
+                    _MiniActionButton(
+                      icon: Icons.edit_rounded,
+                      onTap: onEditPressed!,
+                    ),
+                  ],
+                  if (onDeactivatePressed != null) ...[
+                    const SizedBox(width: 8),
+                    _MiniActionButton(
+                      icon: Icons.close_rounded,
+                      backgroundColor: AppColors.dangerStrong,
+                      onTap: onDeactivatePressed!,
+                    ),
+                  ],
+                  if (onDeletePressed != null) ...[
+                    const SizedBox(width: 8),
+                    _MiniActionButton(
+                      icon: Icons.delete_rounded,
+                      onTap: onDeletePressed!,
+                      isDanger: true,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -1292,17 +1282,17 @@ class _StatusFormResponsiveCard extends StatelessWidget {
     required this.form,
     required this.vm,
     required this.onViewPressed,
-    required this.onEditPressed,
-    required this.onDeactivatePressed,
-    required this.onDeletePressed,
+    this.onEditPressed,
+    this.onDeactivatePressed,
+    this.onDeletePressed,
   });
 
   final StatusForm form;
   final AdminFlowViewModel vm;
   final VoidCallback onViewPressed;
-  final VoidCallback onEditPressed;
-  final VoidCallback onDeactivatePressed;
-  final VoidCallback onDeletePressed;
+  final VoidCallback? onEditPressed;
+  final VoidCallback? onDeactivatePressed;
+  final VoidCallback? onDeletePressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1347,52 +1337,40 @@ class _StatusFormResponsiveCard extends StatelessWidget {
                 ? CrossAxisAlignment.center
                 : CrossAxisAlignment.start,
             children: [
-              if (showTopActionsRow && stackTopActions)
-                Column(
-                  children: [
-                    _metaPill(
-                      (form.isActive ?? false) ? 'Active' : 'Inactive',
-                      isFilled: form.isActive ?? false,
-                    ),
-                  ],
-                )
-              else
+              if (!stackTopActions)
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    if (showTopActionsRow) ...[
-                      _metaPill(
-                        (form.isActive ?? false) ? 'Active' : 'Inactive',
-                        isFilled: form.isActive ?? false,
-                      ),
-                      const Spacer(),
-                      Wrap(
-                        alignment: WrapAlignment.end,
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          _ActionButton(
-                            icon: Icons.visibility_rounded,
-                            backgroundColor: Colors.yellow.shade900,
-                            onTap: onViewPressed,
-                          ),
+                    const Spacer(),
+                    Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _ActionButton(
+                          icon: Icons.visibility_rounded,
+                          backgroundColor: Colors.yellow.shade900,
+                          onTap: onViewPressed,
+                        ),
+                        if (onEditPressed != null)
                           _ActionButton(
                             icon: Icons.edit_outlined,
-                            onTap: onEditPressed,
+                            onTap: onEditPressed!,
                           ),
+                        if (onDeactivatePressed != null)
                           _ActionButton(
                             icon: Icons.close_rounded,
                             backgroundColor: AppColors.dangerStrong,
-                            onTap: onDeactivatePressed,
+                            onTap: onDeactivatePressed!,
                           ),
+                        if (onDeletePressed != null)
                           _ActionButton(
                             icon: Icons.delete_outline_rounded,
-                            onTap: onDeletePressed,
+                            onTap: onDeletePressed!,
                             isDanger: true,
                           ),
-                        ],
-                      ),
-                    ],
+                      ],
+                    ),
                   ],
                 ),
               const SizedBox(height: 18),
@@ -1424,20 +1402,23 @@ class _StatusFormResponsiveCard extends StatelessWidget {
                       backgroundColor: Colors.yellow.shade900,
                       onTap: onViewPressed,
                     ),
-                    _ActionButton(
-                      icon: Icons.edit_outlined,
-                      onTap: onEditPressed,
-                    ),
-                    _ActionButton(
-                      icon: Icons.close_rounded,
-                      backgroundColor: AppColors.dangerStrong,
-                      onTap: onDeactivatePressed,
-                    ),
-                    _ActionButton(
-                      icon: Icons.delete_outline_rounded,
-                      onTap: onDeletePressed,
-                      isDanger: true,
-                    ),
+                    if (onEditPressed != null)
+                      _ActionButton(
+                        icon: Icons.edit_outlined,
+                        onTap: onEditPressed!,
+                      ),
+                    if (onDeactivatePressed != null)
+                      _ActionButton(
+                        icon: Icons.close_rounded,
+                        backgroundColor: AppColors.dangerStrong,
+                        onTap: onDeactivatePressed!,
+                      ),
+                    if (onDeletePressed != null)
+                      _ActionButton(
+                        icon: Icons.delete_outline_rounded,
+                        onTap: onDeletePressed!,
+                        isDanger: true,
+                      ),
                   ],
                 ),
               ],
@@ -1473,13 +1454,11 @@ class _InlineEditorContent extends StatelessWidget {
   const _InlineEditorContent({
     required this.vm,
     required this.form,
-    this.onSubmit,
     this.onClose,
   });
 
   final AdminFlowViewModel vm;
   final StatusForm form;
-  final VoidCallback? onSubmit;
   final VoidCallback? onClose;
 
   @override
@@ -1489,7 +1468,7 @@ class _InlineEditorContent extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: _BasicInfoSection(vm: vm, form: form, onSubmit: onSubmit),
+          child: _BasicInfoSection(vm: vm, form: form),
         ),
         const SizedBox(height: 6),
         Padding(
@@ -1498,7 +1477,6 @@ class _InlineEditorContent extends StatelessWidget {
             context: context,
             vm: vm,
             form: form,
-            onSubmit: onSubmit,
           ),
         ),
         const SizedBox(height: 16),
@@ -1509,7 +1487,7 @@ class _InlineEditorContent extends StatelessWidget {
         const SizedBox(height: 16),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: _DependenciesSection(vm: vm, form: form, onSubmit: onSubmit),
+          child: _DependenciesSection(vm: vm, form: form),
         ),
         Padding(
           padding: const EdgeInsets.only(top: 16),
@@ -1525,15 +1503,10 @@ class _InlineEditorContent extends StatelessWidget {
 }
 
 class _BasicInfoSection extends StatelessWidget {
-  const _BasicInfoSection({
-    required this.vm,
-    required this.form,
-    this.onSubmit,
-  });
+  const _BasicInfoSection({required this.vm, required this.form});
 
   final AdminFlowViewModel vm;
   final StatusForm form;
-  final VoidCallback? onSubmit;
 
   @override
   Widget build(BuildContext context) {
@@ -1550,7 +1523,6 @@ class _BasicInfoSection extends StatelessWidget {
                 statuses: roleStatuses,
                 value: form.currentStatusKey,
                 label: 'Status',
-                onSubmit: onSubmit,
                 onChanged: (value) =>
                     vm.updateFormField('currentStatusKey', value),
               ),
@@ -1559,7 +1531,6 @@ class _BasicInfoSection extends StatelessWidget {
                 statuses: roleStatuses,
                 value: form.nextStatusKey,
                 label: 'Next Status',
-                onSubmit: onSubmit,
                 onChanged: (value) =>
                     vm.updateFormField('nextStatusKey', value),
               ),
@@ -1567,7 +1538,6 @@ class _BasicInfoSection extends StatelessWidget {
               _fullWidthTextField(
                 initialValue: form.buttonText,
                 label: 'Text On Button',
-                onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                 onChanged: (value) => vm.updateFormField('buttonText', value),
               ),
             ],
@@ -1589,7 +1559,6 @@ class _BasicInfoSection extends StatelessWidget {
                         statuses: roleStatuses,
                         value: form.currentStatusKey,
                         label: 'Status',
-                        onSubmit: onSubmit,
                         onChanged: (value) =>
                             vm.updateFormField('currentStatusKey', value),
                       ),
@@ -1601,7 +1570,6 @@ class _BasicInfoSection extends StatelessWidget {
                         statuses: roleStatuses,
                         value: form.nextStatusKey,
                         label: 'Next Status',
-                        onSubmit: onSubmit,
                         onChanged: (value) =>
                             vm.updateFormField('nextStatusKey', value),
                       ),
@@ -1618,7 +1586,6 @@ class _BasicInfoSection extends StatelessWidget {
                   child: _fullWidthTextField(
                     initialValue: form.buttonText,
                     label: 'Text On Button',
-                    onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
                     onChanged: (value) =>
                         vm.updateFormField('buttonText', value),
                   ),
@@ -1633,15 +1600,10 @@ class _BasicInfoSection extends StatelessWidget {
 }
 
 class _DependenciesSection extends StatelessWidget {
-  const _DependenciesSection({
-    required this.vm,
-    required this.form,
-    this.onSubmit,
-  });
+  const _DependenciesSection({required this.vm, required this.form});
 
   final AdminFlowViewModel vm;
   final StatusForm form;
-  final VoidCallback? onSubmit;
 
   @override
   Widget build(BuildContext context) {
@@ -1702,7 +1664,6 @@ class _DependenciesSection extends StatelessWidget {
                 onRemove: () => vm.removeDependency(entry.key),
                 onBlockedMessageChanged: (value) =>
                     vm.updateFormField('blockedMessage', value),
-                onSubmit: onSubmit,
               ),
             ),
           ),
@@ -1724,7 +1685,6 @@ class _DependencyCard extends StatelessWidget {
     required this.onStatusChanged,
     required this.onRemove,
     required this.onBlockedMessageChanged,
-    this.onSubmit,
   });
 
   final int index;
@@ -1738,7 +1698,6 @@ class _DependencyCard extends StatelessWidget {
   final ValueChanged<String?> onStatusChanged;
   final VoidCallback onRemove;
   final ValueChanged<String> onBlockedMessageChanged;
-  final VoidCallback? onSubmit;
 
   @override
   Widget build(BuildContext context) {
@@ -1824,7 +1783,6 @@ class _DependencyCard extends StatelessWidget {
                 )
                 .toList(),
             onChanged: onStatusChanged,
-            onSelectionCompleted: onSubmit,
           ),
           if (showBlockedMessage) ...[
             const SizedBox(height: 8),
@@ -1832,7 +1790,6 @@ class _DependencyCard extends StatelessWidget {
               label: 'Blocked Message',
               initialValue: blockedMessage,
               bottomPadding: 0,
-              onSubmitted: onSubmit == null ? null : (_) => onSubmit!(),
               onChanged: onBlockedMessageChanged,
             ),
           ],
@@ -2310,7 +2267,6 @@ Widget _fullWidthRolesField({
   required BuildContext context,
   required AdminFlowViewModel vm,
   required StatusForm form,
-  VoidCallback? onSubmit,
 }) {
   final selectedRoles = form.resolvedRoles.toSet();
   return Column(
@@ -2339,7 +2295,6 @@ Widget _fullWidthRolesField({
                 nextRoles.add(role);
               }
               vm.updateFormRoles(nextRoles.toList());
-              onSubmit?.call();
             },
           );
         }).toList(),
@@ -2352,14 +2307,12 @@ Widget _fullWidthTextField({
   required String? initialValue,
   required String label,
   required ValueChanged<String> onChanged,
-  ValueChanged<String>? onSubmitted,
 }) {
   return AdminModalValueTextField(
     initialValue: initialValue,
     label: label,
     bottomPadding: 0,
     onChanged: onChanged,
-    onSubmitted: onSubmitted,
   );
 }
 
@@ -2368,7 +2321,6 @@ Widget _fullWidthStatusField({
   required String? value,
   required String label,
   required ValueChanged<String?> onChanged,
-  VoidCallback? onSubmit,
 }) {
   return AdminModalDropdownField<String>(
     label: label,
@@ -2384,7 +2336,6 @@ Widget _fullWidthStatusField({
         )
         .toList(),
     onChanged: onChanged,
-    onSelectionCompleted: onSubmit,
   );
 }
 
@@ -2615,10 +2566,6 @@ class _MiniActionButton extends StatelessWidget {
       borderRadius: 12,
     );
   }
-}
-
-Widget _metaPill(String label, {bool isFilled = false}) {
-  return adminMetaPill(label, isFilled: isFilled);
 }
 
 String _titleCase(String? value) {

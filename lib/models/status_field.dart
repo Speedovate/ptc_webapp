@@ -42,7 +42,7 @@ const statusFieldOptionSourceLabels = <String, String>{
   statusFieldOptionSourceAdmins: 'Admins',
   statusFieldOptionSourceDrivers: 'Drivers',
   statusFieldOptionSourceHelpers: 'Helpers',
-  statusFieldOptionSourceClientMembers: 'Client Members',
+  statusFieldOptionSourceClientMembers: 'Clients',
   statusFieldOptionSourceVehicleMakes: 'Vehicle Makes',
   statusFieldOptionSourceVehicleTypes: 'Vehicle Types',
   statusFieldOptionSourceVehicleSizes: 'Vehicle Sizes',

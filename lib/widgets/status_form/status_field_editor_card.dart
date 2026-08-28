@@ -568,7 +568,6 @@ class StatusFieldEditorCard extends StatelessWidget {
       statusFieldOptionSourceAdmins,
       statusFieldOptionSourceDrivers,
       statusFieldOptionSourceHelpers,
-      statusFieldOptionSourceClientMembers,
       statusFieldOptionSourceVehicleMakes,
       statusFieldOptionSourceVehicleTypes,
       statusFieldOptionSourceVehicleSizes,

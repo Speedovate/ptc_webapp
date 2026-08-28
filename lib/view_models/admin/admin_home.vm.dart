@@ -6,6 +6,7 @@ enum AdminSection {
   vehicles('Vehicles'),
   settings('Flows'),
   users('Users'),
+  access('Roles'),
   support('Support'),
   profile('Profile');
 

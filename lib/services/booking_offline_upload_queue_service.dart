@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
+import 'package:webapp/services/image_upload_processor.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_sync_status_service.dart';
 import 'package:webapp/services/photo_storage_service.dart';
@@ -32,6 +33,8 @@ class BookingOfflineUploadQueueService {
   final BookingStorageBackend _backend;
   final FirebaseFirestore _firestore;
   final PhotoStorageService _photoStorageService;
+  final ImageUploadProcessor _imageUploadProcessor =
+      ImageUploadProcessor.instance;
   final AuthStorageBackend _authStorage = createAuthStorageBackend();
 
   bool _isInitialized = false;
@@ -71,9 +74,6 @@ class BookingOfflineUploadQueueService {
         _storageKeyForUserId(userId),
       );
     }
-    debugPrint(
-      '[OfflineQueueScope] booking-photo scoped statuses ${statuses.entries.map((entry) => '${entry.key}:${entry.value.pendingCount}/${entry.value.failedCount}').join(', ')}',
-    );
     return statuses;
   }
 
@@ -81,11 +81,6 @@ class BookingOfflineUploadQueueService {
     await _authStorage.initialize();
     if (_isInitialized) {
       await _refreshStatusFromStorage();
-      debugPrint(
-        '[OfflineQueueScope] booking-photo initialize refresh '
-        'storageKey=${await _resolvedStorageKey()} '
-        'pending=${_currentStatus.pendingCount}',
-      );
       return;
     }
     await _backend.initialize();
@@ -99,11 +94,6 @@ class BookingOfflineUploadQueueService {
       }
     });
     _isInitialized = true;
-    debugPrint(
-      '[OfflineQueueScope] booking-photo initialize first-run '
-      'storageKey=${await _resolvedStorageKey()} '
-      'pending=${_currentStatus.pendingCount}',
-    );
     unawaited(flushPendingUploads());
   }
 
@@ -117,16 +107,21 @@ class BookingOfflineUploadQueueService {
     int? size,
   }) async {
     await initialize();
+    final processed = await _imageUploadProcessor.prepare(
+      bytes: bytes,
+      fileName: fileName,
+      mimeType: mimeType,
+    );
 
     final entry = _PendingBookingUploadEntry(
       id: _nextEntryId(),
       bookingId: bookingId,
       statusKey: statusKey,
       fieldKey: fieldKey,
-      bytesBase64: base64Encode(bytes),
-      fileName: fileName,
-      mimeType: mimeType,
-      size: size ?? bytes.length,
+      bytesBase64: base64Encode(processed.bytes),
+      fileName: processed.fileName,
+      mimeType: processed.mimeType,
+      size: processed.size,
       createdAtIso: DateTime.now().toUtc().toIso8601String(),
       retryCount: 0,
       lastError: null,
@@ -138,17 +133,17 @@ class BookingOfflineUploadQueueService {
     _setStatus(_currentStatus.copyWith(pendingCount: entries.length));
     unawaited(flushPendingUploads());
 
-    final resolvedMimeType = mimeType?.trim().isNotEmpty == true
-        ? mimeType!.trim()
+    final resolvedMimeType = processed.mimeType.trim().isNotEmpty
+        ? processed.mimeType.trim()
         : 'image/jpeg';
     final previewDataUrl =
-        'data:$resolvedMimeType;base64,${base64Encode(bytes)}';
+        'data:$resolvedMimeType;base64,${base64Encode(processed.bytes)}';
 
     return {
-      'name': fileName,
+      'name': processed.fileName,
       'download_url': previewDataUrl,
-      'mime_type': mimeType,
-      'size': size ?? bytes.length,
+      'mime_type': processed.mimeType,
+      'size': processed.size,
       'pending_upload': true,
       'pending_upload_id': entry.id,
     };
@@ -157,10 +152,6 @@ class BookingOfflineUploadQueueService {
   Future<void> flushPendingUploads() async {
     await initialize();
     if (_isFlushing) {
-      debugPrint(
-        '[OfflineQueueScope] booking-photo flush skipped '
-        'storageKey=${await _resolvedStorageKey()} isFlushing=true',
-      );
       return;
     }
 
@@ -168,10 +159,6 @@ class BookingOfflineUploadQueueService {
     try {
       final currentStorageKey = await _resolvedStorageKey();
       final storageKeys = await _allKnownStorageKeys();
-      debugPrint(
-        '[OfflineQueueScope] booking-photo flush all '
-        'current=$currentStorageKey storageKeys=$storageKeys',
-      );
       for (final storageKey in storageKeys) {
         await _flushPendingUploadsForStorageKey(
           storageKey,
@@ -332,10 +319,6 @@ class BookingOfflineUploadQueueService {
     required bool updateStatus,
   }) async {
     final entries = await _readEntriesForStorageKey(storageKey);
-    debugPrint(
-      '[OfflineQueueScope] booking-photo flush start '
-      'storageKey=$storageKey entries=${entries.length}',
-    );
     if (updateStatus) {
       _setStatus(
         _currentStatus.copyWith(

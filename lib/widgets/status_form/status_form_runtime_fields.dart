@@ -292,6 +292,21 @@ class _SearchDropdownFieldInput extends StatelessWidget {
   final String? errorText;
   final ValueChanged<dynamic>? onAdvanceAfterSelection;
 
+  void _closeSelectionFlow(BuildContext context, dynamic value) {
+    onChanged(value);
+    final handleAdvance = onAdvanceAfterSelection;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) {
+        return;
+      }
+      if (handleAdvance != null) {
+        handleAdvance(value);
+        return;
+      }
+      FocusScope.of(context).unfocus();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = bookingFormResolvedStatusPalette(
@@ -302,11 +317,13 @@ class _SearchDropdownFieldInput extends StatelessWidget {
     final fieldLabel = field.title?.trim().isNotEmpty == true
         ? field.title!.trim()
         : 'Field';
+    if (field.options.isEmpty) {
+    } else {
+    }
 
     return AdminSearchSelectFormField(
       initialValue: initialValue?.toString(),
       focusNode: focusNode,
-      autoActivateOnFocus: activateNextFocus,
       dialogTitle: adminSelectPlaceholder(fieldLabel),
       decoration: adminPlainDropdownDecoration(
         field.required == true
@@ -332,38 +349,7 @@ class _SearchDropdownFieldInput extends StatelessWidget {
         errorText: errorText,
       ),
       options: field.options,
-      onChanged: (value) {
-        onChanged(value);
-        final handleAdvance = onAdvanceAfterSelection;
-        if (handleAdvance != null) {
-          handleAdvance(value);
-          return;
-        }
-        final resolvedNextFocusNode = nextFocusNode;
-        if (resolvedNextFocusNode != null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!context.mounted) {
-              return;
-            }
-            FocusScope.of(context).requestFocus(resolvedNextFocusNode);
-            if (activateNextFocus) {
-              final primaryFocus = FocusManager.instance.primaryFocus;
-              final targetContext =
-                  primaryFocus?.context ?? resolvedNextFocusNode.context;
-              if (targetContext != null) {
-                Actions.maybeInvoke(targetContext, const ActivateIntent());
-              }
-            }
-          });
-        } else {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!context.mounted) {
-              return;
-            }
-            FocusScope.of(context).unfocus();
-          });
-        }
-      },
+      onChanged: (value) => _closeSelectionFlow(context, value),
     );
   }
 }
@@ -395,6 +381,21 @@ class _PalawanLocationFieldInput extends StatelessWidget {
   final String? errorText;
   final ValueChanged<dynamic>? onAdvanceAfterSelection;
 
+  void _closeSelectionFlow(BuildContext context, dynamic value) {
+    onChanged(value);
+    final handleAdvance = onAdvanceAfterSelection;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) {
+        return;
+      }
+      if (handleAdvance != null) {
+        handleAdvance(value);
+        return;
+      }
+      FocusScope.of(context).unfocus();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = bookingFormResolvedStatusPalette(
@@ -406,7 +407,6 @@ class _PalawanLocationFieldInput extends StatelessWidget {
     return AdminSearchSelectFormField(
       initialValue: initialValue?.toString(),
       focusNode: focusNode,
-      autoActivateOnFocus: activateNextFocus,
       dialogTitle: adminSelectPlaceholder(
         field.title?.trim().isNotEmpty == true ? field.title!.trim() : 'Location',
       ),
@@ -439,38 +439,7 @@ class _PalawanLocationFieldInput extends StatelessWidget {
         errorText: errorText,
       ),
       options: palawanLocationOptions,
-      onChanged: (value) {
-        onChanged(value);
-        final handleAdvance = onAdvanceAfterSelection;
-        if (handleAdvance != null) {
-          handleAdvance(value);
-          return;
-        }
-        final resolvedNextFocusNode = nextFocusNode;
-        if (resolvedNextFocusNode != null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!context.mounted) {
-              return;
-            }
-            FocusScope.of(context).requestFocus(resolvedNextFocusNode);
-            if (activateNextFocus) {
-              final primaryFocus = FocusManager.instance.primaryFocus;
-              final targetContext =
-                  primaryFocus?.context ?? resolvedNextFocusNode.context;
-              if (targetContext != null) {
-                Actions.maybeInvoke(targetContext, const ActivateIntent());
-              }
-            }
-          });
-        } else {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!context.mounted) {
-              return;
-            }
-            FocusScope.of(context).unfocus();
-          });
-        }
-      },
+      onChanged: (value) => _closeSelectionFlow(context, value),
     );
   }
 }
@@ -579,11 +548,13 @@ class _TextFieldInputState extends State<_TextFieldInput> {
     if (_controller.text == nextText) {
       return;
     }
+    _controller.removeListener(_handleChanged);
     _controller.value = _controller.value.copyWith(
       text: nextText,
       selection: TextSelection.collapsed(offset: nextText.length),
       composing: TextRange.empty,
     );
+    _controller.addListener(_handleChanged);
   }
 
   @override
@@ -729,35 +700,26 @@ class _DropdownFieldInput extends StatelessWidget {
     final fieldLabel = field.title?.trim().isNotEmpty == true
         ? field.title!.trim()
         : 'Field';
+    if (effectiveOptions.isEmpty) {
+    } else {
+    }
     final hintText = placeholder?.isNotEmpty == true
         ? placeholder!
         : field.required == true
         ? adminSelectPlaceholder(fieldLabel)
         : 'Optional';
-    void moveToNextField() {
+    void closeSelectionFlow(dynamic value) {
+      onChanged(value);
+      final handleAdvance = onAdvanceAfterSelection;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!context.mounted) {
           return;
         }
-        final resolvedNextFocusNode = nextFocusNode;
-        if (resolvedNextFocusNode != null) {
-          FocusScope.of(context).requestFocus(resolvedNextFocusNode);
-          if (activateNextFocus) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!context.mounted) {
-                return;
-              }
-              final primaryFocus = FocusManager.instance.primaryFocus;
-              final targetContext =
-                  primaryFocus?.context ?? resolvedNextFocusNode.context;
-              if (targetContext != null) {
-                Actions.maybeInvoke(targetContext, const ActivateIntent());
-              }
-            });
-          }
-        } else {
-          FocusScope.of(context).unfocus();
+        if (handleAdvance != null) {
+          handleAdvance(value);
+          return;
         }
+        FocusScope.of(context).unfocus();
       });
     }
 
@@ -800,15 +762,7 @@ class _DropdownFieldInput extends StatelessWidget {
           ),
         );
       }).toList(),
-      onChanged: (value) {
-        onChanged(value);
-        final handleAdvance = onAdvanceAfterSelection;
-        if (handleAdvance != null) {
-          handleAdvance(value);
-          return;
-        }
-        moveToNextField();
-      },
+        onChanged: (value) => closeSelectionFlow(value),
       onDisabledTap: onDisabledTap,
     );
   }
@@ -1305,6 +1259,9 @@ class _PhotoFieldInputState extends State<_PhotoFieldInput> {
 }
 
 String? _constraintHint(StatusField field) {
+  if ((field.type ?? '').trim().toLowerCase() == 'phone') {
+    return null;
+  }
   final parts = <String>[];
   if (field.min != null) {
     parts.add('Min: ${field.min}');

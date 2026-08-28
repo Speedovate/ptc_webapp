@@ -9,6 +9,7 @@ import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
+import 'package:webapp/services/image_upload_processor.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_sync_status_service.dart';
 import 'package:webapp/services/photo_storage_service.dart';
@@ -34,11 +35,14 @@ class OfflineMediaSyncService {
   static const _currentUserIdKey = 'paltranco_current_user_id';
   static const _knownSessionUserIdsKey = 'paltranco_known_session_user_ids';
   static const _retryInterval = Duration(seconds: 20);
+  static const Duration _queuedSupportReadTimeout = Duration(seconds: 1);
 
   final BookingStorageBackend _backend;
   final FirebaseFirestore _firestore;
   final PhotoStorageService _photoStorageService;
   final SupportStorageService _supportStorageService;
+  final ImageUploadProcessor _imageUploadProcessor =
+      ImageUploadProcessor.instance;
   final AuthStorageBackend _authStorage = createAuthStorageBackend();
 
   bool _isInitialized = false;
@@ -82,9 +86,6 @@ class OfflineMediaSyncService {
         _storageKeyForUserId(userId),
       );
     }
-    debugPrint(
-      '[OfflineQueueScope] media scoped statuses ${statuses.entries.map((entry) => '${entry.key}:${entry.value.pendingCount}/${entry.value.failedCount}').join(', ')}',
-    );
     return statuses;
   }
 
@@ -92,7 +93,13 @@ class OfflineMediaSyncService {
     String? threadId,
   }) async {
     await initialize();
-    await _queueMutationChain.catchError((_) {});
+    try {
+      await _queueMutationChain
+          .catchError((_) {})
+          .timeout(_queuedSupportReadTimeout);
+    } on TimeoutException {
+      // Ignore queue read delays so support UI can continue rendering.
+    }
     final normalizedThreadId = normalizeId(threadId);
     final entries = await _readEntries();
     final documents = entries
@@ -112,11 +119,6 @@ class OfflineMediaSyncService {
     await _authStorage.initialize();
     if (_isInitialized) {
       await _refreshStatusFromStorage();
-      debugPrint(
-        '[OfflineQueueScope] media initialize refresh '
-        'storageKey=${await _resolvedStorageKey()} '
-        'pending=${_currentStatus.pendingCount}',
-      );
       return;
     }
     await _backend.initialize();
@@ -130,11 +132,6 @@ class OfflineMediaSyncService {
       }
     });
     _isInitialized = true;
-    debugPrint(
-      '[OfflineQueueScope] media initialize first-run '
-      'storageKey=${await _resolvedStorageKey()} '
-      'pending=${_currentStatus.pendingCount}',
-    );
     unawaited(flushPendingOperations());
   }
 
@@ -149,15 +146,20 @@ class OfflineMediaSyncService {
   }) async {
     await initialize();
     return _serializeQueueMutation(() async {
+      final processed = await _imageUploadProcessor.prepare(
+        bytes: bytes,
+        fileName: fileName,
+        mimeType: mimeType,
+      );
       final entry = _OfflineMediaQueueEntry.userUpload(
         id: _nextEntryId('user_upload'),
         createdAtIso: DateTime.now().toUtc().toIso8601String(),
         userId: userId,
         fieldKey: fieldKey,
-        fileName: fileName,
-        mimeType: mimeType,
-        size: size ?? bytes.length,
-        bytesBase64: base64Encode(bytes),
+        fileName: processed.fileName,
+        mimeType: processed.mimeType,
+        size: processed.size,
+        bytesBase64: base64Encode(processed.bytes),
         originalValue: originalValue,
       );
       final entries = await _readEntries();
@@ -169,7 +171,10 @@ class OfflineMediaSyncService {
       unawaited(flushPendingOperations());
 
       return QueuedUserMediaResult(
-        previewUrl: _dataUrlForBytes(bytes: bytes, mimeType: mimeType),
+        previewUrl: _dataUrlForBytes(
+          bytes: processed.bytes,
+          mimeType: processed.mimeType,
+        ),
         queuedAt: DateTime.now(),
       );
     });
@@ -230,11 +235,6 @@ class OfflineMediaSyncService {
     var shouldFlushAgainImmediately = false;
     if (!currentNetworkStatus()) {
       final entries = await _readEntries();
-      debugPrint(
-        '[OfflineQueueScope] media flush skipped '
-        'storageKey=${await _resolvedStorageKey()} '
-        'online=false entries=${entries.length}',
-      );
       _setStatus(
         _currentStatus.copyWith(
           pendingCount: entries.length,
@@ -249,10 +249,6 @@ class OfflineMediaSyncService {
     try {
       final currentStorageKey = await _resolvedStorageKey();
       final storageKeys = await _allKnownStorageKeys();
-      debugPrint(
-        '[OfflineQueueScope] media flush all '
-        'current=$currentStorageKey storageKeys=$storageKeys',
-      );
       for (final storageKey in storageKeys) {
         final flushed = await _flushPendingOperationsForStorageKey(
           storageKey,
@@ -465,10 +461,6 @@ class OfflineMediaSyncService {
     required bool updateStatus,
   }) async {
     final entries = await _readEntriesForStorageKey(storageKey);
-    debugPrint(
-      '[OfflineQueueScope] media flush start '
-      'storageKey=$storageKey entries=${entries.length}',
-    );
     final originalEntryIds = entries.map((entry) => entry.id).toSet();
     if (updateStatus) {
       _setStatus(

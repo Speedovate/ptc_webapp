@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:webapp/models/client_member.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/client_member_repository.dart';
+import 'package:webapp/services/offline_queue_coordinator_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class ClientMemberRequest implements ClientMemberRepository {
@@ -12,11 +15,21 @@ class ClientMemberRequest implements ClientMemberRepository {
   static final ClientMemberRequest instance = ClientMemberRequest();
 
   static const resourceKeyPrefix = 'client_members';
+  static bool _didStartBackgroundOfflineQueueInitialization = false;
 
   final AuthRepository _authRepository;
 
   @override
   Future<void> initialize() async {
+    if (!_didStartBackgroundOfflineQueueInitialization) {
+      _didStartBackgroundOfflineQueueInitialization = true;
+      unawaited(
+        OfflineQueueCoordinatorService.instance.initialize().catchError((
+          error,
+          stackTrace,
+        ) {}),
+      );
+    }
     await _authRepository.initialize();
   }
 
@@ -73,7 +86,7 @@ class ClientMemberRequest implements ClientMemberRepository {
     final savedUser = await _authRepository.saveUser(
       UserModel(
         id: normalizedUserId,
-        role: 'sub-client',
+        role: 'client',
         parentClientId: normalizedClientId,
         email: member.email ?? existingUser?.email,
         name: member.name ?? existingUser?.name,
@@ -81,7 +94,7 @@ class ClientMemberRequest implements ClientMemberRepository {
         phone: member.phone ?? existingUser?.phone,
         position: member.position ?? existingUser?.position,
         isActive: member.isActive ?? existingUser?.isActive ?? true,
-        isOnline: existingUser?.isOnline ?? false,
+        isOnline: false,
         password: existingUser?.password,
         createdAt: existingUser?.createdAt ?? member.createdAt,
         updatedAt: member.updatedAt ?? existingUser?.updatedAt,

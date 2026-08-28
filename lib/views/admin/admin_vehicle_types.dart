@@ -213,9 +213,11 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
                               });
                             },
                           ),
-                      onNewPressed: () {
-                        _handleNew(vm);
-                      },
+                      onNewPressed: vm.canCreateTypes
+                          ? () {
+                              _handleNew(vm);
+                            }
+                          : null,
                     ),
                     const SizedBox(height: 12),
                     if (vm.errorMessage != null)
@@ -310,6 +312,9 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
     AdminVehicleTypesViewModel vm,
     VehicleCatalogItem item,
   ) async {
+    if (!vm.canUpdateTypes) {
+      return;
+    }
     final edited = await _showCatalogItemDialog(
       context,
       title: 'Edit Type',
@@ -332,6 +337,9 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
     AdminVehicleTypesViewModel vm,
     VehicleCatalogItem item,
   ) async {
+    if (!vm.canUpdateTypes) {
+      return;
+    }
     final willBeActive = !(item.isActive ?? false);
     final confirmed = await showAdminActionConfirmation(
       context,
@@ -360,6 +368,9 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
     AdminVehicleTypesViewModel vm,
     VehicleCatalogItem item,
   ) async {
+    if (!vm.canDeleteTypes) {
+      return;
+    }
     final confirmed = await showAdminActionConfirmation(
       context,
       title: 'Delete Type ${item.id ?? '-'}',
@@ -701,43 +712,52 @@ List<Widget> _vehicleTypeActions(
           ?._handlePreview(item);
     },
   ),
-  AdminListActionButton(
-    icon: Icons.edit_rounded,
-    onTap: () {
-      final state = context
-          .findAncestorStateOfType<_AdminVehicleTypesViewState>();
-      final vm = state?._vm;
-      if (vm != null) {
-        state?._handleEdit(vm, item);
-      }
-    },
-  ),
-  AdminListActionButton(
-    icon: (item.isActive ?? false) ? Icons.close_rounded : Icons.check_rounded,
-    backgroundColor: (item.isActive ?? false)
-        ? AppColors.dangerStrong
-        : const Color(0xFF2EAD62),
-    onTap: () {
-      final state = context
-          .findAncestorStateOfType<_AdminVehicleTypesViewState>();
-      final vm = state?._vm;
-      if (vm != null) {
-        state?._handleToggleActive(vm, item);
-      }
-    },
-  ),
-  AdminListActionButton(
-    icon: Icons.delete_rounded,
-    isDanger: true,
-    onTap: () {
-      final state = context
-          .findAncestorStateOfType<_AdminVehicleTypesViewState>();
-      final vm = state?._vm;
-      if (vm != null) {
-        state?._handleDelete(vm, item);
-      }
-    },
-  ),
+  if ((context.findAncestorStateOfType<_AdminVehicleTypesViewState>()?._vm
+              ?.canUpdateTypes ??
+          false))
+    AdminListActionButton(
+      icon: Icons.edit_rounded,
+      onTap: () {
+        final state = context
+            .findAncestorStateOfType<_AdminVehicleTypesViewState>();
+        final vm = state?._vm;
+        if (vm != null) {
+          state?._handleEdit(vm, item);
+        }
+      },
+    ),
+  if ((context.findAncestorStateOfType<_AdminVehicleTypesViewState>()?._vm
+              ?.canUpdateTypes ??
+          false))
+    AdminListActionButton(
+      icon: (item.isActive ?? false) ? Icons.close_rounded : Icons.check_rounded,
+      backgroundColor: (item.isActive ?? false)
+          ? AppColors.dangerStrong
+          : const Color(0xFF2EAD62),
+      onTap: () {
+        final state = context
+            .findAncestorStateOfType<_AdminVehicleTypesViewState>();
+        final vm = state?._vm;
+        if (vm != null) {
+          state?._handleToggleActive(vm, item);
+        }
+      },
+    ),
+  if ((context.findAncestorStateOfType<_AdminVehicleTypesViewState>()?._vm
+              ?.canDeleteTypes ??
+          false))
+    AdminListActionButton(
+      icon: Icons.delete_rounded,
+      isDanger: true,
+      onTap: () {
+        final state = context
+            .findAncestorStateOfType<_AdminVehicleTypesViewState>();
+        final vm = state?._vm;
+        if (vm != null) {
+          state?._handleDelete(vm, item);
+        }
+      },
+    ),
 ];
 
 class _VehicleTypeEmptyState extends StatelessWidget {

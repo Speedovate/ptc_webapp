@@ -27,6 +27,12 @@ class AdminModalShell extends StatelessWidget {
     final mediaSize = MediaQuery.sizeOf(context);
     final hasActions = actions != null && actions!.isNotEmpty;
     final dialogMaxHeight = mediaSize.height * maxHeightFactor;
+    final horizontalInset = 24.0;
+    final verticalInset = 24.0;
+    final availableWidth = (mediaSize.width - (horizontalInset * 2)).clamp(
+      0.0,
+      maxWidth,
+    );
     final bodyMaxHeight = hasActions
         ? (dialogMaxHeight - 120).clamp(0.0, dialogMaxHeight)
         : (dialogMaxHeight - 56).clamp(0.0, dialogMaxHeight);
@@ -56,14 +62,17 @@ class AdminModalShell extends StatelessWidget {
       child: Dialog(
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        insetPadding: EdgeInsets.symmetric(
+          horizontal: horizontalInset,
+          vertical: verticalInset,
+        ),
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: (mediaSize.width - 96).clamp(0.0, maxWidth),
+            maxWidth: availableWidth,
             maxHeight: mediaSize.height * maxHeightFactor,
           ),
           child: SizedBox(
-            width: (mediaSize.width - 96).clamp(0.0, maxWidth),
+            width: availableWidth,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,

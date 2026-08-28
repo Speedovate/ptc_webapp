@@ -23,6 +23,9 @@ class AdminFieldsView extends StatelessWidget {
     AdminFlowViewModel vm,
     StatusField field,
   ) async {
+    if (!vm.canUpdateFields) {
+      return;
+    }
     final willBeActive = !(field.isActive ?? false);
     final confirmed = await showAdminActionConfirmation(
       context,
@@ -50,6 +53,9 @@ class AdminFieldsView extends StatelessWidget {
     AdminFlowViewModel vm,
     StatusField field,
   ) async {
+    if (!vm.canDeleteFields) {
+      return;
+    }
     final confirmed = await showAdminActionConfirmation(
       context,
       title: 'Delete Field ${field.id ?? '-'}',
@@ -81,7 +87,7 @@ class AdminFieldsView extends StatelessWidget {
   Widget build(BuildContext context) {
     return ViewModelBuilder<AdminFlowViewModel>.reactive(
       viewModelBuilder: AdminFlowViewModel.new,
-      onViewModelReady: (vm) => vm.loadForms(),
+      onViewModelReady: (vm) => vm.loadFieldsPage(),
       builder: (context, vm, child) {
         return AppPageLoadingOverlay(
           isVisible: vm.isLoading,
@@ -107,6 +113,10 @@ class AdminFieldsView extends StatelessWidget {
     required String title,
     bool readOnly = false,
   }) async {
+    if (!readOnly &&
+        !(initialField == null ? vm.canCreateFields : vm.canUpdateFields)) {
+      return;
+    }
     final savedField = await showDialog<StatusField>(
       context: context,
       builder: (dialogContext) => _FieldEditorDialog(
@@ -162,7 +172,7 @@ class _FieldsContentState extends State<_FieldsContent> {
   String _activeFilter = 'All';
 
   String get _emptyMessage {
-    final hasAnyData = widget.vm.fields.isNotEmpty;
+    final hasAnyData = widget.vm.fieldLibrary.isNotEmpty;
     if (!hasAnyData) {
       return 'No fields yet.';
     }
@@ -218,11 +228,13 @@ class _FieldsContentState extends State<_FieldsContent> {
                 onTypeChanged: (value) => setState(() => _typeFilter = value),
                 onActiveChanged: (value) =>
                     setState(() => _activeFilter = value),
-                onNewPressed: () => AdminFieldsView.openFieldDialog(
-                  context,
-                  widget.vm,
-                  title: 'New Field',
-                ),
+                onNewPressed: widget.vm.canCreateFields
+                    ? () => AdminFieldsView.openFieldDialog(
+                        context,
+                        widget.vm,
+                        title: 'New Field',
+                      )
+                    : null,
               ),
               const SizedBox(height: AdminFieldsView.toolbarSectionGap),
               if (isNarrow)
@@ -279,7 +291,7 @@ class _FieldsToolbar extends StatelessWidget {
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<String> onTypeChanged;
   final ValueChanged<String> onActiveChanged;
-  final VoidCallback onNewPressed;
+  final VoidCallback? onNewPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -583,9 +595,6 @@ class _FieldsTable extends StatelessWidget {
         final sampleType = fields
             .map((field) => field.type ?? '-')
             .fold<String>('-', _longerText);
-        final sampleActive = fields
-            .map((field) => (field.isActive ?? false) ? 'Active' : 'Inactive')
-            .fold<String>('Inactive', _longerText);
         final sampleCreated = fields
             .map((field) => AdminUsersView.formatCreatedAt(field.createdAt))
             .fold<String>('-', _longerText);
@@ -625,14 +634,6 @@ class _FieldsTable extends StatelessWidget {
           sampleType,
           _valueStyle,
         );
-        final activeWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Active',
-          _headerStyle,
-          sampleActive,
-          _valueStyle,
-        );
         final createdWidth = _maxTextWidth(
           context,
           textScaler,
@@ -658,14 +659,12 @@ class _FieldsTable extends StatelessWidget {
         final resolvedKeyWidth = _resolvedColumnWidth(keyWidth);
         final resolvedTitleWidth = _resolvedColumnWidth(titleWidth);
         final resolvedTypeWidth = _resolvedColumnWidth(typeWidth);
-        final resolvedActiveWidth = _resolvedColumnWidth(activeWidth) + 12;
         final resolvedCreatedWidth = _resolvedColumnWidth(createdWidth);
         final resolvedUpdatedWidth = _resolvedColumnWidth(updatedWidth);
         final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
         final fixedWidthTotal =
             resolvedIdWidth +
             resolvedTypeWidth +
-            resolvedActiveWidth +
             resolvedCreatedWidth +
             resolvedUpdatedWidth +
             resolvedActionsWidth +
@@ -711,10 +710,6 @@ class _FieldsTable extends StatelessWidget {
                     child: const _FieldsHeaderCell(label: 'Type'),
                   ),
                   _FieldsFixedSlot(
-                    width: resolvedActiveWidth,
-                    child: const _FieldsHeaderCell(label: 'Active'),
-                  ),
-                  _FieldsFixedSlot(
                     width: resolvedCreatedWidth,
                     child: const _FieldsHeaderCell(label: 'Created'),
                   ),
@@ -750,7 +745,6 @@ class _FieldsTable extends StatelessWidget {
                     resolvedKeyWidth: effectiveKeyWidth,
                     resolvedTitleWidth: effectiveTitleWidth,
                     resolvedTypeWidth: resolvedTypeWidth,
-                    resolvedActiveWidth: resolvedActiveWidth,
                     resolvedCreatedWidth: resolvedCreatedWidth,
                     resolvedUpdatedWidth: resolvedUpdatedWidth,
                     resolvedActionsWidth: resolvedActionsWidth,
@@ -817,7 +811,6 @@ class _FieldTableRow extends StatelessWidget {
     required this.resolvedKeyWidth,
     required this.resolvedTitleWidth,
     required this.resolvedTypeWidth,
-    required this.resolvedActiveWidth,
     required this.resolvedCreatedWidth,
     required this.resolvedUpdatedWidth,
     required this.resolvedActionsWidth,
@@ -829,7 +822,6 @@ class _FieldTableRow extends StatelessWidget {
   final double resolvedKeyWidth;
   final double resolvedTitleWidth;
   final double resolvedTypeWidth;
-  final double resolvedActiveWidth;
   final double resolvedCreatedWidth;
   final double resolvedUpdatedWidth;
   final double resolvedActionsWidth;
@@ -873,15 +865,6 @@ class _FieldTableRow extends StatelessWidget {
             ),
           ),
           _FieldsFixedSlot(
-            width: resolvedActiveWidth,
-            child: _FieldsBodyCell(
-              child: _metaPill(
-                (field.isActive ?? false) ? 'Active' : 'Inactive',
-                isFilled: field.isActive ?? false,
-              ),
-            ),
-          ),
-          _FieldsFixedSlot(
             width: resolvedCreatedWidth,
             child: _FieldsBodyCell(
               child: Text(
@@ -920,37 +903,44 @@ class _FieldTableRow extends StatelessWidget {
                       readOnly: true,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  _MiniActionButton(
-                    icon: Icons.edit_rounded,
-                    onTap: () => AdminFieldsView.openFieldDialog(
-                      context,
-                      vm,
-                      initialField: field,
-                      title: 'Edit Field',
+                  if (vm.canUpdateFields) ...[
+                    const SizedBox(width: 8),
+                    _MiniActionButton(
+                      icon: Icons.edit_rounded,
+                      onTap: () => AdminFieldsView.openFieldDialog(
+                        context,
+                        vm,
+                        initialField: field,
+                        title: 'Edit Field',
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  _MiniActionButton(
-                    icon: (field.isActive ?? false)
-                        ? Icons.close_rounded
-                        : Icons.check_rounded,
-                    backgroundColor: (field.isActive ?? false)
-                        ? AppColors.dangerStrong
-                        : const Color(0xFF2EAD62),
-                    onTap: () => AdminFieldsView.confirmToggleFieldActive(
-                      context,
-                      vm,
-                      field,
+                    const SizedBox(width: 8),
+                    _MiniActionButton(
+                      icon: (field.isActive ?? false)
+                          ? Icons.close_rounded
+                          : Icons.check_rounded,
+                      backgroundColor: (field.isActive ?? false)
+                          ? AppColors.dangerStrong
+                          : const Color(0xFF2EAD62),
+                      onTap: () => AdminFieldsView.confirmToggleFieldActive(
+                        context,
+                        vm,
+                        field,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  _MiniActionButton(
-                    icon: Icons.delete_rounded,
-                    backgroundColor: AppColors.dangerStrong,
-                    onTap: () =>
-                        AdminFieldsView.confirmDeleteField(context, vm, field),
-                  ),
+                  ],
+                  if (vm.canDeleteFields) ...[
+                    const SizedBox(width: 8),
+                    _MiniActionButton(
+                      icon: Icons.delete_rounded,
+                      backgroundColor: AppColors.dangerStrong,
+                      onTap: () => AdminFieldsView.confirmDeleteField(
+                        context,
+                        vm,
+                        field,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -1006,22 +996,9 @@ class _FieldResponsiveCard extends StatelessWidget {
                 ? CrossAxisAlignment.center
                 : CrossAxisAlignment.start,
             children: [
-              if (showTopActionsRow && stackTopActions)
-                Column(
-                  children: [
-                    _metaPill(
-                      (field.isActive ?? false) ? 'Active' : 'Inactive',
-                      isFilled: field.isActive ?? false,
-                    ),
-                  ],
-                )
-              else
+              if (!stackTopActions)
                 Row(
                   children: [
-                    _metaPill(
-                      (field.isActive ?? false) ? 'Active' : 'Inactive',
-                      isFilled: field.isActive ?? false,
-                    ),
                     const Spacer(),
                     Wrap(
                       alignment: WrapAlignment.end,
@@ -1076,29 +1053,33 @@ class _FieldResponsiveCard extends StatelessWidget {
         readOnly: true,
       ),
     ),
-    _ActionButton(
-      icon: Icons.edit_outlined,
-      onTap: () => AdminFieldsView.openFieldDialog(
-        context,
-        vm,
-        initialField: field,
-        title: 'Edit Field',
+    if (vm.canUpdateFields)
+      _ActionButton(
+        icon: Icons.edit_outlined,
+        onTap: () => AdminFieldsView.openFieldDialog(
+          context,
+          vm,
+          initialField: field,
+          title: 'Edit Field',
+        ),
       ),
-    ),
-    _ActionButton(
-      icon: (field.isActive ?? false)
-          ? Icons.close_rounded
-          : Icons.check_rounded,
-      backgroundColor: (field.isActive ?? false)
-          ? AppColors.dangerStrong
-          : const Color(0xFF2EAD62),
-      onTap: () => AdminFieldsView.confirmToggleFieldActive(context, vm, field),
-    ),
-    _ActionButton(
-      icon: Icons.delete_outline_rounded,
-      backgroundColor: AppColors.dangerStrong,
-      onTap: () => AdminFieldsView.confirmDeleteField(context, vm, field),
-    ),
+    if (vm.canUpdateFields)
+      _ActionButton(
+        icon: (field.isActive ?? false)
+            ? Icons.close_rounded
+            : Icons.check_rounded,
+        backgroundColor: (field.isActive ?? false)
+            ? AppColors.dangerStrong
+            : const Color(0xFF2EAD62),
+        onTap: () =>
+            AdminFieldsView.confirmToggleFieldActive(context, vm, field),
+      ),
+    if (vm.canDeleteFields)
+      _ActionButton(
+        icon: Icons.delete_outline_rounded,
+        backgroundColor: AppColors.dangerStrong,
+        onTap: () => AdminFieldsView.confirmDeleteField(context, vm, field),
+      ),
   ];
 
   static double _resolvedFieldWidth(
@@ -1504,8 +1485,4 @@ class _MiniActionButton extends StatelessWidget {
       borderRadius: 12,
     );
   }
-}
-
-Widget _metaPill(String label, {bool isFilled = false}) {
-  return adminMetaPill(label, isFilled: isFilled);
 }

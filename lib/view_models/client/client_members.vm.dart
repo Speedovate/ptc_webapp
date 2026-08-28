@@ -34,6 +34,8 @@ class ClientMembersViewModel extends BaseViewModel {
     }
     _clientId = clientId;
     final cachedMembers = _cachedMembersByClientId[clientId];
+    final hasVisiblePrimaryData =
+        _members.isNotEmpty || (cachedMembers?.isNotEmpty ?? false);
     if (cachedMembers != null && cachedMembers.isNotEmpty) {
       _members
         ..clear()
@@ -41,7 +43,9 @@ class ClientMembersViewModel extends BaseViewModel {
       notifyListeners();
     }
 
-    setBusy(true);
+    if (!hasVisiblePrimaryData) {
+      setBusy(true);
+    }
     try {
       await _repository.initialize();
       final loadedMembers = await _repository.getMembersForClient(clientId);
@@ -50,7 +54,9 @@ class ClientMembersViewModel extends BaseViewModel {
         ..addAll(loadedMembers);
       _cachedMembersByClientId[clientId] = List<ClientMember>.from(_members);
     } finally {
-      setBusy(false);
+      if (!hasVisiblePrimaryData) {
+        setBusy(false);
+      }
       notifyListeners();
     }
   }

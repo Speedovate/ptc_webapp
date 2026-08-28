@@ -110,7 +110,15 @@ class PlatformShell extends StatelessWidget {
           ],
         ),
       ),
-      drawer: isCompact ? Drawer(width: 250, child: sidebar) : null,
+      drawer: isCompact
+          ? Drawer(
+              width: 250,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.zero,
+              ),
+              child: sidebar,
+            )
+          : null,
     );
   }
 }

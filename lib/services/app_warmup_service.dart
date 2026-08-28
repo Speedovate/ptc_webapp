@@ -1,11 +1,12 @@
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
-import 'package:webapp/requests/client_member.request.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/requests/support.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class AppWarmupService {
@@ -14,14 +15,11 @@ class AppWarmupService {
     BookingRequest? bookingRequest,
     StatusRequest? statusRequest,
     VehicleRequest? vehicleRequest,
-    ClientMemberRequest? clientMemberRequest,
     SupportRequest? supportRequest,
   }) : _authRequest = authRequest ?? AuthRequest.instance,
        _bookingRequest = bookingRequest ?? BookingRequest.instance,
        _statusRequest = statusRequest ?? StatusRequest.instance,
        _vehicleRequest = vehicleRequest ?? VehicleRequest.instance,
-       _clientMemberRequest =
-           clientMemberRequest ?? ClientMemberRequest.instance,
        _supportRequest = supportRequest ?? SupportRequest.instance;
 
   static final AppWarmupService instance = AppWarmupService();
@@ -30,8 +28,8 @@ class AppWarmupService {
   final BookingRequest _bookingRequest;
   final StatusRequest _statusRequest;
   final VehicleRequest _vehicleRequest;
-  final ClientMemberRequest _clientMemberRequest;
   final SupportRequest _supportRequest;
+  final RoleAccessService _roleAccessService = RoleAccessService.instance;
 
   Future<void> warmUpGlobalData() async {
     await Future.wait([
@@ -52,19 +50,6 @@ class AppWarmupService {
       return;
     }
 
-    final normalizedRole = normalizeRoleKey(user.role);
-    final normalizedUserId = normalizeId(user.id);
-    final normalizedClientId = isSubClientRole(user.role)
-        ? normalizeId(user.parentClientId)
-        : normalizedUserId;
-
-    if (normalizedClientId != null &&
-        (normalizedRole == 'client' || normalizedRole == 'sub-client')) {
-      await _runSafely(
-        () => _clientMemberRequest.getMembersForClient(normalizedClientId),
-      );
-    }
-
     final threads = await _prefetchSupportDataForUser(user);
     if (threads.isNotEmpty) {
       await _runSafely(
@@ -76,7 +61,16 @@ class AppWarmupService {
   Future<List<SupportThread>> _prefetchSupportDataForUser(
     UserModel user,
   ) async {
-    if (isBackOfficeRole(user.role)) {
+    final canViewInbox =
+        _roleAccessService.canAccess(
+          DispatcherAccessCapability.supportRead,
+          role: user.role,
+        ) &&
+        _roleAccessService.canAccess(
+          DispatcherAccessCapability.usersRead,
+          role: user.role,
+        );
+    if (canViewInbox) {
       return await _runSafelyList(() => _supportRequest.prefetchAllThreads());
     }
     final normalizedUserId = normalizeId(user.id);

@@ -33,7 +33,6 @@ String supportRoleSectionLabel(String? role) {
     'admin' => 'Admins',
     'driver' => 'Drivers',
     'helper' => 'Helpers',
-    'sub-client' => 'Sub-Clients',
     'client' => 'Clients',
     _ => 'Others',
   };
@@ -145,8 +144,8 @@ class SupportThread {
 
   bool get hasConversation {
     return (lastMessageText?.trim().isNotEmpty == true) ||
-        (lastSenderUserId?.trim().isNotEmpty == true) ||
-        (lastMessageAt != null);
+        ((lastSenderUserId?.trim().isNotEmpty == true) &&
+            (lastMessageAt != null));
   }
 
   SupportThread copyWith({

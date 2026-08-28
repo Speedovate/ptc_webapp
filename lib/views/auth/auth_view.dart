@@ -1,24 +1,30 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
+import 'package:webapp/services/auth_camera_service.dart';
+import 'package:webapp/services/auth_image_picker_service.dart';
+import 'package:webapp/services/local_form_draft_service.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/auth/auth.vm.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
-import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 
 class AuthView extends StatefulWidget {
   const AuthView({super.key, required this.onAuthenticated});
 
-  final ValueChanged<UserModel> onAuthenticated;
+  final Future<void> Function(UserModel) onAuthenticated;
 
   @override
   State<AuthView> createState() => _AuthViewState();
@@ -31,8 +37,11 @@ class _RegisterUploadResult {
   final String? errorMessage;
 }
 
-class _AuthViewState extends State<AuthView> {
+class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
   static const double _authFieldSpacing = 6;
+  static const String _loginDraftStorageKey = 'auth_login_draft_v1';
+  static const String _registerDraftStorageKey = 'auth_register_draft_v1';
+  static const String _legacyAuthDraftStorageKey = 'auth_form_draft_v1';
   final _loginFormKey = GlobalKey<FormState>();
   final _registerFormKey = GlobalKey<FormState>();
 
@@ -42,18 +51,15 @@ class _AuthViewState extends State<AuthView> {
   final _registerNameController = TextEditingController();
   final _registerPhoneController = TextEditingController();
   final _registerLicenseController = TextEditingController();
-  final _registerLatController = TextEditingController();
-  final _registerLngController = TextEditingController();
   final _registerPasswordController = TextEditingController();
   final _loginIdentifierFocusNode = FocusNode();
   final _loginPasswordFocusNode = FocusNode();
   final _registerEmailFocusNode = FocusNode();
   final _registerNameFocusNode = FocusNode();
   final _registerPhoneFocusNode = FocusNode();
-  final _registerLatFocusNode = FocusNode();
-  final _registerLngFocusNode = FocusNode();
   final _registerPasswordFocusNode = FocusNode();
   final AuthRequest _authRequest = AuthRequest.instance;
+  final LocalFormDraftService _draftService = LocalFormDraftService.instance;
 
   String? _registerRole;
   String? _registerVehicleTypeId;
@@ -64,18 +70,18 @@ class _AuthViewState extends State<AuthView> {
   List<VehicleCatalogItem> _vehicleTypes = const [];
   _PendingAuthImageUpload? _registerProfilePhotoUpload;
   _PendingAuthImageUpload? _registerLicensePhotoUpload;
-
-  static const _roleOptions = ['client', 'driver', 'helper', 'dispatcher'];
+  AuthCameraSession? _activeCameraSession;
+  bool _isHydratingDraft = false;
+  bool _isRestoringDraft = true;
+  bool _suppressDraftPersistence = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _attachDraftListeners();
+    unawaited(_restoreDraft());
     _loadVehicleTypes();
-  }
-
-  Future<void> _showPostRegisterUploadIssue(String message) async {
-    AppSnackbar.showError(context, message);
-    await Future<void>.delayed(const Duration(milliseconds: 1800));
   }
 
   Future<void> _showAuthFlowStage(String message) async {
@@ -118,24 +124,40 @@ class _AuthViewState extends State<AuthView> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    if (!_suppressDraftPersistence) {
+      unawaited(_persistDraftImmediately());
+    }
+    final activeCameraSession = _activeCameraSession;
+    _activeCameraSession = null;
+    if (activeCameraSession != null) {
+      unawaited(activeCameraSession.dispose());
+    }
     _loginEmailController.dispose();
     _loginPasswordController.dispose();
     _registerEmailController.dispose();
     _registerNameController.dispose();
     _registerPhoneController.dispose();
     _registerLicenseController.dispose();
-    _registerLatController.dispose();
-    _registerLngController.dispose();
     _registerPasswordController.dispose();
     _loginIdentifierFocusNode.dispose();
     _loginPasswordFocusNode.dispose();
     _registerEmailFocusNode.dispose();
     _registerNameFocusNode.dispose();
     _registerPhoneFocusNode.dispose();
-    _registerLatFocusNode.dispose();
-    _registerLngFocusNode.dispose();
     _registerPasswordFocusNode.dispose();
+    _detachDraftListeners();
     super.dispose();
+  }
+
+  @override
+  void reassemble() {
+    final activeCameraSession = _activeCameraSession;
+    _activeCameraSession = null;
+    if (activeCameraSession != null) {
+      unawaited(activeCameraSession.dispose());
+    }
+    super.reassemble();
   }
 
   void _resetLoginFields() {
@@ -148,8 +170,6 @@ class _AuthViewState extends State<AuthView> {
     _registerNameController.clear();
     _registerPhoneController.clear();
     _registerLicenseController.clear();
-    _registerLatController.clear();
-    _registerLngController.clear();
     _registerPasswordController.clear();
     _registerRole = null;
     _registerVehicleTypeId = null;
@@ -160,9 +180,168 @@ class _AuthViewState extends State<AuthView> {
   void _switchAuthMode() {
     setState(() {
       _isLoginMode = !_isLoginMode;
-      _resetLoginFields();
-      _resetRegisterFields();
     });
+    unawaited(_persistDraftImmediately());
+  }
+
+  void _attachDraftListeners() {
+    _loginEmailController.addListener(_scheduleDraftPersist);
+    _loginPasswordController.addListener(_scheduleDraftPersist);
+    _registerEmailController.addListener(_scheduleDraftPersist);
+    _registerNameController.addListener(_scheduleDraftPersist);
+    _registerPhoneController.addListener(_scheduleDraftPersist);
+    _registerLicenseController.addListener(_scheduleDraftPersist);
+    _registerPasswordController.addListener(_scheduleDraftPersist);
+  }
+
+  void _detachDraftListeners() {
+    _loginEmailController.removeListener(_scheduleDraftPersist);
+    _loginPasswordController.removeListener(_scheduleDraftPersist);
+    _registerEmailController.removeListener(_scheduleDraftPersist);
+    _registerNameController.removeListener(_scheduleDraftPersist);
+    _registerPhoneController.removeListener(_scheduleDraftPersist);
+    _registerLicenseController.removeListener(_scheduleDraftPersist);
+    _registerPasswordController.removeListener(_scheduleDraftPersist);
+  }
+
+  void _scheduleDraftPersist() {
+    unawaited(_persistDraftImmediately());
+  }
+
+  Map<String, dynamic> _buildLoginDraftPayload() {
+    return <String, dynamic>{
+      'is_login_mode': _isLoginMode,
+      'identifier': _loginEmailController.text,
+      'password': _loginPasswordController.text,
+    };
+  }
+
+  Map<String, dynamic> _buildRegisterDraftPayload() {
+    return <String, dynamic>{
+      'email': _registerEmailController.text,
+      'name': _registerNameController.text,
+      'phone': _registerPhoneController.text,
+      'license_text': _registerLicenseController.text,
+      'password': _registerPasswordController.text,
+      'role': _registerRole,
+      'vehicle_type_id': _registerVehicleTypeId,
+      'profile_photo': _registerProfilePhotoUpload?.toMap(),
+      'license_photo': _registerLicensePhotoUpload?.toMap(),
+    };
+  }
+
+  Future<void> _restoreDraft() async {
+    try {
+      final loginDraft =
+          await _draftService.readMap(_loginDraftStorageKey) ??
+          await _restoreLegacyLoginDraft();
+      final registerDraft =
+          await _draftService.readMap(_registerDraftStorageKey) ??
+          await _restoreLegacyRegisterDraft();
+      _isHydratingDraft = true;
+      setState(() {
+        _isLoginMode = loginDraft?['is_login_mode'] != false;
+        _loginEmailController.text = loginDraft?['identifier']?.toString() ?? '';
+        _loginPasswordController.text = loginDraft?['password']?.toString() ?? '';
+        _registerRole = registerDraft?['role']?.toString();
+        _registerVehicleTypeId =
+            registerDraft?['vehicle_type_id']?.toString();
+        _registerEmailController.text =
+            registerDraft?['email']?.toString() ?? '';
+        _registerNameController.text =
+            registerDraft?['name']?.toString() ?? '';
+        _registerPhoneController.text =
+            registerDraft?['phone']?.toString() ?? '';
+        _registerLicenseController.text =
+            registerDraft?['license_text']?.toString() ?? '';
+        _registerPasswordController.text =
+            registerDraft?['password']?.toString() ?? '';
+        _registerProfilePhotoUpload = _pendingUploadFromMap(
+          registerDraft?['profile_photo'],
+        );
+        _registerLicensePhotoUpload = _pendingUploadFromMap(
+          registerDraft?['license_photo'],
+        );
+      });
+    } finally {
+      _isHydratingDraft = false;
+      _isRestoringDraft = false;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _restoreLegacyLoginDraft() async {
+    final legacy = await _draftService.readMap(_legacyAuthDraftStorageKey);
+    if (legacy == null || legacy.isEmpty) {
+      return null;
+    }
+    final login = legacy['login'] is Map
+        ? Map<String, dynamic>.from(legacy['login'] as Map)
+        : const <String, dynamic>{};
+    return <String, dynamic>{
+      'is_login_mode': legacy['is_login_mode'] != false,
+      'identifier': login['identifier']?.toString() ?? '',
+      'password': login['password']?.toString() ?? '',
+    };
+  }
+
+  Future<Map<String, dynamic>?> _restoreLegacyRegisterDraft() async {
+    final legacy = await _draftService.readMap(_legacyAuthDraftStorageKey);
+    if (legacy == null || legacy.isEmpty) {
+      return null;
+    }
+    return legacy['register'] is Map
+        ? Map<String, dynamic>.from(legacy['register'] as Map)
+        : null;
+  }
+
+  Future<void> _persistDraftImmediately() async {
+    if (_suppressDraftPersistence ||
+        _isHydratingDraft ||
+        _isRestoringDraft) {
+      return;
+    }
+    await _draftService.writeMapNow(
+      _loginDraftStorageKey,
+      _buildLoginDraftPayload(),
+    );
+    await _draftService.writeMapNow(
+      _registerDraftStorageKey,
+      _buildRegisterDraftPayload(),
+    );
+  }
+
+  Future<void> _clearDraft() async {
+    _suppressDraftPersistence = true;
+    await _draftService.remove(_loginDraftStorageKey);
+    await _draftService.remove(_registerDraftStorageKey);
+    await _draftService.remove(_legacyAuthDraftStorageKey);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      unawaited(_persistDraftImmediately());
+    }
+  }
+
+  _PendingAuthImageUpload? _pendingUploadFromMap(dynamic value) {
+    if (value is! Map) {
+      return null;
+    }
+    final map = Map<String, dynamic>.from(value);
+    final bytes = map['bytes'];
+    if (bytes is! Uint8List || bytes.isEmpty) {
+      return null;
+    }
+    return _PendingAuthImageUpload(
+      bytes: bytes,
+      fileName: map['file_name']?.toString() ?? 'photo',
+      size: (map['size'] as num?)?.toInt() ?? bytes.length,
+      mimeType: map['mime_type']?.toString(),
+    );
   }
 
   void _focusNext(FocusNode focusNode) {
@@ -219,9 +398,24 @@ class _AuthViewState extends State<AuthView> {
 
   @override
   Widget build(BuildContext context) {
-    return ViewModelBuilder<AuthViewModel>.reactive(
-      viewModelBuilder: AuthViewModel.new,
-      builder: (context, vm, child) {
+    final roleAccessService = RoleAccessService.instance;
+    return AnimatedBuilder(
+      animation: roleAccessService,
+      builder: (context, _) {
+        final registerRoleOptions =
+            (roleAccessService.publicRegisterRoleKeys.isEmpty
+                    ? builtInRoleKeys
+                    : roleAccessService.publicRegisterRoleKeys)
+                .where(
+                  (role) =>
+                      role != 'admin' &&
+                      role != 'manager' &&
+                      role != 'dispatcher',
+                )
+                .toList(growable: false);
+        return ViewModelBuilder<AuthViewModel>.reactive(
+          viewModelBuilder: AuthViewModel.new,
+          builder: (context, vm, child) {
         final isBusy = vm.isBusy;
         final isAuthBusy = isBusy || _isSubmittingAuthFlow;
         return Scaffold(
@@ -349,7 +543,7 @@ class _AuthViewState extends State<AuthView> {
                                                           _loginEmailController,
                                                       focusNode:
                                                           _loginIdentifierFocusNode,
-                                                      label: 'Email or Number',
+                                                      label: 'Email or Phone',
                                                       keyboardType:
                                                           TextInputType
                                                               .emailAddress,
@@ -380,19 +574,6 @@ class _AuthViewState extends State<AuthView> {
                                                   ],
                                                 ),
                                               )
-                                            : _isLoadingVehicleTypes
-                                            ? const SizedBox(
-                                                key: ValueKey(
-                                                  'register_loading',
-                                                ),
-                                                height: 220,
-                                                child: AppPageLoading(
-                                                  message:
-                                                      'Loading vehicle types ...',
-                                                  compact: true,
-                                                  padding: EdgeInsets.zero,
-                                                ),
-                                              )
                                             : Form(
                                                 key: _registerFormKey,
                                                 child: Column(
@@ -403,7 +584,7 @@ class _AuthViewState extends State<AuthView> {
                                                     _AuthDropdownField(
                                                       label: 'Role',
                                                       value: _registerRole,
-                                                      items: _roleOptions,
+                                                      items: registerRoleOptions,
                                                       onChanged: (value) {
                                                         setState(() {
                                                           _registerRole = value;
@@ -416,7 +597,8 @@ class _AuthViewState extends State<AuthView> {
                                                       },
                                                     ),
                                                     if (_registerRole ==
-                                                        'driver') ...[
+                                                            'driver' &&
+                                                        !_isLoadingVehicleTypes) ...[
                                                       const SizedBox(
                                                         height:
                                                             _authFieldSpacing,
@@ -530,10 +712,7 @@ class _AuthViewState extends State<AuthView> {
                                                       textInputAction:
                                                           TextInputAction.next,
                                                       onSubmitted: (_) => _focusNext(
-                                                        _registerRole ==
-                                                                'driver'
-                                                            ? _registerLatFocusNode
-                                                            : _registerPasswordFocusNode,
+                                                        _registerPasswordFocusNode,
                                                       ),
                                                     ),
                                                     if (_registerRole ==
@@ -549,52 +728,6 @@ class _AuthViewState extends State<AuthView> {
                                                                 .text,
                                                         onTap:
                                                             _pickRegisterLicensePhoto,
-                                                      ),
-                                                      const SizedBox(
-                                                        height:
-                                                            _authFieldSpacing,
-                                                      ),
-                                                      _AuthTextField(
-                                                        controller:
-                                                            _registerLatController,
-                                                        focusNode:
-                                                            _registerLatFocusNode,
-                                                        label: 'Latitude',
-                                                        keyboardType:
-                                                            const TextInputType.numberWithOptions(
-                                                              decimal: true,
-                                                              signed: true,
-                                                            ),
-                                                        textInputAction:
-                                                            TextInputAction
-                                                                .next,
-                                                        onSubmitted: (_) =>
-                                                            _focusNext(
-                                                              _registerLngFocusNode,
-                                                            ),
-                                                      ),
-                                                      const SizedBox(
-                                                        height:
-                                                            _authFieldSpacing,
-                                                      ),
-                                                      _AuthTextField(
-                                                        controller:
-                                                            _registerLngController,
-                                                        focusNode:
-                                                            _registerLngFocusNode,
-                                                        label: 'Longitude',
-                                                        keyboardType:
-                                                            const TextInputType.numberWithOptions(
-                                                              decimal: true,
-                                                              signed: true,
-                                                            ),
-                                                        textInputAction:
-                                                            TextInputAction
-                                                                .next,
-                                                        onSubmitted: (_) =>
-                                                            _focusNext(
-                                                              _registerPasswordFocusNode,
-                                                            ),
                                                       ),
                                                     ],
                                                     const SizedBox(
@@ -753,6 +886,8 @@ class _AuthViewState extends State<AuthView> {
             ),
           ),
         );
+          },
+        );
       },
     );
   }
@@ -775,7 +910,14 @@ class _AuthViewState extends State<AuthView> {
           password: _loginPasswordController.text,
         );
         if (user != null) {
-          widget.onAuthenticated(user);
+          await _clearDraft();
+          if (mounted) {
+            setState(() {
+              _resetLoginFields();
+              _resetRegisterFields();
+            });
+          }
+          await widget.onAuthenticated(user);
         } else if (mounted && vm.errorMessage?.isNotEmpty == true) {
           AppSnackbar.showError(context, vm.errorMessage!);
         }
@@ -812,8 +954,6 @@ class _AuthViewState extends State<AuthView> {
                 phone: normalizedPhone,
                 password: _registerPasswordController.text,
                 license: null,
-                lat: _tryParseDouble(_registerLatController.text),
-                lng: _tryParseDouble(_registerLngController.text),
                 vehicleType: resolvedVehicleType,
                 isActive: !isPendingRole,
                 isOnline: false,
@@ -829,33 +969,49 @@ class _AuthViewState extends State<AuthView> {
               ),
       );
       if (user != null) {
-        await _showAuthFlowStage('Uploading your photo ...');
         final uploadResult = await _completeRegisterImageUploads(user);
         final uploadedUser = uploadResult.user;
+        final registeredIdentifier = _registerEmailController.text.trim();
+        final registeredPassword = _registerPasswordController.text;
         if (!mounted) {
           return;
         }
         if (uploadResult.errorMessage?.trim().isNotEmpty == true) {
-          _setAuthFlowLoading(false);
-          await _showPostRegisterUploadIssue(uploadResult.errorMessage!);
+          final rollbackMessage = await _rollbackFailedRegisteredUser(
+            uploadedUser.id,
+          );
           if (!mounted) {
             return;
           }
-          await _showAuthFlowStage('Signing you in ...');
+          final baseMessage = uploadResult.errorMessage!.trim();
+          AppSnackbar.showError(
+            context,
+            rollbackMessage == null
+                ? baseMessage
+                : '$baseMessage $rollbackMessage',
+          );
+          return;
+        }
+        await _clearDraft();
+        if (mounted) {
+          setState(() {
+            _resetLoginFields();
+            _resetRegisterFields();
+          });
         }
         if (uploadedUser.isActive ?? false) {
           await _showAuthFlowStage('Signing you in ...');
           final authenticatedUser = await vm.login(
-            identifier: _registerEmailController.text.trim(),
-            password: _registerPasswordController.text,
+            identifier: registeredIdentifier,
+            password: registeredPassword,
           );
           if (!mounted) {
             return;
           }
           if (authenticatedUser != null) {
-            widget.onAuthenticated(authenticatedUser);
+            await widget.onAuthenticated(authenticatedUser);
           } else {
-            widget.onAuthenticated(uploadedUser);
+            await widget.onAuthenticated(uploadedUser);
           }
         } else {
           if (!mounted) {
@@ -909,12 +1065,6 @@ class _AuthViewState extends State<AuthView> {
         _validateRequired('Name')(_registerNameController.text) ??
         _validatePhone(_registerPhoneController.text) ??
         (_registerRole == 'driver' ? _validateLicensePhoto() : null) ??
-        (_registerRole == 'driver'
-            ? _validateLatitude(_registerLatController.text)
-            : null) ??
-        (_registerRole == 'driver'
-            ? _validateLongitude(_registerLngController.text)
-            : null) ??
         _validatePassword(_registerPasswordController.text);
   }
 
@@ -986,41 +1136,481 @@ class _AuthViewState extends State<AuthView> {
   }
 
   Future<void> _pickRegisterProfilePhoto() async {
-    final upload = await _pickAuthImageUpload();
+    final upload = await _pickAuthImageUploadWithSourceChooser();
     if (upload == null || !mounted) {
       return;
     }
     setState(() {
-      _registerProfilePhotoUpload = upload;
+      _registerProfilePhotoUpload = _PendingAuthImageUpload(
+        bytes: Uint8List.fromList(upload.bytes),
+        fileName: upload.fileName,
+        size: upload.size,
+        mimeType: upload.mimeType,
+      );
     });
+    await _persistDraftImmediately();
   }
 
   Future<void> _pickRegisterLicensePhoto() async {
-    final upload = await _pickAuthImageUpload();
+    final upload = await _pickAuthImageUploadWithSourceChooser();
     if (upload == null || !mounted) {
       return;
     }
     setState(() {
-      _registerLicensePhotoUpload = upload;
+      _registerLicensePhotoUpload = _PendingAuthImageUpload(
+        bytes: Uint8List.fromList(upload.bytes),
+        fileName: upload.fileName,
+        size: upload.size,
+        mimeType: upload.mimeType,
+      );
       _registerLicenseController.text = upload.fileName;
     });
+    await _persistDraftImmediately();
   }
 
-  Future<_PendingAuthImageUpload?> _pickAuthImageUpload() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final file = result?.files.singleOrNull;
-    final bytes = file?.bytes;
-    if (file == null || bytes == null) {
+  Future<_PendingAuthImageUpload?> _pickAuthImageUploadWithSourceChooser() async {
+    final source = await _showAuthImageSourcePicker();
+    if (source == null) {
+      return null;
+    }
+    final pickedImage = source == AuthImagePickSource.camera
+        ? await _captureAuthCameraImage()
+        : await pickAuthImage(source);
+    if (pickedImage == null) {
       return null;
     }
     return _PendingAuthImageUpload(
-      bytes: bytes,
-      fileName: file.name,
-      size: file.size,
-      mimeType: _resolvedMimeType(file.extension),
+      bytes: pickedImage.bytes,
+      fileName: pickedImage.fileName,
+      size: pickedImage.size,
+      mimeType: pickedImage.mimeType,
+    );
+  }
+
+  Future<AuthPickedImage?> _captureAuthCameraImage() async {
+    if (!authCameraSupported) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          'Camera is not supported on this browser. Please use Gallery instead.',
+        );
+      }
+      return null;
+    }
+    final session = createAuthCameraSession();
+    _activeCameraSession = session;
+    final initializeFuture = session.initialize();
+    try {
+      final image = await showDialog<AuthPickedImage>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) {
+          var isCapturing = false;
+          return StatefulBuilder(
+            builder: (context, setModalState) {
+              return Dialog(
+                insetPadding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 24,
+                ),
+                elevation: 0,
+                backgroundColor: Colors.transparent,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final modalWidth = constraints.maxWidth.clamp(0.0, 760.0);
+                    final isCompact = modalWidth < 560;
+                    return Align(
+                      alignment: Alignment.center,
+                      child: Container(
+                        width: modalWidth,
+                        padding: EdgeInsets.fromLTRB(
+                          isCompact ? 16 : 20,
+                          isCompact ? 16 : 20,
+                          isCompact ? 16 : 20,
+                          isCompact ? 16 : 20,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(color: AppColors.primaryBorder),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x261A1333),
+                              blurRadius: 28,
+                              offset: Offset(0, 14),
+                            ),
+                          ],
+                        ),
+                        child: FutureBuilder<void>(
+                          future: initializeFuture,
+                          builder: (context, snapshot) {
+                            final hasError = snapshot.hasError;
+                            final isReady =
+                                snapshot.connectionState ==
+                                    ConnectionState.done &&
+                                !hasError;
+                            return Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Container(
+                                      width: 42,
+                                      height: 42,
+                                      decoration: BoxDecoration(
+                                        color: AppColors.primarySurface,
+                                        borderRadius: BorderRadius.circular(14),
+                                        border: Border.all(
+                                          color: AppColors.primaryBorder,
+                                        ),
+                                      ),
+                                      child: const Icon(
+                                        Icons.photo_camera_outlined,
+                                        color: AppColors.primaryColor,
+                                        size: 20,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'Take Photo',
+                                            style: TextStyle(
+                                              color: AppColors.textPrimary,
+                                              fontSize: 20,
+                                              fontWeight: FontWeight.w800,
+                                              height: 1.1,
+                                            ),
+                                          ),
+                                          if (hasError) ...[
+                                            const SizedBox(height: 4),
+                                            const Text(
+                                              'Camera permission was denied or unavailable.',
+                                              style: TextStyle(
+                                                color: AppColors.textSecondary,
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w500,
+                                                height: 1.3,
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 18),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(24),
+                                  child: Container(
+                                    width: double.infinity,
+                                    constraints: BoxConstraints(
+                                      maxHeight: isCompact ? 420 : 520,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primaryDark,
+                                      borderRadius: BorderRadius.circular(24),
+                                    ),
+                                    child: AspectRatio(
+                                      aspectRatio: isCompact ? 3 / 4 : 4 / 3,
+                                      child: Stack(
+                                        fit: StackFit.expand,
+                                        children: [
+                                          if (hasError)
+                                            const Center(
+                                              child: Padding(
+                                                padding: EdgeInsets.all(24),
+                                                child: Text(
+                                                  'We could not open the camera. Check browser permission settings and try again.',
+                                                  textAlign: TextAlign.center,
+                                                  style: TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 13,
+                                                    fontWeight: FontWeight.w600,
+                                                    height: 1.4,
+                                                  ),
+                                                ),
+                                              ),
+                                            )
+                                          else if (!isReady)
+                                            const Center(
+                                              child: CircularProgressIndicator(
+                                                color: Colors.white,
+                                              ),
+                                            )
+                                          else
+                                            HtmlElementView(
+                                              viewType: session.viewType!,
+                                            ),
+                                          IgnorePointer(
+                                            child: Padding(
+                                              padding: EdgeInsets.all(
+                                                isCompact ? 18 : 24,
+                                              ),
+                                              child: DecoratedBox(
+                                                decoration: BoxDecoration(
+                                                  borderRadius:
+                                                      BorderRadius.circular(24),
+                                                  border: Border.all(
+                                                    color: const Color(
+                                                      0xCCFFFFFF,
+                                                    ),
+                                                    width: 2,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 18),
+                                Flex(
+                                  direction: isCompact
+                                      ? Axis.vertical
+                                      : Axis.horizontal,
+                                  children: [
+                                    if (!isCompact)
+                                      Expanded(
+                                        child: OutlinedButton(
+                                          onPressed: () =>
+                                              Navigator.of(dialogContext).pop(),
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor:
+                                                AppColors.textPrimary,
+                                            side: const BorderSide(
+                                              color: AppColors.primaryBorder,
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 15,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(18),
+                                            ),
+                                          ),
+                                          child: const Text('Cancel'),
+                                        ),
+                                      )
+                                    else
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: FilledButton(
+                                          onPressed: !isReady || isCapturing
+                                              ? null
+                                              : () async {
+                                                  setModalState(() {
+                                                    isCapturing = true;
+                                                  });
+                                                  try {
+                                                    final image =
+                                                        await session.capture();
+                                                    if (dialogContext.mounted) {
+                                                      Navigator.of(
+                                                        dialogContext,
+                                                      ).pop(image);
+                                                    }
+                                                  } catch (error) {
+                                                    if (mounted) {
+                                                      AppSnackbar.showError(
+                                                        this.context,
+                                                        userFacingErrorMessage(
+                                                          error,
+                                                          fallback:
+                                                              'We could not capture the image right now.',
+                                                        ),
+                                                      );
+                                                    }
+                                                    if (dialogContext.mounted) {
+                                                      setModalState(() {
+                                                        isCapturing = false;
+                                                      });
+                                                    }
+                                                  }
+                                                },
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor:
+                                                AppColors.primaryColor,
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 16,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(18),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            isCapturing
+                                                ? 'Capturing ...'
+                                                : 'Capture Photo',
+                                          ),
+                                        ),
+                                      ),
+                                    if (!isCompact) ...[
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        flex: 2,
+                                        child: FilledButton(
+                                          onPressed: !isReady || isCapturing
+                                              ? null
+                                              : () async {
+                                                  setModalState(() {
+                                                    isCapturing = true;
+                                                  });
+                                                  try {
+                                                    final image =
+                                                        await session.capture();
+                                                    if (dialogContext.mounted) {
+                                                      Navigator.of(
+                                                        dialogContext,
+                                                      ).pop(image);
+                                                    }
+                                                  } catch (error) {
+                                                    if (mounted) {
+                                                      AppSnackbar.showError(
+                                                        this.context,
+                                                        userFacingErrorMessage(
+                                                          error,
+                                                          fallback:
+                                                              'We could not capture the image right now.',
+                                                        ),
+                                                      );
+                                                    }
+                                                    if (dialogContext.mounted) {
+                                                      setModalState(() {
+                                                        isCapturing = false;
+                                                      });
+                                                    }
+                                                  }
+                                                },
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor:
+                                                AppColors.primaryColor,
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 15,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(18),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            isCapturing
+                                                ? 'Capturing ...'
+                                                : 'Capture Photo',
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                    if (isCompact) ...[
+                                      const SizedBox(height: 10),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: OutlinedButton(
+                                          onPressed: () =>
+                                              Navigator.of(dialogContext).pop(),
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor:
+                                                AppColors.textPrimary,
+                                            side: const BorderSide(
+                                              color: AppColors.primaryBorder,
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 14,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(18),
+                                            ),
+                                          ),
+                                          child: const Text('Cancel'),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          );
+        },
+      );
+      return image;
+    } finally {
+      if (identical(_activeCameraSession, session)) {
+        _activeCameraSession = null;
+      }
+      await SchedulerBinding.instance.endOfFrame;
+      await session.dispose();
+    }
+  }
+
+  Future<AuthImagePickSource?> _showAuthImageSourcePicker() {
+    return showModalBottomSheet<AuthImagePickSource>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: AppColors.primaryBorder),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Choose Photo Source',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    _AuthImageSourceAction(
+                      icon: Icons.photo_camera_outlined,
+                      label: 'Camera',
+                      onTap: () => Navigator.of(sheetContext).pop(
+                        AuthImagePickSource.camera,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _AuthImageSourceAction(
+                      icon: Icons.photo_library_outlined,
+                      label: 'Gallery',
+                      onTap: () => Navigator.of(sheetContext).pop(
+                        AuthImagePickSource.gallery,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1044,7 +1634,7 @@ class _AuthViewState extends State<AuthView> {
 
       final licenseUpload = _registerLicensePhotoUpload;
       if (licenseUpload != null &&
-          updatedUser.role == 'driver' &&
+          normalizeRoleKey(updatedUser.role) == 'driver' &&
           (updatedUser.id?.isNotEmpty == true)) {
         updatedUser = await _authRequest.saveDriverLicensePhoto(
           userId: updatedUser.id!,
@@ -1067,52 +1657,20 @@ class _AuthViewState extends State<AuthView> {
     return _RegisterUploadResult(user: updatedUser, errorMessage: errorMessage);
   }
 
-  String? _validateLatitude(String? value) {
-    final text = value?.trim() ?? '';
-    if (text.isEmpty) {
-      return 'Latitude is required.';
+  Future<String?> _rollbackFailedRegisteredUser(String? userId) async {
+    final normalizedUserId = normalizeId(userId);
+    if (normalizedUserId == null) {
+      return 'The account was not completed because the required image failed.';
     }
-    final parsed = double.tryParse(text);
-    if (parsed == null || parsed < -90 || parsed > 90) {
-      return 'Latitude must be between -90 and 90.';
-    }
-    return null;
-  }
-
-  String? _validateLongitude(String? value) {
-    final text = value?.trim() ?? '';
-    if (text.isEmpty) {
-      return 'Longitude is required.';
-    }
-    final parsed = double.tryParse(text);
-    if (parsed == null || parsed < -180 || parsed > 180) {
-      return 'Longitude must be between -180 and 180.';
-    }
-    return null;
-  }
-
-  static double? _tryParseDouble(String value) {
-    final text = value.trim();
-    if (text.isEmpty) {
+    try {
+      await _authRequest.deleteUser(normalizedUserId);
       return null;
+    } catch (_) {
+      return 'The account image failed, and cleanup may still be pending.';
     }
-    return double.tryParse(text);
   }
 
-  String? _resolvedMimeType(String? extension) {
-    switch ((extension ?? '').toLowerCase()) {
-      case 'png':
-        return 'image/png';
-      case 'gif':
-        return 'image/gif';
-      case 'webp':
-        return 'image/webp';
-      case 'bmp':
-        return 'image/bmp';
-      default:
-        return 'image/jpeg';
-    }
-  }
+
 }
 
 class _PendingAuthImageUpload {
@@ -1127,6 +1685,15 @@ class _PendingAuthImageUpload {
   final String fileName;
   final int size;
   final String? mimeType;
+
+  Map<String, dynamic> toMap() {
+    return <String, dynamic>{
+      'bytes': bytes,
+      'file_name': fileName,
+      'size': size,
+      'mime_type': mimeType,
+    };
+  }
 }
 
 class _AuthTextField extends StatefulWidget {
@@ -1362,18 +1929,66 @@ class _AuthHeaderCameraButton extends StatelessWidget {
               fit: StackFit.expand,
               children: [
                 if (hasPreview)
-                  Image.memory(previewBytes!, fit: BoxFit.cover)
-                else
-                  const SizedBox.shrink(),
+                  Image.memory(
+                    previewBytes!,
+                    key: ValueKey<int>(previewBytes!.length),
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                    filterQuality: FilterQuality.medium,
+                  ),
                 if (!hasPreview)
-                  const Icon(
-                    Icons.photo_camera_rounded,
-                    color: AppColors.primaryColor,
-                    size: 22,
+                  const Center(
+                    child: Icon(
+                      Icons.photo_camera_rounded,
+                      color: AppColors.primaryColor,
+                      size: 22,
+                    ),
                   ),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AuthImageSourceAction extends StatelessWidget {
+  const _AuthImageSourceAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppMousePressable(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F1FF),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.primaryBorder),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: AppColors.primaryColor, size: 20),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1401,10 +2016,11 @@ class _AuthDropdownField extends StatelessWidget {
       initialValue: value,
       iconEnabledColor: AppColors.primaryColor,
       onChanged: onChanged,
-      decoration: adminFormInputDecoration(
+      decoration: adminPlainDropdownDecoration(
         label,
         radius: 18,
-        minHeight: adminModalFieldMinHeight,
+      ).copyWith(
+        constraints: const BoxConstraints(minHeight: adminModalFieldMinHeight),
       ),
       style: adminFieldValueTextStyle,
       items: items

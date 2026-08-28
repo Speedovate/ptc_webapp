@@ -5,6 +5,7 @@ import 'package:webapp/models/vehicle_catalog_item.dart';
 class UserModel {
   const UserModel({
     this.id,
+    this.firebaseAuthUid,
     this.role,
     this.parentClientId,
     this.email,
@@ -20,6 +21,7 @@ class UserModel {
   });
 
   final String? id;
+  final String? firebaseAuthUid;
   final String? role;
   final String? parentClientId;
   final String? email;
@@ -37,6 +39,7 @@ class UserModel {
 
   UserModel copyWith({
     String? id,
+    String? firebaseAuthUid,
     String? role,
     String? parentClientId,
     String? email,
@@ -49,8 +52,6 @@ class UserModel {
     String? password,
     DateTime? createdAt,
     DateTime? updatedAt,
-    double? lat,
-    double? lng,
     String? license,
     VehicleCatalogItem? vehicleType,
   }) {
@@ -60,6 +61,7 @@ class UserModel {
     if (nextRole == 'driver') {
       return DriverModel(
         id: id ?? this.id,
+        firebaseAuthUid: firebaseAuthUid ?? this.firebaseAuthUid,
         role: nextRole,
         parentClientId: parentClientId ?? this.parentClientId,
         email: email ?? this.email,
@@ -72,8 +74,6 @@ class UserModel {
         password: password ?? this.password,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
-        lat: lat ?? currentDriver?.lat,
-        lng: lng ?? currentDriver?.lng,
         license: license ?? currentDriver?.license,
         vehicleType: vehicleType ?? currentDriver?.vehicleType,
       );
@@ -81,6 +81,7 @@ class UserModel {
 
     return UserModel(
       id: id ?? this.id,
+      firebaseAuthUid: firebaseAuthUid ?? this.firebaseAuthUid,
       role: nextRole,
       parentClientId: parentClientId ?? this.parentClientId,
       email: email ?? this.email,
@@ -99,6 +100,7 @@ class UserModel {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'firebase_auth_uid': firebaseAuthUid,
       'role': role,
       'parent_client_id': parentClientId,
       'email': email,
@@ -121,6 +123,7 @@ class UserModel {
 
     return UserModel(
       id: map['id']?.toString(),
+      firebaseAuthUid: map['firebase_auth_uid']?.toString(),
       role: map['role']?.toString(),
       parentClientId: map['parent_client_id']?.toString(),
       email: map['email']?.toString(),
@@ -146,6 +149,7 @@ class UserModel {
 class DriverModel extends UserModel {
   const DriverModel({
     super.id,
+    super.firebaseAuthUid,
     super.role = 'driver',
     super.parentClientId,
     super.email,
@@ -158,14 +162,10 @@ class DriverModel extends UserModel {
     super.password,
     super.createdAt,
     super.updatedAt,
-    this.lat,
-    this.lng,
     this.license,
     this.vehicleType,
   });
 
-  final double? lat;
-  final double? lng;
   final String? license;
   final VehicleCatalogItem? vehicleType;
 
@@ -173,8 +173,6 @@ class DriverModel extends UserModel {
   Map<String, dynamic> toMap() {
     return {
       ...super.toMap(),
-      'lat': lat,
-      'lng': lng,
       'license': license,
       'vehicle_type': vehicleType?.toMap(),
     };
@@ -183,6 +181,7 @@ class DriverModel extends UserModel {
   factory DriverModel.fromMap(Map<String, dynamic> map) {
     return DriverModel(
       id: map['id']?.toString(),
+      firebaseAuthUid: map['firebase_auth_uid']?.toString(),
       role: map['role']?.toString() ?? 'driver',
       parentClientId: map['parent_client_id']?.toString(),
       email: map['email']?.toString(),
@@ -195,8 +194,6 @@ class DriverModel extends UserModel {
       password: map['password']?.toString(),
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),
-      lat: _toDouble(map['lat']),
-      lng: _toDouble(map['lng']),
       license: map['license']?.toString(),
       vehicleType: map['vehicle_type'] is Map
           ? VehicleCatalogItem.fromMap(
@@ -205,16 +202,6 @@ class DriverModel extends UserModel {
           : null,
     );
   }
-}
-
-double? _toDouble(dynamic value) {
-  if (value == null) {
-    return null;
-  }
-  if (value is num) {
-    return value.toDouble();
-  }
-  return double.tryParse(value.toString());
 }
 
 DateTime? _toDateTime(dynamic value) {

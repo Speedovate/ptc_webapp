@@ -5,129 +5,61 @@ import 'dart:html' as html;
 
 import 'auth_storage_backend.dart';
 
-const _dbName = 'paltranco_local_storage';
-const _storeName = 'kv';
-const _legacySharedPreferencesPrefix = 'flutter.';
+const _storagePrefix = 'flutter.';
 
-AuthStorageBackend createAuthStorageBackend() => _IndexedDbAuthStorageBackend();
+AuthStorageBackend createAuthStorageBackend() =>
+    _LocalStorageAuthStorageBackend();
 
-class _IndexedDbAuthStorageBackend implements AuthStorageBackend {
-  Object? _database;
-
+class _LocalStorageAuthStorageBackend implements AuthStorageBackend {
   @override
-  Future<void> initialize() async {
-    await _openDatabase();
-  }
+  Future<void> initialize() async {}
 
   @override
   Future<List<String>> readStringList(String key) async {
-    final db = await _openDatabase() as dynamic;
-    final transaction = db.transaction(_storeName, 'readonly');
-    final store = transaction.objectStore(_storeName);
-    dynamic value = await store.getObject(key);
-    await transaction.completed;
-
-    value ??= await _readLegacyValue(key);
-    if (value is List) {
-      return value.map((item) => item.toString()).toList();
+    final raw = html.window.localStorage['$_storagePrefix$key'];
+    if (raw == null || raw.isEmpty) {
+      return const [];
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded.map((item) => item.toString()).toList(growable: false);
+      }
+      if (decoded is String && decoded.isNotEmpty) {
+        return <String>[decoded];
+      }
+    } catch (_) {
+      return <String>[raw];
     }
     return const [];
   }
 
   @override
   Future<void> writeStringList(String key, List<String> values) async {
-    final db = await _openDatabase() as dynamic;
-    final transaction = db.transaction(_storeName, 'readwrite');
-    final store = transaction.objectStore(_storeName);
-    await store.put(values, key);
-    await transaction.completed;
+    html.window.localStorage['$_storagePrefix$key'] = jsonEncode(values);
   }
 
   @override
   Future<String?> readString(String key) async {
-    final db = await _openDatabase() as dynamic;
-    final transaction = db.transaction(_storeName, 'readonly');
-    final store = transaction.objectStore(_storeName);
-    dynamic value = await store.getObject(key);
-    await transaction.completed;
-
-    value ??= await _readLegacyValue(key);
-    return value?.toString();
+    final raw = html.window.localStorage['$_storagePrefix$key'];
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded?.toString();
+    } catch (_) {
+      return raw;
+    }
   }
 
   @override
   Future<void> writeString(String key, String value) async {
-    final db = await _openDatabase() as dynamic;
-    final transaction = db.transaction(_storeName, 'readwrite');
-    final store = transaction.objectStore(_storeName);
-    await store.put(value, key);
-    await transaction.completed;
+    html.window.localStorage['$_storagePrefix$key'] = jsonEncode(value);
   }
 
   @override
   Future<void> remove(String key) async {
-    final db = await _openDatabase() as dynamic;
-    final transaction = db.transaction(_storeName, 'readwrite');
-    final store = transaction.objectStore(_storeName);
-    await store.delete(key);
-    await transaction.completed;
-    html.window.localStorage.remove('$_legacySharedPreferencesPrefix$key');
-  }
-
-  Future<Object> _openDatabase() async {
-    final existing = _database;
-    if (existing != null) {
-      return existing;
-    }
-
-    final factory = html.window.indexedDB;
-    if (factory == null) {
-      throw StateError('IndexedDB is not available in this browser.');
-    }
-
-    final database = await factory.open(
-      _dbName,
-      version: 1,
-      onUpgradeNeeded: (event) {
-        final request = event.target;
-        final db = (request as dynamic).result;
-        if (!db.objectStoreNames!.contains(_storeName)) {
-          db.createObjectStore(_storeName);
-        }
-      },
-    );
-    _database = database;
-    return database;
-  }
-
-  Future<Object?> _readLegacyValue(String key) async {
-    final raw = html.window.localStorage['$_legacySharedPreferencesPrefix$key'];
-    if (raw == null) {
-      return null;
-    }
-
-    dynamic decoded;
-    try {
-      decoded = jsonDecode(raw);
-    } catch (_) {
-      decoded = raw;
-    }
-
-    if (decoded is List) {
-      await writeStringList(
-        key,
-        decoded.map((item) => item.toString()).toList(),
-      );
-      html.window.localStorage.remove('$_legacySharedPreferencesPrefix$key');
-      return decoded;
-    }
-
-    if (decoded is String) {
-      await writeString(key, decoded);
-      html.window.localStorage.remove('$_legacySharedPreferencesPrefix$key');
-      return decoded;
-    }
-
-    return null;
+    html.window.localStorage.remove('$_storagePrefix$key');
   }
 }
