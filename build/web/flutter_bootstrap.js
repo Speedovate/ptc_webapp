@@ -38,13 +38,50 @@ _flutter.buildConfig = {"engineRevision":"59aa584fdf100e6c78c785d8a5b565d1de4b48
 
 (function () {
   const serviceWorkerVersion =
-    "1797709135" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
+    "2913472085" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
+  const swVersionKey = 'paltranco_sw_version';
 
-  _flutter.loader.load({
-    serviceWorkerSettings: {
-      serviceWorkerVersion,
-      serviceWorkerUrl: `app_service_worker.js?v=${serviceWorkerVersion}`,
-      timeoutMillis: 10000,
-    },
+  async function clearStaleWebCachesIfNeeded() {
+    if (
+      typeof window === 'undefined' ||
+      typeof navigator === 'undefined' ||
+      !('serviceWorker' in navigator) ||
+      !('caches' in window)
+    ) {
+      return;
+    }
+
+    const previousVersion = window.localStorage.getItem(swVersionKey);
+    if (previousVersion === serviceWorkerVersion) {
+      return;
+    }
+
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    } catch (_) {}
+
+    try {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys
+          .filter((key) => key.startsWith('paltranco-'))
+          .map((key) => caches.delete(key)),
+      );
+    } catch (_) {}
+
+    try {
+      window.localStorage.setItem(swVersionKey, serviceWorkerVersion);
+    } catch (_) {}
+  }
+
+  clearStaleWebCachesIfNeeded().finally(function () {
+    _flutter.loader.load({
+      serviceWorkerSettings: {
+        serviceWorkerVersion,
+        serviceWorkerUrl: `app_service_worker.js?v=${serviceWorkerVersion}`,
+        timeoutMillis: 10000,
+      },
+    });
   });
 })();

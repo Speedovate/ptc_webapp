@@ -4,6 +4,15 @@ const version = new URL(self.location.href).searchParams.get('v') || 'v1';
 const SHELL_CACHE = `paltranco-shell-${version}`;
 const RUNTIME_CACHE = `paltranco-runtime-${version}`;
 const IMAGE_CACHE = `paltranco-images-${version}`;
+const NETWORK_FIRST_PATHS = new Set([
+  '/',
+  '/index.html',
+  '/flutter_bootstrap.js',
+  '/flutter.js',
+  '/main.dart.js',
+  '/manifest.json',
+  '/version.json',
+]);
 const TRUSTED_IMAGE_HOSTS = new Set([
   'firebasestorage.googleapis.com',
   'storage.googleapis.com',
@@ -94,11 +103,37 @@ async function handleNavigationRequest(request) {
 }
 
 async function handleAssetRequest(request) {
+  const url = new URL(request.url);
+  if (NETWORK_FIRST_PATHS.has(url.pathname)) {
+    return handleCriticalAssetRequest(request);
+  }
+
   const runtimeCache = await caches.open(RUNTIME_CACHE);
   const cached = await runtimeCache.match(request, { ignoreSearch: false });
   if (cached) {
     return cached;
   }
+
+  try {
+    const response = await fetch(request);
+    if (response && response.ok) {
+      await runtimeCache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    const shellCache = await caches.open(SHELL_CACHE);
+    const fallback =
+        (await runtimeCache.match(request, { ignoreSearch: true })) ||
+        (await shellCache.match(request, { ignoreSearch: true }));
+    if (fallback) {
+      return fallback;
+    }
+    throw error;
+  }
+}
+
+async function handleCriticalAssetRequest(request) {
+  const runtimeCache = await caches.open(RUNTIME_CACHE);
 
   try {
     const response = await fetch(request);
