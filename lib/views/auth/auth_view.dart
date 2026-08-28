@@ -1031,6 +1031,17 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
       } else if (mounted && vm.errorMessage?.isNotEmpty == true) {
         AppSnackbar.showError(context, vm.errorMessage!);
       }
+    } on AuthFailure catch (error) {
+      if (mounted && error.message.trim().isNotEmpty) {
+        AppSnackbar.showError(context, error.message.trim());
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          exactUserErrorMessage(error, fallback: 'Unknown error.'),
+        );
+      }
     } finally {
       _setAuthFlowLoading(false);
     }
@@ -1647,10 +1658,9 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
     } on AuthFailure catch (error) {
       errorMessage = error.message;
     } catch (error) {
-      errorMessage = userFacingErrorMessage(
+      errorMessage = exactUserErrorMessage(
         error,
-        fallback:
-            'Account created, but an image upload could not be completed.',
+        fallback: 'Unknown error.',
       );
     }
 

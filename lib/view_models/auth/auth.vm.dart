@@ -55,10 +55,9 @@ class AuthViewModel extends BaseViewModel {
       notifyListeners();
       return null;
     } catch (error) {
-      errorMessage = userFacingErrorMessage(
+      errorMessage = exactUserErrorMessage(
         error,
-        fallback:
-            'We could not create your account right now. Please try again.',
+        fallback: 'Unknown error.',
       );
       notifyListeners();
       return null;
