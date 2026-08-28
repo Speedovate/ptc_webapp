@@ -1400,8 +1400,40 @@ class AuthRequest implements AuthRepository {
       if (publicRestUser != null) {
         return publicRestUser;
       }
-      rethrow;
+      throw _buildLoginLookupFailure(error, isPhoneLogin: isPhoneLogin);
     }
+  }
+
+  AuthFailure _buildLoginLookupFailure(
+    Object error, {
+    required bool isPhoneLogin,
+  }) {
+    final normalized = normalizeUserErrorText(
+      error.toString(),
+      fallback: '',
+    ).toLowerCase();
+    if (normalized.contains('timeout') ||
+        normalized.contains('failed to fetch') ||
+        normalized.contains('network') ||
+        normalized.contains('progressevent')) {
+      return const AuthFailure(
+        'We could not reach the account records right now. Please check your connection and try again.',
+      );
+    }
+    if (normalized.contains('failed-precondition') ||
+        normalized.contains('index') ||
+        normalized.contains('invalid-argument') ||
+        normalized.contains('invalid value') ||
+        normalized.contains('query')) {
+      return AuthFailure(
+        isPhoneLogin
+            ? 'We could not verify that phone number right now. Please try again shortly.'
+            : 'We could not verify that email address right now. Please try again shortly.',
+      );
+    }
+    return const AuthFailure(
+      'We could not look up that account right now. Please try again.',
+    );
   }
 
   Future<UserModel?> _findCachedUserByIdentifier({
