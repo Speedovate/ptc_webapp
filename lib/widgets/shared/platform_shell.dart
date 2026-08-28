@@ -46,7 +46,7 @@ class PlatformShell extends StatelessWidget {
 
     return Scaffold(
       key: scaffoldKey,
-      backgroundColor: AppColors.primarySurface,
+      backgroundColor: isCompact ? Colors.white : AppColors.primarySurface,
       body: SafeArea(
         child: Row(
           children: [
