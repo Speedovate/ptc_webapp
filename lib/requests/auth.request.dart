@@ -1666,10 +1666,14 @@ class AuthRequest implements AuthRepository {
   Future<UserModel> _inflateUser(
     DocumentSnapshot<Map<String, dynamic>> doc,
   ) async {
-    final typeById = {
-      for (final item in await _vehicleRequest.getTypes()) item.id ?? '': item,
-    };
-    return _userFromFirestoreMap(documentData(doc), typeById);
+    final data = documentData(doc);
+    if (normalizeRoleKey(data['role']?.toString()) != 'driver') {
+      return UserModel.fromMap(data);
+    }
+    final typeById = await _vehicleRequest
+        .getTypeByIdCachedFirst()
+        .timeout(_loginFallbackLookupTimeout, onTimeout: () => const {});
+    return _userFromFirestoreMap(data, typeById);
   }
 
   Future<Map<String, dynamic>?> _readCurrentSessionSnapshot() async {
