@@ -142,25 +142,57 @@ class AuthRequest implements AuthRepository {
 
       final typeByIdFuture = _vehicleRequest
           .getTypeByIdCachedFirst()
-          .timeout(_startupTimeout, onTimeout: () => <String, VehicleCatalogItem>{});
-      final documents = await _usersCollection.get().timeout(
-        _startupTimeout,
-        onTimeout: () {
-          throw TimeoutException('users fetch timeout');
-        },
-      );
-      final rawDocuments = documents.docs.map(documentData).toList(growable: false);
-      await _cache.writeDocuments(
-        resourceKey: _usersResourceKey,
-        documents: rawDocuments,
-      );
-      await _writeUsersCacheLocally(rawDocuments);
-      final typeById = await typeByIdFuture;
-      final users = rawDocuments
-          .map((doc) => _userFromFirestoreMap(doc, typeById))
-          .toList(growable: false);
-      _sortUsersNewestFirst(users);
-      return users;
+          .timeout(
+            _startupTimeout,
+            onTimeout: () => <String, VehicleCatalogItem>{},
+          );
+      try {
+        final documents = await _usersCollection.get().timeout(
+          _startupTimeout,
+          onTimeout: () {
+            throw TimeoutException('users fetch timeout');
+          },
+        );
+        final rawDocuments = documents.docs
+            .map(documentData)
+            .toList(growable: false);
+        await _cache.writeDocuments(
+          resourceKey: _usersResourceKey,
+          documents: rawDocuments,
+        );
+        await _writeUsersCacheLocally(rawDocuments);
+        final typeById = await typeByIdFuture;
+        final users = rawDocuments
+            .map((doc) => _userFromFirestoreMap(doc, typeById))
+            .toList(growable: false);
+        _sortUsersNewestFirst(users);
+        return users;
+      } catch (error) {
+        final lateCachedUsers = await _getUsersCachedOnly();
+        if (lateCachedUsers.isNotEmpty) {
+          return lateCachedUsers;
+        }
+        final publicDocuments = await _firestorePublicDocumentFetcher
+            .fetchCollectionDocuments('users')
+            .timeout(
+              _startupTimeout,
+              onTimeout: () => const <Map<String, dynamic>>[],
+            );
+        if (publicDocuments.isEmpty) {
+          rethrow;
+        }
+        await _cache.writeDocuments(
+          resourceKey: _usersResourceKey,
+          documents: publicDocuments,
+        );
+        await _writeUsersCacheLocally(publicDocuments);
+        final typeById = await typeByIdFuture;
+        final users = publicDocuments
+            .map((doc) => _userFromFirestoreMap(doc, typeById))
+            .toList(growable: false);
+        _sortUsersNewestFirst(users);
+        return users;
+      }
     }, fallback: 'We could not load the users right now.');
   }
 

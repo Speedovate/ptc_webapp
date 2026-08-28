@@ -332,12 +332,16 @@ class _AppBootstrapLoadingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
-      backgroundColor: Color(0xFF5C33CF),
+      backgroundColor: Colors.white,
       body: SafeArea(
-        child: Center(
-          child: AppPageLoading(
-            message: 'Starting Paltranco and preparing offline data ...',
-            compact: true,
+        bottom: false,
+        child: ColoredBox(
+          color: Color(0xFF5C33CF),
+          child: Center(
+            child: AppPageLoading(
+              message: 'Starting Paltranco and preparing offline data ...',
+              compact: true,
+            ),
           ),
         ),
       ),

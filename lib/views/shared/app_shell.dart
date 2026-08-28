@@ -26,12 +26,16 @@ class AppShell extends StatelessWidget {
           return const SelectionArea(
             child: InAppBrowserGuard(
               child: Scaffold(
-                backgroundColor: Color(0xFF5C33CF),
+                backgroundColor: Colors.white,
                 body: SafeArea(
-                  child: Center(
-                    child: AppPageLoading(
-                      message: 'Loading, please wait ...',
-                      compact: true,
+                  bottom: false,
+                  child: ColoredBox(
+                    color: Color(0xFF5C33CF),
+                    child: Center(
+                      child: AppPageLoading(
+                        message: 'Loading, please wait ...',
+                        compact: true,
+                      ),
                     ),
                   ),
                 ),

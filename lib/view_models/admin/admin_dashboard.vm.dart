@@ -9,6 +9,7 @@ import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
@@ -34,6 +35,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   final VehicleCatalogRepository _vehicleRepository;
   final BookingRepository _bookingRepository;
   StreamSubscription<List<Booking>>? _bookingsSubscription;
+  bool _didScheduleWarmRetry = false;
   static List<Booking> _cachedCompletedBookings = const [];
   static Map<String, UserModel> _cachedUsersById = const {};
   static UserModel? _cachedCurrentUser;
@@ -143,6 +145,7 @@ class AdminDashboardViewModel extends BaseViewModel {
         }).catchError((error, stackTrace) {
         }),
       );
+      await _ensureBookingsSubscription();
 
       final results = await Future.wait<dynamic>([
         _loadCurrentUserSafe(),
@@ -164,17 +167,11 @@ class AdminDashboardViewModel extends BaseViewModel {
               .map((user) => MapEntry(user.id!, user)),
         );
       _applyCompletedBookings(bookings);
-      await _bookingsSubscription?.cancel();
-      _bookingsSubscription = _bookingRepository.watchBookings().listen((
-        liveBookings,
-      ) {
-        _applyCompletedBookings(liveBookings);
-        notifyListeners();
-      });
       _cachedCompletedBookings = List<Booking>.from(_completedBookings);
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedCurrentUser = _currentUser;
       _cachedErrorMessage = null;
+      _scheduleWarmRetryIfNeeded();
     } catch (error) {
       errorMessage = userFacingErrorMessage(
         error,
@@ -220,12 +217,52 @@ class AdminDashboardViewModel extends BaseViewModel {
       final bookings = await _bookingRepository
           .getBookings()
           .timeout(_loadStepTimeout, onTimeout: () {
-            return const <Booking>[];
+            return List<Booking>.from(_cachedCompletedBookings);
           });
       return bookings;
     } catch (error) {
-      return const <Booking>[];
+      return List<Booking>.from(_cachedCompletedBookings);
     }
+  }
+
+  Future<void> _ensureBookingsSubscription() async {
+    if (_bookingsSubscription != null) {
+      return;
+    }
+    _bookingsSubscription = _bookingRepository.watchBookings().listen((
+      liveBookings,
+    ) {
+      _applyCompletedBookings(liveBookings);
+      errorMessage = null;
+      if (isBusy && _completedBookings.isNotEmpty) {
+        setBusy(false);
+      }
+      notifyListeners();
+    });
+  }
+
+  void _scheduleWarmRetryIfNeeded() {
+    if (_didScheduleWarmRetry ||
+        !currentNetworkStatus() ||
+        _completedBookings.isNotEmpty ||
+        _cachedCompletedBookings.isNotEmpty) {
+      return;
+    }
+    _didScheduleWarmRetry = true;
+    unawaited(_retryLoadAfterWarmup());
+  }
+
+  Future<void> _retryLoadAfterWarmup() async {
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    try {
+      final bookings = await _bookingRepository.getBookings();
+      if (bookings.isEmpty) {
+        return;
+      }
+      _applyCompletedBookings(bookings);
+      _cachedCompletedBookings = List<Booking>.from(_completedBookings);
+      notifyListeners();
+    } catch (_) {}
   }
 
   void _applyCompletedBookings(List<Booking> bookings) {
@@ -233,7 +270,8 @@ class AdminDashboardViewModel extends BaseViewModel {
       ..clear()
       ..addAll(
         bookings.where(
-          (booking) => (booking.clientStatus ?? '').trim() == 'delivered',
+          (booking) =>
+              (booking.clientStatus ?? '').trim().toLowerCase() == 'delivered',
         ),
       );
 

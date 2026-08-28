@@ -62,6 +62,11 @@ class BookingRequest implements BookingRepository {
       return;
     }
     _didKickOffBackgroundQueueInitialization = true;
+    if (currentNetworkStatus()) {
+      unawaited(
+        _refreshBookingsCacheInBackground().catchError((error, stackTrace) {}),
+      );
+    }
     unawaited(
       OfflineQueueCoordinatorService.instance.initialize().then((_) {
       }).catchError((error, stackTrace) {
@@ -153,8 +158,17 @@ class BookingRequest implements BookingRepository {
   Stream<List<Booking>> watchBookings() {
     return Stream<List<Booking>>.multi((controller) {
       Future<void> emitCachedBookings() async {
+        if (_memoryBookings.isNotEmpty && !controller.isClosed) {
+          controller.add(List<Booking>.from(_memoryBookings));
+        }
         final cachedDocuments = await _cache.readDocuments(_bookingsResourceKey);
-        if (controller.isClosed || cachedDocuments == null) {
+        if (controller.isClosed) {
+          return;
+        }
+        if (cachedDocuments == null || cachedDocuments.isEmpty) {
+          if (currentNetworkStatus()) {
+            unawaited(_refreshBookingsCacheInBackground());
+          }
           return;
         }
         final queuedDocuments = await _readQueuedBookingDocumentsSafe();

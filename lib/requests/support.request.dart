@@ -251,6 +251,13 @@ class SupportRequest {
       }
 
       unawaited(emitCachedThreads());
+      if (currentNetworkStatus()) {
+        unawaited(
+          prefetchAllThreads().then((_) {
+            _threadCacheUpdates.add(null);
+          }).catchError((error, stackTrace) {}),
+        );
+      }
 
       final remoteSubscription = _supportCollection.snapshots().listen((
         snapshot,
@@ -314,6 +321,13 @@ class SupportRequest {
       }
 
       unawaited(emitCachedThreads());
+      if (currentNetworkStatus()) {
+        unawaited(
+          prefetchThreadsForUser(normalizedUserId).then((_) {
+            _threadCacheUpdates.add(null);
+          }).catchError((error, stackTrace) {}),
+        );
+      }
 
       final remoteSubscription = _supportCollection
           .where('requester_user_id', isEqualTo: normalizedUserId)

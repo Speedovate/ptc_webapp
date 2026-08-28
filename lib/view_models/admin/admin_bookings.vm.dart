@@ -13,10 +13,12 @@ import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class AdminBookingsViewModel extends BaseViewModel {
+  static const Duration _loadStepTimeout = Duration(seconds: 8);
   AdminBookingsViewModel({
     AuthRepository? authRepository,
     BookingRepository? bookingRepository,
@@ -40,6 +42,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   final VehicleCatalogRepository _vehicleCatalogRepository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   StreamSubscription<List<Booking>>? _bookingsSubscription;
+  bool _didScheduleWarmRetry = false;
   static List<Booking> _cachedBookings = const [];
   static Map<String, UserModel> _cachedUsersById = const {};
   static Map<String, Status> _cachedStatusesByKey = const {};
@@ -102,24 +105,23 @@ class AdminBookingsViewModel extends BaseViewModel {
     errorMessage = null;
     try {
       await _bookingRepository.initialize();
-      final initialBookings = await _bookingRepository.getBookings();
+      await _ensureBookingsSubscription();
+      final initialBookings = await _bookingRepository
+          .getBookings()
+          .timeout(
+            _loadStepTimeout,
+            onTimeout: () => List<Booking>.from(_cachedBookings),
+          );
       _applyBookings(initialBookings);
-      await _bookingsSubscription?.cancel();
-      _bookingsSubscription = _bookingRepository.watchBookings().listen((
-        bookings,
-      ) {
-        _applyBookings(bookings);
-        notifyListeners();
-      });
       if (shouldShowLoadingState && _bookings.isNotEmpty && isBusy) {
         setBusy(false);
         notifyListeners();
       }
 
-      final results = await Future.wait([
-        _authRepository.getUsers(),
-        _statusRepository.getStatuses(),
-        _vehicleCatalogRepository.getSizes(),
+      final results = await Future.wait<dynamic>([
+        _loadUsersSafe(),
+        _loadStatusesSafe(),
+        _loadVehicleSizesSafe(),
       ]);
       final users = results[0] as List<UserModel>;
       final statuses = results[1] as List<Status>;
@@ -142,18 +144,93 @@ class AdminBookingsViewModel extends BaseViewModel {
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
       _cachedVehicleSizes = List<VehicleCatalogItem>.from(_vehicleSizes);
       _cachedErrorMessage = null;
+      _scheduleWarmRetryIfNeeded();
     } catch (error) {
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the bookings right now.',
       );
       _cachedErrorMessage = errorMessage;
+      _scheduleWarmRetryIfNeeded();
     } finally {
       if (shouldShowLoadingState) {
         setBusy(false);
       }
       notifyListeners();
     }
+  }
+
+  Future<void> _ensureBookingsSubscription() async {
+    if (_bookingsSubscription != null) {
+      return;
+    }
+    _bookingsSubscription = _bookingRepository.watchBookings().listen((
+      bookings,
+    ) {
+      _applyBookings(bookings);
+      errorMessage = null;
+      if (isBusy && _bookings.isNotEmpty) {
+        setBusy(false);
+      }
+      notifyListeners();
+    });
+  }
+
+  Future<List<UserModel>> _loadUsersSafe() async {
+    try {
+      return await _authRepository.getUsers().timeout(
+        _loadStepTimeout,
+        onTimeout: () => List<UserModel>.from(_cachedUsersById.values),
+      );
+    } catch (_) {
+      return List<UserModel>.from(_cachedUsersById.values);
+    }
+  }
+
+  Future<List<Status>> _loadStatusesSafe() async {
+    try {
+      return await _statusRepository.getStatuses().timeout(
+        _loadStepTimeout,
+        onTimeout: () => List<Status>.from(_cachedStatusesByKey.values),
+      );
+    } catch (_) {
+      return List<Status>.from(_cachedStatusesByKey.values);
+    }
+  }
+
+  Future<List<VehicleCatalogItem>> _loadVehicleSizesSafe() async {
+    try {
+      return await _vehicleCatalogRepository.getSizes().timeout(
+        _loadStepTimeout,
+        onTimeout: () => List<VehicleCatalogItem>.from(_cachedVehicleSizes),
+      );
+    } catch (_) {
+      return List<VehicleCatalogItem>.from(_cachedVehicleSizes);
+    }
+  }
+
+  void _scheduleWarmRetryIfNeeded() {
+    if (_didScheduleWarmRetry ||
+        !currentNetworkStatus() ||
+        _bookings.isNotEmpty ||
+        _cachedBookings.isNotEmpty) {
+      return;
+    }
+    _didScheduleWarmRetry = true;
+    unawaited(_retryLoadAfterWarmup());
+  }
+
+  Future<void> _retryLoadAfterWarmup() async {
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    try {
+      final refreshedBookings = await _bookingRepository.getBookings();
+      if (refreshedBookings.isEmpty) {
+        return;
+      }
+      _applyBookings(refreshedBookings);
+      _cachedBookings = List<Booking>.from(_bookings);
+      notifyListeners();
+    } catch (_) {}
   }
 
   void _applyBookings(List<Booking> bookings) {

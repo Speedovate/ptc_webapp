@@ -355,7 +355,7 @@ class PlatformSidebarBrandTile extends StatelessWidget {
                           future: AppVersionService.sidebarVersionLabel,
                           builder: (context, snapshot) {
                             final versionLabel =
-                                snapshot.data ?? 'Version 1.0.0 (3)';
+                                snapshot.data ?? 'Version 1.0.0 (4)';
                             return Text(
                               versionLabel,
                               maxLines: 1,

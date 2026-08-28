@@ -101,6 +101,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
       notifyListeners();
+      _scheduleWarmRetryIfNeeded();
     } finally {
       if (shouldShowLoadingState) {
         setBusy(false);

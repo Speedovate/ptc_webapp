@@ -86,7 +86,7 @@ class VehicleRequest implements VehicleCatalogRepository {
   @override
   Future<List<VehicleMake>> getMakes() async {
     return _runRequest(() async {
-      initialize();
+      await initialize();
       final cachedMakes = await _cache.readDocuments(_vehicleMakesResourceKey);
       final cachedTypes = await _cache.readDocuments(_vehicleTypesResourceKey);
       final cachedUsers = await _cache.readDocuments(_usersResourceKey);
@@ -196,7 +196,7 @@ class VehicleRequest implements VehicleCatalogRepository {
   @override
   Future<List<VehicleCatalogItem>> getSizes() async {
     return _runRequest(() async {
-      initialize();
+      await initialize();
       final cachedDocuments = await _cache.readDocuments(_vehicleSizesResourceKey);
       if (cachedDocuments != null && cachedDocuments.isNotEmpty) {
         if (currentNetworkStatus()) {
@@ -313,7 +313,7 @@ class VehicleRequest implements VehicleCatalogRepository {
   @override
   Future<List<VehicleCatalogItem>> getTypes() async {
     return _runRequest(() async {
-      initialize();
+      await initialize();
       final cachedDocuments = await _cache.readDocuments(_vehicleTypesResourceKey);
       if (cachedDocuments != null && cachedDocuments.isNotEmpty) {
         if (currentNetworkStatus()) {

@@ -12,6 +12,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/support.request.dart';
+import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
@@ -124,6 +125,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   bool _showMobileChat = false;
   List<Booking> _accessibleBookings = const [];
   List<UserModel> _adminUsers = const [];
+  bool _didScheduleAdminUsersWarmRetry = false;
   List<_PendingSupportAttachment> _pendingAttachments = const [];
   Map<String, String> _threadReadMarkersById = const <String, String>{};
   String? _pendingInitialAdminUserId;
@@ -361,7 +363,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     try {
       final users = await _authRequest.getUsers().timeout(
         _supportLoadTimeout,
-        onTimeout: () => const <UserModel>[],
+        onTimeout: () => List<UserModel>.from(_adminUsers),
       );
       if (!mounted) {
         return;
@@ -386,6 +388,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         _adminUsers = filtered;
       });
       await _applyPendingInitialAdminUser(filtered);
+      _scheduleAdminUsersWarmRetryIfNeeded();
     } catch (error) {
       if (!mounted) {
         return;
@@ -397,6 +400,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
           fallback: 'We could not load the user inbox right now.',
         ),
       );
+      _scheduleAdminUsersWarmRetryIfNeeded();
     } finally {
       if (mounted) {
         setState(() {
@@ -404,6 +408,25 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         });
       }
     }
+  }
+
+  void _scheduleAdminUsersWarmRetryIfNeeded() {
+    if (_didScheduleAdminUsersWarmRetry ||
+        !currentNetworkStatus() ||
+        _adminUsers.isNotEmpty) {
+      return;
+    }
+    _didScheduleAdminUsersWarmRetry = true;
+    unawaited(_retryLoadAdminUsersAfterWarmup());
+  }
+
+  Future<void> _retryLoadAdminUsersAfterWarmup() async {
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    if (!mounted || !_isAdmin) {
+      return;
+    }
+    _didScheduleAdminUsersWarmRetry = false;
+    await _loadAdminUsers();
   }
 
   Future<void> _applyPendingInitialAdminUser(List<UserModel> users) async {
