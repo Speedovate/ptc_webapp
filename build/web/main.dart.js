@@ -34292,7 +34292,7 @@ if(B.b.p(r,"invalid-argument")||B.b.p(r,"invalid value")){if(B.b.p(r,"email"))re
 if(B.b.p(r,"phone")||B.b.p(r,"mobile"))return"Please enter a valid phone number."
 if(B.b.p(r,"password"))return"Please check the password and try again."
 if(B.b.p(r,"query"))return"This data could not be loaded correctly right now. Please try again."
-return"Some of the information entered is invalid. Please review it and try again."}if(B.b.p(r,"failed-precondition")){if(B.b.p(r,"index"))return"This data is still being prepared on the server. Please try again shortly."
+return b}if(B.b.p(r,"failed-precondition")){if(B.b.p(r,"index"))return"This data is still being prepared on the server. Please try again shortly."
 return"This action cannot be completed right now."}if(B.b.p(r,"aborted")||B.b.p(r,"cancelled"))return"This action could not be completed. Please try again."
 if(B.b.p(r,"resource-exhausted")||B.b.p(r,"quota-exceeded"))return"Service is busy right now. Please try again later."
 if(B.b.p(r,"storage/unknown")||B.b.p(r,"unknown error occurred")||B.b.p(r,"internal"))return b

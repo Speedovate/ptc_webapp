@@ -377,12 +377,42 @@ String? _firebaseErrorMessage(
       normalized.contains('unauthorized')) {
     return 'You do not have permission to do that right now.';
   }
+  if (normalized.contains('incorrect password') ||
+      normalized.contains('old password is incorrect')) {
+    return 'The password you entered is incorrect.';
+  }
+  if (normalized.contains('no account found for that email or mobile number')) {
+    return 'No account was found for that email or phone number.';
+  }
+  if (normalized.contains('that email is already registered') ||
+      normalized.contains('email already exists') ||
+      normalized.contains('email already registered')) {
+    return 'That email address is already in use.';
+  }
+  if (normalized.contains('that phone number is already registered') ||
+      normalized.contains('phone already exists') ||
+      normalized.contains('phone number already exists') ||
+      normalized.contains('mobile number already exists')) {
+    return 'That phone number is already in use.';
+  }
+  if (normalized.contains('not active yet')) {
+    return 'This account is not active yet. Please contact your admin.';
+  }
   if (normalized.contains('unauthenticated')) {
     return 'Please sign in again and try again.';
   }
   if (normalized.contains('network-request-failed') ||
-      normalized.contains('network error')) {
+      normalized.contains('network error') ||
+      normalized.contains('failed to fetch') ||
+      normalized.contains('progressevent')) {
     return 'Please check your internet connection and try again.';
+  }
+  if (normalized.contains('public firestore fetch timeout') ||
+      normalized.contains('fetch timeout') ||
+      normalized.contains('request took too long') ||
+      normalized.contains('timeoutexception') ||
+      normalized.contains('future not completed')) {
+    return 'The request took too long. Please try again.';
   }
   if (normalized.contains('unavailable')) {
     return 'Service is temporarily unavailable. Please try again.';
@@ -399,9 +429,24 @@ String? _firebaseErrorMessage(
   }
   if (normalized.contains('invalid-argument') ||
       normalized.contains('invalid value')) {
-    return 'Some information is invalid. Please review and try again.';
+    if (normalized.contains('email')) {
+      return 'Please enter a valid email address.';
+    }
+    if (normalized.contains('phone') || normalized.contains('mobile')) {
+      return 'Please enter a valid phone number.';
+    }
+    if (normalized.contains('password')) {
+      return 'Please check the password and try again.';
+    }
+    if (normalized.contains('query')) {
+      return 'This data could not be loaded correctly right now. Please try again.';
+    }
+    return fallback;
   }
   if (normalized.contains('failed-precondition')) {
+    if (normalized.contains('index')) {
+      return 'This data is still being prepared on the server. Please try again shortly.';
+    }
     return 'This action cannot be completed right now.';
   }
   if (normalized.contains('aborted') || normalized.contains('cancelled')) {
