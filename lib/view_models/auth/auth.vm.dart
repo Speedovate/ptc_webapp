@@ -32,9 +32,7 @@ class AuthViewModel extends BaseViewModel {
       notifyListeners();
       return null;
     } catch (error) {
-      errorMessage = exactUserErrorMessage(
-        error,
-      );
+      errorMessage = error.toString();
       notifyListeners();
       return null;
     } finally {

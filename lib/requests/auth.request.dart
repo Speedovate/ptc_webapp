@@ -272,7 +272,7 @@ class AuthRequest implements AuthRepository {
     } on AuthFailure {
       rethrow;
     } catch (error) {
-      throw AuthFailure(exactUserErrorMessage(error));
+      throw AuthFailure(error.toString());
     }
   }
 

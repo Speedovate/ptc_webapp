@@ -1039,7 +1039,7 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
       if (mounted) {
         AppSnackbar.showError(
           context,
-          exactUserErrorMessage(error),
+          error.toString(),
         );
       }
     } finally {

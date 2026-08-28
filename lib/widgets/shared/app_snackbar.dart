@@ -8,7 +8,13 @@ class AppSnackbar {
   static const _successColor = Color(0xFF2EAD62);
 
   static void showError(BuildContext context, String message) {
-    _show(context, normalizeUserErrorText(message), _errorColor);
+    final normalized = normalizeUserErrorText(message, fallback: '').trim();
+    final resolved = normalized.isNotEmpty
+        ? normalized
+        : message.toString().trim().isNotEmpty
+        ? message.toString().trim()
+        : 'Error';
+    _show(context, resolved, _errorColor);
   }
 
   static void showSuccess(BuildContext context, String message) {
