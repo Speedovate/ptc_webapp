@@ -34,7 +34,6 @@ class AuthViewModel extends BaseViewModel {
     } catch (error) {
       errorMessage = exactUserErrorMessage(
         error,
-        fallback: 'Sign in failed.',
       );
       notifyListeners();
       return null;
@@ -57,7 +56,6 @@ class AuthViewModel extends BaseViewModel {
     } catch (error) {
       errorMessage = exactUserErrorMessage(
         error,
-        fallback: 'Unknown error.',
       );
       notifyListeners();
       return null;

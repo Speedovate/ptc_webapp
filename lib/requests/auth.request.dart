@@ -272,12 +272,7 @@ class AuthRequest implements AuthRepository {
     } on AuthFailure {
       rethrow;
     } catch (error) {
-      throw AuthFailure(
-        exactUserErrorMessage(
-          error,
-          fallback: 'Sign in failed.',
-        ),
-      );
+      throw AuthFailure(exactUserErrorMessage(error));
     }
   }
 
@@ -1417,32 +1412,7 @@ class AuthRequest implements AuthRepository {
     Object error, {
     required bool isPhoneLogin,
   }) {
-    final normalized = normalizeUserErrorText(
-      error.toString(),
-      fallback: '',
-    ).toLowerCase();
-    if (normalized.contains('timeout') ||
-        normalized.contains('failed to fetch') ||
-        normalized.contains('network') ||
-        normalized.contains('progressevent')) {
-      return const AuthFailure(
-        'We could not reach the account records right now. Please check your connection and try again.',
-      );
-    }
-    if (normalized.contains('failed-precondition') ||
-        normalized.contains('index') ||
-        normalized.contains('invalid-argument') ||
-        normalized.contains('invalid value') ||
-        normalized.contains('query')) {
-      return AuthFailure(
-        isPhoneLogin
-            ? 'We could not verify that phone number right now. Please try again shortly.'
-            : 'We could not verify that email address right now. Please try again shortly.',
-      );
-    }
-    return const AuthFailure(
-      'We could not look up that account right now. Please try again.',
-    );
+    return AuthFailure(exactUserErrorMessage(error));
   }
 
   Future<UserModel?> _findCachedUserByIdentifier({
@@ -1908,9 +1878,9 @@ class AuthRequest implements AuthRepository {
     } on AuthFailure {
       rethrow;
     } on FirebaseException catch (error) {
-      throw AuthFailure(userFacingErrorMessage(error, fallback: fallback));
+      throw AuthFailure(exactUserErrorMessage(error));
     } catch (error) {
-      throw AuthFailure(userFacingErrorMessage(error, fallback: fallback));
+      throw AuthFailure(exactUserErrorMessage(error));
     }
   }
 }

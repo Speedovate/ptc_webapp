@@ -315,15 +315,29 @@ String userFacingErrorMessage(
 
 String exactUserErrorMessage(
   Object error, {
-  String fallback = 'Unknown error.',
+  String fallback = '',
 }) {
   if (error is FirebaseException) {
-    return _normalizeRawErrorText(error.message ?? error.code, fallback);
+    final raw = error.message ?? error.code;
+    final normalized = _normalizeRawErrorText(raw, '');
+    if (normalized.isNotEmpty) {
+      return normalized;
+    }
+    return error.toString().trim();
   }
   if (error is PlatformException) {
-    return _normalizeRawErrorText(error.message ?? error.code, fallback);
+    final raw = error.message ?? error.code;
+    final normalized = _normalizeRawErrorText(raw, '');
+    if (normalized.isNotEmpty) {
+      return normalized;
+    }
+    return error.toString().trim();
   }
-  return _normalizeRawErrorText(error.toString(), fallback);
+  final normalized = _normalizeRawErrorText(error.toString(), '');
+  if (normalized.isNotEmpty) {
+    return normalized;
+  }
+  return error.toString().trim();
 }
 
 String normalizeUserErrorText(

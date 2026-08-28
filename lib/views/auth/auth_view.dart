@@ -1039,7 +1039,7 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
       if (mounted) {
         AppSnackbar.showError(
           context,
-          exactUserErrorMessage(error, fallback: 'Unknown error.'),
+          exactUserErrorMessage(error),
         );
       }
     } finally {
@@ -1660,7 +1660,6 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
     } catch (error) {
       errorMessage = exactUserErrorMessage(
         error,
-        fallback: 'Unknown error.',
       );
     }
 
