@@ -35,7 +35,9 @@ class AdminDashboardViewModel extends BaseViewModel {
   final VehicleCatalogRepository _vehicleRepository;
   final BookingRepository _bookingRepository;
   StreamSubscription<List<Booking>>? _bookingsSubscription;
+  StreamSubscription<void>? _usersCacheUpdatesSubscription;
   bool _didScheduleWarmRetry = false;
+  bool _isRealtimeRefreshing = false;
   static List<Booking> _cachedCompletedBookings = const [];
   static Map<String, UserModel> _cachedUsersById = const {};
   static UserModel? _cachedCurrentUser;
@@ -60,6 +62,10 @@ class AdminDashboardViewModel extends BaseViewModel {
   String _searchQuery = '';
   DateTime? _startDate;
   DateTime? _endDate;
+  DateTime? _createdStartDate;
+  DateTime? _createdEndDate;
+  DateTime? _updatedStartDate;
+  DateTime? _updatedEndDate;
   String? _billingStatusFilter;
   bool _isExporting = false;
   int _exportTotalSteps = 0;
@@ -68,6 +74,10 @@ class AdminDashboardViewModel extends BaseViewModel {
   String get searchQuery => _searchQuery;
   DateTime? get startDate => _startDate;
   DateTime? get endDate => _endDate;
+  DateTime? get createdStartDate => _createdStartDate;
+  DateTime? get createdEndDate => _createdEndDate;
+  DateTime? get updatedStartDate => _updatedStartDate;
+  DateTime? get updatedEndDate => _updatedEndDate;
   String get billingStatusFilter => _billingStatusFilter ?? billingStatusAll;
   bool get isExporting => _isExporting;
   String get exportProgressLabel {
@@ -128,10 +138,13 @@ class AdminDashboardViewModel extends BaseViewModel {
   }
 
   Future<void> load() async {
+    _ensureSupportingSubscriptions();
     busyMessage = 'Loading dashboard ...';
+    final hasSharedBookings = BookingRequest.hasHydratedBookings;
     final hasVisiblePrimaryData =
         _completedBookings.isNotEmpty ||
         _cachedCompletedBookings.isNotEmpty ||
+        hasSharedBookings ||
         _usersById.isNotEmpty ||
         _cachedUsersById.isNotEmpty;
     final shouldShowLoadingState = !hasVisiblePrimaryData;
@@ -183,6 +196,43 @@ class AdminDashboardViewModel extends BaseViewModel {
         setBusy(false);
       }
       notifyListeners();
+    }
+  }
+
+  void _ensureSupportingSubscriptions() {
+    _usersCacheUpdatesSubscription ??= AuthRequest.instance
+        .watchUsersCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadSupportingData());
+        });
+  }
+
+  Future<void> _reloadSupportingData() async {
+    if (_isRealtimeRefreshing) {
+      return;
+    }
+    _isRealtimeRefreshing = true;
+    try {
+      final results = await Future.wait<dynamic>([
+        _loadCurrentUserSafe(),
+        _loadUsersSafe(),
+      ]);
+      _currentUser = results[0] as UserModel?;
+      final users = results[1] as List<UserModel>;
+      _usersById
+        ..clear()
+        ..addEntries(
+          users
+              .where((user) => (user.id ?? '').isNotEmpty)
+              .map((user) => MapEntry(user.id!, user)),
+        );
+      _cachedUsersById = Map<String, UserModel>.from(_usersById);
+      _cachedCurrentUser = _currentUser;
+      notifyListeners();
+    } catch (_) {
+      // Keep current visible state if live support data refresh fails.
+    } finally {
+      _isRealtimeRefreshing = false;
     }
   }
 
@@ -262,7 +312,9 @@ class AdminDashboardViewModel extends BaseViewModel {
       _applyCompletedBookings(bookings);
       _cachedCompletedBookings = List<Booking>.from(_completedBookings);
       notifyListeners();
-    } catch (_) {}
+    } catch (_) {
+      // Ignore cache warm-up issues and keep the visible data intact.
+    }
   }
 
   void _applyCompletedBookings(List<Booking> bookings) {
@@ -276,8 +328,8 @@ class AdminDashboardViewModel extends BaseViewModel {
       );
 
     _completedBookings.sort((left, right) {
-      final leftDate = deliveredAt(left) ?? left.updatedAt ?? left.createdAt;
-      final rightDate = deliveredAt(right) ?? right.updatedAt ?? right.createdAt;
+      final leftDate = bookingEffectiveDate(left);
+      final rightDate = bookingEffectiveDate(right);
       final dateComparison = _compareLatestFirst(leftDate, rightDate);
       if (dateComparison != 0) {
         return dateComparison;
@@ -302,6 +354,13 @@ class AdminDashboardViewModel extends BaseViewModel {
     }
   }
 
+  @override
+  void dispose() {
+    _usersCacheUpdatesSubscription?.cancel();
+    _bookingsSubscription?.cancel();
+    super.dispose();
+  }
+
   String client(Booking booking) {
     final client = _usersById[booking.client?.id];
     final name = client?.name?.trim();
@@ -318,8 +377,7 @@ class AdminDashboardViewModel extends BaseViewModel {
       if (!matchesBillingStatus) {
         return false;
       }
-      final deliveredDate =
-          deliveredAt(booking) ?? booking.updatedAt ?? booking.createdAt;
+      final deliveredDate = bookingEffectiveDate(booking);
       final matchesStartDate =
           _startDate == null ||
           (deliveredDate != null &&
@@ -328,7 +386,30 @@ class AdminDashboardViewModel extends BaseViewModel {
           _endDate == null ||
           (deliveredDate != null &&
               !_dateOnly(deliveredDate).isAfter(_dateOnly(_endDate!)));
-      if (!matchesStartDate || !matchesEndDate) {
+      final createdAt = booking.createdAt;
+      final matchesCreatedStartDate =
+          _createdStartDate == null ||
+          (createdAt != null &&
+              !_dateOnly(createdAt).isBefore(_dateOnly(_createdStartDate!)));
+      final matchesCreatedEndDate =
+          _createdEndDate == null ||
+          (createdAt != null &&
+              !_dateOnly(createdAt).isAfter(_dateOnly(_createdEndDate!)));
+      final updatedAt = booking.updatedAt;
+      final matchesUpdatedStartDate =
+          _updatedStartDate == null ||
+          (updatedAt != null &&
+              !_dateOnly(updatedAt).isBefore(_dateOnly(_updatedStartDate!)));
+      final matchesUpdatedEndDate =
+          _updatedEndDate == null ||
+          (updatedAt != null &&
+              !_dateOnly(updatedAt).isAfter(_dateOnly(_updatedEndDate!)));
+      if (!matchesStartDate ||
+          !matchesEndDate ||
+          !matchesCreatedStartDate ||
+          !matchesCreatedEndDate ||
+          !matchesUpdatedStartDate ||
+          !matchesUpdatedEndDate) {
         return false;
       }
 
@@ -383,6 +464,46 @@ class AdminDashboardViewModel extends BaseViewModel {
     notifyListeners();
   }
 
+  void updateCreatedStartDate(DateTime? value) {
+    _createdStartDate = value;
+    if (_createdStartDate != null &&
+        _createdEndDate != null &&
+        _createdEndDate!.isBefore(_createdStartDate!)) {
+      _createdEndDate = _createdStartDate;
+    }
+    notifyListeners();
+  }
+
+  void updateCreatedEndDate(DateTime? value) {
+    _createdEndDate = value;
+    if (_createdStartDate != null &&
+        _createdEndDate != null &&
+        _createdStartDate!.isAfter(_createdEndDate!)) {
+      _createdStartDate = _createdEndDate;
+    }
+    notifyListeners();
+  }
+
+  void updateUpdatedStartDate(DateTime? value) {
+    _updatedStartDate = value;
+    if (_updatedStartDate != null &&
+        _updatedEndDate != null &&
+        _updatedEndDate!.isBefore(_updatedStartDate!)) {
+      _updatedEndDate = _updatedStartDate;
+    }
+    notifyListeners();
+  }
+
+  void updateUpdatedEndDate(DateTime? value) {
+    _updatedEndDate = value;
+    if (_updatedStartDate != null &&
+        _updatedEndDate != null &&
+        _updatedStartDate!.isAfter(_updatedEndDate!)) {
+      _updatedStartDate = _updatedEndDate;
+    }
+    notifyListeners();
+  }
+
   void clearFilters() {
     var changed = false;
     if (_startDate != null) {
@@ -391,6 +512,22 @@ class AdminDashboardViewModel extends BaseViewModel {
     }
     if (_endDate != null) {
       _endDate = null;
+      changed = true;
+    }
+    if (_createdStartDate != null) {
+      _createdStartDate = null;
+      changed = true;
+    }
+    if (_createdEndDate != null) {
+      _createdEndDate = null;
+      changed = true;
+    }
+    if (_updatedStartDate != null) {
+      _updatedStartDate = null;
+      changed = true;
+    }
+    if (_updatedEndDate != null) {
+      _updatedEndDate = null;
       changed = true;
     }
     if (_billingStatusFilter != null) {
@@ -417,11 +554,10 @@ class AdminDashboardViewModel extends BaseViewModel {
 
   List<Booking> currentRangeExportBookings() {
     if (_startDate == null || _endDate == null) {
-      return const [];
+      return filteredCompletedBookings();
     }
     return _completedBookings.where((booking) {
-      final deliveredDate =
-          deliveredAt(booking) ?? booking.updatedAt ?? booking.createdAt;
+      final deliveredDate = bookingEffectiveDate(booking);
       if (deliveredDate == null) {
         return false;
       }
@@ -440,8 +576,7 @@ class AdminDashboardViewModel extends BaseViewModel {
       if (startDate == null) {
         return true;
       }
-      final deliveredDate =
-          deliveredAt(booking) ?? booking.updatedAt ?? booking.createdAt;
+      final deliveredDate = bookingEffectiveDate(booking);
       if (deliveredDate == null) {
         return false;
       }
@@ -598,6 +733,20 @@ class AdminDashboardViewModel extends BaseViewModel {
     return DateTime.tryParse(submittedAt.toString());
   }
 
+  DateTime? bookingEffectiveDate(Booking booking) {
+    final dropOffDate = BookingRecordCard.outputFieldDisplayValue(
+      booking.statusOutputs,
+      'drop_off_date',
+    ).trim();
+    if (dropOffDate.isNotEmpty) {
+      final parsedDropOffDate = DateTime.tryParse(dropOffDate);
+      if (parsedDropOffDate != null) {
+        return parsedDropOffDate;
+      }
+    }
+    return deliveredAt(booking) ?? booking.updatedAt ?? booking.createdAt;
+  }
+
   static int _compareLatestFirst(DateTime? left, DateTime? right) {
     if (left == null && right == null) {
       return 0;
@@ -716,9 +865,4 @@ class AdminDashboardViewModel extends BaseViewModel {
     notifyListeners();
   }
 
-  @override
-  void dispose() {
-    _bookingsSubscription?.cancel();
-    super.dispose();
-  }
 }

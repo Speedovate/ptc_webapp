@@ -13,6 +13,27 @@ import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 
+String _formatCatalogFilterDateValue(DateTime? value) {
+  if (value == null) {
+    return '';
+  }
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${months[value.month - 1]} ${value.day}, ${value.year}';
+}
+
 class AdminVehicleSizesView extends StatefulWidget {
   const AdminVehicleSizesView({super.key});
 
@@ -24,6 +45,10 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
   static const _toolbarControlHeight = 52.0;
   String _searchQuery = '';
   String _activeFilter = 'All';
+  DateTime? _createdStartDate;
+  DateTime? _createdEndDate;
+  DateTime? _updatedStartDate;
+  DateTime? _updatedEndDate;
   AdminVehicleSizesViewModel? _vm;
 
   static const _headerStyle = TextStyle(
@@ -63,7 +88,36 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
           final matchesActive =
               _activeFilter == 'All' ||
               ((_activeFilter == 'Active') == (item.isActive ?? false));
-          return matchesSearch && matchesActive;
+          final matchesCreatedStart =
+              _createdStartDate == null ||
+              (item.createdAt != null &&
+                  !DateUtils.dateOnly(item.createdAt!).isBefore(
+                    DateUtils.dateOnly(_createdStartDate!),
+                  ));
+          final matchesCreatedEnd =
+              _createdEndDate == null ||
+              (item.createdAt != null &&
+                  !DateUtils.dateOnly(item.createdAt!).isAfter(
+                    DateUtils.dateOnly(_createdEndDate!),
+                  ));
+          final matchesUpdatedStart =
+              _updatedStartDate == null ||
+              (item.updatedAt != null &&
+                  !DateUtils.dateOnly(item.updatedAt!).isBefore(
+                    DateUtils.dateOnly(_updatedStartDate!),
+                  ));
+          final matchesUpdatedEnd =
+              _updatedEndDate == null ||
+              (item.updatedAt != null &&
+                  !DateUtils.dateOnly(item.updatedAt!).isAfter(
+                    DateUtils.dateOnly(_updatedEndDate!),
+                  ));
+          return matchesSearch &&
+              matchesActive &&
+              matchesCreatedStart &&
+              matchesCreatedEnd &&
+              matchesUpdatedStart &&
+              matchesUpdatedEnd;
         }).toList();
 
         return LayoutBuilder(
@@ -182,14 +236,14 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
             final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
 
             return AppPageLoadingOverlay(
-              isVisible: vm.isBusy,
+              isVisible: vm.showBlockingLoading,
               message: vm.busyMessage,
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    AppRefreshStrip(isVisible: vm.isBusy),
+                    AppRefreshStrip(isVisible: vm.showBlockingLoading),
                     AdminListToolbar(
                       controlHeight: _toolbarControlHeight,
                       surfaceRadius: 16,
@@ -207,9 +261,61 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
                           _CatalogFiltersPanel(
                             iconOnly: iconOnly,
                             activeFilter: _activeFilter,
+                            createdStartDate: _createdStartDate,
+                            createdEndDate: _createdEndDate,
+                            updatedStartDate: _updatedStartDate,
+                            updatedEndDate: _updatedEndDate,
                             onActiveChanged: (value) {
                               setState(() {
                                 _activeFilter = value;
+                              });
+                            },
+                            onCreatedStartDateChanged: (value) {
+                              setState(() {
+                                _createdStartDate = value;
+                                if (_createdStartDate != null &&
+                                    _createdEndDate != null &&
+                                    _createdEndDate!.isBefore(
+                                      _createdStartDate!,
+                                    )) {
+                                  _createdEndDate = _createdStartDate;
+                                }
+                              });
+                            },
+                            onCreatedEndDateChanged: (value) {
+                              setState(() {
+                                _createdEndDate = value;
+                                if (_createdStartDate != null &&
+                                    _createdEndDate != null &&
+                                    _createdStartDate!.isAfter(
+                                      _createdEndDate!,
+                                    )) {
+                                  _createdStartDate = _createdEndDate;
+                                }
+                              });
+                            },
+                            onUpdatedStartDateChanged: (value) {
+                              setState(() {
+                                _updatedStartDate = value;
+                                if (_updatedStartDate != null &&
+                                    _updatedEndDate != null &&
+                                    _updatedEndDate!.isBefore(
+                                      _updatedStartDate!,
+                                    )) {
+                                  _updatedEndDate = _updatedStartDate;
+                                }
+                              });
+                            },
+                            onUpdatedEndDateChanged: (value) {
+                              setState(() {
+                                _updatedEndDate = value;
+                                if (_updatedStartDate != null &&
+                                    _updatedEndDate != null &&
+                                    _updatedStartDate!.isAfter(
+                                      _updatedEndDate!,
+                                    )) {
+                                  _updatedStartDate = _updatedEndDate;
+                                }
                               });
                             },
                           ),
@@ -285,18 +391,15 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
   }
 
   Future<void> _handleNew(AdminVehicleSizesViewModel vm) async {
-    final created = await _showCatalogItemDialog(context, title: 'New Size');
+    final created = await _showCatalogItemDialog(
+      context,
+      title: 'New Size',
+      onSaveAsync: (item) => vm.saveSize(item),
+    );
     if (created == null || !mounted) {
       return;
     }
-    await vm.saveSize(created);
-    if (!mounted) {
-      return;
-    }
-    AppSnackbar.showSuccess(
-      context,
-      'Vehicle size added.',
-    );
+    AppSnackbar.showSuccess(context, 'Vehicle size added.');
   }
 
   Future<void> _handlePreview(VehicleCatalogItem item) async {
@@ -319,18 +422,12 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
       context,
       title: 'Edit Size',
       initialItem: item,
+      onSaveAsync: (value) => vm.saveSize(value.copyWith(id: item.id)),
     );
     if (edited == null || !mounted) {
       return;
     }
-    await vm.saveSize(edited.copyWith(id: item.id));
-    if (!mounted) {
-      return;
-    }
-    AppSnackbar.showSuccess(
-      context,
-      'Vehicle size updated.',
-    );
+    AppSnackbar.showSuccess(context, 'Vehicle size updated.');
   }
 
   Future<void> _handleToggleActive(
@@ -348,20 +445,31 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
       message:
           'Are you sure you want to ${willBeActive ? 'activate' : 'deactivate'} ${item.name ?? 'this vehicle size'}?',
       confirmLabel: willBeActive ? 'Activate' : 'Deactivate',
+      onConfirmAsync: () async {
+        try {
+          final saved = await vm.setSizeActive(item, willBeActive);
+          if (!mounted) {
+            return false;
+          }
+          AppSnackbar.showSuccess(
+            context,
+            (saved.isActive ?? false)
+                ? 'Vehicle size activated.'
+                : 'Vehicle size deactivated.',
+          );
+          return true;
+        } catch (error) {
+          if (!mounted) {
+            return false;
+          }
+          AppSnackbar.showError(context, error.toString());
+          return false;
+        }
+      },
     );
     if (confirmed != true || !mounted) {
       return;
     }
-    final saved = await vm.setSizeActive(item, !(item.isActive ?? false));
-    if (!mounted) {
-      return;
-    }
-    AppSnackbar.showSuccess(
-      context,
-      (saved.isActive ?? false)
-          ? 'Vehicle size activated.'
-          : 'Vehicle size deactivated.',
-    );
   }
 
   Future<void> _handleDelete(
@@ -378,18 +486,29 @@ class _AdminVehicleSizesViewState extends State<AdminVehicleSizesView> {
           'Are you sure you want to delete ${item.name ?? 'this vehicle size'}?',
       confirmLabel: 'Delete',
       isDanger: true,
+      onConfirmAsync: () async {
+        try {
+          await vm.deleteSize(item);
+          if (!mounted) {
+            return false;
+          }
+          AppSnackbar.showSuccess(
+            context,
+            'Vehicle size deleted.',
+          );
+          return true;
+        } catch (error) {
+          if (!mounted) {
+            return false;
+          }
+          AppSnackbar.showError(context, error.toString());
+          return false;
+        }
+      },
     );
     if (confirmed != true || !mounted) {
       return;
     }
-    await vm.deleteSize(item);
-    if (!mounted) {
-      return;
-    }
-    AppSnackbar.showSuccess(
-      context,
-      'Vehicle size deleted.',
-    );
   }
 }
 
@@ -784,12 +903,28 @@ class _CatalogFiltersPanel extends StatefulWidget {
   const _CatalogFiltersPanel({
     required this.iconOnly,
     required this.activeFilter,
+    required this.createdStartDate,
+    required this.createdEndDate,
+    required this.updatedStartDate,
+    required this.updatedEndDate,
     required this.onActiveChanged,
+    required this.onCreatedStartDateChanged,
+    required this.onCreatedEndDateChanged,
+    required this.onUpdatedStartDateChanged,
+    required this.onUpdatedEndDateChanged,
   });
 
   final bool iconOnly;
   final String activeFilter;
+  final DateTime? createdStartDate;
+  final DateTime? createdEndDate;
+  final DateTime? updatedStartDate;
+  final DateTime? updatedEndDate;
   final ValueChanged<String> onActiveChanged;
+  final ValueChanged<DateTime?> onCreatedStartDateChanged;
+  final ValueChanged<DateTime?> onCreatedEndDateChanged;
+  final ValueChanged<DateTime?> onUpdatedStartDateChanged;
+  final ValueChanged<DateTime?> onUpdatedEndDateChanged;
 
   @override
   State<_CatalogFiltersPanel> createState() => _CatalogFiltersPanelState();
@@ -813,7 +948,7 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     const overlayRightPadding = 24.0;
-    const filterItemWidth = 180.0;
+    const filterItemWidth = 220.0;
     const overlayPadding = 14.0;
     const desiredOverlayWidth = filterItemWidth + (overlayPadding * 2);
     final overlayWidth = (screenWidth - 32 - overlayRightPadding).clamp(
@@ -854,11 +989,55 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
                   const SizedBox(height: 8),
                   SizedBox(
                     width: contentWidth,
+                    child: _CatalogDateFilter(
+                      label: 'Created Start',
+                      value: widget.createdStartDate,
+                      formatter: _formatCatalogFilterDateValue,
+                      onSelected: widget.onCreatedStartDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: contentWidth,
+                    child: _CatalogDateFilter(
+                      label: 'Created End',
+                      value: widget.createdEndDate,
+                      formatter: _formatCatalogFilterDateValue,
+                      onSelected: widget.onCreatedEndDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: contentWidth,
+                    child: _CatalogDateFilter(
+                      label: 'Updated Start',
+                      value: widget.updatedStartDate,
+                      formatter: _formatCatalogFilterDateValue,
+                      onSelected: widget.onUpdatedStartDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: contentWidth,
+                    child: _CatalogDateFilter(
+                      label: 'Updated End',
+                      value: widget.updatedEndDate,
+                      formatter: _formatCatalogFilterDateValue,
+                      onSelected: widget.onUpdatedEndDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: contentWidth,
                     height: adminFilterFieldMinHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
                         widget.onActiveChanged('All');
+                        widget.onCreatedStartDateChanged(null);
+                        widget.onCreatedEndDateChanged(null);
+                        widget.onUpdatedStartDateChanged(null);
+                        widget.onUpdatedEndDateChanged(null);
                       },
                       style: FilledButton.styleFrom(
                         backgroundColor: AppColors.danger,
@@ -932,11 +1111,131 @@ class _CatalogFilterDropdown extends StatelessWidget {
   }
 }
 
+class _CatalogDateFilter extends StatefulWidget {
+  const _CatalogDateFilter({
+    required this.label,
+    required this.value,
+    required this.formatter,
+    required this.onSelected,
+  });
+
+  final String label;
+  final DateTime? value;
+  final String Function(DateTime?) formatter;
+  final ValueChanged<DateTime?> onSelected;
+
+  @override
+  State<_CatalogDateFilter> createState() => _CatalogDateFilterState();
+}
+
+class _CatalogDateFilterState extends State<_CatalogDateFilter> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _displayValue);
+    _focusNode = FocusNode()..canRequestFocus = false;
+  }
+
+  @override
+  void didUpdateWidget(covariant _CatalogDateFilter oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_controller.text != _displayValue) {
+      _controller.value = _controller.value.copyWith(
+        text: _displayValue,
+        selection: TextSelection.collapsed(offset: _displayValue.length),
+        composing: TextRange.empty,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  String get _displayValue =>
+      widget.value == null ? '' : widget.formatter(widget.value);
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: widget.value ?? now,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (context.mounted) {
+      widget.onSelected(picked);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeFillColor = appFieldInteractiveFillColor(context);
+    return SizedBox(
+      height: adminFilterFieldMinHeight,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() {
+          _isHovered = false;
+          _isPressed = false;
+        }),
+        child: Listener(
+          onPointerDown: (_) => setState(() => _isPressed = true),
+          onPointerUp: (_) => setState(() => _isPressed = false),
+          onPointerCancel: (_) => setState(() => _isPressed = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _pickDate,
+            child: IgnorePointer(
+              child: TextFormField(
+                controller: _controller,
+                focusNode: _focusNode,
+                readOnly: true,
+                showCursor: false,
+                enableInteractiveSelection: false,
+                style: adminDropdownDisplayTextStyle,
+                decoration: adminFormInputDecoration(
+                  widget.label,
+                  radius: 16,
+                  minHeight: adminFilterFieldMinHeight,
+                ).copyWith(
+                  suffixIcon: IconButton(
+                    onPressed: null,
+                    icon: Icon(
+                      Icons.calendar_today_outlined,
+                      size: 18,
+                      color: AppColors.primaryColor,
+                    ),
+                  ),
+                  filled: true,
+                  fillColor: _isPressed
+                      ? activeFillColor.withValues(alpha: 0.92)
+                      : (_isHovered ? activeFillColor : Colors.white),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 Future<VehicleCatalogItem?> _showCatalogItemDialog(
   BuildContext context, {
   required String title,
   VehicleCatalogItem? initialItem,
   bool readOnly = false,
+  Future<void> Function(VehicleCatalogItem item)? onSaveAsync,
 }) async {
   final nameController = TextEditingController(text: initialItem?.name ?? '');
   final slugController = TextEditingController(text: initialItem?.slug ?? '');
@@ -944,31 +1243,67 @@ Future<VehicleCatalogItem?> _showCatalogItemDialog(
   final slugFocusNode = FocusNode();
   var isActive = initialItem?.isActive ?? true;
   final isEditing = initialItem != null;
+  var isSubmitting = false;
+  void Function(VoidCallback fn)? dialogSetState;
+  var didScheduleDispose = false;
 
-  void submit() {
+  void disposeLater() {
+    if (didScheduleDispose) {
+      return;
+    }
+    didScheduleDispose = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      nameController.dispose();
+      slugController.dispose();
+      nameFocusNode.dispose();
+      slugFocusNode.dispose();
+    });
+  }
+
+  Future<void> submit() async {
     final name = nameController.text.trim();
     final slug = slugController.text.trim();
     if (name.isEmpty || slug.isEmpty) {
       AppSnackbar.showError(context, 'Name and slug are required.');
       return;
     }
-    Navigator.of(context).pop(
-      VehicleCatalogItem(
-        id: initialItem?.id,
-        name: name,
-        slug: slug,
-        isActive: isActive,
-        createdAt: initialItem?.createdAt,
-        updatedAt: DateTime.now(),
-      ),
+    final result = VehicleCatalogItem(
+      id: initialItem?.id,
+      name: name,
+      slug: slug,
+      isActive: isActive,
+      createdAt: initialItem?.createdAt,
+      updatedAt: DateTime.now(),
     );
+    if (onSaveAsync == null) {
+      Navigator.of(context).pop(result);
+      return;
+    }
+    if (isSubmitting) {
+      return;
+    }
+    dialogSetState?.call(() => isSubmitting = true);
+    try {
+      await onSaveAsync(result);
+      if (!context.mounted) {
+        return;
+      }
+      Navigator.of(context).pop(result);
+    } catch (error) {
+      if (context.mounted) {
+        AppSnackbar.showError(context, error.toString());
+      }
+    } finally {
+      if (context.mounted) {
+        dialogSetState?.call(() => isSubmitting = false);
+      }
+    }
   }
 
-  try {
-    return await showDialog<VehicleCatalogItem>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AdminModalShell(
+  final result = await showDialog<VehicleCatalogItem>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AdminModalShell(
           title: title,
           contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
           actions: readOnly
@@ -980,14 +1315,31 @@ Future<VehicleCatalogItem?> _showCatalogItemDialog(
                 ]
               : [
                   TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: isSubmitting
+                        ? null
+                        : () => Navigator.of(context).pop(),
                     child: const Text('Cancel'),
                   ),
-                  FilledButton(onPressed: submit, child: const Text('Save')),
+                  FilledButton(
+                    onPressed: isSubmitting ? null : submit,
+                    child: isSubmitting
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2.2),
+                          )
+                        : const Text('Save'),
+                  ),
                 ],
           child: AdminModalFormBody(
             readOnly: readOnly,
             children: [
+              Builder(
+                builder: (context) {
+                  dialogSetState = setState;
+                  return const SizedBox.shrink();
+                },
+              ),
               AdminModalFieldsSection(
                 children: [
                   AdminModalTextField(
@@ -1025,13 +1377,9 @@ Future<VehicleCatalogItem?> _showCatalogItemDialog(
               ),
             ],
           ),
-        ),
       ),
-    );
-  } finally {
-    nameController.dispose();
-    slugController.dispose();
-    nameFocusNode.dispose();
-    slugFocusNode.dispose();
-  }
+    ),
+  );
+  disposeLater();
+  return result;
 }

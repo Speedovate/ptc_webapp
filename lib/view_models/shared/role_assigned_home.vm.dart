@@ -33,6 +33,8 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   final StatusFormRepository _statusRepository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   StreamSubscription<List<Booking>>? _bookingsSubscription;
+  StreamSubscription<void>? _usersCacheUpdatesSubscription;
+  StreamSubscription<void>? _statusCacheUpdatesSubscription;
   static List<Booking> _cachedAssignedBookings = const [];
   static UserModel? _cachedCurrentUser;
   static String? _cachedErrorMessage;
@@ -54,8 +56,10 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   UserModel? currentUser;
   String? errorMessage;
   String busyMessage = 'Loading, please wait ...';
+  bool _isRealtimeRefreshing = false;
 
   Future<void> load(UserModel user) async {
+    _ensureSupportingSubscriptions();
     busyMessage = 'Loading assigned bookings ...';
     final hasVisiblePrimaryData =
         assignedBookings.isNotEmpty ||
@@ -121,6 +125,58 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
         setBusy(false);
       }
       notifyListeners();
+    }
+  }
+
+  void _ensureSupportingSubscriptions() {
+    _usersCacheUpdatesSubscription ??= AuthRequest.instance
+        .watchUsersCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadSupportingData());
+        });
+    _statusCacheUpdatesSubscription ??= StatusRequest.instance
+        .watchStatusCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadSupportingData());
+        });
+  }
+
+  Future<void> _reloadSupportingData() async {
+    if (_isRealtimeRefreshing || currentUser == null) {
+      return;
+    }
+    _isRealtimeRefreshing = true;
+    try {
+      final results = await Future.wait<dynamic>([
+        _authRepository.getUsers(),
+        _statusRepository.getStatuses(),
+      ]);
+      final users = results[0] as List<UserModel>;
+      final statuses = results[1] as List<Status>;
+      _usersById
+        ..clear()
+        ..addEntries(
+          users
+              .where((item) => (item.id ?? '').isNotEmpty)
+              .map((item) => MapEntry(item.id!, item)),
+        );
+      _statusesByKey
+        ..clear()
+        ..addEntries(
+          statuses
+              .where((item) => (item.key ?? '').isNotEmpty)
+              .map((item) => MapEntry(item.key!, item)),
+        );
+      currentUser = _usersById[currentUser?.id] ?? currentUser;
+      _cachedCurrentUser = currentUser;
+      _cachedUsersById = Map<String, UserModel>.from(_usersById);
+      _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
+      _applyAssignedBookings(List<Booking>.from(assignedBookings));
+      notifyListeners();
+    } catch (_) {
+      // Keep current visible state if live support data refresh fails.
+    } finally {
+      _isRealtimeRefreshing = false;
     }
   }
 
@@ -223,6 +279,14 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
     return name?.isNotEmpty == true ? name! : fallback;
   }
 
+  @override
+  void dispose() {
+    _usersCacheUpdatesSubscription?.cancel();
+    _statusCacheUpdatesSubscription?.cancel();
+    _bookingsSubscription?.cancel();
+    super.dispose();
+  }
+
   String _userPhone(String? userId) {
     final user = _usersById[userId];
     final phone = user?.phone?.trim();
@@ -240,11 +304,5 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       return -1;
     }
     return left.compareTo(right);
-  }
-
-  @override
-  void dispose() {
-    _bookingsSubscription?.cancel();
-    super.dispose();
   }
 }

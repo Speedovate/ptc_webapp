@@ -110,9 +110,30 @@ class FirestoreCollectionCache {
 
   final FirebaseFirestore _firestore;
   final FirestoreCacheStore _store;
+  static const Duration _remoteVersionTimeout = Duration(seconds: 1);
 
   CollectionReference<Map<String, dynamic>> get _versionsCollection =>
       _firestore.collection('app_cache_versions');
+
+  Stream<String?> watchResourceVersion(String resourceKey) {
+    return _versionsCollection.doc(resourceKey).snapshots().map((snapshot) {
+      if (!snapshot.exists) {
+        return null;
+      }
+      return snapshot.data()?['version']?.toString();
+    });
+  }
+
+  Future<bool> hasRemoteVersionMismatch(
+    String resourceKey,
+    String? remoteVersion,
+  ) async {
+    if (remoteVersion == null || remoteVersion.isEmpty) {
+      return false;
+    }
+    final localVersion = await _store.readVersion(resourceKey);
+    return localVersion != remoteVersion;
+  }
 
   Future<List<Map<String, dynamic>>> getDocuments({
     required String resourceKey,
@@ -149,6 +170,56 @@ class FirestoreCollectionCache {
           cachedVersion: cachedVersion,
         ),
       );
+      return cachedDocuments;
+    }
+
+    final freshDocuments = await fetchDocuments();
+    final remoteVersion = await _tryReadRemoteVersion(resourceKey);
+    final resolvedVersion = remoteVersion ?? _bootstrapVersion(freshDocuments);
+
+    await Future.wait([
+      _store.writeDocumentMaps(resourceKey, freshDocuments),
+      _store.writeVersion(resourceKey, resolvedVersion),
+    ]);
+
+    if (remoteVersion == null) {
+      await _tryWriteRemoteVersion(resourceKey, resolvedVersion);
+    }
+
+    return freshDocuments;
+  }
+
+  Future<List<Map<String, dynamic>>> getDocumentsVerifiedOnlineFirst({
+    required String resourceKey,
+    required Future<List<Map<String, dynamic>>> Function() fetchDocuments,
+  }) async {
+    final cachedDocuments = await _store.readDocumentMaps(resourceKey);
+
+    if (currentNetworkStatus()) {
+      try {
+        final freshDocuments = await fetchDocuments();
+        final remoteVersion = await _tryReadRemoteVersion(resourceKey);
+        final resolvedVersion =
+            remoteVersion ?? _bootstrapVersion(freshDocuments);
+
+        await Future.wait([
+          _store.writeDocumentMaps(resourceKey, freshDocuments),
+          _store.writeVersion(resourceKey, resolvedVersion),
+        ]);
+
+        if (remoteVersion == null) {
+          await _tryWriteRemoteVersion(resourceKey, resolvedVersion);
+        }
+
+        return freshDocuments;
+      } catch (_) {
+        if (cachedDocuments != null) {
+          return cachedDocuments;
+        }
+      }
+    }
+
+    if (cachedDocuments != null) {
       return cachedDocuments;
     }
 
@@ -264,7 +335,10 @@ class FirestoreCollectionCache {
   }
 
   Future<String?> _readRemoteVersion(String resourceKey) async {
-    final snapshot = await _versionsCollection.doc(resourceKey).get();
+    final snapshot = await _versionsCollection.doc(resourceKey).get().timeout(
+      _remoteVersionTimeout,
+      onTimeout: () => throw TimeoutException('cache version read timeout'),
+    );
     if (!snapshot.exists) {
       return null;
     }
@@ -326,12 +400,17 @@ class FirestoreCollectionCache {
     String version,
   ) async {
     try {
-      await _versionsCollection.doc(resourceKey).set({
-        'version': version,
-        'updated_at': version,
-      }, SetOptions(merge: true));
+      await _versionsCollection
+          .doc(resourceKey)
+          .set({
+            'version': version,
+            'updated_at': version,
+          }, SetOptions(merge: true))
+          .timeout(_remoteVersionTimeout);
     } on FirebaseException {
       // Keep the app usable even if the cache-version collection is blocked.
+    } on TimeoutException {
+      // Keep the app usable even if the cache-version collection is slow.
     }
   }
 

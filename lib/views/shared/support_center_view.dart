@@ -156,6 +156,11 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         role: _effectiveRole,
       );
 
+  bool get _hasStableAdminSelection =>
+      _isAdmin &&
+      normalizeId(_selectedThreadId) != null &&
+      _selectedAdminDraftUser == null;
+
   @override
   void initState() {
     super.initState();
@@ -292,7 +297,11 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     if (latestMarker.isEmpty) {
       return false;
     }
-    return _threadReadMarkersById[threadId] != latestMarker;
+    final savedMarker = _threadReadMarkersById[threadId];
+    if (savedMarker == null || savedMarker.isEmpty) {
+      return false;
+    }
+    return savedMarker != latestMarker;
   }
 
   Future<void> _loadAccessibleBookings() async {
@@ -434,6 +443,16 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     if (targetUserId == null) {
       return;
     }
+    if (_hasStableAdminSelection) {
+      if (mounted) {
+        setState(() {
+          _pendingInitialAdminUserId = null;
+        });
+      } else {
+        _pendingInitialAdminUserId = null;
+      }
+      return;
+    }
     final targetUser = users.where((user) {
       return normalizeId(user.id) == targetUserId;
     }).firstOrNull;
@@ -458,6 +477,12 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         _pendingInitialAdminUserId = null;
         return;
       }
+      if (_hasStableAdminSelection) {
+        setState(() {
+          _pendingInitialAdminUserId = null;
+        });
+        return;
+      }
       setState(() {
         _selectedThreadId = thread?.id;
         _selectedAdminDraftUser = thread == null ? targetUser : null;
@@ -468,6 +493,12 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     } catch (_) {
       if (!mounted) {
         _pendingInitialAdminUserId = null;
+        return;
+      }
+      if (_hasStableAdminSelection) {
+        setState(() {
+          _pendingInitialAdminUserId = null;
+        });
         return;
       }
       setState(() {

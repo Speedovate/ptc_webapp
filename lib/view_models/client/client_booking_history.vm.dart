@@ -52,11 +52,15 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   String _statusFilter = 'All';
   DateTime? _startDate;
   DateTime? _endDate;
+  DateTime? _updatedStartDate;
+  DateTime? _updatedEndDate;
 
   String get searchQuery => _searchQuery;
   String get statusFilter => _statusFilter;
   DateTime? get startDate => _startDate;
   DateTime? get endDate => _endDate;
+  DateTime? get updatedStartDate => _updatedStartDate;
+  DateTime? get updatedEndDate => _updatedEndDate;
   List<String> get statusOptions => [
     'All',
     if (bookings.any(
@@ -246,6 +250,14 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
       _endDate = null;
       changed = true;
     }
+    if (_updatedStartDate != null) {
+      _updatedStartDate = null;
+      changed = true;
+    }
+    if (_updatedEndDate != null) {
+      _updatedEndDate = null;
+      changed = true;
+    }
     if (changed) {
       notifyListeners();
     }
@@ -267,6 +279,26 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
         _endDate != null &&
         _startDate!.isAfter(_endDate!)) {
       _startDate = _endDate;
+    }
+    notifyListeners();
+  }
+
+  void updateUpdatedStartDate(DateTime? value) {
+    _updatedStartDate = value;
+    if (_updatedStartDate != null &&
+        _updatedEndDate != null &&
+        _updatedEndDate!.isBefore(_updatedStartDate!)) {
+      _updatedEndDate = _updatedStartDate;
+    }
+    notifyListeners();
+  }
+
+  void updateUpdatedEndDate(DateTime? value) {
+    _updatedEndDate = value;
+    if (_updatedStartDate != null &&
+        _updatedEndDate != null &&
+        _updatedStartDate!.isAfter(_updatedEndDate!)) {
+      _updatedStartDate = _updatedEndDate;
     }
     notifyListeners();
   }
@@ -300,7 +332,19 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
           _endDate == null ||
           (createdAt != null &&
               !_dateOnly(createdAt).isAfter(_dateOnly(_endDate!)));
-      if (!matchesStartDate || !matchesEndDate) {
+      final updatedAt = booking.updatedAt;
+      final matchesUpdatedStartDate =
+          _updatedStartDate == null ||
+          (updatedAt != null &&
+              !_dateOnly(updatedAt).isBefore(_dateOnly(_updatedStartDate!)));
+      final matchesUpdatedEndDate =
+          _updatedEndDate == null ||
+          (updatedAt != null &&
+              !_dateOnly(updatedAt).isAfter(_dateOnly(_updatedEndDate!)));
+      if (!matchesStartDate ||
+          !matchesEndDate ||
+          !matchesUpdatedStartDate ||
+          !matchesUpdatedEndDate) {
         return false;
       }
 

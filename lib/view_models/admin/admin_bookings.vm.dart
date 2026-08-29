@@ -42,7 +42,11 @@ class AdminBookingsViewModel extends BaseViewModel {
   final VehicleCatalogRepository _vehicleCatalogRepository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   StreamSubscription<List<Booking>>? _bookingsSubscription;
+  StreamSubscription<void>? _usersCacheUpdatesSubscription;
+  StreamSubscription<void>? _statusCacheUpdatesSubscription;
+  StreamSubscription<void>? _catalogCacheUpdatesSubscription;
   bool _didScheduleWarmRetry = false;
+  bool _isRealtimeRefreshing = false;
   static List<Booking> _cachedBookings = const [];
   static Map<String, UserModel> _cachedUsersById = const {};
   static Map<String, Status> _cachedStatusesByKey = const {};
@@ -65,6 +69,8 @@ class AdminBookingsViewModel extends BaseViewModel {
   String _statusFilter = 'All';
   DateTime? _startDate;
   DateTime? _endDate;
+  DateTime? _updatedStartDate;
+  DateTime? _updatedEndDate;
   String? errorMessage;
   String _busyMessage = 'Loading, please wait ...';
 
@@ -73,6 +79,8 @@ class AdminBookingsViewModel extends BaseViewModel {
   String get statusFilter => _statusFilter;
   DateTime? get startDate => _startDate;
   DateTime? get endDate => _endDate;
+  DateTime? get updatedStartDate => _updatedStartDate;
+  DateTime? get updatedEndDate => _updatedEndDate;
   String get busyMessage => _busyMessage;
   List<String> get statusOptions => [
     'All',
@@ -88,10 +96,13 @@ class AdminBookingsViewModel extends BaseViewModel {
   ];
 
   Future<void> load() async {
+    _ensureSupportingSubscriptions();
     _busyMessage = 'Loading bookings ...';
+    final hasSharedBookings = BookingRequest.hasHydratedBookings;
     final hasVisiblePrimaryData =
         _bookings.isNotEmpty ||
         _cachedBookings.isNotEmpty ||
+        hasSharedBookings ||
         _usersById.isNotEmpty ||
         _cachedUsersById.isNotEmpty ||
         _statusesByKey.isNotEmpty ||
@@ -160,6 +171,63 @@ class AdminBookingsViewModel extends BaseViewModel {
     }
   }
 
+  void _ensureSupportingSubscriptions() {
+    _usersCacheUpdatesSubscription ??= AuthRequest.instance
+        .watchUsersCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadSupportingData());
+        });
+    _statusCacheUpdatesSubscription ??= StatusRequest.instance
+        .watchStatusCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadSupportingData());
+        });
+    _catalogCacheUpdatesSubscription ??= VehicleRequest.instance
+        .watchCatalogCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadSupportingData());
+        });
+  }
+
+  Future<void> _reloadSupportingData() async {
+    if (_isRealtimeRefreshing) {
+      return;
+    }
+    _isRealtimeRefreshing = true;
+    try {
+      final results = await Future.wait<dynamic>([
+        _loadUsersSafe(),
+        _loadStatusesSafe(),
+        _loadVehicleSizesSafe(),
+      ]);
+      final users = results[0] as List<UserModel>;
+      final statuses = results[1] as List<Status>;
+      _vehicleSizes = results[2] as List<VehicleCatalogItem>;
+      _usersById
+        ..clear()
+        ..addEntries(
+          users
+              .where((user) => (user.id ?? '').isNotEmpty)
+              .map((user) => MapEntry(user.id!, user)),
+        );
+      _statusesByKey
+        ..clear()
+        ..addEntries(
+          statuses
+              .where((status) => (status.key ?? '').isNotEmpty)
+              .map((status) => MapEntry(status.key!, status)),
+        );
+      _cachedUsersById = Map<String, UserModel>.from(_usersById);
+      _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
+      _cachedVehicleSizes = List<VehicleCatalogItem>.from(_vehicleSizes);
+      notifyListeners();
+    } catch (_) {
+      // Keep current visible state if live support data refresh fails.
+    } finally {
+      _isRealtimeRefreshing = false;
+    }
+  }
+
   Future<void> _ensureBookingsSubscription() async {
     if (_bookingsSubscription != null) {
       return;
@@ -178,10 +246,11 @@ class AdminBookingsViewModel extends BaseViewModel {
 
   Future<List<UserModel>> _loadUsersSafe() async {
     try {
-      return await _authRepository.getUsers().timeout(
+      final users = await _authRepository.getUsers().timeout(
         _loadStepTimeout,
         onTimeout: () => List<UserModel>.from(_cachedUsersById.values),
       );
+      return users;
     } catch (_) {
       return List<UserModel>.from(_cachedUsersById.values);
     }
@@ -189,10 +258,11 @@ class AdminBookingsViewModel extends BaseViewModel {
 
   Future<List<Status>> _loadStatusesSafe() async {
     try {
-      return await _statusRepository.getStatuses().timeout(
+      final statuses = await _statusRepository.getStatuses().timeout(
         _loadStepTimeout,
         onTimeout: () => List<Status>.from(_cachedStatusesByKey.values),
       );
+      return statuses;
     } catch (_) {
       return List<Status>.from(_cachedStatusesByKey.values);
     }
@@ -200,10 +270,11 @@ class AdminBookingsViewModel extends BaseViewModel {
 
   Future<List<VehicleCatalogItem>> _loadVehicleSizesSafe() async {
     try {
-      return await _vehicleCatalogRepository.getSizes().timeout(
+      final sizes = await _vehicleCatalogRepository.getSizes().timeout(
         _loadStepTimeout,
         onTimeout: () => List<VehicleCatalogItem>.from(_cachedVehicleSizes),
       );
+      return sizes;
     } catch (_) {
       return List<VehicleCatalogItem>.from(_cachedVehicleSizes);
     }
@@ -271,6 +342,15 @@ class AdminBookingsViewModel extends BaseViewModel {
     notifyListeners();
   }
 
+  @override
+  void dispose() {
+    _usersCacheUpdatesSubscription?.cancel();
+    _statusCacheUpdatesSubscription?.cancel();
+    _catalogCacheUpdatesSubscription?.cancel();
+    _bookingsSubscription?.cancel();
+    super.dispose();
+  }
+
   void setSearchQuery(String value) {
     if (_searchQuery == value) {
       return;
@@ -301,6 +381,14 @@ class AdminBookingsViewModel extends BaseViewModel {
       _endDate = null;
       changed = true;
     }
+    if (_updatedStartDate != null) {
+      _updatedStartDate = null;
+      changed = true;
+    }
+    if (_updatedEndDate != null) {
+      _updatedEndDate = null;
+      changed = true;
+    }
     if (changed) {
       notifyListeners();
     }
@@ -323,7 +411,19 @@ class AdminBookingsViewModel extends BaseViewModel {
           _endDate == null ||
           (createdAt != null &&
               !_dateOnly(createdAt).isAfter(_dateOnly(_endDate!)));
-      if (!matchesStartDate || !matchesEndDate) {
+      final updatedAt = booking.updatedAt;
+      final matchesUpdatedStartDate =
+          _updatedStartDate == null ||
+          (updatedAt != null &&
+              !_dateOnly(updatedAt).isBefore(_dateOnly(_updatedStartDate!)));
+      final matchesUpdatedEndDate =
+          _updatedEndDate == null ||
+          (updatedAt != null &&
+              !_dateOnly(updatedAt).isAfter(_dateOnly(_updatedEndDate!)));
+      if (!matchesStartDate ||
+          !matchesEndDate ||
+          !matchesUpdatedStartDate ||
+          !matchesUpdatedEndDate) {
         return false;
       }
       if (query.isEmpty) {
@@ -361,6 +461,26 @@ class AdminBookingsViewModel extends BaseViewModel {
         _endDate != null &&
         _startDate!.isAfter(_endDate!)) {
       _startDate = _endDate;
+    }
+    notifyListeners();
+  }
+
+  void updateUpdatedStartDate(DateTime? value) {
+    _updatedStartDate = value;
+    if (_updatedStartDate != null &&
+        _updatedEndDate != null &&
+        _updatedEndDate!.isBefore(_updatedStartDate!)) {
+      _updatedEndDate = _updatedStartDate;
+    }
+    notifyListeners();
+  }
+
+  void updateUpdatedEndDate(DateTime? value) {
+    _updatedEndDate = value;
+    if (_updatedStartDate != null &&
+        _updatedEndDate != null &&
+        _updatedStartDate!.isAfter(_updatedEndDate!)) {
+      _updatedStartDate = _updatedEndDate;
     }
     notifyListeners();
   }
@@ -460,16 +580,13 @@ class AdminBookingsViewModel extends BaseViewModel {
     setBusy(true);
     try {
       final updatedBooking = booking.copyWith(updatedAt: DateTime.now());
-      return await _bookingRepository.saveBooking(updatedBooking);
+      final saved = await _bookingRepository.saveBooking(updatedBooking);
+      return saved;
+    } catch (error) {
+      rethrow;
     } finally {
       setBusy(false);
     }
-  }
-
-  @override
-  void dispose() {
-    _bookingsSubscription?.cancel();
-    super.dispose();
   }
 
   String statusLabelForKey(String? statusKey) {

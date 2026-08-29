@@ -18,6 +18,27 @@ import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/view_models/admin/admin_flow.vm.dart';
 import 'package:webapp/widgets/status_form/status_form_preview.dart';
 
+String _formatFormsFilterDateValue(DateTime? value) {
+  if (value == null) {
+    return '';
+  }
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${months[value.month - 1]} ${value.day}, ${value.year}';
+}
+
 class AdminFormsView extends StatelessWidget {
   const AdminFormsView({super.key});
 
@@ -33,14 +54,14 @@ class AdminFormsView extends StatelessWidget {
       onViewModelReady: (vm) => vm.loadFormsPage(),
       builder: (context, vm, _) {
         return AppPageLoadingOverlay(
-          isVisible: vm.isLoading,
+          isVisible: vm.showBlockingLoading,
           message: vm.busyMessage,
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                AppRefreshStrip(isVisible: vm.isLoading),
+                AppRefreshStrip(isVisible: vm.showBlockingLoading),
                 _StatusFormsListSection(vm: vm),
               ],
             ),
@@ -65,6 +86,11 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
   String _searchQuery = '';
   String _roleFilter = 'All';
   String _activeFilter = 'All';
+  DateTime? _createdStartDate;
+  DateTime? _createdEndDate;
+  DateTime? _updatedStartDate;
+  DateTime? _updatedEndDate;
+  bool _isSubmittingFormDialog = false;
 
   String _formSaveMessage({required bool isEditing}) {
     return isEditing ? 'Form updated.' : 'Form added.';
@@ -84,6 +110,10 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
     final activeFilterCount = [
       _roleFilter != 'All',
       _activeFilter != 'All',
+      _createdStartDate != null,
+      _createdEndDate != null,
+      _updatedStartDate != null,
+      _updatedEndDate != null,
     ].where((isActive) => isActive).length;
 
     return AdminUsersView.buildEmptyStateMessage(
@@ -117,9 +147,83 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
           form.resolvedRoles.any((role) => _titleCase(role) == _roleFilter);
       final matchesActive =
           _activeFilter == 'All' || activeText == _activeFilter;
+      final matchesCreatedStart =
+          _createdStartDate == null ||
+          (form.createdAt != null &&
+              !DateUtils.dateOnly(form.createdAt!).isBefore(
+                DateUtils.dateOnly(_createdStartDate!),
+              ));
+      final matchesCreatedEnd =
+          _createdEndDate == null ||
+          (form.createdAt != null &&
+              !DateUtils.dateOnly(form.createdAt!).isAfter(
+                DateUtils.dateOnly(_createdEndDate!),
+              ));
+      final matchesUpdatedStart =
+          _updatedStartDate == null ||
+          (form.updatedAt != null &&
+              !DateUtils.dateOnly(form.updatedAt!).isBefore(
+                DateUtils.dateOnly(_updatedStartDate!),
+              ));
+      final matchesUpdatedEnd =
+          _updatedEndDate == null ||
+          (form.updatedAt != null &&
+              !DateUtils.dateOnly(form.updatedAt!).isAfter(
+                DateUtils.dateOnly(_updatedEndDate!),
+              ));
 
-      return matchesSearch && matchesRole && matchesActive;
+      return matchesSearch &&
+          matchesRole &&
+          matchesActive &&
+          matchesCreatedStart &&
+          matchesCreatedEnd &&
+          matchesUpdatedStart &&
+          matchesUpdatedEnd;
     }).toList();
+  }
+
+  void _updateCreatedStartDate(DateTime? value) {
+    setState(() {
+      _createdStartDate = value;
+      if (_createdStartDate != null &&
+          _createdEndDate != null &&
+          _createdEndDate!.isBefore(_createdStartDate!)) {
+        _createdEndDate = _createdStartDate;
+      }
+    });
+  }
+
+  void _updateCreatedEndDate(DateTime? value) {
+    setState(() {
+      _createdEndDate = value;
+      if (_createdStartDate != null &&
+          _createdEndDate != null &&
+          _createdStartDate!.isAfter(_createdEndDate!)) {
+        _createdStartDate = _createdEndDate;
+      }
+    });
+  }
+
+  void _updateUpdatedStartDate(DateTime? value) {
+    setState(() {
+      _updatedStartDate = value;
+      if (_updatedStartDate != null &&
+          _updatedEndDate != null &&
+          _updatedEndDate!.isBefore(_updatedStartDate!)) {
+        _updatedEndDate = _updatedStartDate;
+      }
+    });
+  }
+
+  void _updateUpdatedEndDate(DateTime? value) {
+    setState(() {
+      _updatedEndDate = value;
+      if (_updatedStartDate != null &&
+          _updatedEndDate != null &&
+          _updatedStartDate!.isAfter(_updatedEndDate!)) {
+        _updatedStartDate = _updatedEndDate;
+      }
+    });
   }
 
   Future<void> _openNewFormDialog() async {
@@ -154,24 +258,51 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
-                  onPressed: () async {
-                    await widget.vm.saveForm();
-                    final errorMessage = widget.vm.errorMessage;
-                    if (!dialogContext.mounted) {
-                      return;
-                    }
-                    if (errorMessage == null) {
-                      AppSnackbar.showSuccess(
-                        dialogContext,
-                        _formSaveMessage(isEditing: false),
-                      );
-                      widget.vm.clearSelection();
-                      Navigator.of(dialogContext).pop();
-                    } else {
-                      AppSnackbar.showError(dialogContext, errorMessage);
-                    }
-                  },
-                  child: const Text('Save'),
+                  onPressed: _isSubmittingFormDialog
+                      ? null
+                      : () async {
+                          setState(() {
+                            _isSubmittingFormDialog = true;
+                          });
+                          try {
+                            await widget.vm.saveForm();
+                            final errorMessage = widget.vm.errorMessage;
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
+                            if (errorMessage == null) {
+                              AppSnackbar.showSuccess(
+                                dialogContext,
+                                _formSaveMessage(isEditing: false),
+                              );
+                              widget.vm.clearSelection();
+                              Navigator.of(dialogContext).pop();
+                            } else {
+                              AppSnackbar.showError(
+                                dialogContext,
+                                errorMessage,
+                              );
+                            }
+                          } finally {
+                            if (mounted) {
+                              setState(() {
+                                _isSubmittingFormDialog = false;
+                              });
+                            }
+                          }
+                        },
+                  child: _isSubmittingFormDialog
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                      : const Text('Save'),
                 ),
               ],
               child: _InlineEditorContent(
@@ -224,24 +355,51 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
-                  onPressed: () async {
-                    await widget.vm.saveForm();
-                    final errorMessage = widget.vm.errorMessage;
-                    if (!dialogContext.mounted) {
-                      return;
-                    }
-                    if (errorMessage == null) {
-                      AppSnackbar.showSuccess(
-                        dialogContext,
-                        _formEditMessage(),
-                      );
-                      widget.vm.clearSelection();
-                      Navigator.of(dialogContext).pop();
-                    } else {
-                      AppSnackbar.showError(dialogContext, errorMessage);
-                    }
-                  },
-                  child: const Text('Save'),
+                  onPressed: _isSubmittingFormDialog
+                      ? null
+                      : () async {
+                          setState(() {
+                            _isSubmittingFormDialog = true;
+                          });
+                          try {
+                            await widget.vm.saveForm();
+                            final errorMessage = widget.vm.errorMessage;
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
+                            if (errorMessage == null) {
+                              AppSnackbar.showSuccess(
+                                dialogContext,
+                                _formEditMessage(),
+                              );
+                              widget.vm.clearSelection();
+                              Navigator.of(dialogContext).pop();
+                            } else {
+                              AppSnackbar.showError(
+                                dialogContext,
+                                errorMessage,
+                              );
+                            }
+                          } finally {
+                            if (mounted) {
+                              setState(() {
+                                _isSubmittingFormDialog = false;
+                              });
+                            }
+                          }
+                        },
+                  child: _isSubmittingFormDialog
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                      : const Text('Save'),
                 ),
               ],
               child: Builder(
@@ -326,15 +484,26 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
       title: 'Deactivate Form ${form.id ?? '-'}',
       message: 'Are you sure you want to deactivate this form?',
       confirmLabel: 'Deactivate',
+      onConfirmAsync: () async {
+        try {
+          await widget.vm.deactivateForm(form);
+          if (!mounted) {
+            return false;
+          }
+          AppSnackbar.showSuccess(context, 'Form deactivated.');
+          return true;
+        } catch (error) {
+          if (!mounted) {
+            return false;
+          }
+          AppSnackbar.showError(context, error.toString());
+          return false;
+        }
+      },
     );
     if (!confirmed || !mounted) {
       return;
     }
-    await widget.vm.deactivateForm(form);
-    if (!mounted) {
-      return;
-    }
-    AppSnackbar.showSuccess(context, 'Form deactivated.');
   }
 
   Future<void> _confirmDeleteForm(StatusForm form) async {
@@ -347,15 +516,26 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
       message: 'Are you sure you want to delete this form?',
       confirmLabel: 'Delete',
       isDanger: true,
+      onConfirmAsync: () async {
+        try {
+          await widget.vm.deleteForm(form);
+          if (!mounted) {
+            return false;
+          }
+          AppSnackbar.showSuccess(context, 'Form deleted.');
+          return true;
+        } catch (error) {
+          if (!mounted) {
+            return false;
+          }
+          AppSnackbar.showError(context, error.toString());
+          return false;
+        }
+      },
     );
     if (!confirmed || !mounted) {
       return;
     }
-    await widget.vm.deleteForm(form);
-    if (!mounted) {
-      return;
-    }
-    AppSnackbar.showSuccess(context, 'Form deleted.');
   }
 
   @override
@@ -370,9 +550,17 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
               searchQuery: _searchQuery,
               roleFilter: _roleFilter,
               activeFilter: _activeFilter,
+              createdStartDate: _createdStartDate,
+              createdEndDate: _createdEndDate,
+              updatedStartDate: _updatedStartDate,
+              updatedEndDate: _updatedEndDate,
               onSearchChanged: (value) => setState(() => _searchQuery = value),
               onRoleChanged: (value) => setState(() => _roleFilter = value),
               onActiveChanged: (value) => setState(() => _activeFilter = value),
+              onCreatedStartDateChanged: _updateCreatedStartDate,
+              onCreatedEndDateChanged: _updateCreatedEndDate,
+              onUpdatedStartDateChanged: _updateUpdatedStartDate,
+              onUpdatedEndDateChanged: _updateUpdatedEndDate,
               onNewPressed: widget.vm.canCreateForms
                   ? _openNewFormDialog
                   : null,
@@ -451,18 +639,34 @@ class _StatusFormsToolbar extends StatelessWidget {
     required this.searchQuery,
     required this.roleFilter,
     required this.activeFilter,
+    required this.createdStartDate,
+    required this.createdEndDate,
+    required this.updatedStartDate,
+    required this.updatedEndDate,
     required this.onSearchChanged,
     required this.onRoleChanged,
     required this.onActiveChanged,
+    required this.onCreatedStartDateChanged,
+    required this.onCreatedEndDateChanged,
+    required this.onUpdatedStartDateChanged,
+    required this.onUpdatedEndDateChanged,
     required this.onNewPressed,
   });
 
   final String searchQuery;
   final String roleFilter;
   final String activeFilter;
+  final DateTime? createdStartDate;
+  final DateTime? createdEndDate;
+  final DateTime? updatedStartDate;
+  final DateTime? updatedEndDate;
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<String> onRoleChanged;
   final ValueChanged<String> onActiveChanged;
+  final ValueChanged<DateTime?> onCreatedStartDateChanged;
+  final ValueChanged<DateTime?> onCreatedEndDateChanged;
+  final ValueChanged<DateTime?> onUpdatedStartDateChanged;
+  final ValueChanged<DateTime?> onUpdatedEndDateChanged;
   final VoidCallback? onNewPressed;
 
   @override
@@ -477,9 +681,17 @@ class _StatusFormsToolbar extends StatelessWidget {
       filtersBuilder: (context, iconOnly) => _StatusFormsFiltersPanel(
         roleFilter: roleFilter,
         activeFilter: activeFilter,
+        createdStartDate: createdStartDate,
+        createdEndDate: createdEndDate,
+        updatedStartDate: updatedStartDate,
+        updatedEndDate: updatedEndDate,
         iconOnly: iconOnly,
         onRoleChanged: onRoleChanged,
         onActiveChanged: onActiveChanged,
+        onCreatedStartDateChanged: onCreatedStartDateChanged,
+        onCreatedEndDateChanged: onCreatedEndDateChanged,
+        onUpdatedStartDateChanged: onUpdatedStartDateChanged,
+        onUpdatedEndDateChanged: onUpdatedEndDateChanged,
       ),
       onNewPressed: onNewPressed,
     );
@@ -541,16 +753,32 @@ class _StatusFormsFiltersPanel extends StatefulWidget {
   const _StatusFormsFiltersPanel({
     required this.roleFilter,
     required this.activeFilter,
+    required this.createdStartDate,
+    required this.createdEndDate,
+    required this.updatedStartDate,
+    required this.updatedEndDate,
     required this.iconOnly,
     required this.onRoleChanged,
     required this.onActiveChanged,
+    required this.onCreatedStartDateChanged,
+    required this.onCreatedEndDateChanged,
+    required this.onUpdatedStartDateChanged,
+    required this.onUpdatedEndDateChanged,
   });
 
   final String roleFilter;
   final String activeFilter;
+  final DateTime? createdStartDate;
+  final DateTime? createdEndDate;
+  final DateTime? updatedStartDate;
+  final DateTime? updatedEndDate;
   final bool iconOnly;
   final ValueChanged<String> onRoleChanged;
   final ValueChanged<String> onActiveChanged;
+  final ValueChanged<DateTime?> onCreatedStartDateChanged;
+  final ValueChanged<DateTime?> onCreatedEndDateChanged;
+  final ValueChanged<DateTime?> onUpdatedStartDateChanged;
+  final ValueChanged<DateTime?> onUpdatedEndDateChanged;
 
   @override
   State<_StatusFormsFiltersPanel> createState() =>
@@ -578,7 +806,7 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     const overlayRightPadding = 24.0;
-    const filterItemWidth = 180.0;
+    const filterItemWidth = 220.0;
     const overlayPadding = 14.0;
     const desiredOverlayWidth = filterItemWidth + (overlayPadding * 2);
     final overlayWidth = (screenWidth - 32 - overlayRightPadding).clamp(
@@ -638,12 +866,56 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
                   const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
+                    child: _StatusFormsDateFilter(
+                      label: 'Created Start',
+                      value: widget.createdStartDate,
+                      formatter: _formatFormsFilterDateValue,
+                      onSelected: widget.onCreatedStartDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    child: _StatusFormsDateFilter(
+                      label: 'Created End',
+                      value: widget.createdEndDate,
+                      formatter: _formatFormsFilterDateValue,
+                      onSelected: widget.onCreatedEndDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    child: _StatusFormsDateFilter(
+                      label: 'Updated Start',
+                      value: widget.updatedStartDate,
+                      formatter: _formatFormsFilterDateValue,
+                      onSelected: widget.onUpdatedStartDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    child: _StatusFormsDateFilter(
+                      label: 'Updated End',
+                      value: widget.updatedEndDate,
+                      formatter: _formatFormsFilterDateValue,
+                      onSelected: widget.onUpdatedEndDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
                     height: AdminFormsView.controlHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
                         widget.onRoleChanged('All');
                         widget.onActiveChanged('All');
+                        widget.onCreatedStartDateChanged(null);
+                        widget.onCreatedEndDateChanged(null);
+                        widget.onUpdatedStartDateChanged(null);
+                        widget.onUpdatedEndDateChanged(null);
                       },
                       style: FilledButton.styleFrom(
                         backgroundColor: AppColors.danger,
@@ -717,6 +989,125 @@ class _StatusFormsFilterDropdown extends StatelessWidget {
         }
         focusNode.unfocus();
       },
+    );
+  }
+}
+
+class _StatusFormsDateFilter extends StatefulWidget {
+  const _StatusFormsDateFilter({
+    required this.label,
+    required this.value,
+    required this.formatter,
+    required this.onSelected,
+  });
+
+  final String label;
+  final DateTime? value;
+  final String Function(DateTime?) formatter;
+  final ValueChanged<DateTime?> onSelected;
+
+  @override
+  State<_StatusFormsDateFilter> createState() => _StatusFormsDateFilterState();
+}
+
+class _StatusFormsDateFilterState extends State<_StatusFormsDateFilter> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _displayValue);
+    _focusNode = FocusNode()..canRequestFocus = false;
+  }
+
+  @override
+  void didUpdateWidget(covariant _StatusFormsDateFilter oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_controller.text != _displayValue) {
+      _controller.value = _controller.value.copyWith(
+        text: _displayValue,
+        selection: TextSelection.collapsed(offset: _displayValue.length),
+        composing: TextRange.empty,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  String get _displayValue =>
+      widget.value == null ? '' : widget.formatter(widget.value);
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: widget.value ?? now,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (context.mounted) {
+      widget.onSelected(picked);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeFillColor = appFieldInteractiveFillColor(context);
+    return SizedBox(
+      height: AdminFormsView.controlHeight,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() {
+          _isHovered = false;
+          _isPressed = false;
+        }),
+        child: Listener(
+          onPointerDown: (_) => setState(() => _isPressed = true),
+          onPointerUp: (_) => setState(() => _isPressed = false),
+          onPointerCancel: (_) => setState(() => _isPressed = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _pickDate,
+            child: IgnorePointer(
+              child: TextFormField(
+                controller: _controller,
+                focusNode: _focusNode,
+                readOnly: true,
+                showCursor: false,
+                enableInteractiveSelection: false,
+                style: adminDropdownDisplayTextStyle,
+                decoration: adminFormInputDecoration(
+                  widget.label,
+                  radius: AdminFormsView.surfaceRadius,
+                  minHeight: AdminFormsView.controlHeight,
+                ).copyWith(
+                  suffixIcon: IconButton(
+                    onPressed: null,
+                    icon: Icon(
+                      Icons.calendar_today_outlined,
+                      size: 18,
+                      color: AppColors.primaryColor,
+                    ),
+                  ),
+                  filled: true,
+                  fillColor: _isPressed
+                      ? activeFillColor.withValues(alpha: 0.92)
+                      : (_isHovered ? activeFillColor : Colors.white),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

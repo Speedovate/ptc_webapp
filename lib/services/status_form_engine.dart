@@ -66,8 +66,7 @@ class StatusFormEngine {
           normalizedKey == 'helper_id' ||
           (isIdKey && usesDynamicSource) ||
           optionSourceKey == statusFieldOptionSourceDrivers ||
-          optionSourceKey == statusFieldOptionSourceHelpers ||
-          optionSourceKey == statusFieldOptionSourceClientMembers;
+          optionSourceKey == statusFieldOptionSourceHelpers;
 
       if (answer is String && isPalawanLocationFieldKey(normalizedKey)) {
         if (!isValidPalawanLocationOption(answer)) {

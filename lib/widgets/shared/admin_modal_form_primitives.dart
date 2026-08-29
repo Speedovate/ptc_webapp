@@ -239,8 +239,6 @@ class _AdminModalActionFieldState extends State<AdminModalActionField> {
   late final bool _ownsFocusNode;
   bool _isHovered = false;
   bool _isPressed = false;
-  bool _suppressFocusActivationOnce = false;
-  bool _skipNextFocusActivation = false;
 
   @override
   void initState() {
@@ -273,7 +271,6 @@ class _AdminModalActionFieldState extends State<AdminModalActionField> {
   }
 
   void _handleActivate() {
-    _skipNextFocusActivation = true;
     if (widget.onSubmitted case final onSubmitted?) {
       onSubmitted();
       return;
@@ -283,24 +280,8 @@ class _AdminModalActionFieldState extends State<AdminModalActionField> {
 
   void _handleFocusChanged() {
     if (!_focusNode.hasFocus) {
-      _suppressFocusActivationOnce = false;
       return;
     }
-    if (_skipNextFocusActivation) {
-      _skipNextFocusActivation = false;
-      _suppressFocusActivationOnce = false;
-      return;
-    }
-    if (!widget.activateOnFocus || _suppressFocusActivationOnce) {
-      _suppressFocusActivationOnce = false;
-      return;
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_focusNode.hasFocus) {
-        return;
-      }
-      _handleActivate();
-    });
   }
 
   @override
@@ -347,10 +328,7 @@ class _AdminModalActionFieldState extends State<AdminModalActionField> {
           },
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTapDown: (_) {
-              _suppressFocusActivationOnce = true;
-              setState(() => _isPressed = true);
-            },
+            onTapDown: (_) => setState(() => _isPressed = true),
             onTapCancel: () => setState(() => _isPressed = false),
             onTapUp: (_) => setState(() => _isPressed = false),
             onTap: widget.onTap,

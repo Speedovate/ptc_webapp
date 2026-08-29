@@ -9,6 +9,20 @@ class _NoopFirestorePublicDocumentFetcher
   }) async {
     return const <Map<String, dynamic>>[];
   }
+
+  @override
+  Future<bool> deleteDocument(String documentPath) async {
+    return false;
+  }
+
+  @override
+  Future<bool> patchDocument(
+    String documentPath, {
+    required Map<String, dynamic> fields,
+    List<String>? updateMaskFieldPaths,
+  }) async {
+    return false;
+  }
 }
 
 FirestorePublicDocumentFetcher createFirestorePublicDocumentFetcher() =>

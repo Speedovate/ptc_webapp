@@ -367,7 +367,7 @@ class _HistoryFiltersPanelState extends State<_HistoryFiltersPanel> {
                     width: itemWidth,
                     height: adminFilterFieldMinHeight,
                     child: _HistoryDateFilter(
-                      label: 'Start Date',
+                      label: 'Created Start',
                       value: widget.vm.startDate,
                       formatter: widget.vm.formatDate,
                       onSelected: widget.vm.updateStartDate,
@@ -378,10 +378,32 @@ class _HistoryFiltersPanelState extends State<_HistoryFiltersPanel> {
                     width: itemWidth,
                     height: adminFilterFieldMinHeight,
                     child: _HistoryDateFilter(
-                      label: 'End Date',
+                      label: 'Created End',
                       value: widget.vm.endDate,
                       formatter: widget.vm.formatDate,
                       onSelected: widget.vm.updateEndDate,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    height: adminFilterFieldMinHeight,
+                    child: _HistoryDateFilter(
+                      label: 'Updated Start',
+                      value: widget.vm.updatedStartDate,
+                      formatter: widget.vm.formatDate,
+                      onSelected: widget.vm.updateUpdatedStartDate,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    height: adminFilterFieldMinHeight,
+                    child: _HistoryDateFilter(
+                      label: 'Updated End',
+                      value: widget.vm.updatedEndDate,
+                      formatter: widget.vm.formatDate,
+                      onSelected: widget.vm.updateUpdatedEndDate,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -519,13 +541,9 @@ class _HistoryDateFilterState extends State<_HistoryDateFilter> {
                           : AppColors.primarySurface,
                       suffixIcon: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap: widget.value == null
-                            ? _pickDate
-                            : () => widget.onSelected(null),
+                        onTap: _pickDate,
                         child: Icon(
-                          widget.value == null
-                              ? Icons.calendar_today_rounded
-                              : Icons.close_rounded,
+                          Icons.calendar_today_rounded,
                           size: 18,
                           color: AppColors.primaryColor,
                         ),

@@ -62,15 +62,18 @@ class AppShell extends StatelessWidget {
                         : 'Are you sure you want to log out of your account?',
                     confirmLabel: isQuickLoggedIn ? 'Go Back' : 'Logout',
                     isDanger: !isQuickLoggedIn,
+                    onConfirmAsync: () async {
+                      if (vm.isQuickLoggedIn) {
+                        await vm.goBackFromQuickLogin();
+                        return true;
+                      }
+                      await vm.logout();
+                      return true;
+                    },
                   );
                   if (!confirmed) {
                     return;
                   }
-                  if (vm.isQuickLoggedIn) {
-                    await vm.goBackFromQuickLogin();
-                    return;
-                  }
-                  await vm.logout();
                 },
               );
 

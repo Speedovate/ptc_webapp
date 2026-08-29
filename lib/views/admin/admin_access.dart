@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/requests/role_access.request.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
@@ -34,6 +37,8 @@ class _AdminAccessViewState extends State<AdminAccessView> {
   };
   final RoleAccessService _service = RoleAccessService.instance;
   final AuthRequest _authRequest = AuthRequest.instance;
+  StreamSubscription<void>? _roleAccessCacheUpdatesSubscription;
+  StreamSubscription<void>? _usersCacheUpdatesSubscription;
   static List<_AccessRoleEntry> _cachedRoles = const [];
   static String? _cachedErrorMessage;
   static bool _cachedHasCompletedInitialLoad = false;
@@ -43,6 +48,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
   String? _errorMessage;
   String _searchQuery = '';
   List<_AccessRoleEntry> _roles = List<_AccessRoleEntry>.from(_cachedRoles);
+  bool _isRealtimeReloading = false;
 
   bool get _canReadRoles => _service.canAccess(
     DispatcherAccessCapability.roleAccessRead,
@@ -66,7 +72,40 @@ class _AdminAccessViewState extends State<AdminAccessView> {
   @override
   void initState() {
     super.initState();
+    _ensureRealtimeSubscriptions();
     _load();
+  }
+
+  void _ensureRealtimeSubscriptions() {
+    _roleAccessCacheUpdatesSubscription ??= RoleAccessRequest.instance
+        .watchRoleAccessCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadFromRealtime());
+        });
+    _usersCacheUpdatesSubscription ??= AuthRequest.instance
+        .watchUsersCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadFromRealtime());
+        });
+  }
+
+  Future<void> _reloadFromRealtime() async {
+    if (_isRealtimeReloading || !mounted) {
+      return;
+    }
+    _isRealtimeReloading = true;
+    try {
+      await _load();
+    } finally {
+      _isRealtimeReloading = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _roleAccessCacheUpdatesSubscription?.cancel();
+    _usersCacheUpdatesSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -905,63 +944,68 @@ class _RoleAccessDialogState extends State<_RoleAccessDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AppPageLoadingOverlay(
-      isVisible: _isSaving,
-      message: 'Saving role ...',
-      child: AdminModalShell(
-        title: '${widget.role.label} Permissions',
-        maxWidth: 720,
-        contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
-        actions: [
-          TextButton(
-            onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-          if (_isEditable)
-            FilledButton(
-              onPressed: _isSaving ? null : _save,
-              child: const Text('Save'),
-            ),
-        ],
-        child: AdminModalFormBody(
-          readOnly: !_isEditable,
-          children: [
-            AdminModalFieldsSection(
-              children: [
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final columns = constraints.maxWidth >= 520 ? 2 : 1;
-                    const spacing = 12.0;
-                    final itemWidth =
-                        ((constraints.maxWidth - ((columns - 1) * spacing)) /
-                                columns)
-                            .clamp(0.0, constraints.maxWidth);
-                    return Wrap(
-                      spacing: spacing,
-                      runSpacing: spacing,
-                      children: _allAccessOptions.map((option) {
-                        final value = _draft[option.key] ?? false;
-                        return SizedBox(
-                          width: itemWidth,
-                          child: _RoleCapabilityTile(
-                            label: _formatPermissionLabel(option.key),
-                            value: value,
-                            enabled: _isEditable,
-                            onChanged: (nextValue) {
-                              setState(() {
-                                _draft[option.key] = nextValue;
-                              });
-                            },
-                          ),
-                        );
-                      }).toList(growable: false),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ],
+    return AdminModalShell(
+      title: '${widget.role.label} Permissions',
+      maxWidth: 720,
+      contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Close'),
         ),
+        if (_isEditable)
+          FilledButton(
+            onPressed: _isSaving ? null : _save,
+            child: _isSaving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Text('Save'),
+          ),
+      ],
+      child: AdminModalFormBody(
+        readOnly: !_isEditable,
+        children: [
+          AdminModalFieldsSection(
+            children: [
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final columns = constraints.maxWidth >= 520 ? 2 : 1;
+                  const spacing = 12.0;
+                  final itemWidth =
+                      ((constraints.maxWidth - ((columns - 1) * spacing)) /
+                              columns)
+                          .clamp(0.0, constraints.maxWidth);
+                  return Wrap(
+                    spacing: spacing,
+                    runSpacing: spacing,
+                    children: _allAccessOptions.map((option) {
+                      final value = _draft[option.key] ?? false;
+                      return SizedBox(
+                        width: itemWidth,
+                        child: _RoleCapabilityTile(
+                          label: _formatPermissionLabel(option.key),
+                          value: value,
+                          enabled: _isEditable,
+                          onChanged: (nextValue) {
+                            setState(() {
+                              _draft[option.key] = nextValue;
+                            });
+                          },
+                        ),
+                      );
+                    }).toList(growable: false),
+                  );
+                },
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

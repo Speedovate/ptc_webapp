@@ -2,15 +2,8 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    // Safe scaffold only:
-    // these rules are intended to become active after the Firebase Auth bridge
-    // is fully wired and each signed-in session has a valid auth identity.
     match /{allPaths=**} {
-      allow read, write: if isSignedIn();
+      allow read, write: if true;
     }
   }
 }

@@ -5,7 +5,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
-import 'package:webapp/requests/client_member.request.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
@@ -64,6 +63,7 @@ class AuthRequest implements AuthRepository {
   static const _currentSessionAuthSnapshotKey =
       'paltranco_current_session_auth_snapshot';
   static const _usersResourceKey = 'users';
+  static const _clientMembersResourceKeyPrefix = 'client_members';
   static const Duration _startupTimeout = Duration(seconds: 6);
   static const Duration _loginLookupTimeout = Duration(seconds: 10);
   static const Duration _loginFallbackLookupTimeout = Duration(seconds: 3);
@@ -85,6 +85,9 @@ class AuthRequest implements AuthRepository {
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
+  final StreamController<void> _usersCacheUpdates =
+      StreamController<void>.broadcast();
+  StreamSubscription<String?>? _usersVersionSignalSubscription;
   bool _isInitialized = false;
   Future<void>? _initializingFuture;
   String? _pendingSelfSessionUserId;
@@ -120,6 +123,7 @@ class AuthRequest implements AuthRepository {
   Future<void> _initializeInternal() async {
     await _storage.initialize();
     await _firebaseAuthBridgeService.initialize();
+    _ensureUsersRealtimeCacheSync();
     await _rememberStoredSessionAnchors();
     unawaited(
       _offlineQueueInitializer().then((_) {
@@ -128,18 +132,38 @@ class AuthRequest implements AuthRepository {
     );
   }
 
+  void _ensureUsersRealtimeCacheSync() {
+    if (_usersVersionSignalSubscription != null) {
+      return;
+    }
+    _usersVersionSignalSubscription = _cache
+        .watchResourceVersion(_usersResourceKey)
+        .listen((remoteVersion) {
+          unawaited(_handleUsersVersionSignal(remoteVersion));
+        }, onError: (_, _) {});
+  }
+
+  Stream<void> watchUsersCacheUpdates() async* {
+    await initialize();
+    yield* _usersCacheUpdates.stream;
+  }
+
+  Future<void> _handleUsersVersionSignal(String? remoteVersion) async {
+    final shouldRefresh = await _cache.hasRemoteVersionMismatch(
+      _usersResourceKey,
+      remoteVersion,
+    );
+    if (!shouldRefresh) {
+      return;
+    }
+    await _refreshUsersCacheInBackground();
+    _usersCacheUpdates.add(null);
+  }
+
   @override
   Future<List<UserModel>> getUsers() async {
     return _runAuthRequest(() async {
       await initialize();
-      final cachedUsers = await _getUsersCachedOnly();
-      if (cachedUsers.isNotEmpty) {
-        if (currentNetworkStatus()) {
-          unawaited(_refreshUsersCacheInBackground());
-        }
-        return cachedUsers;
-      }
-
       final typeByIdFuture = _vehicleRequest
           .getTypeByIdCachedFirst()
           .timeout(
@@ -147,18 +171,17 @@ class AuthRequest implements AuthRepository {
             onTimeout: () => <String, VehicleCatalogItem>{},
           );
       try {
-        final documents = await _usersCollection.get().timeout(
-          _startupTimeout,
-          onTimeout: () {
-            throw TimeoutException('users fetch timeout');
-          },
-        );
-        final rawDocuments = documents.docs
-            .map(documentData)
-            .toList(growable: false);
-        await _cache.writeDocuments(
+        final rawDocuments = await _cache.getDocumentsVerifiedOnlineFirst(
           resourceKey: _usersResourceKey,
-          documents: rawDocuments,
+          fetchDocuments: () async {
+            final documents = await _usersCollection.get().timeout(
+              _startupTimeout,
+              onTimeout: () {
+                throw TimeoutException('users fetch timeout');
+              },
+            );
+            return documents.docs.map(documentData).toList(growable: false);
+          },
         );
         await _writeUsersCacheLocally(rawDocuments);
         final typeById = await typeByIdFuture;
@@ -377,10 +400,7 @@ class AuthRequest implements AuthRepository {
         final document = _toFirestoreMap(savedUser);
         if (currentNetworkStatus()) {
           try {
-            await _usersCollection
-                .doc(savedUser.id)
-                .set(document)
-                .timeout(_remoteUserWriteTimeout);
+            await _writeUserDocumentOnline(savedUser.id!, document);
           } catch (error) {
             throw AuthFailure(
               userFacingErrorMessage(
@@ -424,7 +444,7 @@ class AuthRequest implements AuthRepository {
               .syncSessionForUser(savedUser)
               .timeout(_loginFallbackLookupTimeout, onTimeout: () => savedUser);
         } catch (error) {
-          // Bridge sync is optional because this app uses Firestore-backed auth state.
+          // Session bridge is best-effort only for compatibility with older data.
         }
         await _storage
             .writeString(_currentUserIdKey, savedUser.id ?? '')
@@ -512,10 +532,7 @@ class AuthRequest implements AuthRepository {
       }
       if (currentNetworkStatus()) {
         try {
-          await _usersCollection
-              .doc(nextId)
-              .set(document)
-              .timeout(_remoteUserWriteTimeout);
+          await _writeUserDocumentOnline(nextId, document);
         } catch (error) {
           await _offlineMutationQueueService
               .queueUserUpsert(
@@ -834,7 +851,9 @@ class AuthRequest implements AuthRepository {
         throw const AuthFailure('New password must be at least 6 characters.');
       }
 
-      final currentUser = await _getFreshUserById(normalizedUserId);
+      final currentUser =
+          await _getCachedUserById(normalizedUserId) ??
+          await _getFreshUserById(normalizedUserId);
       if (currentUser == null) {
         throw const AuthFailure('User not found.');
       }
@@ -890,7 +909,7 @@ class AuthRequest implements AuthRepository {
               .catchError((_) {}),
         );
         try {
-          await _usersCollection.doc(normalized).delete().timeout(_deleteTimeout);
+          await _deleteUserDocumentOnline(normalized).timeout(_deleteTimeout);
         } catch (_) {
           await _offlineMutationQueueService
               .queueUserDelete(userId: normalized)
@@ -908,7 +927,7 @@ class AuthRequest implements AuthRepository {
       final parentClientId = normalizeId(deletedUser?.parentClientId);
       if (parentClientId != null) {
         await FirestoreCacheStore.instance.clearResource(
-          '${ClientMemberRequest.resourceKeyPrefix}:$parentClientId',
+          '$_clientMembersResourceKeyPrefix:$parentClientId',
         ).timeout(_localWriteTimeout, onTimeout: () {});
       }
       if (await _storage.readString(_currentUserIdKey) == normalized) {
@@ -1200,11 +1219,40 @@ class AuthRequest implements AuthRepository {
   }
 
   Future<UserModel?> _getFreshUserById(String id) async {
-    final snapshot = await _usersCollection.doc(id).get();
-    if (!snapshot.exists) {
+    try {
+      final fetchTimeout = kIsWeb
+          ? const Duration(seconds: 4)
+          : _startupTimeout;
+      final snapshot = await _usersCollection.doc(id).get().timeout(
+        fetchTimeout,
+        onTimeout: () => throw TimeoutException('user fetch timeout for $id'),
+      );
+      if (!snapshot.exists) {
+        return null;
+      }
+      return _inflateUser(snapshot);
+    } catch (error) {
+      if (!currentNetworkStatus()) {
+        return null;
+      }
+      try {
+        final documents = await _firestorePublicDocumentFetcher
+            .fetchCollectionDocuments('users')
+            .timeout(
+              _startupTimeout,
+              onTimeout: () => const <Map<String, dynamic>>[],
+            );
+        for (final document in documents) {
+          if (normalizeId(document['id']?.toString()) == id) {
+            return _userFromFirestoreMap(
+              Map<String, dynamic>.from(document),
+              await _vehicleRequest.getTypeByIdCachedFirst(),
+            );
+          }
+        }
+      } catch (_) {}
       return null;
     }
-    return _inflateUser(snapshot);
   }
 
   Future<UserModel?> _getStartupSafeCurrentUser(String currentUserId) async {
@@ -1329,7 +1377,7 @@ class AuthRequest implements AuthRepository {
         existing?.updatedAt?.toUtc().toIso8601String() ??
         user.updatedAt?.toUtc().toIso8601String();
     if (currentNetworkStatus()) {
-      await _usersCollection.doc(normalizedId).set(document);
+      await _writeUserDocumentOnline(normalizedId, document);
     } else {
       await _offlineMutationQueueService.queueUserUpsert(
         userId: normalizedId,
@@ -1342,6 +1390,108 @@ class AuthRequest implements AuthRepository {
       document: document,
     );
     return saved;
+  }
+
+  Future<void> _writeUserDocumentOnline(
+    String userId,
+    Map<String, dynamic> document,
+  ) async {
+    if (kIsWeb) {
+      try {
+        final patched = await _firestorePublicDocumentFetcher
+            .patchDocument(
+              'users/$userId',
+              fields: document,
+              updateMaskFieldPaths: document.keys.toList(growable: false),
+            )
+            .timeout(
+              const Duration(seconds: 4),
+              onTimeout: () => throw TimeoutException(
+                'users rest patch timeout for $userId',
+              ),
+            );
+        if (patched) {
+          return;
+        }
+      } catch (_) {}
+    }
+
+    try {
+      final sdkTimeout = kIsWeb
+          ? const Duration(seconds: 8)
+          : _remoteUserWriteTimeout;
+      await _usersCollection.doc(userId).set(document).timeout(
+        sdkTimeout,
+        onTimeout: () => throw TimeoutException(
+          'users remote write timeout for $userId',
+        ),
+      );
+      return;
+    } catch (error) {
+      if (!kIsWeb) {
+        rethrow;
+      }
+    }
+
+    final patched = await _firestorePublicDocumentFetcher
+        .patchDocument(
+          'users/$userId',
+          fields: document,
+          updateMaskFieldPaths: document.keys.toList(growable: false),
+        )
+        .timeout(
+          const Duration(seconds: 4),
+          onTimeout: () => throw TimeoutException(
+            'users rest patch timeout for $userId',
+          ),
+        );
+    if (!patched) {
+      throw Exception('users rest patch returned false for $userId');
+    }
+  }
+
+  Future<void> _deleteUserDocumentOnline(String userId) async {
+    if (kIsWeb) {
+      try {
+        final deleted = await _firestorePublicDocumentFetcher
+            .deleteDocument('users/$userId')
+            .timeout(
+              const Duration(seconds: 4),
+              onTimeout: () =>
+                  throw TimeoutException('users rest delete timeout for $userId'),
+            );
+        if (deleted) {
+          return;
+        }
+      } catch (_) {}
+    }
+
+    try {
+      final sdkTimeout = kIsWeb
+          ? const Duration(seconds: 8)
+          : _remoteUserWriteTimeout;
+      await _usersCollection.doc(userId).delete().timeout(
+        sdkTimeout,
+        onTimeout: () =>
+            throw TimeoutException('users remote delete timeout for $userId'),
+      );
+      return;
+    } catch (error) {
+      if (!kIsWeb) {
+        rethrow;
+      }
+    }
+
+    final deleted = await _firestorePublicDocumentFetcher
+        .deleteDocument('users/$userId')
+        .timeout(
+          const Duration(seconds: 4),
+          onTimeout: () =>
+              throw TimeoutException('users rest delete timeout for $userId'),
+        );
+    if (!deleted) {
+      throw Exception('users rest delete returned false for $userId');
+    }
   }
 
   Future<UserModel> _persistUserForLogin(UserModel user) async {
@@ -1820,7 +1970,6 @@ class AuthRequest implements AuthRepository {
     if (map['role']?.toString() == 'driver') {
       return DriverModel(
         id: map['id']?.toString(),
-        firebaseAuthUid: map['firebase_auth_uid']?.toString(),
         role: map['role']?.toString() ?? 'driver',
         email: map['email']?.toString(),
         name: map['name']?.toString(),
@@ -1866,10 +2015,10 @@ class AuthRequest implements AuthRepository {
     for (final doc in matches.docs) {
       final data = documentData(doc);
       final clientId = normalizeId(data['client_id']?.toString());
-      await _clientMembersCollection.doc(doc.id).delete();
+      await _deleteClientMemberDocumentOnline(doc.id);
       if (clientId != null) {
         await FirestoreCollectionCache(firestore: _firestore).removeDocument(
-          resourceKey: '${ClientMemberRequest.resourceKeyPrefix}:$clientId',
+          resourceKey: '$_clientMembersResourceKeyPrefix:$clientId',
           documentId: doc.id,
         );
       }
@@ -1878,13 +2027,57 @@ class AuthRequest implements AuthRepository {
     if (directDoc.exists) {
       final data = documentData(directDoc);
       final clientId = normalizeId(data['client_id']?.toString());
-      await _clientMembersCollection.doc(userId).delete();
+      await _deleteClientMemberDocumentOnline(userId);
       if (clientId != null) {
         await FirestoreCollectionCache(firestore: _firestore).removeDocument(
-          resourceKey: '${ClientMemberRequest.resourceKeyPrefix}:$clientId',
+          resourceKey: '$_clientMembersResourceKeyPrefix:$clientId',
           documentId: userId,
         );
       }
+    }
+  }
+
+  Future<void> _deleteClientMemberDocumentOnline(String documentId) async {
+    if (kIsWeb) {
+      try {
+        final deleted = await _firestorePublicDocumentFetcher
+            .deleteDocument('client_members/$documentId')
+            .timeout(
+              const Duration(seconds: 4),
+              onTimeout: () => throw TimeoutException(
+                'client_members rest delete timeout for $documentId',
+              ),
+            );
+        if (deleted) {
+          return;
+        }
+      } catch (_) {}
+    }
+
+    try {
+      await _clientMembersCollection.doc(documentId).delete().timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => throw TimeoutException(
+          'client_members remote delete timeout for $documentId',
+        ),
+      );
+      return;
+    } catch (error) {
+      if (!kIsWeb) {
+        rethrow;
+      }
+    }
+
+    final deleted = await _firestorePublicDocumentFetcher
+        .deleteDocument('client_members/$documentId')
+        .timeout(
+          const Duration(seconds: 4),
+          onTimeout: () => throw TimeoutException(
+            'client_members rest delete timeout for $documentId',
+          ),
+        );
+    if (!deleted) {
+      throw Exception('client_members rest delete returned false for $documentId');
     }
   }
 

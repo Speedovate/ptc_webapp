@@ -5,7 +5,6 @@ import 'package:webapp/models/vehicle_catalog_item.dart';
 class UserModel {
   const UserModel({
     this.id,
-    this.firebaseAuthUid,
     this.role,
     this.parentClientId,
     this.email,
@@ -21,7 +20,6 @@ class UserModel {
   });
 
   final String? id;
-  final String? firebaseAuthUid;
   final String? role;
   final String? parentClientId;
   final String? email;
@@ -39,7 +37,6 @@ class UserModel {
 
   UserModel copyWith({
     String? id,
-    String? firebaseAuthUid,
     String? role,
     String? parentClientId,
     String? email,
@@ -61,7 +58,6 @@ class UserModel {
     if (nextRole == 'driver') {
       return DriverModel(
         id: id ?? this.id,
-        firebaseAuthUid: firebaseAuthUid ?? this.firebaseAuthUid,
         role: nextRole,
         parentClientId: parentClientId ?? this.parentClientId,
         email: email ?? this.email,
@@ -81,7 +77,6 @@ class UserModel {
 
     return UserModel(
       id: id ?? this.id,
-      firebaseAuthUid: firebaseAuthUid ?? this.firebaseAuthUid,
       role: nextRole,
       parentClientId: parentClientId ?? this.parentClientId,
       email: email ?? this.email,
@@ -100,7 +95,6 @@ class UserModel {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'firebase_auth_uid': firebaseAuthUid,
       'role': role,
       'parent_client_id': parentClientId,
       'email': email,
@@ -123,7 +117,6 @@ class UserModel {
 
     return UserModel(
       id: map['id']?.toString(),
-      firebaseAuthUid: map['firebase_auth_uid']?.toString(),
       role: map['role']?.toString(),
       parentClientId: map['parent_client_id']?.toString(),
       email: map['email']?.toString(),
@@ -149,7 +142,6 @@ class UserModel {
 class DriverModel extends UserModel {
   const DriverModel({
     super.id,
-    super.firebaseAuthUid,
     super.role = 'driver',
     super.parentClientId,
     super.email,
@@ -181,7 +173,6 @@ class DriverModel extends UserModel {
   factory DriverModel.fromMap(Map<String, dynamic> map) {
     return DriverModel(
       id: map['id']?.toString(),
-      firebaseAuthUid: map['firebase_auth_uid']?.toString(),
       role: map['role']?.toString() ?? 'driver',
       parentClientId: map['parent_client_id']?.toString(),
       email: map['email']?.toString(),

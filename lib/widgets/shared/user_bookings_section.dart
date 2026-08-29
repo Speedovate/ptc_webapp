@@ -145,14 +145,20 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
   void _applyBookings(List<Booking> allBookings) {
     final filtered = allBookings.where(_matchesUser).toList();
     filtered.sort((a, b) {
+      final aId = int.tryParse(a.id ?? '');
+      final bId = int.tryParse(b.id ?? '');
+      if (aId != null && bId != null) {
+        return bId.compareTo(aId);
+      }
+      if (aId != null) {
+        return -1;
+      }
+      if (bId != null) {
+        return 1;
+      }
       final aDate = a.updatedAt ?? a.createdAt;
       final bDate = b.updatedAt ?? b.createdAt;
       if (aDate == null && bDate == null) {
-        final aId = int.tryParse(a.id ?? '');
-        final bId = int.tryParse(b.id ?? '');
-        if (aId != null && bId != null) {
-          return bId.compareTo(aId);
-        }
         return (b.id ?? '').compareTo(a.id ?? '');
       }
       if (aDate == null) {
@@ -1054,7 +1060,7 @@ class _UserBookingsFiltersPanelState extends State<_UserBookingsFiltersPanel> {
                     width: itemWidth,
                     height: adminFilterFieldMinHeight,
                     child: _UserBookingsDateFilter(
-                      label: 'Start Date',
+                      label: 'Start',
                       value: widget.startDate,
                       formatter: widget.dateFormatter,
                       onSelected: widget.onStartDateChanged,
@@ -1065,7 +1071,7 @@ class _UserBookingsFiltersPanelState extends State<_UserBookingsFiltersPanel> {
                     width: itemWidth,
                     height: adminFilterFieldMinHeight,
                     child: _UserBookingsDateFilter(
-                      label: 'End Date',
+                      label: 'End',
                       value: widget.endDate,
                       formatter: widget.dateFormatter,
                       onSelected: widget.onEndDateChanged,

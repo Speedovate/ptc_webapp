@@ -34,10 +34,10 @@ class RoleAccessService extends ChangeNotifier {
       _configsByRole.values.toList(growable: false);
   List<String> get knownRoleKeys => orderedKnownRoleKeys;
   List<String> get orderedKnownRoleKeys {
-    final sourceRoles = (_configsByRole.isEmpty
-            ? builtInRoleKeys
-            : _configsByRole.keys)
-        .where((role) => role != 'sub-client');
+    final sourceRoles = {
+      ...builtInRoleKeys,
+      ..._configsByRole.keys,
+    }.where((role) => role != 'sub-client');
     final roles = sourceRoles.toList(growable: false)
           ..sort((a, b) {
             final aIndex = _preferredRoleOrder.indexOf(a);
@@ -57,7 +57,9 @@ class RoleAccessService extends ChangeNotifier {
   }
 
   List<String> get publicRegisterRoleKeys => orderedKnownRoleKeys
-      .where((role) => role != 'admin')
+      .where(
+        (role) => role == 'client' || role == 'driver' || role == 'helper',
+      )
       .toList(growable: false);
 
   List<String> get adminUserRoleKeys => orderedKnownRoleKeys;
@@ -243,9 +245,12 @@ class RoleAccessService extends ChangeNotifier {
       return const [];
     }
     final resolved = <String>[normalizedRole];
-    if (hasWorkflowAdminScope(role: normalizedRole) &&
-        !resolved.contains('admin')) {
-      resolved.add('admin');
+    if (hasWorkflowAdminScope(role: normalizedRole)) {
+      for (final workflowRole in workflowRoleKeys) {
+        if (!resolved.contains(workflowRole)) {
+          resolved.add(workflowRole);
+        }
+      }
     }
     return resolved;
   }

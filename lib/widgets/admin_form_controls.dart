@@ -306,20 +306,22 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
       errorStyle: const TextStyle(fontSize: 0, height: 0),
       helperStyle: const TextStyle(fontSize: 0, height: 0),
     );
+    final minHeight = decoration.constraints?.minHeight ?? adminModalFieldMinHeight;
+    final verticalPadding = minHeight <= adminFilterFieldMinHeight ? 12.0 : 14.0;
     final contentPadding = switch (decoration.contentPadding) {
       EdgeInsets edgeInsets => EdgeInsets.fromLTRB(
         edgeInsets.left,
-        14,
+        verticalPadding,
         edgeInsets.right,
-        14,
+        verticalPadding,
       ),
       EdgeInsetsDirectional edgeInsets => EdgeInsetsDirectional.fromSTEB(
         edgeInsets.start,
-        14,
+        verticalPadding,
         edgeInsets.end,
-        14,
+        verticalPadding,
       ),
-      _ => const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      _ => EdgeInsets.symmetric(horizontal: 14, vertical: verticalPadding),
     };
     final hasItems = widget.items?.isNotEmpty == true;
     final isDisabled = widget.onChanged == null || !hasItems;
@@ -710,9 +712,6 @@ class _AdminSearchSelectFormFieldState
           onTap: !widget.enabled
               ? null
               : () {
-                  if (!_focusNode.hasFocus) {
-                    _focusNode.requestFocus();
-                  }
                   _openPicker();
                 },
           child: Focus(
@@ -825,7 +824,6 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
               const SizedBox(height: 14),
               TextField(
                 controller: _controller,
-                autofocus: true,
                 decoration: const InputDecoration(
                   hintText: 'Search location',
                   prefixIcon: Icon(Icons.search_rounded),

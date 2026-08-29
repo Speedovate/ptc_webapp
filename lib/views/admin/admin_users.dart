@@ -271,7 +271,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
           final viewedBusinessUser = vm.parentBusinessFor(viewedUser);
           return AppPageLoadingOverlay(
             isVisible:
-                vm.isBusy ||
+                vm.showBlockingLoading ||
                 _isUploadingViewedProfilePhoto ||
                 _isUploadingViewedLicensePhoto,
             message: _isUploadingViewedLicensePhoto
@@ -324,21 +324,25 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                               message:
                                   'Continue signing in as ${viewedUser.name ?? 'this user'} (${AdminUsersView.formatRole(viewedUser.role)})?',
                               confirmLabel: 'Sign In',
+                              onConfirmAsync: () async {
+                                try {
+                                  await vm.loginAsUser(viewedUser);
+                                  if (!context.mounted) {
+                                    return false;
+                                  }
+                                  await widget.onCurrentUserUpdated();
+                                  return true;
+                                } on AuthFailure catch (error) {
+                                  if (!context.mounted) {
+                                    return false;
+                                  }
+                                  AppSnackbar.showError(context, error.message);
+                                  return false;
+                                }
+                              },
                             );
                             if (!confirmed || !context.mounted) {
                               return;
-                            }
-                            try {
-                              await vm.loginAsUser(viewedUser);
-                              if (!context.mounted) {
-                                return;
-                              }
-                              await widget.onCurrentUserUpdated();
-                            } on AuthFailure catch (error) {
-                              if (!context.mounted) {
-                                return;
-                              }
-                              AppSnackbar.showError(context, error.message);
                             }
                           },
                     quickActionLabel: isViewingCurrentUser
@@ -430,7 +434,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
 
         return AppPageLoadingOverlay(
           isVisible:
-              vm.isBusy ||
+              vm.showBlockingLoading ||
               _isUploadingViewedProfilePhoto ||
               _isUploadingViewedLicensePhoto,
           message: _isUploadingViewedLicensePhoto
@@ -446,8 +450,11 @@ class _AdminUsersViewState extends State<AdminUsersView> {
               final activeFilterCount = [
                 vm.roleFilter != 'All',
                 vm.activeFilter != 'All',
+                vm.onlineFilter != 'All',
                 vm.startDate != null,
                 vm.endDate != null,
+                vm.updatedStartDate != null,
+                vm.updatedEndDate != null,
               ].where((isActive) => isActive).length;
               final emptyMessage = hasAnyData
                   ? AdminUsersView.buildEmptyStateMessage(
@@ -462,7 +469,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    AppRefreshStrip(isVisible: vm.isBusy),
+                    AppRefreshStrip(isVisible: vm.showBlockingLoading),
                     _UsersToolbar(vm: vm),
                     const SizedBox(
                       height: AdminUsersView.usersToolbarSectionGap,
@@ -642,25 +649,21 @@ class _AdminUsersViewState extends State<AdminUsersView> {
         initialUser: user,
         isEditing: true,
         clientOptions: vm.clientUsers(),
+        onSaveAsync: (result) async {
+          var savedUser = await vm.updateUser(result.user);
+          savedUser = await _applyPendingUserImageUploads(
+            vm,
+            savedUser,
+            result,
+          );
+          if (vm.currentUser?.id == savedUser.id) {
+            await onCurrentUserUpdated();
+          }
+        },
       ),
     );
 
     if (editedUser != null && context.mounted) {
-      var savedUser = await vm.updateUser(editedUser.user);
-      savedUser = await _applyPendingUserImageUploads(
-        vm,
-        savedUser,
-        editedUser,
-      );
-      if (!context.mounted) {
-        return;
-      }
-      if (vm.currentUser?.id == savedUser.id) {
-        await onCurrentUserUpdated();
-        if (!context.mounted) {
-          return;
-        }
-      }
       AppSnackbar.showSuccess(
         context,
         _buildUserSaveMessage(isEditing: true),
@@ -686,16 +689,20 @@ class _AdminUsersViewState extends State<AdminUsersView> {
         generatedId: vm.nextUserId,
         onDraftChanged: vm.updateDraftNewUser,
         clientOptions: vm.clientUsers(),
+        onSaveAsync: (result) async {
+          var savedUser = await vm.addUser(result.user);
+          savedUser = await _applyPendingUserImageUploads(
+            vm,
+            savedUser,
+            result,
+          );
+          vm.clearDraftNewUser();
+          vm.syncUser(savedUser);
+        },
       ),
     );
 
     if (newUser != null && context.mounted) {
-      var savedUser = await vm.addUser(newUser.user);
-      savedUser = await _applyPendingUserImageUploads(vm, savedUser, newUser);
-      vm.clearDraftNewUser();
-      if (!context.mounted) {
-        return;
-      }
       AppSnackbar.showSuccess(
         context,
         _buildUserSaveMessage(isEditing: false),
@@ -910,10 +917,12 @@ class _UsersFiltersPanel extends StatefulWidget {
 class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
   final FocusNode _roleFocusNode = FocusNode();
   final FocusNode _activeFocusNode = FocusNode();
+  final FocusNode _onlineFocusNode = FocusNode();
 
   void _unfocusFilterFields() {
     _roleFocusNode.unfocus();
     _activeFocusNode.unfocus();
+    _onlineFocusNode.unfocus();
     FocusScope.of(context).unfocus();
   }
 
@@ -921,6 +930,7 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
   void dispose() {
     _roleFocusNode.dispose();
     _activeFocusNode.dispose();
+    _onlineFocusNode.dispose();
     super.dispose();
   }
 
@@ -983,8 +993,20 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
                   SizedBox(
                     width: itemWidth,
                     height: AdminUsersView.usersFilterControlHeight,
+                    child: _UsersFilterDropdown(
+                      label: 'Is Online',
+                      value: widget.vm.onlineFilter,
+                      focusNode: _onlineFocusNode,
+                      items: const ['All', 'Online', 'Offline'],
+                      onChanged: widget.vm.updateOnlineFilter,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    height: AdminUsersView.usersFilterControlHeight,
                     child: _UsersDateFilter(
-                      label: 'Start Date',
+                      label: 'Created Start',
                       value: widget.vm.startDate,
                       formatter: widget.vm.formatDate,
                       onSelected: widget.vm.updateStartDate,
@@ -995,10 +1017,32 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
                     width: itemWidth,
                     height: AdminUsersView.usersFilterControlHeight,
                     child: _UsersDateFilter(
-                      label: 'End Date',
+                      label: 'Created End',
                       value: widget.vm.endDate,
                       formatter: widget.vm.formatDate,
                       onSelected: widget.vm.updateEndDate,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    height: AdminUsersView.usersFilterControlHeight,
+                    child: _UsersDateFilter(
+                      label: 'Updated Start',
+                      value: widget.vm.updatedStartDate,
+                      formatter: widget.vm.formatDate,
+                      onSelected: widget.vm.updateUpdatedStartDate,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    height: AdminUsersView.usersFilterControlHeight,
+                    child: _UsersDateFilter(
+                      label: 'Updated End',
+                      value: widget.vm.updatedEndDate,
+                      formatter: widget.vm.formatDate,
+                      onSelected: widget.vm.updateUpdatedEndDate,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -1211,13 +1255,9 @@ class _UsersDateFilterState extends State<_UsersDateFilter> {
                           : AppColors.primarySurface,
                       suffixIcon: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap: widget.value == null
-                            ? _pickDate
-                            : () => widget.onSelected(null),
+                        onTap: _pickDate,
                         child: Icon(
-                          widget.value == null
-                              ? Icons.calendar_today_rounded
-                              : Icons.close_rounded,
+                          Icons.calendar_today_rounded,
                           size: 18,
                           color: AppColors.primaryColor,
                         ),
@@ -2283,7 +2323,7 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
         final viewedBusinessUser = vm.parentBusinessFor(viewedUser);
         return AppPageLoadingOverlay(
           isVisible:
-              vm.isBusy ||
+              vm.showBlockingLoading ||
               _isUploadingViewedProfilePhoto ||
               _isUploadingViewedLicensePhoto,
           message: _isUploadingViewedLicensePhoto
@@ -2468,6 +2508,7 @@ class _UserFormDialog extends StatefulWidget {
     this.initialUser,
     this.generatedId,
     this.onDraftChanged,
+    this.onSaveAsync,
   });
 
   final String title;
@@ -2477,6 +2518,7 @@ class _UserFormDialog extends StatefulWidget {
   final UserModel? initialUser;
   final String? generatedId;
   final ValueChanged<UserModel>? onDraftChanged;
+  final Future<void> Function(_UserFormDialogResult result)? onSaveAsync;
 
   @override
   State<_UserFormDialog> createState() => _UserFormDialogState();
@@ -2507,6 +2549,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   String? _licenseValue;
   _PendingImageUpload? _pendingPhotoUpload;
   _PendingImageUpload? _pendingLicenseUpload;
+  bool _isSubmitting = false;
 
   bool get _isDriverRole => _roleValue == 'driver';
   bool get _supportsOnlineRole => _supportsOnlineRoleStatic(_roleValue);
@@ -2639,7 +2682,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     }
   }
 
-  void _submitForm() {
+  Future<void> _submitForm() async {
     final validationMessage = _validationMessage();
     if (validationMessage != null) {
       AppSnackbar.showError(context, validationMessage);
@@ -2660,35 +2703,57 @@ class _UserFormDialogState extends State<_UserFormDialog> {
       (item) => item.id == _vehicleTypeId,
     );
     final fallbackVehicleType = widget.initialUser?.asDriver?.vehicleType;
-    Navigator.of(context).pop(
-      _UserFormDialogResult(
-        user: baseUser.copyWith(
-          id: widget.isEditing ? baseUser.id : widget.generatedId,
-          role: _roleValue,
-          parentClientId: null,
-          email: _nullIfEmpty(_emailController.text),
-          name: _nullIfEmpty(_nameController.text),
-          photo: _photoValue,
-          phone: normalizePhilippinePhone(_phoneController.text),
-          position: null,
-          isActive: _isActive,
-          isOnline: _supportsOnlineRole ? _isOnline : false,
-          password: _nullIfEmpty(_passwordController.text),
-          createdAt: widget.isEditing ? baseUser.createdAt : now,
-          updatedAt: now,
-          license: _isDriverRole ? _licenseValue : null,
-          vehicleType: _isDriverRole
-              ? (selectedVehicleType.isNotEmpty
-                    ? selectedVehicleType.first
-                    : (fallbackVehicleType?.id == _vehicleTypeId
-                          ? fallbackVehicleType
-                          : null))
-              : null,
-        ),
-        pendingPhotoUpload: _pendingPhotoUpload,
-        pendingLicenseUpload: _pendingLicenseUpload,
+    final result = _UserFormDialogResult(
+      user: baseUser.copyWith(
+        id: widget.isEditing ? baseUser.id : widget.generatedId,
+        role: _roleValue,
+        parentClientId: null,
+        email: _nullIfEmpty(_emailController.text),
+        name: _nullIfEmpty(_nameController.text),
+        photo: _photoValue,
+        phone: normalizePhilippinePhone(_phoneController.text),
+        position: null,
+        isActive: _isActive,
+        isOnline: _supportsOnlineRole ? _isOnline : false,
+        password: _nullIfEmpty(_passwordController.text),
+        createdAt: widget.isEditing ? baseUser.createdAt : now,
+        updatedAt: now,
+        license: _isDriverRole ? _licenseValue : null,
+        vehicleType: _isDriverRole
+            ? (selectedVehicleType.isNotEmpty
+                  ? selectedVehicleType.first
+                  : (fallbackVehicleType?.id == _vehicleTypeId
+                        ? fallbackVehicleType
+                        : null))
+            : null,
       ),
+      pendingPhotoUpload: _pendingPhotoUpload,
+      pendingLicenseUpload: _pendingLicenseUpload,
     );
+    if (widget.onSaveAsync == null) {
+      Navigator.of(context).pop(result);
+      return;
+    }
+    if (_isSubmitting) {
+      return;
+    }
+    setState(() => _isSubmitting = true);
+    try {
+      await widget.onSaveAsync!(result);
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(result);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, error.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
 
   @override
@@ -2698,10 +2763,19 @@ class _UserFormDialogState extends State<_UserFormDialog> {
       contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        FilledButton(onPressed: _submitForm, child: const Text('Save')),
+        FilledButton(
+          onPressed: _isSubmitting ? null : _submitForm,
+          child: _isSubmitting
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2.2),
+                )
+              : const Text('Save'),
+        ),
       ],
       child: AdminModalFormBody(
         children: _isDriverRole && _isLoadingVehicleTypes

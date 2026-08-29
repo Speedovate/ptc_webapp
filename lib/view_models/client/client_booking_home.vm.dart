@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/status.dart';
@@ -5,19 +7,28 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/status_field.dart';
+import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
+import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
 
 class ClientBookingHomeViewModel extends BaseViewModel {
   ClientBookingHomeViewModel({
     StatusFormRepository? statusRepository,
     BookingRepository? bookingRepository,
+    AuthRepository? authRepository,
+    VehicleCatalogRepository? vehicleCatalogRepository,
   }) : _statusRepository = statusRepository ?? StatusRequest.instance,
        _bookingRepository = bookingRepository ?? BookingRequest.instance,
+       _authRepository = authRepository ?? AuthRequest.instance,
+       _vehicleCatalogRepository =
+           vehicleCatalogRepository ?? VehicleRequest.instance,
        _engine = StatusFormEngine(statusRepository ?? StatusRequest.instance) {
     mainForms = List<StatusForm>.from(_cachedMainForms);
     form = _cachedForm;
@@ -35,8 +46,13 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
   final StatusFormRepository _statusRepository;
   final BookingRepository _bookingRepository;
+  final AuthRepository _authRepository;
+  final VehicleCatalogRepository _vehicleCatalogRepository;
   final StatusFormEngine _engine;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
+  StreamSubscription<void>? _statusCacheUpdatesSubscription;
+  StreamSubscription<void>? _usersCacheUpdatesSubscription;
+  StreamSubscription<void>? _catalogCacheUpdatesSubscription;
   static List<StatusForm> _cachedMainForms = const [];
   static Map<String, List<StatusField>> _cachedFieldsByFormId = const {};
   static StatusForm? _cachedForm;
@@ -71,10 +87,12 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   int resetTick = 0;
   UserModel? _activeClientUser;
   UserModel? _pendingClientUser;
+  bool _isRealtimeRefreshing = false;
   static const representativeNameKey = 'representative_name';
   static const representativePhoneKey = 'representative_phone';
 
   Future<void> load(UserModel clientUser) async {
+    _ensureRealtimeSubscriptions();
     if (isBusyLoading) {
       _pendingClientUser = clientUser;
       return;
@@ -166,6 +184,43 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     }
   }
 
+  void _ensureRealtimeSubscriptions() {
+    _statusCacheUpdatesSubscription ??= StatusRequest.instance
+        .watchStatusCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadFromRealtime());
+        });
+    _usersCacheUpdatesSubscription ??= AuthRequest.instance
+        .watchUsersCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadFromRealtime());
+        });
+    _catalogCacheUpdatesSubscription ??= VehicleRequest.instance
+        .watchCatalogCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadFromRealtime());
+        });
+  }
+
+  Future<void> _reloadFromRealtime() async {
+    if (_isRealtimeRefreshing || _activeClientUser == null) {
+      return;
+    }
+    _isRealtimeRefreshing = true;
+    try {
+      final users = await _authRepository.getUsers();
+      final refreshedClient =
+          users.where((item) => item.id == _activeClientUser?.id).firstOrNull ??
+          _activeClientUser;
+      await _vehicleCatalogRepository.getSizes();
+      await load(refreshedClient!);
+    } catch (_) {
+      // Keep current visible state if live support data refresh fails.
+    } finally {
+      _isRealtimeRefreshing = false;
+    }
+  }
+
   void syncClient(UserModel clientUser) {
     if (_activeClientUser?.id == clientUser.id &&
         _activeClientUser?.updatedAt == clientUser.updatedAt) {
@@ -238,7 +293,8 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     required String submittedByUserId,
     required String? submittedByUserRole,
   }) async {
-    if (blockedMessageForForm(activeForm, clientUser) != null) {
+    final blocked = blockedMessageForForm(activeForm, clientUser);
+    if (blocked != null) {
       notifyListeners();
       return null;
     }
@@ -264,11 +320,22 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         submittedByUserId,
         submittedByUserRole,
       );
-      return await _bookingRepository.saveBooking(nextBooking);
+      final saved = await _bookingRepository.saveBooking(nextBooking);
+      return saved;
+    } catch (error) {
+      rethrow;
     } finally {
       isSubmitting = false;
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    _statusCacheUpdatesSubscription?.cancel();
+    _usersCacheUpdatesSubscription?.cancel();
+    _catalogCacheUpdatesSubscription?.cancel();
+    super.dispose();
   }
 
   Future<Booking?> submit({

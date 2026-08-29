@@ -37,6 +37,7 @@ class AdminFlowViewModel extends BaseViewModel {
   final StatusFormEngine _engine;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
+  StreamSubscription<void>? _statusCacheUpdatesSubscription;
   static List<StatusForm> _cachedForms = const [];
   static StatusForm? _cachedSelectedForm;
   static List<StatusField> _cachedFields = const [];
@@ -115,6 +116,16 @@ class AdminFlowViewModel extends BaseViewModel {
   String? successMessage;
   bool isPreviewVisible = true;
   String busyMessage = 'Loading, please wait ...';
+  bool _isRealtimeRefreshing = false;
+  bool get showBlockingLoading =>
+      isLoading &&
+      !_hasLoadedOnce &&
+      forms.isEmpty &&
+      _cachedForms.isEmpty &&
+      fieldLibrary.isEmpty &&
+      _cachedFieldLibrary.isEmpty &&
+      statuses.isEmpty &&
+      _cachedStatuses.isEmpty;
   bool get canReadForms => _roleAccessService.canAccess(
     DispatcherAccessCapability.formsRead,
   );
@@ -155,6 +166,7 @@ class AdminFlowViewModel extends BaseViewModel {
       canReadForms || canReadFields || canReadStatuses;
 
   Future<void> loadFormsPage() async {
+    _ensureStatusRealtimeSubscription();
     if (!canReadForms) {
       errorMessage = 'You do not have access to view forms.';
       notifyListeners();
@@ -201,6 +213,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> loadFieldsPage() async {
+    _ensureStatusRealtimeSubscription();
     if (!canReadFields) {
       errorMessage = 'You do not have access to view fields.';
       notifyListeners();
@@ -240,6 +253,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> loadStatusesPage() async {
+    _ensureStatusRealtimeSubscription();
     if (!canReadStatuses) {
       errorMessage = 'You do not have access to view statuses.';
       notifyListeners();
@@ -279,6 +293,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> loadForms() async {
+    _ensureStatusRealtimeSubscription();
     if (!canReadAnyFlowAdminData) {
       errorMessage = 'You do not have access to view flows.';
       notifyListeners();
@@ -352,6 +367,33 @@ class AdminFlowViewModel extends BaseViewModel {
         isLoading = false;
       }
       notifyListeners();
+    }
+  }
+
+  void _ensureStatusRealtimeSubscription() {
+    _statusCacheUpdatesSubscription ??= StatusRequest.instance
+        .watchStatusCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadFromRealtime());
+        });
+  }
+
+  Future<void> _reloadFromRealtime() async {
+    if (_isRealtimeRefreshing) {
+      return;
+    }
+    _isRealtimeRefreshing = true;
+    try {
+      if (forms.isNotEmpty ||
+          fieldLibrary.isNotEmpty ||
+          statuses.isNotEmpty ||
+          _hasLoadedOnce) {
+        await loadForms();
+      }
+    } catch (_) {
+      // Keep the current visible state if a live refresh fails.
+    } finally {
+      _isRealtimeRefreshing = false;
     }
   }
 
@@ -1467,4 +1509,10 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   static bool _isBlank(String? value) => value == null || value.trim().isEmpty;
+
+  @override
+  void dispose() {
+    _statusCacheUpdatesSubscription?.cancel();
+    super.dispose();
+  }
 }

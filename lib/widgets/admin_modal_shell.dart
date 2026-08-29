@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/widgets/shared/app_page_loading.dart';
 
 class AdminModalShell extends StatelessWidget {
+  static const BorderRadius _dialogBorderRadius = BorderRadius.all(
+    Radius.circular(28),
+  );
+
   const AdminModalShell({
     super.key,
     required this.title,
@@ -11,6 +16,11 @@ class AdminModalShell extends StatelessWidget {
     this.actions,
     this.contentInset = const EdgeInsets.fromLTRB(0, 16, 0, 24),
     this.actionsInset = const EdgeInsets.fromLTRB(24, 0, 24, 24),
+    this.isLoading = false,
+    this.loadingMessage = 'Loading, please wait ...',
+    this.loadingPadding = const EdgeInsets.all(24),
+    this.loadingOpacity = 0.72,
+    this.loadingAlignmentY = 0,
   });
 
   final String title;
@@ -20,6 +30,11 @@ class AdminModalShell extends StatelessWidget {
   final List<Widget>? actions;
   final EdgeInsets contentInset;
   final EdgeInsets actionsInset;
+  final bool isLoading;
+  final String loadingMessage;
+  final EdgeInsets loadingPadding;
+  final double loadingOpacity;
+  final double loadingAlignmentY;
 
   @override
   Widget build(BuildContext context) {
@@ -62,45 +77,65 @@ class AdminModalShell extends StatelessWidget {
       child: Dialog(
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
+        shape: const RoundedRectangleBorder(borderRadius: _dialogBorderRadius),
+        clipBehavior: Clip.antiAlias,
         insetPadding: EdgeInsets.symmetric(
           horizontal: horizontalInset,
           vertical: verticalInset,
         ),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: availableWidth,
-            maxHeight: mediaSize.height * maxHeightFactor,
-          ),
-          child: SizedBox(
-            width: availableWidth,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-                  child: Text(title, style: theme.textTheme.titleLarge),
+        child: Stack(
+          children: [
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: availableWidth,
+                maxHeight: mediaSize.height * maxHeightFactor,
+              ),
+              child: SizedBox(
+                width: availableWidth,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                      child: Text(title, style: theme.textTheme.titleLarge),
+                    ),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: bodyMaxHeight),
+                      child: SingleChildScrollView(
+                        primary: false,
+                        child: Padding(padding: contentInset, child: child),
+                      ),
+                    ),
+                    if (hasActions)
+                      Padding(
+                        padding: actionsInset,
+                        child: Wrap(
+                          alignment: WrapAlignment.end,
+                          spacing: 12,
+                          runSpacing: 8,
+                          children: actions!,
+                        ),
+                      ),
+                  ],
                 ),
-                ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: bodyMaxHeight),
-                  child: SingleChildScrollView(
-                    primary: false,
-                    child: Padding(padding: contentInset, child: child),
-                  ),
-                ),
-                if (hasActions)
-                  Padding(
-                    padding: actionsInset,
-                    child: Wrap(
-                      alignment: WrapAlignment.end,
-                      spacing: 12,
-                      runSpacing: 8,
-                      children: actions!,
+              ),
+            ),
+            if (isLoading)
+              Positioned.fill(
+                child: ColoredBox(
+                  color: Colors.white.withValues(alpha: loadingOpacity),
+                  child: Align(
+                    alignment: Alignment(0, loadingAlignmentY),
+                    child: AppPageLoading(
+                      message: loadingMessage,
+                      compact: true,
+                      padding: loadingPadding,
                     ),
                   ),
-              ],
-            ),
-          ),
+                ),
+              ),
+          ],
         ),
       ),
     );

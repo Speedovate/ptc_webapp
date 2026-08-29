@@ -418,13 +418,8 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             Expanded(child: content),
           ],
         );
-        final overlayVisible =
-            vm.isBusyLoading || vm.isSubmitting || vm.isCancelSubmitting;
-        final overlayMessage = vm.isCancelSubmitting
-            ? 'Submitting cancellation ...'
-            : vm.isSubmitting
-            ? 'Submitting update ...'
-            : 'Loading booking ...';
+        final overlayVisible = vm.isBusyLoading;
+        final overlayMessage = 'Loading booking ...';
 
         if (widget.embedded) {
           return AppPageLoadingOverlay(
@@ -611,31 +606,34 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                                 message:
                                     'Are you sure you want to ${actionLabel.toLowerCase()}?',
                                 confirmLabel: actionLabel,
+                                onConfirmAsync: () async {
+                                  final savedBooking = await vm.submit();
+                                  if (!context.mounted) {
+                                    return false;
+                                  }
+                                  if (savedBooking == null) {
+                                    if (vm.blockedMessage != null) {
+                                      AppSnackbar.showError(
+                                        context,
+                                        vm.blockedMessage!,
+                                      );
+                                    }
+                                    _restoreScrollSnapshot(scrollSnapshot);
+                                    return false;
+                                  }
+                                  _unfocusWithoutScroll(context);
+                                  widget.onBookingUpdated?.call(savedBooking);
+                                  AppSnackbar.showSuccess(
+                                    context,
+                                    'Booking updated.',
+                                  );
+                                  return true;
+                                },
                               );
                               if (!confirmed || !context.mounted) {
                                 _restoreScrollSnapshot(scrollSnapshot);
                                 return;
                               }
-                              final savedBooking = await vm.submit();
-                              if (!context.mounted) {
-                                return;
-                              }
-                              if (savedBooking == null) {
-                                if (vm.blockedMessage != null) {
-                                  AppSnackbar.showError(
-                                    context,
-                                    vm.blockedMessage!,
-                                  );
-                                }
-                                _restoreScrollSnapshot(scrollSnapshot);
-                                return;
-                              }
-                              _unfocusWithoutScroll(context);
-                              widget.onBookingUpdated?.call(savedBooking);
-                              AppSnackbar.showSuccess(
-                                context,
-                                'Booking updated.',
-                              );
                             },
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(0, 52),
@@ -649,9 +647,18 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                           borderRadius: BorderRadius.circular(14),
                         ),
                       ),
-                      child: Text(
-                        vm.isSubmitting ? 'Saving ...' : primaryActionLabel,
-                      ),
+                      child: vm.isSubmitting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
+                              ),
+                            )
+                          : Text(primaryActionLabel),
                     ),
                   ),
                   if (hasFormFields || vm.supportsAdditionalFields) ...[
@@ -912,25 +919,28 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                                       'Are you sure you want to ${actionLabel.toLowerCase()}?',
                                   confirmLabel: actionLabel,
                                   isDanger: true,
+                                  onConfirmAsync: () async {
+                                    final savedBooking = await vm.submitCancel();
+                                    if (!context.mounted) {
+                                      return false;
+                                    }
+                                    if (savedBooking == null) {
+                                      _restoreScrollSnapshot(scrollSnapshot);
+                                      return false;
+                                    }
+                                    _unfocusWithoutScroll(context);
+                                    widget.onBookingUpdated?.call(savedBooking);
+                                    AppSnackbar.showSuccess(
+                                      context,
+                                      'Booking cancelled.',
+                                    );
+                                    return true;
+                                  },
                                 );
                                 if (!confirmed || !context.mounted) {
                                   _restoreScrollSnapshot(scrollSnapshot);
                                   return;
                                 }
-                                final savedBooking = await vm.submitCancel();
-                                if (!context.mounted) {
-                                  return;
-                                }
-                                if (savedBooking == null) {
-                                  _restoreScrollSnapshot(scrollSnapshot);
-                                  return;
-                                }
-                                _unfocusWithoutScroll(context);
-                                widget.onBookingUpdated?.call(savedBooking);
-                                AppSnackbar.showSuccess(
-                                  context,
-                                  'Booking cancelled.',
-                                );
                               },
                         style: FilledButton.styleFrom(
                           minimumSize: const Size(0, 52),
@@ -1305,47 +1315,52 @@ class _WorkflowInteractiveFormSectionState
                               'Are you sure you want to ${actionLabel.toLowerCase()}?',
                           confirmLabel: actionLabel,
                           isDanger: widget.isDanger,
+                          onConfirmAsync: () async {
+                            setState(() {
+                              _isSubmitting = true;
+                            });
+                            try {
+                              final savedBooking = await vm.submitSpecificForm(
+                                form,
+                                Map<String, dynamic>.from(_answers),
+                              );
+                              if (!mounted) {
+                                return false;
+                              }
+                              if (savedBooking == null) {
+                                widget.restoreScrollSnapshot(scrollSnapshot);
+                                return false;
+                              }
+                              widget.onUnfocusWithoutScroll();
+                              setState(() {
+                                _answers = {};
+                                _errors = {};
+                                _resetTick += 1;
+                              });
+                              widget.onBookingUpdated?.call(savedBooking);
+                              if (!context.mounted) {
+                                return false;
+                              }
+                              AppSnackbar.showSuccess(
+                                context,
+                                widget.isDanger
+                                    ? 'Booking cancelled.'
+                                    : 'Booking updated.',
+                              );
+                              return true;
+                            } finally {
+                              if (mounted) {
+                                setState(() {
+                                  _isSubmitting = false;
+                                });
+                              }
+                            }
+                          },
                         );
                         if (!confirmed || !mounted) {
                           widget.restoreScrollSnapshot(scrollSnapshot);
                           return;
                         }
-                        setState(() {
-                          _isSubmitting = true;
-                        });
-                        final savedBooking = await vm.submitSpecificForm(
-                          form,
-                          Map<String, dynamic>.from(_answers),
-                        );
-                        if (!mounted) {
-                          return;
-                        }
-                        setState(() {
-                          _isSubmitting = false;
-                        });
-                        if (savedBooking == null) {
-                          widget.restoreScrollSnapshot(scrollSnapshot);
-                          return;
-                        }
-                        widget.onUnfocusWithoutScroll();
-                        setState(() {
-                          _answers = {};
-                          _errors = {};
-                          _resetTick += 1;
-                        });
-                        widget.onBookingUpdated?.call(savedBooking);
-                        if (!mounted) {
-                          return;
-                        }
-                        if (!context.mounted) {
-                          return;
-                        }
-                        AppSnackbar.showSuccess(
-                          context,
-                          widget.isDanger
-                              ? 'Booking cancelled.'
-                              : 'Booking updated.',
-                        );
                       },
                 style: FilledButton.styleFrom(
                   minimumSize: const Size(0, 52),
@@ -1372,6 +1387,7 @@ class _WorkflowInteractiveFormSectionState
                     ? null
                     : () {
                         widget.onUnfocusWithoutScroll();
+                        vm.clearForm();
                         setState(() {
                           _answers = {};
                           _errors = {};
@@ -2276,13 +2292,7 @@ class _WorkflowFieldCard extends StatelessWidget {
       case 'dropdown':
         final optionSourceKey =
             StatusFieldOptionResolver.resolvedOptionSourceKey(field);
-        final memberOptionLabels =
-            optionSourceKey == statusFieldOptionSourceClientMembers
-            ? vm.memberOptionLabelsForCurrentBooking()
-            : const <String, String>{};
-        final effectiveOptions = field.options.isNotEmpty
-            ? field.options
-            : memberOptionLabels.keys.toList();
+        final effectiveOptions = field.options;
         return AdminDropdownFormField<String>(
           initialValue: initialValue?.toString(),
           focusNode: focusNode,
@@ -2295,11 +2305,9 @@ class _WorkflowFieldCard extends StatelessWidget {
           ).copyWith(errorText: errorText),
           style: adminDropdownDisplayTextStyle,
           items: effectiveOptions.map((item) {
-            final label =
-                memberOptionLabels[item] ??
-                (optionSourceKey == statusFieldOptionSourceVehicleSizes
-                    ? VehicleRequest.instance.displayVehicleSizeLabel(item)
-                    : item);
+            final label = optionSourceKey == statusFieldOptionSourceVehicleSizes
+                ? VehicleRequest.instance.displayVehicleSizeLabel(item)
+                : item;
             return DropdownMenuItem<String>(
               value: item,
               child: Text(

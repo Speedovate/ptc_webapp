@@ -30,6 +30,7 @@ import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_image_source_picker.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
+import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
 class AdminBookingsView extends StatefulWidget {
@@ -106,6 +107,7 @@ class AdminBookingsView extends StatefulWidget {
       builder: (dialogContext) => _EditAdminBookingDialog(
         booking: booking,
         currentUser: currentUser,
+        onSave: vm.saveEditedBooking,
         currentStatusLabel: vm.clientStatusLabel(booking),
         clientUsers: vm.clientUsers(),
         statuses: vm.activeStatuses(),
@@ -119,7 +121,7 @@ class AdminBookingsView extends StatefulWidget {
     if (updatedBooking == null) {
       return null;
     }
-    return vm.saveEditedBooking(updatedBooking);
+    return updatedBooking;
   }
 
   static Future<Booking?> showNewBookingDialog(
@@ -343,6 +345,7 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
       builder: (dialogContext) => _EditAdminBookingDialog(
         booking: booking,
         currentUser: widget.user,
+        onSave: vm.saveEditedBooking,
         currentStatusLabel: vm.clientStatusLabel(booking),
         clientUsers: vm.clientUsers(),
         statuses: vm.activeStatuses(),
@@ -356,7 +359,7 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
     if (updatedBooking == null) {
       return;
     }
-    await vm.saveEditedBooking(updatedBooking);
+    vm.ingestSubmittedBooking(updatedBooking);
     if (!mounted) {
       return;
     }
@@ -513,6 +516,7 @@ class _EditAdminBookingDialog extends StatefulWidget {
   const _EditAdminBookingDialog({
     required this.booking,
     required this.currentUser,
+    required this.onSave,
     required this.currentStatusLabel,
     required this.clientUsers,
     required this.statuses,
@@ -525,6 +529,7 @@ class _EditAdminBookingDialog extends StatefulWidget {
 
   final Booking booking;
   final UserModel currentUser;
+  final Future<Booking> Function(Booking booking) onSave;
   final String currentStatusLabel;
   final List<UserModel> clientUsers;
   final List<Status> statuses;
@@ -586,6 +591,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
   String? _destinationErrorText;
   String? _destinationBarangayErrorText;
   List<VehicleCatalogItem> _vehicleSizes = const [];
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -1034,16 +1040,25 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
       actionsInset: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: _handleSave,
+          onPressed: _isSaving ? null : _handleSave,
           style: FilledButton.styleFrom(
             backgroundColor: AppColors.primaryColor,
             foregroundColor: Colors.white,
           ),
-          child: const Text('Save Changes'),
+          child: _isSaving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text('Save Changes'),
         ),
       ],
       child: SizedBox(
@@ -1357,7 +1372,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                       setState(() {
                         _statusKey = value ?? '';
                       });
-                      _focusNext(_driverFocusNode);
+                      _unfocusCurrentField();
                     },
                   ),
                   AdminModalDropdownField<String>(
@@ -1376,7 +1391,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                       setState(() {
                         _driverId = value;
                       });
-                      _focusNext(_helperFocusNode);
+                      _unfocusCurrentField();
                     },
                   ),
                   AdminModalDropdownField<String>(
@@ -1396,7 +1411,6 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                         _helperId = value;
                       });
                       _unfocusCurrentField();
-                      _handleSave();
                     },
                   ),
                 ],
@@ -1408,7 +1422,35 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     );
   }
 
-  void _handleSave() {
+  Future<void> _handleSave() async {
+    final draftBooking = _buildDraftBooking();
+    if (draftBooking == null) {
+      return;
+    }
+    setState(() {
+      _isSaving = true;
+    });
+    try {
+      final savedBooking = await widget.onSave(draftBooking);
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(savedBooking);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, error.toString());
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
+
+  Booking? _buildDraftBooking() {
     final origin = _originController.text.trim();
     final originBarangay = _originBarangayController.text.trim();
     final destination = _destinationController.text.trim();
@@ -1456,7 +1498,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                   ? 'Destination Barangay is required.'
                   : 'Select a valid Destination Barangay.';
       });
-      return;
+      return null;
     }
 
     final currentOutputs = Map<String, dynamic>.from(
@@ -1562,24 +1604,22 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
         ..addAll(appendedOutputs);
     }
 
-    Navigator.of(context).pop(
-      widget.booking.copyWith(
-        client: widget.clientUsers
-            .where((user) => user.id == _selectedBookerId)
-            .firstOrNull,
-        clientStatus: _statusKey.isEmpty
-            ? widget.booking.clientStatus
-            : _statusKey,
-        driverStatus: _statusKey.isEmpty
-            ? widget.booking.driverStatus
-            : _statusKey,
-        helperStatus: _statusKey.isEmpty
-            ? widget.booking.helperStatus
-            : _statusKey,
-        driver: _resolveSelectedUser(_driverId, widget.drivers),
-        helper: _resolveSelectedUser(_helperId, widget.helpers),
-        statusOutputs: currentOutputs,
-      ),
+    return widget.booking.copyWith(
+      client: widget.clientUsers
+          .where((user) => user.id == _selectedBookerId)
+          .firstOrNull,
+      clientStatus: _statusKey.isEmpty
+          ? widget.booking.clientStatus
+          : _statusKey,
+      driverStatus: _statusKey.isEmpty
+          ? widget.booking.driverStatus
+          : _statusKey,
+      helperStatus: _statusKey.isEmpty
+          ? widget.booking.helperStatus
+          : _statusKey,
+      driver: _resolveSelectedUser(_driverId, widget.drivers),
+      helper: _resolveSelectedUser(_helperId, widget.helpers),
+      statusOutputs: currentOutputs,
     );
   }
 
@@ -1795,7 +1835,6 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
   static const String _draftStorageKeyPrefix = 'admin_new_booking_draft_v1';
   late String _selectedBookerId;
   String? _bookerErrorText;
-  static const _placeholderClientUser = UserModel(role: 'client');
   late final FocusNode _bookedByFocusNode;
   final LocalFormDraftService _draftService = LocalFormDraftService.instance;
 
@@ -1843,8 +1882,9 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
     if (!mounted || draft == null) {
       return;
     }
+    final restoredId = draft['selected_booker_id']?.toString() ?? '';
     setState(() {
-      _selectedBookerId = draft['selected_booker_id']?.toString() ?? '';
+      _selectedBookerId = restoredId;
     });
   }
 
@@ -1856,6 +1896,18 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
 
   Future<void> _clearDraft() async {
     await _draftService.remove(_draftStorageKey);
+  }
+
+  Future<void> _handleBookingSubmitted(Booking booking) async {
+    await _clearDraft();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _selectedBookerId = '';
+      _bookerErrorText = null;
+    });
+    widget.onBookingSubmitted(booking);
   }
 
   @override
@@ -1927,43 +1979,49 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
                       ],
                     ),
                     const SizedBox(height: 6),
-                    ClientBookingHomeView(
-                      user: selectedUser ?? _placeholderClientUser,
-                      bookingClientUser: selectedUser ?? _placeholderClientUser,
-                      submittedByUserId: widget.currentUser.id,
-                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
-                      scrollable: false,
-                      loadingPlaceholderMinHeight: formVisibleHeight,
-                      submitBlockMessage: () {
-                        if (selectedUser == null) {
-                          if (mounted) {
+                    if (selectedUser == null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
+                        child: SizedBox(
+                          height: formVisibleHeight,
+                          child: Center(
+                            child: Text(
+                              'Select a client first before creating a booking.',
+                              style: TextStyle(
+                                color: AppColors.primaryColor.withValues(
+                                  alpha: 0.72,
+                                ),
+                                fontWeight: FontWeight.w600,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      ClientBookingHomeView(
+                        key: ValueKey(
+                          'admin-new-booking:${selectedUser.id ?? '-'}',
+                        ),
+                        user: selectedUser,
+                        bookingClientUser: selectedUser,
+                        submittedByUserId: widget.currentUser.id,
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
+                        scrollable: false,
+                        loadingPlaceholderMinHeight: formVisibleHeight,
+                        submitBlockMessage: () {
+                          if (_bookerErrorText != null && mounted) {
                             setState(() {
-                              _bookerErrorText = 'Client is required.';
+                              _bookerErrorText = null;
                             });
                           }
-                          return 'Select a client first before creating a booking.';
-                        }
-                        if (_bookerErrorText != null && mounted) {
-                          setState(() {
-                            _bookerErrorText = null;
-                          });
-                        }
-                        return null;
-                      },
-                      onRepresentativeTapWithoutClient: _openBookedByOptions,
-                      onBookingSubmitted: selectedUser == null
-                          ? null
-                          : (booking) {
-                              unawaited(_clearDraft());
-                              if (mounted) {
-                                setState(() {
-                                  _selectedBookerId = '';
-                                  _bookerErrorText = null;
-                                });
-                              }
-                              widget.onBookingSubmitted(booking);
-                            },
-                    ),
+                          return null;
+                        },
+                        onRepresentativeTapWithoutClient: _openBookedByOptions,
+                        onBookingSubmitted: (booking) {
+                          unawaited(_handleBookingSubmitted(booking));
+                        },
+                      ),
                   ],
                 ),
               );
@@ -1980,7 +2038,7 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
     }
     return widget.clientUsers.cast<UserModel?>().firstWhere(
       (user) => user?.id == _selectedBookerId,
-      orElse: () => widget.clientUsers.firstOrNull,
+      orElse: () => null,
     );
   }
 
@@ -2512,22 +2570,57 @@ class _AdminBookingResponsiveCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  adminMetaPill(statusLabel),
-                  const Spacer(),
-                  AdminListActionButton(
-                    icon: Icons.visibility_rounded,
-                    backgroundColor: Colors.yellow.shade900,
-                    onTap: onView,
-                  ),
-                  const SizedBox(width: 8),
-                  AdminListActionButton(
-                    icon: Icons.edit_outlined,
-                    onTap: onEdit,
-                  ),
-                ],
+              LayoutBuilder(
+                builder: (context, headerConstraints) {
+                  final useStackedHeader = headerConstraints.maxWidth < 180;
+                  final actions = Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AdminListActionButton(
+                        icon: Icons.visibility_rounded,
+                        backgroundColor: Colors.yellow.shade900,
+                        onTap: onView,
+                        size: useStackedHeader ? 36 : 40,
+                        iconSize: useStackedHeader ? 16 : 18,
+                      ),
+                      const SizedBox(width: 8),
+                      AdminListActionButton(
+                        icon: Icons.edit_outlined,
+                        onTap: onEdit,
+                        size: useStackedHeader ? 36 : 40,
+                        iconSize: useStackedHeader ? 16 : 18,
+                      ),
+                    ],
+                  );
+
+                  if (useStackedHeader) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        adminMetaPill(statusLabel),
+                        const SizedBox(height: 10),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: actions,
+                        ),
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: adminMetaPill(statusLabel),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      actions,
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 16),
               Wrap(
@@ -2627,43 +2720,54 @@ class _AdminBookingDetailHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Transform.translate(
-          offset: const Offset(-8, 0),
-          child: IconButton(
-            onPressed: onBack,
-            icon: const Icon(Icons.arrow_back_rounded),
-            color: AppColors.primaryColor,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-            visualDensity: VisualDensity.compact,
-            splashRadius: 22,
+        Expanded(
+          child: Row(
+            children: [
+              Transform.translate(
+                offset: const Offset(-8, 0),
+                child: IconButton(
+                  onPressed: onBack,
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  color: AppColors.primaryColor,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 40,
+                    minHeight: 40,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  splashRadius: 22,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Booking ${booking.id ?? '-'}',
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (onEdit != null) ...[
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: onEdit,
+                  tooltip: 'Edit booking',
+                  icon: const Icon(Icons.edit_rounded, size: 20),
+                  color: AppColors.primaryColor,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 40,
+                    minHeight: 40,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  splashRadius: 22,
+                ),
+              ],
+            ],
           ),
         ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            'Booking ${booking.id ?? '-'}',
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: AppColors.textPrimary,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-        if (onEdit != null) ...[
-          const SizedBox(width: 8),
-          IconButton(
-            onPressed: onEdit,
-            tooltip: 'Edit booking',
-            icon: const Icon(Icons.edit_rounded, size: 20),
-            color: AppColors.primaryColor,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-            visualDensity: VisualDensity.compact,
-            splashRadius: 22,
-          ),
-        ],
-        const Spacer(),
         BookingSupportButton(
           onPressed: () => openSupportDestination(
             context,
@@ -2761,7 +2865,7 @@ class _BookingsFiltersPanelState extends State<_BookingsFiltersPanel> {
                     width: itemWidth,
                     height: adminFilterFieldMinHeight,
                     child: _BookingsDateFilter(
-                      label: 'Start Date',
+                      label: 'Created Start',
                       value: widget.vm.startDate,
                       formatter: widget.vm.formatDate,
                       onSelected: widget.vm.updateStartDate,
@@ -2772,10 +2876,32 @@ class _BookingsFiltersPanelState extends State<_BookingsFiltersPanel> {
                     width: itemWidth,
                     height: adminFilterFieldMinHeight,
                     child: _BookingsDateFilter(
-                      label: 'End Date',
+                      label: 'Created End',
                       value: widget.vm.endDate,
                       formatter: widget.vm.formatDate,
                       onSelected: widget.vm.updateEndDate,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    height: adminFilterFieldMinHeight,
+                    child: _BookingsDateFilter(
+                      label: 'Updated Start',
+                      value: widget.vm.updatedStartDate,
+                      formatter: widget.vm.formatDate,
+                      onSelected: widget.vm.updateUpdatedStartDate,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    height: adminFilterFieldMinHeight,
+                    child: _BookingsDateFilter(
+                      label: 'Updated End',
+                      value: widget.vm.updatedEndDate,
+                      formatter: widget.vm.formatDate,
+                      onSelected: widget.vm.updateUpdatedEndDate,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -2913,13 +3039,9 @@ class _BookingsDateFilterState extends State<_BookingsDateFilter> {
                           : AppColors.primarySurface,
                       suffixIcon: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap: widget.value == null
-                            ? _pickDate
-                            : () => widget.onSelected(null),
+                        onTap: _pickDate,
                         child: Icon(
-                          widget.value == null
-                              ? Icons.calendar_today_rounded
-                              : Icons.close_rounded,
+                          Icons.calendar_today_rounded,
                           size: 18,
                           color: AppColors.primaryColor,
                         ),

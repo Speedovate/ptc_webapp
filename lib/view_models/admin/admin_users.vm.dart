@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
@@ -17,6 +19,7 @@ class AdminUsersViewModel extends BaseViewModel {
 
   final AuthRepository _repository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  StreamSubscription<void>? _usersCacheUpdatesSubscription;
   static List<UserModel> _cachedUsers = const [];
   static UserModel? _cachedCurrentUser;
   static UserModel? _cachedViewedUser;
@@ -40,7 +43,10 @@ class AdminUsersViewModel extends BaseViewModel {
   String _onlineFilter = 'All';
   DateTime? _startDate;
   DateTime? _endDate;
+  DateTime? _updatedStartDate;
+  DateTime? _updatedEndDate;
   String _busyMessage = 'Loading, please wait ...';
+  bool _isRealtimeRefreshing = false;
   String get searchQuery => _searchQuery;
   List<UserModel> get users => List.unmodifiable(_users);
   UserModel? get currentUser => _currentUser;
@@ -51,7 +57,15 @@ class AdminUsersViewModel extends BaseViewModel {
   String get onlineFilter => _onlineFilter;
   DateTime? get startDate => _startDate;
   DateTime? get endDate => _endDate;
+  DateTime? get updatedStartDate => _updatedStartDate;
+  DateTime? get updatedEndDate => _updatedEndDate;
   String get busyMessage => _busyMessage;
+  bool get showBlockingLoading =>
+      isBusy &&
+      _users.isEmpty &&
+      _cachedUsers.isEmpty &&
+      _currentUser == null &&
+      _cachedCurrentUser == null;
   bool get canCreateUsers => _roleAccessService.canAccess(
     DispatcherAccessCapability.usersCreate,
     role: _currentUser?.role,
@@ -83,6 +97,7 @@ class AdminUsersViewModel extends BaseViewModel {
   }
 
   Future<void> loadUsers({UserModel? fallbackCurrentUser}) async {
+    _ensureUsersRealtimeSubscription();
     _busyMessage = 'Loading users ...';
     final hasVisiblePrimaryData =
         _users.isNotEmpty ||
@@ -114,6 +129,57 @@ class AdminUsersViewModel extends BaseViewModel {
         setBusy(false);
       }
       notifyListeners();
+    }
+  }
+
+  void _ensureUsersRealtimeSubscription() {
+    _usersCacheUpdatesSubscription ??= AuthRequest.instance
+        .watchUsersCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadUsersFromRealtime());
+        });
+  }
+
+  Future<void> _reloadUsersFromRealtime() async {
+    if (_isRealtimeRefreshing) {
+      return;
+    }
+    _isRealtimeRefreshing = true;
+    try {
+      final results = await Future.wait([
+        _repository.getUsers(),
+        _repository.getCurrentUser(),
+      ]);
+      final users = results[0] as List<UserModel>;
+      final currentUser = results[1] as UserModel?;
+      _users
+        ..clear()
+        ..addAll(users);
+      _sortUsers();
+      _currentUser = currentUser ?? _currentUser;
+      if (_viewedUser != null) {
+        _viewedUser = _findUserById(_viewedUser?.id);
+      }
+      if (_viewedUserStack.isNotEmpty) {
+        final refreshedStack = _viewedUserStack
+            .map(
+              (item) => _findUserById(item.id),
+            )
+            .whereType<UserModel>()
+            .toList(growable: false);
+        _viewedUserStack
+          ..clear()
+          ..addAll(refreshedStack);
+      }
+      _cachedUsers = List<UserModel>.from(_users);
+      _cachedCurrentUser = _currentUser;
+      _cachedViewedUser = _viewedUser;
+      _cachedViewedUserStack = List<UserModel>.from(_viewedUserStack);
+      notifyListeners();
+    } catch (_) {
+      // Keep the current visible state if a live refresh fails.
+    } finally {
+      _isRealtimeRefreshing = false;
     }
   }
 
@@ -358,13 +424,24 @@ class AdminUsersViewModel extends BaseViewModel {
         _endDate == null ||
         (createdAt != null &&
             !_dateOnly(createdAt).isAfter(_dateOnly(_endDate!)));
+    final updatedAt = user.updatedAt;
+    final matchesUpdatedStartDate =
+        _updatedStartDate == null ||
+        (updatedAt != null &&
+            !_dateOnly(updatedAt).isBefore(_dateOnly(_updatedStartDate!)));
+    final matchesUpdatedEndDate =
+        _updatedEndDate == null ||
+        (updatedAt != null &&
+            !_dateOnly(updatedAt).isAfter(_dateOnly(_updatedEndDate!)));
 
     return matchesQuery &&
         matchesRole &&
         matchesActive &&
         matchesOnline &&
         matchesStartDate &&
-        matchesEndDate;
+        matchesEndDate &&
+        matchesUpdatedStartDate &&
+        matchesUpdatedEndDate;
   }
 
   void updateSearchQuery(String value) {
@@ -407,12 +484,34 @@ class AdminUsersViewModel extends BaseViewModel {
     notifyListeners();
   }
 
+  void updateUpdatedStartDate(DateTime? value) {
+    _updatedStartDate = value;
+    if (_updatedStartDate != null &&
+        _updatedEndDate != null &&
+        _updatedEndDate!.isBefore(_updatedStartDate!)) {
+      _updatedEndDate = _updatedStartDate;
+    }
+    notifyListeners();
+  }
+
+  void updateUpdatedEndDate(DateTime? value) {
+    _updatedEndDate = value;
+    if (_updatedStartDate != null &&
+        _updatedEndDate != null &&
+        _updatedStartDate!.isAfter(_updatedEndDate!)) {
+      _updatedStartDate = _updatedEndDate;
+    }
+    notifyListeners();
+  }
+
   void clearFilters() {
     _roleFilter = 'All';
     _activeFilter = 'All';
     _onlineFilter = 'All';
     _startDate = null;
     _endDate = null;
+    _updatedStartDate = null;
+    _updatedEndDate = null;
     notifyListeners();
   }
 
@@ -483,5 +582,23 @@ class AdminUsersViewModel extends BaseViewModel {
       return '-';
     }
     return humanizeDropdownValue(role);
+  }
+
+  UserModel? _findUserById(String? userId) {
+    if (userId == null || userId.isEmpty) {
+      return null;
+    }
+    for (final user in _users) {
+      if (user.id == userId) {
+        return user;
+      }
+    }
+    return null;
+  }
+
+  @override
+  void dispose() {
+    _usersCacheUpdatesSubscription?.cancel();
+    super.dispose();
   }
 }

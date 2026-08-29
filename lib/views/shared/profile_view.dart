@@ -283,35 +283,18 @@ class _ProfileViewState extends State<ProfileView> {
       AppSnackbar.showError(context, 'User ID is required.');
       return;
     }
-    final result = await showDialog<_ChangePasswordResult>(
+    await showDialog<void>(
       context: context,
-      builder: (dialogContext) => const _ChangePasswordDialog(),
+      builder: (dialogContext) => _ChangePasswordDialog(
+        onSave: (result) async {
+          await _authRepository.changePassword(
+            userId: userId,
+            oldPassword: result.oldPassword,
+            newPassword: result.newPassword,
+          );
+        },
+      ),
     );
-    if (!mounted || result == null) {
-      return;
-    }
-
-    try {
-      await _authRepository.changePassword(
-        userId: userId,
-        oldPassword: result.oldPassword,
-        newPassword: result.newPassword,
-      );
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showSuccess(context, 'Password updated.');
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      AppSnackbar.showError(
-        context,
-        error is Exception
-            ? error.toString().replaceFirst('Exception: ', '')
-            : 'We could not change the password right now.',
-      );
-    }
   }
 
   @override
@@ -1263,7 +1246,9 @@ class _ChangePasswordResult {
 }
 
 class _ChangePasswordDialog extends StatefulWidget {
-  const _ChangePasswordDialog();
+  const _ChangePasswordDialog({required this.onSave});
+
+  final Future<void> Function(_ChangePasswordResult result) onSave;
 
   @override
   State<_ChangePasswordDialog> createState() => _ChangePasswordDialogState();
@@ -1280,6 +1265,7 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
   bool _isOldPasswordObscured = true;
   bool _isNewPasswordObscured = true;
   bool _isConfirmPasswordObscured = true;
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
@@ -1306,7 +1292,10 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
     }
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    if (_isSubmitting) {
+      return;
+    }
     final oldPassword = _oldPasswordController.text.trim();
     final newPassword = _newPasswordController.text.trim();
     final confirmPassword = _confirmPasswordController.text.trim();
@@ -1321,9 +1310,37 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
       return;
     }
 
-    Navigator.of(context).pop(
-      _ChangePasswordResult(oldPassword: oldPassword, newPassword: newPassword),
+    final result = _ChangePasswordResult(
+      oldPassword: oldPassword,
+      newPassword: newPassword,
     );
+    setState(() {
+      _isSubmitting = true;
+    });
+    try {
+      await widget.onSave(result);
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showSuccess(context, 'Password updated.');
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        error is Exception
+            ? error.toString().replaceFirst('Exception: ', '')
+            : 'We could not change the password right now.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
   }
 
   String? _validate({
@@ -1375,10 +1392,22 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
       actionsInset: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Save')),
+        FilledButton(
+          onPressed: _isSubmitting ? null : _submit,
+          child: _isSubmitting
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text('Save'),
+        ),
       ],
       child: AdminModalFormBody(
         children: [

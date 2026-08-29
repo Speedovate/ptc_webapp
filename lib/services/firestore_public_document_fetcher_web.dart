@@ -57,6 +57,76 @@ class _WebFirestorePublicDocumentFetcher
     return mapped;
   }
 
+  @override
+  Future<bool> deleteDocument(String documentPath) async {
+    final options = DefaultFirebaseOptions.currentPlatform;
+    final projectId = options.projectId;
+    final apiKey = options.apiKey;
+    final encodedDocument = Uri.encodeComponent(documentPath).replaceAll(
+      '%2F',
+      '/',
+    );
+    final uri = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$encodedDocument?key=$apiKey',
+    );
+    final response = await html.HttpRequest.request(
+      uri.toString(),
+      method: 'DELETE',
+      requestHeaders: const {
+        'Accept': 'application/json',
+      },
+    ).timeout(const Duration(seconds: 8), onTimeout: () {
+      throw TimeoutException('public firestore delete timeout for $documentPath');
+    });
+    if (response.status == 200 || response.status == 204) {
+      return true;
+    }
+    throw Exception(
+      'public firestore delete failed for $documentPath (${response.status}): ${response.responseText ?? ""}',
+    );
+  }
+
+  @override
+  Future<bool> patchDocument(
+    String documentPath, {
+    required Map<String, dynamic> fields,
+    List<String>? updateMaskFieldPaths,
+  }) async {
+    final options = DefaultFirebaseOptions.currentPlatform;
+    final projectId = options.projectId;
+    final apiKey = options.apiKey;
+    final encodedDocument = Uri.encodeComponent(documentPath).replaceAll(
+      '%2F',
+      '/',
+    );
+    final query = <String>['key=$apiKey'];
+    for (final fieldPath in updateMaskFieldPaths ?? const <String>[]) {
+      query.add('updateMask.fieldPaths=${Uri.encodeQueryComponent(fieldPath)}');
+    }
+    final uri = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$encodedDocument?${query.join('&')}',
+    );
+    final response = await html.HttpRequest.request(
+      uri.toString(),
+      method: 'PATCH',
+      requestHeaders: const {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      sendData: jsonEncode({
+        'fields': _encodeFirestoreFields(fields),
+      }),
+    ).timeout(const Duration(seconds: 8), onTimeout: () {
+      throw TimeoutException('public firestore patch timeout for $documentPath');
+    });
+    if (response.status == 200) {
+      return true;
+    }
+    throw Exception(
+      'public firestore patch failed for $documentPath (${response.status}): ${response.responseText ?? ""}',
+    );
+  }
+
   Map<String, dynamic> _fromFirestoreDocument(Map<String, dynamic> document) {
     final name = document['name']?.toString() ?? '';
     final fields = document['fields'];
@@ -117,6 +187,55 @@ class _WebFirestorePublicDocumentFetcher
       return values.map(_decodeFirestoreValue).toList(growable: false);
     }
     return value;
+  }
+
+  Map<String, dynamic> _encodeFirestoreFields(Map<String, dynamic> fields) {
+    final encoded = <String, dynamic>{};
+    fields.forEach((key, value) {
+      encoded[key] = _encodeFirestoreValue(value);
+    });
+    return encoded;
+  }
+
+  Map<String, dynamic> _encodeFirestoreValue(dynamic value) {
+    if (value == null) {
+      return const {'nullValue': null};
+    }
+    if (value is String) {
+      return {'stringValue': value};
+    }
+    if (value is bool) {
+      return {'booleanValue': value};
+    }
+    if (value is int) {
+      return {'integerValue': value.toString()};
+    }
+    if (value is double) {
+      return {'doubleValue': value};
+    }
+    if (value is num) {
+      return {'doubleValue': value.toDouble()};
+    }
+    if (value is DateTime) {
+      return {'timestampValue': value.toUtc().toIso8601String()};
+    }
+    if (value is Map) {
+      final nestedFields = <String, dynamic>{};
+      value.forEach((key, nestedValue) {
+        nestedFields[key.toString()] = _encodeFirestoreValue(nestedValue);
+      });
+      return {
+        'mapValue': {'fields': nestedFields},
+      };
+    }
+    if (value is List) {
+      return {
+        'arrayValue': {
+          'values': value.map(_encodeFirestoreValue).toList(growable: false),
+        },
+      };
+    }
+    return {'stringValue': value.toString()};
   }
 }
 

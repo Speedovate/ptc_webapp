@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/services/firestore_public_document_fetcher.dart';
@@ -22,7 +23,10 @@ class RoleAccessRequest {
   static const dispatcherResourceKey = 'role_access_dispatcher';
   static const roleAccessResourceKey = 'role_access';
   static const Duration _startupTimeout = Duration(seconds: 6);
+  static const Duration _saveTimeout = Duration(seconds: 12);
   static bool _didKickOffBackgroundQueueInitialization = false;
+  static bool _didStartRealtimeCacheSync = false;
+  static bool _isRefreshingFromVersionSignal = false;
 
   final FirebaseFirestore _firestore;
   final FirestorePublicDocumentFetcher _firestorePublicDocumentFetcher;
@@ -31,6 +35,8 @@ class RoleAccessRequest {
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
+  final StreamController<void> _roleAccessCacheUpdates =
+      StreamController<void>.broadcast();
 
   CollectionReference<Map<String, dynamic>> get _roleAccessCollection =>
       _firestore.collection('role_access');
@@ -53,6 +59,7 @@ class RoleAccessRequest {
       return;
     }
     _didKickOffBackgroundQueueInitialization = true;
+    _ensureRealtimeCacheSync();
     unawaited(
       OfflineQueueCoordinatorService.instance.initialize().then((_) {
       }).catchError((error, stackTrace) {
@@ -60,42 +67,57 @@ class RoleAccessRequest {
     );
   }
 
+  void _ensureRealtimeCacheSync() {
+    if (_didStartRealtimeCacheSync) {
+      return;
+    }
+    _didStartRealtimeCacheSync = true;
+    _cache.watchResourceVersion(roleAccessResourceKey).listen((version) {
+      unawaited(_handleRoleAccessVersionSignal(version));
+    }, onError: (_, _) {});
+  }
+
+  Stream<void> watchRoleAccessCacheUpdates() async* {
+    await initialize();
+    yield* _roleAccessCacheUpdates.stream;
+  }
+
+  Future<void> _handleRoleAccessVersionSignal(String? remoteVersion) async {
+    final shouldRefresh = await _cache.hasRemoteVersionMismatch(
+      roleAccessResourceKey,
+      remoteVersion,
+    );
+    if (!shouldRefresh || _isRefreshingFromVersionSignal) {
+      return;
+    }
+    _isRefreshingFromVersionSignal = true;
+    try {
+      await _refreshRoleAccessFromSourceOfTruth();
+      _roleAccessCacheUpdates.add(null);
+    } finally {
+      _isRefreshingFromVersionSignal = false;
+    }
+  }
+
   Future<List<DispatcherAccessConfig>> getAllRoleAccessConfigs() async {
     await initialize();
-    final cachedDocuments = await _cache.readDocuments(roleAccessResourceKey);
-    if (cachedDocuments != null && cachedDocuments.isNotEmpty) {
-      if (currentNetworkStatus()) {
-        unawaited(_refreshRoleAccessCacheInBackground());
-      }
-      return cachedDocuments
-          .map(DispatcherAccessConfig.fromMap)
-          .toList(growable: false);
-    }
-    final sdkCachedDocuments = await _readRoleAccessSdkCacheOnly();
-    if (sdkCachedDocuments.isNotEmpty) {
-      _writeDocumentsInBackground(
-        resourceKey: roleAccessResourceKey,
-        documents: sdkCachedDocuments,
-      );
-      if (currentNetworkStatus()) {
-        unawaited(_refreshRoleAccessCacheInBackground());
-      }
-      return sdkCachedDocuments
-          .map(DispatcherAccessConfig.fromMap)
-          .toList(growable: false);
-    }
-    final snapshot = await _roleAccessCollection
-        .get()
-        .timeout(_startupTimeout, onTimeout: () {
-          throw TimeoutException('role_access fetch timeout');
-        });
     try {
-      final documents = snapshot.docs
-          .map((doc) => {'id': doc.id, ...doc.data()})
-          .toList(growable: false);
-      _writeDocumentsInBackground(
+      final documents = await _cache.getDocumentsVerifiedOnlineFirst(
         resourceKey: roleAccessResourceKey,
-        documents: documents,
+        fetchDocuments: () async {
+          final sdkCachedDocuments = await _readRoleAccessSdkCacheOnly();
+          if (sdkCachedDocuments.isNotEmpty && !currentNetworkStatus()) {
+            return sdkCachedDocuments;
+          }
+          final snapshot = await _roleAccessCollection
+              .get()
+              .timeout(_startupTimeout, onTimeout: () {
+                throw TimeoutException('role_access fetch timeout');
+              });
+          return snapshot.docs
+              .map((doc) => {'id': doc.id, ...doc.data()})
+              .toList(growable: false);
+        },
       );
       return documents
           .map(DispatcherAccessConfig.fromMap)
@@ -119,43 +141,25 @@ class RoleAccessRequest {
 
   Future<DispatcherAccessConfig> getDispatcherAccess() async {
     await initialize();
-    final cachedDocuments = await _cache.readDocuments(dispatcherResourceKey);
-    if (cachedDocuments != null && cachedDocuments.isNotEmpty) {
-      if (currentNetworkStatus()) {
-        unawaited(_refreshDispatcherCacheInBackground());
-      }
-      return DispatcherAccessConfig.fromMap(cachedDocuments.first);
-    }
-    final snapshot = await _roleAccessCollection.doc('dispatcher').get();
-    if (!snapshot.exists) {
-      return DispatcherAccessConfig.defaults();
-    }
-    final documents = <Map<String, dynamic>>[
-      {
-        'id': snapshot.id,
-        ...?snapshot.data(),
-      },
-    ];
-    await _cache.writeDocuments(
+    final documents = await _cache.getDocumentsVerifiedOnlineFirst(
       resourceKey: dispatcherResourceKey,
-      documents: documents,
+      fetchDocuments: () async {
+        final snapshot = await _roleAccessCollection.doc('dispatcher').get();
+        if (!snapshot.exists) {
+          return const <Map<String, dynamic>>[];
+        }
+        return <Map<String, dynamic>>[
+          {
+            'id': snapshot.id,
+            ...?snapshot.data(),
+          },
+        ];
+      },
     );
     if (documents.isEmpty) {
       return DispatcherAccessConfig.defaults();
     }
     return DispatcherAccessConfig.fromMap(documents.first);
-  }
-
-  Future<void> _refreshRoleAccessCacheInBackground() async {
-    try {
-      final snapshot = await _roleAccessCollection.get().timeout(_startupTimeout);
-      await _cache.writeDocuments(
-        resourceKey: roleAccessResourceKey,
-        documents: snapshot.docs
-            .map((doc) => {'id': doc.id, ...doc.data()})
-            .toList(growable: false),
-      );
-    } catch (_) {}
   }
 
   Future<List<Map<String, dynamic>>> _readRoleAccessSdkCacheOnly() async {
@@ -180,22 +184,25 @@ class RoleAccessRequest {
     return documents;
   }
 
-  Future<void> _refreshDispatcherCacheInBackground() async {
-    try {
-      final snapshot = await _roleAccessCollection.doc('dispatcher').get();
-      if (!snapshot.exists) {
-        return;
-      }
-      await _cache.writeDocuments(
-        resourceKey: dispatcherResourceKey,
-        documents: [
-          {
-            'id': snapshot.id,
-            ...?snapshot.data(),
-          },
-        ],
-      );
-    } catch (_) {}
+  Future<void> _refreshRoleAccessFromSourceOfTruth() async {
+    final snapshot = await _roleAccessCollection.get().timeout(
+      _startupTimeout,
+      onTimeout: () => throw TimeoutException('role_access refresh timeout'),
+    );
+    final documents = snapshot.docs
+        .map((doc) => {'id': doc.id, ...doc.data()})
+        .toList(growable: false);
+    await _cache.writeDocuments(
+      resourceKey: roleAccessResourceKey,
+      documents: documents,
+    );
+    final dispatcherDocument = documents
+        .where((item) => (item['id']?.toString() ?? '') == 'dispatcher')
+        .toList(growable: false);
+    await _cache.writeDocuments(
+      resourceKey: dispatcherResourceKey,
+      documents: dispatcherDocument,
+    );
   }
 
   Future<DispatcherAccessConfig> saveDispatcherAccess(
@@ -218,7 +225,15 @@ class RoleAccessRequest {
     );
     final document = next.toMap();
     if (currentNetworkStatus()) {
-      await _roleAccessCollection.doc(next.id).set(document);
+      try {
+        await _writeRoleAccessOnline(next.id, document);
+      } catch (error) {
+        await _offlineMutationQueueService.queueRoleAccessUpsert(
+          roleKey: next.id,
+          document: document,
+          baseUpdatedAt: config.updatedAtIso,
+        );
+      }
     } else {
       await _offlineMutationQueueService.queueRoleAccessUpsert(
         roleKey: next.id,
@@ -244,5 +259,58 @@ class RoleAccessRequest {
       );
     }
     return next;
+  }
+
+  Future<void> _writeRoleAccessOnline(
+    String roleId,
+    Map<String, dynamic> document,
+  ) async {
+    if (kIsWeb) {
+      try {
+        final patched = await _firestorePublicDocumentFetcher
+            .patchDocument(
+              'role_access/$roleId',
+              fields: document,
+              updateMaskFieldPaths: document.keys.toList(growable: false),
+            )
+            .timeout(
+              const Duration(seconds: 4),
+              onTimeout: () => throw TimeoutException(
+                'role_access rest patch timeout for $roleId',
+              ),
+            );
+        if (patched) {
+          return;
+        }
+      } catch (_) {}
+    }
+
+    try {
+      await _roleAccessCollection.doc(roleId).set(document).timeout(
+        _saveTimeout,
+        onTimeout: () => throw TimeoutException('role_access save timeout'),
+      );
+      return;
+    } catch (error) {
+      if (!kIsWeb) {
+        rethrow;
+      }
+    }
+
+    final patched = await _firestorePublicDocumentFetcher
+        .patchDocument(
+          'role_access/$roleId',
+          fields: document,
+          updateMaskFieldPaths: document.keys.toList(growable: false),
+        )
+        .timeout(
+          const Duration(seconds: 4),
+          onTimeout: () => throw TimeoutException(
+            'role_access rest patch timeout for $roleId',
+          ),
+        );
+    if (!patched) {
+      throw Exception('role_access rest patch returned false for $roleId');
+    }
   }
 }

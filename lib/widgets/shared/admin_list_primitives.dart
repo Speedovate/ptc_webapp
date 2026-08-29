@@ -311,16 +311,27 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final layoutScope = AdminShellLayoutScope.maybeOf(context);
     final effectiveRightGap = layoutScope?.filtersRightGap ?? widget.rightGap;
-    final popupContentMaxWidth = (screenWidth - effectiveRightGap - 24).clamp(
-      0.0,
-      screenWidth,
-    );
     final buttonBox =
         _buttonKey.currentContext?.findRenderObject() as RenderBox?;
-    final buttonTop = buttonBox?.localToGlobal(Offset.zero).dy ?? 0;
+    final buttonOrigin = buttonBox?.localToGlobal(Offset.zero) ?? Offset.zero;
+    final buttonLeft = buttonOrigin.dx;
+    final buttonTop = buttonOrigin.dy;
+    final buttonRight = buttonOrigin.dx + (buttonBox?.size.width ?? 0);
     final buttonHeight = buttonBox?.size.height ?? widget.controlHeight;
     final popupTop =
-        buttonTop + buttonHeight + widget.alignmentOffset.dy + widget.topGap;
+        buttonTop + buttonHeight + widget.alignmentOffset.dy + widget.topGap - 2;
+    final useDesktopLeftAnchor = !widget.iconOnly && screenWidth >= 520;
+    final popupContentMaxWidth = useDesktopLeftAnchor
+        ? (screenWidth - buttonLeft - 12).clamp(0.0, screenWidth)
+        : (screenWidth - 24).clamp(0.0, screenWidth);
+    final popupRight = useDesktopLeftAnchor
+        ? (buttonBox == null
+              ? effectiveRightGap
+              : (screenWidth - buttonRight - widget.alignmentOffset.dx).clamp(
+                  12.0,
+                  screenWidth - 12.0,
+                ))
+        : effectiveRightGap;
 
     return OverlayPortal(
       controller: _controller,
@@ -329,7 +340,8 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
           children: [
             Positioned(
               top: popupTop,
-              right: effectiveRightGap,
+              left: useDesktopLeftAnchor ? buttonLeft : null,
+              right: useDesktopLeftAnchor ? null : popupRight,
               child: TapRegion(
                 groupId: _tapRegionGroupId,
                 onTapOutside: (_) {

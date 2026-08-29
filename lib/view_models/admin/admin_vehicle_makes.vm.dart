@@ -29,6 +29,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   final VehicleCatalogRepository _repository;
   final AuthRepository _authRepository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  StreamSubscription<void>? _catalogCacheUpdatesSubscription;
   static List<VehicleMake> _cachedMakes = const [];
   static List<UserModel> _cachedDrivers = const [];
   static List<VehicleCatalogItem> _cachedTypes = const [];
@@ -50,12 +51,15 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   String _busyMessage = 'Loading, please wait ...';
   bool _hasLoadedOnce = false;
   bool _didScheduleWarmRetry = false;
+  bool _isRealtimeRefreshing = false;
 
   List<VehicleMake> get makes => _makes;
   List<UserModel> get drivers => _drivers;
   List<VehicleCatalogItem> get types => _types;
   String? get errorMessage => _errorMessage;
   String get busyMessage => _busyMessage;
+  bool get showBlockingLoading =>
+      isBusy && !_hasLoadedOnce && _makes.isEmpty && _cachedMakes.isEmpty;
   bool get canReadMakes => _roleAccessService.canAccess(
     DispatcherAccessCapability.vehicleMakesRead,
   );
@@ -70,6 +74,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   );
 
   Future<void> load() async {
+    _ensureCatalogRealtimeSubscription();
     if (!canReadMakes) {
       _errorMessage = 'You do not have access to view vehicle makes.';
       notifyListeners();
@@ -106,6 +111,32 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
       if (shouldShowLoadingState) {
         setBusy(false);
       }
+    }
+  }
+
+  void _ensureCatalogRealtimeSubscription() {
+    _catalogCacheUpdatesSubscription ??= VehicleRequest.instance
+        .watchCatalogCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadFromRealtime());
+        });
+  }
+
+  Future<void> _reloadFromRealtime() async {
+    if (_isRealtimeRefreshing) {
+      return;
+    }
+    _isRealtimeRefreshing = true;
+    try {
+      _makes = await _repository.getMakes();
+      _sortMakes();
+      _cachedMakes = List<VehicleMake>.from(_makes);
+      await _loadSupportingDataInBackground();
+      notifyListeners();
+    } catch (_) {
+      // Keep the current visible state if a live refresh fails.
+    } finally {
+      _isRealtimeRefreshing = false;
     }
   }
 
@@ -175,6 +206,8 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
       _cachedMakes = List<VehicleMake>.from(_makes);
       notifyListeners();
       return saved;
+    } catch (error) {
+      rethrow;
     } finally {
       setBusy(false);
     }
@@ -243,5 +276,11 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
       return -1;
     }
     return b.compareTo(a);
+  }
+
+  @override
+  void dispose() {
+    _catalogCacheUpdatesSubscription?.cancel();
+    super.dispose();
   }
 }

@@ -16,7 +16,7 @@ Future<ExportFileResult> exportFiles(
 
   if (files.length == 1) {
     final entry = files.entries.first;
-    downloadBytes(
+    await downloadBytes(
       fileName: entry.key,
       bytes: entry.value,
       mimeType: exportDocxMimeType,
@@ -26,7 +26,7 @@ Future<ExportFileResult> exportFiles(
     );
   }
 
-  downloadZip(
+  await downloadZip(
     fileName: bundleFileName,
     files: files,
   );

@@ -180,7 +180,11 @@ class BookingWorkflowViewModel extends BaseViewModel {
     return '${maxId + 1}';
   }
 
-  Future<void> load({required UserModel user, required Booking booking}) async {
+  Future<void> load({
+    required UserModel user,
+    required Booking booking,
+    bool hydrateInitialAnswers = true,
+  }) async {
     if (isBusyLoading) {
       return;
     }
@@ -189,6 +193,12 @@ class BookingWorkflowViewModel extends BaseViewModel {
       this.user = cachedSnapshot.user ?? user;
       this.booking = cachedSnapshot.booking ?? booking;
       _restoreCachedState();
+      if (!hydrateInitialAnswers) {
+        answers = {};
+        errors = {};
+        additionalFields = const [];
+        resetTick += 1;
+      }
     }
     this.user = user;
     this.booking = booking;
@@ -302,7 +312,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
       for (final entry in fieldEntries) {
         _fieldsByFormId[entry.key] = entry.value;
       }
-      answers = loadedForm == null
+      answers = !hydrateInitialAnswers || loadedForm == null
           ? {}
           : _initialAnswersForBooking(
               booking,
@@ -850,7 +860,11 @@ class BookingWorkflowViewModel extends BaseViewModel {
       errors = {};
       additionalFields = const [];
       resetTick += 1;
-      await load(user: currentUser, booking: savedBooking);
+      await load(
+        user: currentUser,
+        booking: savedBooking,
+        hydrateInitialAnswers: false,
+      );
       return savedBooking;
     } finally {
       isSubmitting = false;
@@ -892,7 +906,15 @@ class BookingWorkflowViewModel extends BaseViewModel {
         formAnswers: formAnswers,
       );
       final savedBooking = await _bookingRepository.saveBooking(nextBooking);
-      await load(user: currentUser, booking: savedBooking);
+      answers = {};
+      errors = {};
+      additionalFields = const [];
+      resetTick += 1;
+      await load(
+        user: currentUser,
+        booking: savedBooking,
+        hydrateInitialAnswers: false,
+      );
       return savedBooking;
     } finally {
       isSubmitting = false;
@@ -1008,10 +1030,6 @@ class BookingWorkflowViewModel extends BaseViewModel {
         )
         .toList()
       ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
-  }
-
-  Map<String, String> memberOptionLabelsForCurrentBooking() {
-    return const {};
   }
 
   String roleUserLabel(String userId, {required String fallbackRole}) {

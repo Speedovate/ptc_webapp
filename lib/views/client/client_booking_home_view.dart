@@ -156,10 +156,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
         final loadError = vm.loadError;
         if (loadError != null) {
           return AppPageLoadingOverlay(
-            isVisible: vm.isBusyLoading || vm.isSubmitting,
-            message: vm.isSubmitting
-                ? 'Submitting booking ...'
-                : 'Loading booking form ...',
+            isVisible: vm.isBusyLoading,
+            message: 'Loading booking form ...',
             visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
             loadingAlignmentY: widget.loadingOverlayAlignmentY,
             child: _ClientBookingStateCard(
@@ -185,10 +183,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
         final form = vm.form;
         if (form == null || vm.mainForms.isEmpty) {
           return AppPageLoadingOverlay(
-            isVisible: vm.isBusyLoading || vm.isSubmitting,
-            message: vm.isSubmitting
-                ? 'Submitting booking ...'
-                : 'Loading booking form ...',
+            isVisible: vm.isBusyLoading,
+            message: 'Loading booking form ...',
             visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
             loadingAlignmentY: widget.loadingOverlayAlignmentY,
             child: _ClientBookingStateCard(
@@ -225,7 +221,7 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
                   bottom: entry.key == vm.mainForms.length - 1 ? 0 : 18,
                 ),
                 child: _ClientBookingFormSection(
-                  key: ValueKey('${activeForm.id}:${_effectiveClientUser.id}'),
+                  key: ValueKey(activeForm.id),
                   vm: vm,
                   form: activeForm,
                   clientUser: _effectiveClientUser,
@@ -246,10 +242,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
             ? SingleChildScrollView(padding: widget.padding, child: content)
             : Padding(padding: widget.padding, child: content);
         return AppPageLoadingOverlay(
-          isVisible: vm.isBusyLoading || vm.isSubmitting,
-          message: vm.isSubmitting
-              ? 'Submitting booking ...'
-              : 'Loading booking form ...',
+          isVisible: vm.isBusyLoading,
+          message: 'Loading booking form ...',
           visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
           loadingAlignmentY: widget.loadingOverlayAlignmentY,
           child: scaffold,
@@ -375,14 +369,58 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
     unawaited(_restoreDraft());
   }
 
-  String get _draftKey {
-    final formId = widget.form.id?.trim() ?? '';
-    final clientId = widget.clientUser.id?.trim() ?? '';
-    final submittedBy = widget.submittedByUserId.trim();
-    if (formId.isEmpty || submittedBy.isEmpty) {
+  @override
+  void didUpdateWidget(covariant _ClientBookingFormSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldDraftKey = _draftKeyFor(
+      formId: oldWidget.form.id,
+      clientId: oldWidget.clientUser.id,
+      submittedByUserId: oldWidget.submittedByUserId,
+    );
+    final nextDraftKey = _draftKey;
+    if (oldDraftKey == nextDraftKey) {
+      return;
+    }
+    unawaited(_handleDraftIdentityChange(oldDraftKey: oldDraftKey));
+  }
+
+  String _draftKeyFor({
+    required String? formId,
+    required String? clientId,
+    required String submittedByUserId,
+  }) {
+    final normalizedFormId = formId?.trim() ?? '';
+    final normalizedClientId = clientId?.trim() ?? '';
+    final submittedBy = submittedByUserId.trim();
+    if (normalizedFormId.isEmpty || submittedBy.isEmpty) {
       return '';
     }
-    return 'booking_form_draft_v1:$submittedBy:$clientId:$formId';
+    return 'booking_form_draft_v1:$submittedBy:$normalizedClientId:$normalizedFormId';
+  }
+
+  String get _draftKey {
+    return _draftKeyFor(
+      formId: widget.form.id,
+      clientId: widget.clientUser.id,
+      submittedByUserId: widget.submittedByUserId,
+    );
+  }
+
+  Future<void> _handleDraftIdentityChange({
+    required String oldDraftKey,
+  }) async {
+    final nextDraftKey = _draftKey;
+    if (nextDraftKey.isEmpty) {
+      return;
+    }
+    if (_answers.isNotEmpty) {
+      if (oldDraftKey.isNotEmpty && oldDraftKey != nextDraftKey) {
+        await _draftService.remove(oldDraftKey);
+      }
+      await _persistDraft();
+      return;
+    }
+    await _restoreDraft();
   }
 
   Future<void> _restoreDraft() async {
@@ -587,71 +625,83 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
               title: 'Confirm Action',
               message: 'Are you sure you want to ${actionLabel.toLowerCase()}?',
               confirmLabel: actionLabel,
+              onConfirmAsync: () async {
+                widget.onUnfocusWithoutScroll();
+                setState(() {
+                  _isSubmitting = true;
+                });
+                try {
+                  final booking = await vm.submitForm(
+                    activeForm: form,
+                    formAnswers: Map<String, dynamic>.from(_answers),
+                    clientUser: widget.clientUser,
+                    submittedByUserId: widget.submittedByUserId,
+                    submittedByUserRole: widget.submittedByUserRole,
+                  );
+                  if (!mounted) {
+                    return false;
+                  }
+                  if (booking == null) {
+                    final latestBlockedMessage = vm.blockedMessageForForm(
+                      form,
+                      widget.clientUser,
+                    );
+                    if (latestBlockedMessage != null) {
+                      if (!context.mounted) {
+                        return false;
+                      }
+                      AppSnackbar.showError(context, latestBlockedMessage);
+                    } else {
+                      final latestExternalBlockMessage =
+                          widget.submitBlockMessage?.call();
+                      if (latestExternalBlockMessage != null &&
+                          context.mounted) {
+                        AppSnackbar.showError(
+                          context,
+                          latestExternalBlockMessage,
+                        );
+                      }
+                    }
+                    return false;
+                  }
+                  await _clearDraft();
+                  if (!mounted) {
+                    return false;
+                  }
+                  setState(() {
+                    _answers = {};
+                    _errors = {};
+                    _resetTick += 1;
+                  });
+                  if (!context.mounted) {
+                    return false;
+                  }
+                  AppSnackbar.showSuccess(
+                    context,
+                    (booking.localSyncStatus ?? '').trim().toLowerCase() ==
+                            'queued'
+                        ? 'Booking queued. It will sync once your internet is back.'
+                        : 'Booking created.',
+                  );
+                  widget.onBookingSubmitted?.call(booking);
+                  return true;
+                } catch (error) {
+                  if (context.mounted) {
+                    AppSnackbar.showError(context, error.toString());
+                  }
+                  return false;
+                } finally {
+                  if (mounted) {
+                    setState(() {
+                      _isSubmitting = false;
+                    });
+                  }
+                }
+              },
             );
             if (!confirmed || !mounted) {
               return;
             }
-            widget.onUnfocusWithoutScroll();
-            setState(() {
-              _isSubmitting = true;
-            });
-            final booking = await vm.submitForm(
-              activeForm: form,
-              formAnswers: Map<String, dynamic>.from(_answers),
-              clientUser: widget.clientUser,
-              submittedByUserId: widget.submittedByUserId,
-              submittedByUserRole: widget.submittedByUserRole,
-            );
-            if (!mounted) {
-              return;
-            }
-            setState(() {
-              _isSubmitting = false;
-            });
-            if (booking == null) {
-              final latestBlockedMessage = vm.blockedMessageForForm(
-                form,
-                widget.clientUser,
-              );
-              if (latestBlockedMessage != null) {
-                if (!mounted) {
-                  return;
-                }
-                if (!context.mounted) {
-                  return;
-                }
-                AppSnackbar.showError(context, latestBlockedMessage);
-              } else {
-                final latestExternalBlockMessage =
-                    widget.submitBlockMessage?.call();
-                if (latestExternalBlockMessage != null) {
-                  if (!mounted || !context.mounted) {
-                    return;
-                  }
-                  AppSnackbar.showError(context, latestExternalBlockMessage);
-                }
-              }
-              return;
-            }
-            await _clearDraft();
-            setState(() {
-              _answers = {};
-              _errors = {};
-              _resetTick += 1;
-            });
-            if (!mounted) {
-              return;
-            }
-            if (!context.mounted) {
-              return;
-            }
-            AppSnackbar.showSuccess(
-              context,
-              (booking.localSyncStatus ?? '').trim().toLowerCase() == 'queued'
-                  ? 'Booking queued. It will sync once your internet is back.'
-                  : 'Booking created.',
-            );
-            widget.onBookingSubmitted?.call(booking);
           },
           onClear: () {
             widget.onUnfocusWithoutScroll();

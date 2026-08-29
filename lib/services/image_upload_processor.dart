@@ -1,7 +1,6 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
-
 import 'package:image/image.dart' as img;
 
 class ProcessedUploadImage {
@@ -113,7 +112,7 @@ Future<ProcessedUploadImage> _prepareUploadImageForWeb(
   _ImageUploadTask task,
 ) async {
   final trimmedFileName = task.fileName.trim();
-  final fallbackFileName = trimmedFileName.isEmpty ? 'photo' : trimmedFileName;
+  final fallbackFileName = trimmedFileName.isEmpty ? 'photo.jpg' : trimmedFileName;
 
   ui.Codec? codec;
   ui.Image? image;
@@ -157,8 +156,8 @@ Future<ProcessedUploadImage> _prepareUploadImageForWeb(
     image = resizedFrame.image;
 
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-    final encodedBytes = byteData?.buffer.asUint8List();
-    if (encodedBytes == null) {
+    final pngBytes = byteData?.buffer.asUint8List();
+    if (pngBytes == null) {
       return ProcessedUploadImage(
         bytes: task.bytes,
         fileName: fallbackFileName,
@@ -179,10 +178,26 @@ Future<ProcessedUploadImage> _prepareUploadImageForWeb(
       return fallbackFileName.substring(0, dotIndex);
     })();
 
+    final decodedResized = img.decodeImage(pngBytes);
+    if (decodedResized == null) {
+      return ProcessedUploadImage(
+        bytes: task.bytes,
+        fileName: '$normalizedBaseName.jpg',
+        mimeType: 'image/jpeg',
+        size: task.bytes.length,
+        width: targetWidth,
+        height: targetHeight,
+      );
+    }
+
+    final encodedBytes = Uint8List.fromList(
+      img.encodeJpg(decodedResized, quality: ImageUploadProcessor.jpegQuality),
+    );
+
     return ProcessedUploadImage(
       bytes: encodedBytes,
-      fileName: '$normalizedBaseName.png',
-      mimeType: 'image/png',
+      fileName: '$normalizedBaseName.jpg',
+      mimeType: 'image/jpeg',
       size: encodedBytes.length,
       width: targetWidth,
       height: targetHeight,

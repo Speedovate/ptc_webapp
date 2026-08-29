@@ -1,6 +1,5 @@
-import 'dart:typed_data';
-
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:webapp/services/image_upload_processor.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_cleanup_queue_service.dart';

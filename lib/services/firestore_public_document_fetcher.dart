@@ -7,6 +7,14 @@ abstract class FirestorePublicDocumentFetcher {
     String collectionPath, {
     int pageSize = 100,
   });
+
+  Future<bool> deleteDocument(String documentPath);
+
+  Future<bool> patchDocument(
+    String documentPath, {
+    required Map<String, dynamic> fields,
+    List<String>? updateMaskFieldPaths,
+  });
 }
 
 FirestorePublicDocumentFetcher createFirestorePublicDocumentFetcher() =>

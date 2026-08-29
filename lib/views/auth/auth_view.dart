@@ -408,9 +408,9 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
                     : roleAccessService.publicRegisterRoleKeys)
                 .where(
                   (role) =>
-                      role != 'admin' &&
-                      role != 'manager' &&
-                      role != 'dispatcher',
+                      role == 'client' ||
+                      role == 'driver' ||
+                      role == 'helper',
                 )
                 .toList(growable: false);
         return ViewModelBuilder<AuthViewModel>.reactive(

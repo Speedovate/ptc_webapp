@@ -20,6 +20,7 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
 
   final VehicleCatalogRepository _repository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  StreamSubscription<void>? _catalogCacheUpdatesSubscription;
   static List<VehicleCatalogItem> _cachedTypes = const [];
   static String? _cachedErrorMessage;
   static bool _cachedHasLoadedOnce = false;
@@ -35,10 +36,13 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
   String _busyMessage = 'Loading, please wait ...';
   bool _hasLoadedOnce = false;
   bool _didScheduleWarmRetry = false;
+  bool _isRealtimeRefreshing = false;
 
   List<VehicleCatalogItem> get types => _types;
   String? get errorMessage => _errorMessage;
   String get busyMessage => _busyMessage;
+  bool get showBlockingLoading =>
+      isBusy && !_hasLoadedOnce && _types.isEmpty && _cachedTypes.isEmpty;
   bool get canReadTypes => _roleAccessService.canAccess(
     DispatcherAccessCapability.vehicleTypesRead,
   );
@@ -53,6 +57,7 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
   );
 
   Future<void> load() async {
+    _ensureCatalogRealtimeSubscription();
     if (!canReadTypes) {
       _errorMessage = 'You do not have access to view vehicle types.';
       notifyListeners();
@@ -88,6 +93,31 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
       if (shouldShowLoadingState) {
         setBusy(false);
       }
+    }
+  }
+
+  void _ensureCatalogRealtimeSubscription() {
+    _catalogCacheUpdatesSubscription ??= VehicleRequest.instance
+        .watchCatalogCacheUpdates()
+        .listen((_) {
+          unawaited(_reloadFromRealtime());
+        });
+  }
+
+  Future<void> _reloadFromRealtime() async {
+    if (_isRealtimeRefreshing) {
+      return;
+    }
+    _isRealtimeRefreshing = true;
+    try {
+      _types = await _repository.getTypes();
+      _sortTypes();
+      _cachedTypes = List<VehicleCatalogItem>.from(_types);
+      notifyListeners();
+    } catch (_) {
+      // Keep the current visible state if a live refresh fails.
+    } finally {
+      _isRealtimeRefreshing = false;
     }
   }
 
@@ -138,6 +168,8 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
       _cachedTypes = List<VehicleCatalogItem>.from(_types);
       notifyListeners();
       return saved;
+    } catch (error) {
+      rethrow;
     } finally {
       setBusy(false);
     }
@@ -209,5 +241,11 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
       return -1;
     }
     return b.compareTo(a);
+  }
+
+  @override
+  void dispose() {
+    _catalogCacheUpdatesSubscription?.cancel();
+    super.dispose();
   }
 }

@@ -15,6 +15,27 @@ import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/status_form/status_field_editor_card.dart';
 
+String _formatFieldsFilterDateValue(DateTime? value) {
+  if (value == null) {
+    return '';
+  }
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${months[value.month - 1]} ${value.day}, ${value.year}';
+}
+
 class AdminFieldsView extends StatelessWidget {
   const AdminFieldsView({super.key});
 
@@ -34,18 +55,29 @@ class AdminFieldsView extends StatelessWidget {
       message:
           'Are you sure you want to ${willBeActive ? 'activate' : 'deactivate'} ${field.title?.trim().isNotEmpty == true ? field.title!.trim() : 'this field'}?',
       confirmLabel: willBeActive ? 'Activate' : 'Deactivate',
+      onConfirmAsync: () async {
+        try {
+          await vm.setLibraryFieldActive(field, willBeActive);
+          if (!context.mounted) {
+            return false;
+          }
+          AppSnackbar.showSuccess(
+            context,
+            willBeActive ? 'Field activated.' : 'Field deactivated.',
+          );
+          return true;
+        } catch (error) {
+          if (!context.mounted) {
+            return false;
+          }
+          AppSnackbar.showError(context, error.toString());
+          return false;
+        }
+      },
     );
     if (!confirmed || !context.mounted) {
       return;
     }
-    await vm.setLibraryFieldActive(field, willBeActive);
-    if (!context.mounted) {
-      return;
-    }
-    AppSnackbar.showSuccess(
-      context,
-      willBeActive ? 'Field activated.' : 'Field deactivated.',
-    );
   }
 
   static Future<void> confirmDeleteField(
@@ -63,15 +95,26 @@ class AdminFieldsView extends StatelessWidget {
           'Are you sure you want to delete ${field.title?.trim().isNotEmpty == true ? field.title!.trim() : 'this field'}?',
       confirmLabel: 'Delete',
       isDanger: true,
+      onConfirmAsync: () async {
+        try {
+          await vm.deleteLibraryField(field);
+          if (!context.mounted) {
+            return false;
+          }
+          AppSnackbar.showSuccess(context, 'Field deleted.');
+          return true;
+        } catch (error) {
+          if (!context.mounted) {
+            return false;
+          }
+          AppSnackbar.showError(context, error.toString());
+          return false;
+        }
+      },
     );
     if (!confirmed || !context.mounted) {
       return;
     }
-    await vm.deleteLibraryField(field);
-    if (!context.mounted) {
-      return;
-    }
-    AppSnackbar.showSuccess(context, 'Field deleted.');
   }
 
   static const toolbarSectionGap = 12.0;
@@ -90,12 +133,12 @@ class AdminFieldsView extends StatelessWidget {
       onViewModelReady: (vm) => vm.loadFieldsPage(),
       builder: (context, vm, child) {
         return AppPageLoadingOverlay(
-          isVisible: vm.isLoading,
+          isVisible: vm.showBlockingLoading,
           message: vm.busyMessage,
           child: Column(
             children: [
               AppRefreshStrip(
-                isVisible: vm.isLoading,
+                isVisible: vm.showBlockingLoading,
                 padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
               ),
               Expanded(child: _FieldsContent(vm: vm)),
@@ -125,34 +168,18 @@ class AdminFieldsView extends StatelessWidget {
         generatedId: initialField == null ? vm.nextFieldId : null,
         readOnly: readOnly,
         onDraftChanged: initialField == null ? vm.updateDraftNewField : null,
+        onSaveAsync: readOnly ? null : (field) => vm.saveLibraryField(field),
       ),
     );
 
     if (!readOnly && savedField != null && context.mounted) {
-      try {
-        await vm.saveLibraryField(savedField);
-        if (initialField == null) {
-          vm.clearDraftNewField();
-        }
-        if (!context.mounted) {
-          return;
-        }
-        AppSnackbar.showSuccess(
-          context,
-          _fieldSaveMessage(isEditing: initialField != null),
-        );
-      } catch (error) {
-        if (!context.mounted) {
-          return;
-        }
-        AppSnackbar.showError(
-          context,
-          userFacingErrorMessage(
-            error,
-            fallback: 'We could not save the field right now.',
-          ),
-        );
+      if (initialField == null) {
+        vm.clearDraftNewField();
       }
+      AppSnackbar.showSuccess(
+        context,
+        _fieldSaveMessage(isEditing: initialField != null),
+      );
     }
   }
 }
@@ -170,6 +197,10 @@ class _FieldsContentState extends State<_FieldsContent> {
   String _searchQuery = '';
   String _typeFilter = 'All';
   String _activeFilter = 'All';
+  DateTime? _createdStartDate;
+  DateTime? _createdEndDate;
+  DateTime? _updatedStartDate;
+  DateTime? _updatedEndDate;
 
   String get _emptyMessage {
     final hasAnyData = widget.vm.fieldLibrary.isNotEmpty;
@@ -181,6 +212,10 @@ class _FieldsContentState extends State<_FieldsContent> {
     final activeFilterCount = [
       _typeFilter != 'All',
       _activeFilter != 'All',
+      _createdStartDate != null,
+      _createdEndDate != null,
+      _updatedStartDate != null,
+      _updatedEndDate != null,
     ].where((isActive) => isActive).length;
 
     return AdminUsersView.buildEmptyStateMessage(
@@ -203,9 +238,83 @@ class _FieldsContentState extends State<_FieldsContent> {
           haystack.contains(_searchQuery.trim().toLowerCase());
       final matchesType = _typeFilter == 'All' || type == _typeFilter;
       final matchesActive = _activeFilter == 'All' || active == _activeFilter;
+      final matchesCreatedStart =
+          _createdStartDate == null ||
+          (field.createdAt != null &&
+              !DateUtils.dateOnly(field.createdAt!).isBefore(
+                DateUtils.dateOnly(_createdStartDate!),
+              ));
+      final matchesCreatedEnd =
+          _createdEndDate == null ||
+          (field.createdAt != null &&
+              !DateUtils.dateOnly(field.createdAt!).isAfter(
+                DateUtils.dateOnly(_createdEndDate!),
+              ));
+      final matchesUpdatedStart =
+          _updatedStartDate == null ||
+          (field.updatedAt != null &&
+              !DateUtils.dateOnly(field.updatedAt!).isBefore(
+                DateUtils.dateOnly(_updatedStartDate!),
+              ));
+      final matchesUpdatedEnd =
+          _updatedEndDate == null ||
+          (field.updatedAt != null &&
+              !DateUtils.dateOnly(field.updatedAt!).isAfter(
+                DateUtils.dateOnly(_updatedEndDate!),
+              ));
 
-      return matchesSearch && matchesType && matchesActive;
+      return matchesSearch &&
+          matchesType &&
+          matchesActive &&
+          matchesCreatedStart &&
+          matchesCreatedEnd &&
+          matchesUpdatedStart &&
+          matchesUpdatedEnd;
     }).toList();
+  }
+
+  void _updateCreatedStartDate(DateTime? value) {
+    setState(() {
+      _createdStartDate = value;
+      if (_createdStartDate != null &&
+          _createdEndDate != null &&
+          _createdEndDate!.isBefore(_createdStartDate!)) {
+        _createdEndDate = _createdStartDate;
+      }
+    });
+  }
+
+  void _updateCreatedEndDate(DateTime? value) {
+    setState(() {
+      _createdEndDate = value;
+      if (_createdStartDate != null &&
+          _createdEndDate != null &&
+          _createdStartDate!.isAfter(_createdEndDate!)) {
+        _createdStartDate = _createdEndDate;
+      }
+    });
+  }
+
+  void _updateUpdatedStartDate(DateTime? value) {
+    setState(() {
+      _updatedStartDate = value;
+      if (_updatedStartDate != null &&
+          _updatedEndDate != null &&
+          _updatedEndDate!.isBefore(_updatedStartDate!)) {
+        _updatedEndDate = _updatedStartDate;
+      }
+    });
+  }
+
+  void _updateUpdatedEndDate(DateTime? value) {
+    setState(() {
+      _updatedEndDate = value;
+      if (_updatedStartDate != null &&
+          _updatedEndDate != null &&
+          _updatedStartDate!.isAfter(_updatedEndDate!)) {
+        _updatedStartDate = _updatedEndDate;
+      }
+    });
   }
 
   @override
@@ -223,11 +332,19 @@ class _FieldsContentState extends State<_FieldsContent> {
                 searchQuery: _searchQuery,
                 typeFilter: _typeFilter,
                 activeFilter: _activeFilter,
+                createdStartDate: _createdStartDate,
+                createdEndDate: _createdEndDate,
+                updatedStartDate: _updatedStartDate,
+                updatedEndDate: _updatedEndDate,
                 onSearchChanged: (value) =>
                     setState(() => _searchQuery = value),
                 onTypeChanged: (value) => setState(() => _typeFilter = value),
                 onActiveChanged: (value) =>
                     setState(() => _activeFilter = value),
+                onCreatedStartDateChanged: _updateCreatedStartDate,
+                onCreatedEndDateChanged: _updateCreatedEndDate,
+                onUpdatedStartDateChanged: _updateUpdatedStartDate,
+                onUpdatedEndDateChanged: _updateUpdatedEndDate,
                 onNewPressed: widget.vm.canCreateFields
                     ? () => AdminFieldsView.openFieldDialog(
                         context,
@@ -279,18 +396,34 @@ class _FieldsToolbar extends StatelessWidget {
     required this.searchQuery,
     required this.typeFilter,
     required this.activeFilter,
+    required this.createdStartDate,
+    required this.createdEndDate,
+    required this.updatedStartDate,
+    required this.updatedEndDate,
     required this.onSearchChanged,
     required this.onTypeChanged,
     required this.onActiveChanged,
+    required this.onCreatedStartDateChanged,
+    required this.onCreatedEndDateChanged,
+    required this.onUpdatedStartDateChanged,
+    required this.onUpdatedEndDateChanged,
     required this.onNewPressed,
   });
 
   final String searchQuery;
   final String typeFilter;
   final String activeFilter;
+  final DateTime? createdStartDate;
+  final DateTime? createdEndDate;
+  final DateTime? updatedStartDate;
+  final DateTime? updatedEndDate;
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<String> onTypeChanged;
   final ValueChanged<String> onActiveChanged;
+  final ValueChanged<DateTime?> onCreatedStartDateChanged;
+  final ValueChanged<DateTime?> onCreatedEndDateChanged;
+  final ValueChanged<DateTime?> onUpdatedStartDateChanged;
+  final ValueChanged<DateTime?> onUpdatedEndDateChanged;
   final VoidCallback? onNewPressed;
 
   @override
@@ -305,9 +438,17 @@ class _FieldsToolbar extends StatelessWidget {
       filtersBuilder: (context, iconOnly) => _FieldsFiltersPanel(
         typeFilter: typeFilter,
         activeFilter: activeFilter,
+        createdStartDate: createdStartDate,
+        createdEndDate: createdEndDate,
+        updatedStartDate: updatedStartDate,
+        updatedEndDate: updatedEndDate,
         iconOnly: iconOnly,
         onTypeChanged: onTypeChanged,
         onActiveChanged: onActiveChanged,
+        onCreatedStartDateChanged: onCreatedStartDateChanged,
+        onCreatedEndDateChanged: onCreatedEndDateChanged,
+        onUpdatedStartDateChanged: onUpdatedStartDateChanged,
+        onUpdatedEndDateChanged: onUpdatedEndDateChanged,
       ),
       onNewPressed: onNewPressed,
     );
@@ -368,16 +509,32 @@ class _FieldsFiltersPanel extends StatefulWidget {
   const _FieldsFiltersPanel({
     required this.typeFilter,
     required this.activeFilter,
+    required this.createdStartDate,
+    required this.createdEndDate,
+    required this.updatedStartDate,
+    required this.updatedEndDate,
     required this.iconOnly,
     required this.onTypeChanged,
     required this.onActiveChanged,
+    required this.onCreatedStartDateChanged,
+    required this.onCreatedEndDateChanged,
+    required this.onUpdatedStartDateChanged,
+    required this.onUpdatedEndDateChanged,
   });
 
   final String typeFilter;
   final String activeFilter;
+  final DateTime? createdStartDate;
+  final DateTime? createdEndDate;
+  final DateTime? updatedStartDate;
+  final DateTime? updatedEndDate;
   final bool iconOnly;
   final ValueChanged<String> onTypeChanged;
   final ValueChanged<String> onActiveChanged;
+  final ValueChanged<DateTime?> onCreatedStartDateChanged;
+  final ValueChanged<DateTime?> onCreatedEndDateChanged;
+  final ValueChanged<DateTime?> onUpdatedStartDateChanged;
+  final ValueChanged<DateTime?> onUpdatedEndDateChanged;
 
   @override
   State<_FieldsFiltersPanel> createState() => _FieldsFiltersPanelState();
@@ -404,7 +561,7 @@ class _FieldsFiltersPanelState extends State<_FieldsFiltersPanel> {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     const overlayRightPadding = 24.0;
-    const filterItemWidth = 180.0;
+    const filterItemWidth = 220.0;
     const overlayPadding = 14.0;
     const desiredOverlayWidth = filterItemWidth + (overlayPadding * 2);
     final overlayWidth = (screenWidth - 32 - overlayRightPadding).clamp(
@@ -461,12 +618,56 @@ class _FieldsFiltersPanelState extends State<_FieldsFiltersPanel> {
                   const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
+                    child: _FieldsDateFilter(
+                      label: 'Created Start',
+                      value: widget.createdStartDate,
+                      formatter: _formatFieldsFilterDateValue,
+                      onSelected: widget.onCreatedStartDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    child: _FieldsDateFilter(
+                      label: 'Created End',
+                      value: widget.createdEndDate,
+                      formatter: _formatFieldsFilterDateValue,
+                      onSelected: widget.onCreatedEndDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    child: _FieldsDateFilter(
+                      label: 'Updated Start',
+                      value: widget.updatedStartDate,
+                      formatter: _formatFieldsFilterDateValue,
+                      onSelected: widget.onUpdatedStartDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
+                    child: _FieldsDateFilter(
+                      label: 'Updated End',
+                      value: widget.updatedEndDate,
+                      formatter: _formatFieldsFilterDateValue,
+                      onSelected: widget.onUpdatedEndDateChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: itemWidth,
                     height: AdminFieldsView.controlHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
                         widget.onTypeChanged('All');
                         widget.onActiveChanged('All');
+                        widget.onCreatedStartDateChanged(null);
+                        widget.onCreatedEndDateChanged(null);
+                        widget.onUpdatedStartDateChanged(null);
+                        widget.onUpdatedEndDateChanged(null);
                       },
                       style: FilledButton.styleFrom(
                         backgroundColor: AppColors.danger,
@@ -540,6 +741,125 @@ class _FieldsFilterDropdown extends StatelessWidget {
         }
         focusNode.unfocus();
       },
+    );
+  }
+}
+
+class _FieldsDateFilter extends StatefulWidget {
+  const _FieldsDateFilter({
+    required this.label,
+    required this.value,
+    required this.formatter,
+    required this.onSelected,
+  });
+
+  final String label;
+  final DateTime? value;
+  final String Function(DateTime?) formatter;
+  final ValueChanged<DateTime?> onSelected;
+
+  @override
+  State<_FieldsDateFilter> createState() => _FieldsDateFilterState();
+}
+
+class _FieldsDateFilterState extends State<_FieldsDateFilter> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _displayValue);
+    _focusNode = FocusNode()..canRequestFocus = false;
+  }
+
+  @override
+  void didUpdateWidget(covariant _FieldsDateFilter oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_controller.text != _displayValue) {
+      _controller.value = _controller.value.copyWith(
+        text: _displayValue,
+        selection: TextSelection.collapsed(offset: _displayValue.length),
+        composing: TextRange.empty,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  String get _displayValue =>
+      widget.value == null ? '' : widget.formatter(widget.value);
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: widget.value ?? now,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (context.mounted) {
+      widget.onSelected(picked);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeFillColor = appFieldInteractiveFillColor(context);
+    return SizedBox(
+      height: AdminFieldsView.controlHeight,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() {
+          _isHovered = false;
+          _isPressed = false;
+        }),
+        child: Listener(
+          onPointerDown: (_) => setState(() => _isPressed = true),
+          onPointerUp: (_) => setState(() => _isPressed = false),
+          onPointerCancel: (_) => setState(() => _isPressed = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _pickDate,
+            child: IgnorePointer(
+              child: TextFormField(
+                controller: _controller,
+                focusNode: _focusNode,
+                readOnly: true,
+                showCursor: false,
+                enableInteractiveSelection: false,
+                style: adminDropdownDisplayTextStyle,
+                decoration: adminFormInputDecoration(
+                  widget.label,
+                  radius: AdminFieldsView.surfaceRadius,
+                  minHeight: AdminFieldsView.controlHeight,
+                ).copyWith(
+                  suffixIcon: IconButton(
+                    onPressed: null,
+                    icon: Icon(
+                      Icons.calendar_today_outlined,
+                      size: 18,
+                      color: AppColors.primaryColor,
+                    ),
+                  ),
+                  filled: true,
+                  fillColor: _isPressed
+                      ? activeFillColor.withValues(alpha: 0.92)
+                      : (_isHovered ? activeFillColor : Colors.white),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1126,6 +1446,7 @@ class _FieldEditorDialog extends StatefulWidget {
     this.generatedId,
     this.readOnly = false,
     this.onDraftChanged,
+    this.onSaveAsync,
   });
 
   final String title;
@@ -1133,6 +1454,7 @@ class _FieldEditorDialog extends StatefulWidget {
   final String? generatedId;
   final bool readOnly;
   final ValueChanged<StatusField>? onDraftChanged;
+  final Future<void> Function(StatusField field)? onSaveAsync;
 
   @override
   State<_FieldEditorDialog> createState() => _FieldEditorDialogState();
@@ -1140,6 +1462,7 @@ class _FieldEditorDialog extends StatefulWidget {
 
 class _FieldEditorDialogState extends State<_FieldEditorDialog> {
   late StatusField _field;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
@@ -1207,13 +1530,43 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
 
   bool get _isEditing => widget.initialField != null;
 
-  void _submitForm() {
+  Future<void> _submitForm() async {
     final validationMessage = _validationMessage();
     if (validationMessage != null) {
       AppSnackbar.showError(context, validationMessage);
       return;
     }
-    Navigator.of(context).pop(_normalizeFieldPlaceholder(_field));
+    final result = _normalizeFieldPlaceholder(_field);
+    if (widget.onSaveAsync == null) {
+      Navigator.of(context).pop(result);
+      return;
+    }
+    if (_isSubmitting) {
+      return;
+    }
+    setState(() => _isSubmitting = true);
+    try {
+      await widget.onSaveAsync!(result);
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(result);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        userFacingErrorMessage(
+          error,
+          fallback: 'We could not save the field right now.',
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
 
   StatusField _normalizeFieldPlaceholder(StatusField field) {
@@ -1266,10 +1619,21 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
             ]
           : [
               TextButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: _isSubmitting
+                    ? null
+                    : () => Navigator.of(context).pop(),
                 child: const Text('Cancel'),
               ),
-              FilledButton(onPressed: _submitForm, child: const Text('Save')),
+              FilledButton(
+                onPressed: _isSubmitting ? null : _submitForm,
+                child: _isSubmitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2.2),
+                      )
+                    : const Text('Save'),
+              ),
             ],
       child: AdminModalFormBody(
         readOnly: widget.readOnly,

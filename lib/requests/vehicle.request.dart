@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/models/vehicle_make.dart';
@@ -37,6 +38,8 @@ class VehicleRequest implements VehicleCatalogRepository {
   static List<VehicleCatalogItem> _cachedTypes = const [];
   static List<VehicleCatalogItem> _cachedSizes = const [];
   static bool _didStartBackgroundOfflineQueueInitialization = false;
+  static bool _didStartRealtimeCacheSync = false;
+  static bool _isRefreshingFromVersionSignal = false;
 
   void _writeDocumentsInBackground({
     required String resourceKey,
@@ -57,6 +60,8 @@ class VehicleRequest implements VehicleCatalogRepository {
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
+  final StreamController<void> _catalogCacheUpdates =
+      StreamController<void>.broadcast();
 
   CollectionReference<Map<String, dynamic>> get _makesCollection =>
       _firestore.collection('vehicle_makes');
@@ -72,6 +77,7 @@ class VehicleRequest implements VehicleCatalogRepository {
       return;
     }
     _didStartBackgroundOfflineQueueInitialization = true;
+    _ensureRealtimeCacheSync();
     if (currentNetworkStatus()) {
       unawaited(
         _refreshVehicleCachesInBackground().catchError((error, stackTrace) {
@@ -83,69 +89,78 @@ class VehicleRequest implements VehicleCatalogRepository {
     );
   }
 
+  void _ensureRealtimeCacheSync() {
+    if (_didStartRealtimeCacheSync) {
+      return;
+    }
+    _didStartRealtimeCacheSync = true;
+    _cache.watchResourceVersion(_vehicleMakesResourceKey).listen((version) {
+      unawaited(_handleCatalogVersionSignal(_vehicleMakesResourceKey, version));
+    }, onError: (_, _) {});
+    _cache.watchResourceVersion(_vehicleTypesResourceKey).listen((version) {
+      unawaited(_handleCatalogVersionSignal(_vehicleTypesResourceKey, version));
+    }, onError: (_, _) {});
+    _cache.watchResourceVersion(_vehicleSizesResourceKey).listen((version) {
+      unawaited(_handleCatalogVersionSignal(_vehicleSizesResourceKey, version));
+    }, onError: (_, _) {});
+    _cache.watchResourceVersion(_usersResourceKey).listen((version) {
+      unawaited(_handleCatalogVersionSignal(_usersResourceKey, version));
+    }, onError: (_, _) {});
+  }
+
+  Stream<void> watchCatalogCacheUpdates() async* {
+    await initialize();
+    yield* _catalogCacheUpdates.stream;
+  }
+
+  Future<void> _handleCatalogVersionSignal(
+    String resourceKey,
+    String? remoteVersion,
+  ) async {
+    final shouldRefresh = await _cache.hasRemoteVersionMismatch(
+      resourceKey,
+      remoteVersion,
+    );
+    if (!shouldRefresh || _isRefreshingFromVersionSignal) {
+      return;
+    }
+    _isRefreshingFromVersionSignal = true;
+    try {
+      await _refreshVehicleCachesInBackground();
+      _catalogCacheUpdates.add(null);
+    } finally {
+      _isRefreshingFromVersionSignal = false;
+    }
+  }
+
   @override
   Future<List<VehicleMake>> getMakes() async {
     return _runRequest(() async {
       await initialize();
-      final cachedMakes = await _cache.readDocuments(_vehicleMakesResourceKey);
       final cachedTypes = await _cache.readDocuments(_vehicleTypesResourceKey);
       final cachedUsers = await _cache.readDocuments(_usersResourceKey);
-      if (cachedMakes != null && cachedMakes.isNotEmpty) {
-        if (currentNetworkStatus()) {
-          unawaited(_refreshVehicleCachesInBackground());
-        }
-        final inflated = _inflateMakes(
-          makeDocuments: cachedMakes,
-          typeDocuments: cachedTypes ?? const <Map<String, dynamic>>[],
-          userDocuments: cachedUsers ?? const <Map<String, dynamic>>[],
-        );
-        return inflated;
-      }
-      final sdkCachedMakes = await _readCollectionSdkCacheOnly(_makesCollection);
-      if (sdkCachedMakes.isNotEmpty) {
-        final sdkCachedTypes = cachedTypes ?? await _readCollectionSdkCacheOnly(_typesCollection);
-        final sdkCachedUsers = cachedUsers ?? await _readCollectionSdkCacheOnly(_usersCollection);
-        _writeDocumentsInBackground(
-          resourceKey: _vehicleMakesResourceKey,
-          documents: sdkCachedMakes,
-        );
-        if (sdkCachedTypes.isNotEmpty) {
-          _writeDocumentsInBackground(
-            resourceKey: _vehicleTypesResourceKey,
-            documents: sdkCachedTypes,
-          );
-        }
-        if (sdkCachedUsers.isNotEmpty) {
-          _writeDocumentsInBackground(
-            resourceKey: _usersResourceKey,
-            documents: sdkCachedUsers,
-          );
-        }
-        if (currentNetworkStatus()) {
-          unawaited(_refreshVehicleCachesInBackground());
-        }
-        final inflated = _inflateMakes(
-          makeDocuments: sdkCachedMakes,
-          typeDocuments: sdkCachedTypes,
-          userDocuments: sdkCachedUsers,
-        );
-        return inflated;
-      }
       try {
-        final makesSnapshot = await _makesCollection.get().timeout(
-          _startupTimeout,
-          onTimeout: () => throw TimeoutException('vehicle makes fetch timeout'),
+        final makeDocuments = await _cache.getDocuments(
+          resourceKey: _vehicleMakesResourceKey,
+          fetchDocuments: () async {
+            final sdkCachedMakes = await _readCollectionSdkCacheOnly(
+              _makesCollection,
+            );
+            if (sdkCachedMakes.isNotEmpty && !currentNetworkStatus()) {
+              return sdkCachedMakes;
+            }
+            final makesSnapshot = await _makesCollection.get().timeout(
+              _startupTimeout,
+              onTimeout: () =>
+                  throw TimeoutException('vehicle makes fetch timeout'),
+            );
+            return makesSnapshot.docs
+                .map(documentData)
+                .toList(growable: false);
+          },
         );
-        final makeDocuments = makesSnapshot.docs.map(documentData).toList(growable: false);
         final typeDocuments = cachedTypes ?? const <Map<String, dynamic>>[];
         final userDocuments = cachedUsers ?? const <Map<String, dynamic>>[];
-        _writeDocumentsInBackground(
-          resourceKey: _vehicleMakesResourceKey,
-          documents: makeDocuments,
-        );
-        if (currentNetworkStatus()) {
-          unawaited(_refreshVehicleCachesInBackground());
-        }
         final inflated = _inflateMakes(
           makeDocuments: makeDocuments,
           typeDocuments: typeDocuments,
@@ -197,41 +212,23 @@ class VehicleRequest implements VehicleCatalogRepository {
   Future<List<VehicleCatalogItem>> getSizes() async {
     return _runRequest(() async {
       await initialize();
-      final cachedDocuments = await _cache.readDocuments(_vehicleSizesResourceKey);
-      if (cachedDocuments != null && cachedDocuments.isNotEmpty) {
-        if (currentNetworkStatus()) {
-          unawaited(_refreshVehicleCachesInBackground());
-        }
-        final items = cachedDocuments.map(VehicleCatalogItem.fromMap).toList();
-        items.sort(_compareByNewestIdFirst);
-        _cachedSizes = List<VehicleCatalogItem>.from(items);
-        return items;
-      }
-      final sdkCachedDocuments = await _readCollectionSdkCacheOnly(
-        _sizesCollection,
-      );
-      if (sdkCachedDocuments.isNotEmpty) {
-        _writeDocumentsInBackground(
-          resourceKey: _vehicleSizesResourceKey,
-          documents: sdkCachedDocuments,
-        );
-        if (currentNetworkStatus()) {
-          unawaited(_refreshVehicleCachesInBackground());
-        }
-        final items = sdkCachedDocuments.map(VehicleCatalogItem.fromMap).toList();
-        items.sort(_compareByNewestIdFirst);
-        _cachedSizes = List<VehicleCatalogItem>.from(items);
-        return items;
-      }
       try {
-        final snapshot = await _sizesCollection.get().timeout(
-          _startupTimeout,
-          onTimeout: () => throw TimeoutException('vehicle sizes fetch timeout'),
-        );
-        final documents = snapshot.docs.map(documentData).toList(growable: false);
-        _writeDocumentsInBackground(
+        final documents = await _cache.getDocuments(
           resourceKey: _vehicleSizesResourceKey,
-          documents: documents,
+          fetchDocuments: () async {
+            final sdkCachedDocuments = await _readCollectionSdkCacheOnly(
+              _sizesCollection,
+            );
+            if (sdkCachedDocuments.isNotEmpty && !currentNetworkStatus()) {
+              return sdkCachedDocuments;
+            }
+            final snapshot = await _sizesCollection.get().timeout(
+              _startupTimeout,
+              onTimeout: () =>
+                  throw TimeoutException('vehicle sizes fetch timeout'),
+            );
+            return snapshot.docs.map(documentData).toList(growable: false);
+          },
         );
         final items = documents.map(VehicleCatalogItem.fromMap).toList();
         items.sort(_compareByNewestIdFirst);
@@ -314,41 +311,23 @@ class VehicleRequest implements VehicleCatalogRepository {
   Future<List<VehicleCatalogItem>> getTypes() async {
     return _runRequest(() async {
       await initialize();
-      final cachedDocuments = await _cache.readDocuments(_vehicleTypesResourceKey);
-      if (cachedDocuments != null && cachedDocuments.isNotEmpty) {
-        if (currentNetworkStatus()) {
-          unawaited(_refreshVehicleCachesInBackground());
-        }
-        final items = cachedDocuments.map(VehicleCatalogItem.fromMap).toList();
-        items.sort(_compareByNewestIdFirst);
-        _cachedTypes = List<VehicleCatalogItem>.from(items);
-        return items;
-      }
-      final sdkCachedDocuments = await _readCollectionSdkCacheOnly(
-        _typesCollection,
-      );
-      if (sdkCachedDocuments.isNotEmpty) {
-        _writeDocumentsInBackground(
-          resourceKey: _vehicleTypesResourceKey,
-          documents: sdkCachedDocuments,
-        );
-        if (currentNetworkStatus()) {
-          unawaited(_refreshVehicleCachesInBackground());
-        }
-        final items = sdkCachedDocuments.map(VehicleCatalogItem.fromMap).toList();
-        items.sort(_compareByNewestIdFirst);
-        _cachedTypes = List<VehicleCatalogItem>.from(items);
-        return items;
-      }
       try {
-        final snapshot = await _typesCollection.get().timeout(
-          _startupTimeout,
-          onTimeout: () => throw TimeoutException('vehicle types fetch timeout'),
-        );
-        final documents = snapshot.docs.map(documentData).toList(growable: false);
-        _writeDocumentsInBackground(
+        final documents = await _cache.getDocuments(
           resourceKey: _vehicleTypesResourceKey,
-          documents: documents,
+          fetchDocuments: () async {
+            final sdkCachedDocuments = await _readCollectionSdkCacheOnly(
+              _typesCollection,
+            );
+            if (sdkCachedDocuments.isNotEmpty && !currentNetworkStatus()) {
+              return sdkCachedDocuments;
+            }
+            final snapshot = await _typesCollection.get().timeout(
+              _startupTimeout,
+              onTimeout: () =>
+                  throw TimeoutException('vehicle types fetch timeout'),
+            );
+            return snapshot.docs.map(documentData).toList(growable: false);
+          },
         );
         final items = documents.map(VehicleCatalogItem.fromMap).toList();
         items.sort(_compareByNewestIdFirst);
@@ -441,6 +420,7 @@ class VehicleRequest implements VehicleCatalogRepository {
     try {
       final makesSnapshot = await _makesCollection.get().timeout(_startupTimeout);
       final typesSnapshot = await _typesCollection.get().timeout(_startupTimeout);
+      final sizesSnapshot = await _sizesCollection.get().timeout(_startupTimeout);
       final usersSnapshot = await _usersCollection.get().timeout(_startupTimeout);
       await _cache.writeDocuments(
         resourceKey: _vehicleMakesResourceKey,
@@ -451,9 +431,25 @@ class VehicleRequest implements VehicleCatalogRepository {
         documents: typesSnapshot.docs.map(documentData).toList(growable: false),
       );
       await _cache.writeDocuments(
+        resourceKey: _vehicleSizesResourceKey,
+        documents: sizesSnapshot.docs.map(documentData).toList(growable: false),
+      );
+      await _cache.writeDocuments(
         resourceKey: _usersResourceKey,
         documents: usersSnapshot.docs.map(documentData).toList(growable: false),
       );
+      final typeItems = typesSnapshot.docs
+          .map(documentData)
+          .map(VehicleCatalogItem.fromMap)
+          .toList(growable: false)
+        ..sort(_compareByNewestIdFirst);
+      _cachedTypes = List<VehicleCatalogItem>.from(typeItems);
+      final sizeItems = sizesSnapshot.docs
+          .map(documentData)
+          .map(VehicleCatalogItem.fromMap)
+          .toList(growable: false)
+        ..sort(_compareByNewestIdFirst);
+      _cachedSizes = List<VehicleCatalogItem>.from(sizeItems);
     } catch (_) {}
   }
 
@@ -496,7 +492,12 @@ class VehicleRequest implements VehicleCatalogRepository {
   @override
   Future<VehicleMake> saveMake(VehicleMake make) async {
     return _runRequest(() async {
-      final nextId = normalizeId(make.id) ?? await _nextId(_makesCollection);
+      final nextId =
+          normalizeId(make.id) ??
+          await _nextId(
+            collection: _makesCollection,
+            resourceKey: _vehicleMakesResourceKey,
+          );
       final now = DateTime.now();
       final saved = make.copyWith(
         id: nextId,
@@ -509,7 +510,12 @@ class VehicleRequest implements VehicleCatalogRepository {
         documentId: nextId,
       );
       if (currentNetworkStatus()) {
-        await _makesCollection.doc(nextId).set(document);
+        await _writeCollectionDocumentOnline(
+          collectionPath: _vehicleMakesResourceKey,
+          documentId: nextId,
+          document: document,
+          collection: _makesCollection,
+        );
       } else {
         await _offlineMutationQueueService.queueCollectionDocumentUpsert(
           collectionKey: _vehicleMakesResourceKey,
@@ -534,7 +540,11 @@ class VehicleRequest implements VehicleCatalogRepository {
         return;
       }
       if (currentNetworkStatus()) {
-        await _makesCollection.doc(normalized).delete();
+        await _deleteCollectionDocumentOnline(
+          collectionPath: _vehicleMakesResourceKey,
+          documentId: normalized,
+          collection: _makesCollection,
+        );
       } else {
         await _offlineMutationQueueService.queueCollectionDocumentDelete(
           collectionKey: _vehicleMakesResourceKey,
@@ -565,7 +575,11 @@ class VehicleRequest implements VehicleCatalogRepository {
         return;
       }
       if (currentNetworkStatus()) {
-        await _sizesCollection.doc(normalized).delete();
+        await _deleteCollectionDocumentOnline(
+          collectionPath: _vehicleSizesResourceKey,
+          documentId: normalized,
+          collection: _sizesCollection,
+        );
       } else {
         await _offlineMutationQueueService.queueCollectionDocumentDelete(
           collectionKey: _vehicleSizesResourceKey,
@@ -599,7 +613,11 @@ class VehicleRequest implements VehicleCatalogRepository {
         return;
       }
       if (currentNetworkStatus()) {
-        await _typesCollection.doc(normalized).delete();
+        await _deleteCollectionDocumentOnline(
+          collectionPath: _vehicleTypesResourceKey,
+          documentId: normalized,
+          collection: _typesCollection,
+        );
       } else {
         await _offlineMutationQueueService.queueCollectionDocumentDelete(
           collectionKey: _vehicleTypesResourceKey,
@@ -622,7 +640,9 @@ class VehicleRequest implements VehicleCatalogRepository {
     required VehicleCatalogItem item,
   }) async {
     return _runRequest(() async {
-      final nextId = normalizeId(item.id) ?? await _nextId(collection);
+      final nextId =
+          normalizeId(item.id) ??
+          await _nextId(collection: collection, resourceKey: resourceKey);
       final now = DateTime.now();
       final saved = item.copyWith(
         id: nextId,
@@ -635,7 +655,12 @@ class VehicleRequest implements VehicleCatalogRepository {
         documentId: nextId,
       );
       if (currentNetworkStatus()) {
-        await collection.doc(nextId).set(document);
+        await _writeCollectionDocumentOnline(
+          collectionPath: resourceKey,
+          documentId: nextId,
+          document: document,
+          collection: collection,
+        );
       } else {
         await _offlineMutationQueueService.queueCollectionDocumentUpsert(
           collectionKey: resourceKey,
@@ -675,6 +700,115 @@ class VehicleRequest implements VehicleCatalogRepository {
     }, fallback: 'We could not save this item right now.');
   }
 
+  Future<void> _writeCollectionDocumentOnline({
+    required String collectionPath,
+    required String documentId,
+    required Map<String, dynamic> document,
+    required CollectionReference<Map<String, dynamic>> collection,
+  }) async {
+    if (kIsWeb) {
+      try {
+        final patched = await _firestorePublicDocumentFetcher
+            .patchDocument(
+              '$collectionPath/$documentId',
+              fields: document,
+              updateMaskFieldPaths: document.keys.toList(growable: false),
+            )
+            .timeout(
+              const Duration(seconds: 4),
+              onTimeout: () => throw TimeoutException(
+                '$collectionPath remote rest patch timeout for $documentId',
+              ),
+            );
+        if (patched) {
+          return;
+        }
+      } catch (_) {}
+    }
+
+    try {
+      await collection.doc(documentId).set(document).timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => throw TimeoutException(
+          '$collectionPath remote write timeout for $documentId',
+        ),
+      );
+      return;
+    } catch (error) {
+      if (!kIsWeb) {
+        rethrow;
+      }
+    }
+
+    final patched = await _firestorePublicDocumentFetcher
+        .patchDocument(
+          '$collectionPath/$documentId',
+          fields: document,
+          updateMaskFieldPaths: document.keys.toList(growable: false),
+        )
+        .timeout(
+          const Duration(seconds: 4),
+          onTimeout: () => throw TimeoutException(
+            '$collectionPath remote rest patch timeout for $documentId',
+          ),
+        );
+    if (!patched) {
+      throw Exception(
+        '$collectionPath remote rest patch returned false for $documentId',
+      );
+    }
+  }
+
+  Future<void> _deleteCollectionDocumentOnline({
+    required String collectionPath,
+    required String documentId,
+    required CollectionReference<Map<String, dynamic>> collection,
+  }) async {
+    if (kIsWeb) {
+      try {
+        final deleted = await _firestorePublicDocumentFetcher
+            .deleteDocument('$collectionPath/$documentId')
+            .timeout(
+              const Duration(seconds: 4),
+              onTimeout: () => throw TimeoutException(
+                '$collectionPath remote rest delete timeout for $documentId',
+              ),
+            );
+        if (deleted) {
+          return;
+        }
+      } catch (_) {}
+    }
+
+    try {
+      await collection.doc(documentId).delete().timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => throw TimeoutException(
+          '$collectionPath remote delete timeout for $documentId',
+        ),
+      );
+      return;
+    } catch (error) {
+      if (!kIsWeb) {
+        rethrow;
+      }
+    }
+
+    final deleted = await _firestorePublicDocumentFetcher
+        .deleteDocument('$collectionPath/$documentId')
+        .timeout(
+          const Duration(seconds: 4),
+          onTimeout: () => throw TimeoutException(
+            '$collectionPath remote rest delete timeout for $documentId',
+          ),
+        );
+    if (!deleted) {
+      throw Exception(
+        '$collectionPath remote rest delete returned false for $documentId',
+      );
+    }
+  }
+
   Map<String, dynamic> _toFirestoreMap(VehicleMake make) {
     return {
       'id': make.id,
@@ -711,7 +845,6 @@ class VehicleRequest implements VehicleCatalogRepository {
     if (map['role']?.toString() == 'driver') {
       return DriverModel(
         id: map['id']?.toString(),
-        firebaseAuthUid: map['firebase_auth_uid']?.toString(),
         role: map['role']?.toString() ?? 'driver',
         email: map['email']?.toString(),
         name: map['name']?.toString(),
@@ -729,15 +862,47 @@ class VehicleRequest implements VehicleCatalogRepository {
     return UserModel.fromMap(map);
   }
 
-  Future<String> _nextId(
-    CollectionReference<Map<String, dynamic>> collection,
-  ) async {
-    final snapshot = await collection.get();
-    final highest = snapshot.docs
-        .map((doc) => int.tryParse(documentData(doc)['id']?.toString() ?? ''))
-        .whereType<int>()
-        .fold<int>(0, (max, value) => value > max ? value : max);
-    return '${highest + 1}';
+  Future<String> _nextId({
+    required CollectionReference<Map<String, dynamic>> collection,
+    required String resourceKey,
+  }) async {
+    int highestFromDocuments(List<Map<String, dynamic>> documents) {
+      return documents
+          .map((doc) => int.tryParse(doc['id']?.toString() ?? ''))
+          .whereType<int>()
+          .fold<int>(0, (max, value) => value > max ? value : max);
+    }
+
+    final cachedDocuments = await _cache.readDocuments(resourceKey);
+    var highest = highestFromDocuments(cachedDocuments ?? const []);
+    if (!currentNetworkStatus()) {
+      return '${highest + 1}';
+    }
+
+    try {
+      final snapshot = await collection.get().timeout(
+        _startupTimeout,
+        onTimeout: () => throw TimeoutException('$resourceKey next id timeout'),
+      );
+      final remoteHighest = highestFromDocuments(
+        snapshot.docs.map(documentData).toList(growable: false),
+      );
+      if (remoteHighest > highest) {
+        highest = remoteHighest;
+      }
+      return '${highest + 1}';
+    } catch (_) {
+      try {
+        final remoteDocuments = await _fetchCollectionDocumentsViaPublicRest(
+          resourceKey,
+        );
+        final remoteHighest = highestFromDocuments(remoteDocuments);
+        if (remoteHighest > highest) {
+          highest = remoteHighest;
+        }
+      } catch (_) {}
+      return '${highest + 1}';
+    }
   }
 
   int _compareByNewestIdFirst(dynamic a, dynamic b) {
