@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/status.dart';
@@ -13,6 +14,7 @@ import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
+import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
@@ -42,6 +44,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     loadError = _cachedLoadError;
     blockedMessage = _cachedBlockedMessage;
     _activeClientUser = _cachedActiveClientUser;
+    _hasLoadedOnce = _cachedHasLoadedOnce;
   }
 
   final StatusFormRepository _statusRepository;
@@ -50,6 +53,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   final VehicleCatalogRepository _vehicleCatalogRepository;
   final StatusFormEngine _engine;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
+  final AppWarmupService _warmupService = AppWarmupService.instance;
   StreamSubscription<void>? _statusCacheUpdatesSubscription;
   StreamSubscription<void>? _usersCacheUpdatesSubscription;
   StreamSubscription<void>? _catalogCacheUpdatesSubscription;
@@ -61,6 +65,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   static String? _cachedLoadError;
   static String? _cachedBlockedMessage;
   static UserModel? _cachedActiveClientUser;
+  static bool _cachedHasLoadedOnce = false;
 
   static void clearCachedState() {
     _cachedMainForms = const [];
@@ -71,6 +76,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     _cachedLoadError = null;
     _cachedBlockedMessage = null;
     _cachedActiveClientUser = null;
+    _cachedHasLoadedOnce = false;
   }
 
   List<StatusForm> mainForms = [];
@@ -88,10 +94,14 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   UserModel? _activeClientUser;
   UserModel? _pendingClientUser;
   bool _isRealtimeRefreshing = false;
+  bool _hasLoadedOnce = false;
   static const representativeNameKey = 'representative_name';
   static const representativePhoneKey = 'representative_phone';
 
   Future<void> load(UserModel clientUser) async {
+    _log(
+      'load start loggedIn=${clientUser.id != null} user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} visiblePrimary=${mainForms.isNotEmpty || form != null || fields.isNotEmpty || _cachedMainForms.isNotEmpty || _cachedForm != null || _cachedFields.isNotEmpty}',
+    );
     _ensureRealtimeSubscriptions();
     if (isBusyLoading) {
       _pendingClientUser = clientUser;
@@ -105,7 +115,12 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         _cachedMainForms.isNotEmpty ||
         _cachedForm != null ||
         _cachedFields.isNotEmpty;
-    isBusyLoading = !hasVisiblePrimaryData;
+    isBusyLoading = !_hasLoadedOnce && !hasVisiblePrimaryData;
+    if (isBusyLoading) {
+      _log('overlay show section=client-home');
+    } else {
+      _log('silent load only section=client-home');
+    }
     loadError = null;
     blockedMessage = null;
     notifyListeners();
@@ -164,14 +179,29 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       _cachedLoadError = null;
       _cachedBlockedMessage = blockedMessage;
       _cachedActiveClientUser = _activeClientUser;
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
+      _log(
+        'load success user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} forms=${mainForms.length} activeForm=${form?.id ?? "-"} statuses=${statuses.length}',
+      );
+      unawaited(_warmupService.warmUpForUser(clientUser));
     } catch (error) {
+      _log(
+        'load error user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} error=$error',
+      );
       loadError = userFacingErrorMessage(
         error,
         fallback: 'We could not load the booking form right now.',
       );
       _cachedLoadError = loadError;
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
     } finally {
       isBusyLoading = false;
+      _log('overlay hide section=client-home reason=load-finish');
+      _log(
+        'load finish user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} busy=$isBusyLoading error=${loadError ?? "-"}',
+      );
       notifyListeners();
       final pendingClientUser = _pendingClientUser;
       if (pendingClientUser != null &&
@@ -207,6 +237,9 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       return;
     }
     _isRealtimeRefreshing = true;
+    _log(
+      'realtime reload start user=${_activeClientUser?.id ?? "-"} role=${_activeClientUser?.role ?? "-"}',
+    );
     try {
       final users = await _authRepository.getUsers();
       final refreshedClient =
@@ -251,6 +284,11 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     errors = {};
     resetTick += 1;
     notifyListeners();
+  }
+
+  void _log(String message) {
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('[$timestamp][RoleClientHome] $message');
   }
 
   List<StatusField> fieldsForForm(

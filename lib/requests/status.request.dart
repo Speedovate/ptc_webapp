@@ -28,6 +28,12 @@ class StatusRequest implements StatusFormRepository {
   static const _statusFieldsResourceKey = 'status_fields';
   static const _statusesResourceKey = 'statuses';
   static const Duration _startupTimeout = Duration(seconds: 6);
+  static List<StatusForm> _hydratedFormsSnapshot = const [];
+  static List<StatusField> _hydratedFieldsSnapshot = const [];
+  static List<Status> _hydratedStatusesSnapshot = const [];
+  static bool _hasResolvedForms = false;
+  static bool _hasResolvedFields = false;
+  static bool _hasResolvedStatuses = false;
   static bool _didStartBackgroundOfflineQueueInitialization = false;
   static bool _didStartRealtimeCacheSync = false;
   static bool _isRefreshingFromVersionSignal = false;
@@ -61,6 +67,16 @@ class StatusRequest implements StatusFormRepository {
       _firestore.collection('status_fields');
   CollectionReference<Map<String, dynamic>> get _statusesCollection =>
       _firestore.collection('statuses');
+
+  static bool get hasResolvedForms => _hasResolvedForms;
+  static bool get hasResolvedFields => _hasResolvedFields;
+  static bool get hasResolvedStatuses => _hasResolvedStatuses;
+  static List<StatusForm> get hydratedFormsSnapshot =>
+      List<StatusForm>.unmodifiable(_hydratedFormsSnapshot);
+  static List<StatusField> get hydratedFieldsSnapshot =>
+      List<StatusField>.unmodifiable(_hydratedFieldsSnapshot);
+  static List<Status> get hydratedStatusesSnapshot =>
+      List<Status>.unmodifiable(_hydratedStatusesSnapshot);
 
   Future<void> initialize() async {
     if (_didStartBackgroundOfflineQueueInitialization) {
@@ -123,6 +139,8 @@ class StatusRequest implements StatusFormRepository {
       initialize();
       final forms = await _getHydratedForms();
       forms.sort(_compareFormsForStatus);
+      _hasResolvedForms = true;
+      _hydratedFormsSnapshot = List<StatusForm>.from(forms);
       return forms;
     }, fallback: 'We could not load the flows right now.');
   }
@@ -154,6 +172,8 @@ class StatusRequest implements StatusFormRepository {
           (a, b) =>
               (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
         );
+        _hasResolvedFields = true;
+        _hydratedFieldsSnapshot = List<StatusField>.from(fields);
         return fields;
       } catch (error) {
         final documents = await _fetchCollectionDocumentsViaPublicRest(
@@ -171,6 +191,8 @@ class StatusRequest implements StatusFormRepository {
           (a, b) =>
               (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
         );
+        _hasResolvedFields = true;
+        _hydratedFieldsSnapshot = List<StatusField>.from(fields);
         return fields;
       }
     }, fallback: 'We could not load the fields right now.');
@@ -198,6 +220,8 @@ class StatusRequest implements StatusFormRepository {
           },
         );
         final statuses = documents.map(Status.fromMap).toList();
+        _hasResolvedStatuses = true;
+        _hydratedStatusesSnapshot = List<Status>.from(statuses);
         return statuses;
       } catch (error) {
         final documents = await _fetchCollectionDocumentsViaPublicRest(
@@ -211,6 +235,8 @@ class StatusRequest implements StatusFormRepository {
           documents: documents,
         );
         final statuses = documents.map(Status.fromMap).toList();
+        _hasResolvedStatuses = true;
+        _hydratedStatusesSnapshot = List<Status>.from(statuses);
         return statuses;
       }
     }, fallback: 'We could not load the statuses right now.');
@@ -852,6 +878,15 @@ class StatusRequest implements StatusFormRepository {
         formDocuments: formDocuments,
         fieldDocuments: fieldDocuments,
       );
+      _hasResolvedForms = true;
+      _hydratedFormsSnapshot = List<StatusForm>.from(forms);
+      final fields = fieldDocuments.map(StatusField.fromMap).toList();
+      fields.sort(
+        (a, b) =>
+            (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+      );
+      _hasResolvedFields = true;
+      _hydratedFieldsSnapshot = List<StatusField>.from(fields);
       return forms;
     } catch (error) {
       final results = await Future.wait([
@@ -877,6 +912,15 @@ class StatusRequest implements StatusFormRepository {
         formDocuments: formDocuments,
         fieldDocuments: fieldDocuments,
       );
+      _hasResolvedForms = true;
+      _hydratedFormsSnapshot = List<StatusForm>.from(forms);
+      final fields = fieldDocuments.map(StatusField.fromMap).toList();
+      fields.sort(
+        (a, b) =>
+            (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+      );
+      _hasResolvedFields = true;
+      _hydratedFieldsSnapshot = List<StatusField>.from(fields);
       return forms;
     }
   }
@@ -932,6 +976,21 @@ class StatusRequest implements StatusFormRepository {
             .map(documentData)
             .toList(growable: false),
       );
+      final forms = _inflateForms(
+        formDocuments: formsSnapshot.docs.map(documentData).toList(growable: false),
+        fieldDocuments: fieldsSnapshot.docs.map(documentData).toList(growable: false),
+      );
+      _hydratedFormsSnapshot = List<StatusForm>.from(forms);
+      _hasResolvedForms = true;
+      final fields = fieldsSnapshot.docs.map(documentData).map(StatusField.fromMap).toList(growable: false)
+        ..sort(
+          (a, b) =>
+              (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+        );
+      _hydratedFieldsSnapshot = List<StatusField>.from(fields);
+      _hasResolvedFields = true;
+      _hydratedStatusesSnapshot = statusesSnapshot.docs.map(documentData).map(Status.fromMap).toList(growable: false);
+      _hasResolvedStatuses = true;
     } catch (_) {}
   }
 

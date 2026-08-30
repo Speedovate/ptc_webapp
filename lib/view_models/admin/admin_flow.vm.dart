@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/status_field.dart';
@@ -8,6 +9,7 @@ import 'package:webapp/models/status_form.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
@@ -37,6 +39,7 @@ class AdminFlowViewModel extends BaseViewModel {
   final StatusFormEngine _engine;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
+  final AppWarmupService _warmupService = AppWarmupService.instance;
   StreamSubscription<void>? _statusCacheUpdatesSubscription;
   static List<StatusForm> _cachedForms = const [];
   static StatusForm? _cachedSelectedForm;
@@ -169,17 +172,37 @@ class AdminFlowViewModel extends BaseViewModel {
     _ensureStatusRealtimeSubscription();
     if (!canReadForms) {
       errorMessage = 'You do not have access to view forms.';
+      _log('load forms-page denied');
       notifyListeners();
       return;
     }
     busyMessage = 'Loading forms ...';
-    final hasVisiblePrimaryData = forms.isNotEmpty || _cachedForms.isNotEmpty;
+    final hasSharedPrimaryData = StatusRequest.hasResolvedForms;
+    final hasVisiblePrimaryData =
+        forms.isNotEmpty || _cachedForms.isNotEmpty || hasSharedPrimaryData;
     final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
     if (shouldShowLoadingState) {
       isLoading = true;
+      _log('overlay show section=forms');
       notifyListeners();
     }
+    _log(
+      'load start section=forms visible=${!shouldShowLoadingState} localForms=${forms.length} cachedForms=${_cachedForms.length} sharedForms=$hasSharedPrimaryData',
+    );
     try {
+      if (hasSharedPrimaryData && forms.isEmpty) {
+        forms = List<StatusForm>.from(StatusRequest.hydratedFormsSnapshot);
+        _sortFormsLatestFirst();
+        if (forms.isEmpty) {
+          selectedForm = null;
+          fields = [];
+        } else {
+          selectedForm ??= forms.first;
+        }
+        _log('prime shared section=forms count=${forms.length}');
+        notifyListeners();
+      }
+      await _warmupService.warmStatusForms();
       forms = await _repository.getStatusForms();
       _sortFormsLatestFirst();
       if (forms.isEmpty) {
@@ -192,12 +215,15 @@ class AdminFlowViewModel extends BaseViewModel {
       _cachedForms = List<StatusForm>.from(forms);
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
+      _log('load resolved section=forms count=${forms.length}');
       if (shouldShowLoadingState) {
         isLoading = false;
+        _log('overlay hide section=forms reason=primary-data-ready');
       }
       notifyListeners();
       unawaited(_hydrateFormsSupportingDataInBackground());
     } catch (error) {
+      _log('load error section=forms error=$error');
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the forms right now.',
@@ -207,8 +233,13 @@ class AdminFlowViewModel extends BaseViewModel {
       _cachedHasLoadedOnce = true;
       if (shouldShowLoadingState) {
         isLoading = false;
+        _log('overlay hide section=forms reason=error');
       }
       notifyListeners();
+    } finally {
+      _log(
+        'load finish section=forms loading=$isLoading forms=${forms.length} selected=${selectedForm?.id ?? "-"} error=${errorMessage ?? "-"}',
+      );
     }
   }
 
@@ -216,18 +247,34 @@ class AdminFlowViewModel extends BaseViewModel {
     _ensureStatusRealtimeSubscription();
     if (!canReadFields) {
       errorMessage = 'You do not have access to view fields.';
+      _log('load fields-page denied');
       notifyListeners();
       return;
     }
     busyMessage = 'Loading fields ...';
     final hasVisiblePrimaryData =
-        fieldLibrary.isNotEmpty || _cachedFieldLibrary.isNotEmpty;
+        fieldLibrary.isNotEmpty ||
+        _cachedFieldLibrary.isNotEmpty ||
+        StatusRequest.hasResolvedFields;
     final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
     if (shouldShowLoadingState) {
       isLoading = true;
+      _log('overlay show section=fields');
       notifyListeners();
     }
+    _log(
+      'load start section=fields visible=${!shouldShowLoadingState} localFields=${fieldLibrary.length} cachedFields=${_cachedFieldLibrary.length} sharedFields=${StatusRequest.hasResolvedFields}',
+    );
     try {
+      if (StatusRequest.hasResolvedFields && fieldLibrary.isEmpty) {
+        fieldLibrary = List<StatusField>.from(
+          StatusRequest.hydratedFieldsSnapshot,
+        );
+        _sortFieldsLatestFirst();
+        _log('prime shared section=fields count=${fieldLibrary.length}');
+        notifyListeners();
+      }
+      await _warmupService.warmStatusFields();
       fieldLibrary = (await _repository.getAllFields())
           .map((field) => field.copyWith())
           .toList();
@@ -236,7 +283,9 @@ class AdminFlowViewModel extends BaseViewModel {
       _cachedFieldLibrary = List<StatusField>.from(fieldLibrary);
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
+      _log('load resolved section=fields count=${fieldLibrary.length}');
     } catch (error) {
+      _log('load error section=fields error=$error');
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the fields right now.',
@@ -247,7 +296,13 @@ class AdminFlowViewModel extends BaseViewModel {
     } finally {
       if (shouldShowLoadingState) {
         isLoading = false;
+        _log(
+          'overlay hide section=fields reason=${errorMessage == null ? "primary-data-ready" : "error"}',
+        );
       }
+      _log(
+        'load finish section=fields loading=$isLoading fields=${fieldLibrary.length} error=${errorMessage ?? "-"}',
+      );
       notifyListeners();
     }
   }
@@ -256,18 +311,32 @@ class AdminFlowViewModel extends BaseViewModel {
     _ensureStatusRealtimeSubscription();
     if (!canReadStatuses) {
       errorMessage = 'You do not have access to view statuses.';
+      _log('load statuses-page denied');
       notifyListeners();
       return;
     }
     busyMessage = 'Loading statuses ...';
     final hasVisiblePrimaryData =
-        statuses.isNotEmpty || _cachedStatuses.isNotEmpty;
+        statuses.isNotEmpty ||
+        _cachedStatuses.isNotEmpty ||
+        StatusRequest.hasResolvedStatuses;
     final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
     if (shouldShowLoadingState) {
       isLoading = true;
+      _log('overlay show section=statuses');
       notifyListeners();
     }
+    _log(
+      'load start section=statuses visible=${!shouldShowLoadingState} localStatuses=${statuses.length} cachedStatuses=${_cachedStatuses.length} sharedStatuses=${StatusRequest.hasResolvedStatuses}',
+    );
     try {
+      if (StatusRequest.hasResolvedStatuses && statuses.isEmpty) {
+        statuses = List<Status>.from(StatusRequest.hydratedStatusesSnapshot);
+        _sortStatusesLatestFirst();
+        _log('prime shared section=statuses count=${statuses.length}');
+        notifyListeners();
+      }
+      await _warmupService.warmStatuses();
       statuses = (await _repository.getStatuses())
           .map((status) => status.copyWith())
           .toList();
@@ -276,7 +345,9 @@ class AdminFlowViewModel extends BaseViewModel {
       _cachedStatuses = List<Status>.from(statuses);
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
+      _log('load resolved section=statuses count=${statuses.length}');
     } catch (error) {
+      _log('load error section=statuses error=$error');
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the statuses right now.',
@@ -287,7 +358,13 @@ class AdminFlowViewModel extends BaseViewModel {
     } finally {
       if (shouldShowLoadingState) {
         isLoading = false;
+        _log(
+          'overlay hide section=statuses reason=${errorMessage == null ? "primary-data-ready" : "error"}',
+        );
       }
+      _log(
+        'load finish section=statuses loading=$isLoading statuses=${statuses.length} error=${errorMessage ?? "-"}',
+      );
       notifyListeners();
     }
   }
@@ -296,6 +373,7 @@ class AdminFlowViewModel extends BaseViewModel {
     _ensureStatusRealtimeSubscription();
     if (!canReadAnyFlowAdminData) {
       errorMessage = 'You do not have access to view flows.';
+      _log('load flows denied');
       notifyListeners();
       return;
     }
@@ -308,14 +386,47 @@ class AdminFlowViewModel extends BaseViewModel {
         fieldLibrary.isNotEmpty ||
         _cachedFieldLibrary.isNotEmpty ||
         statuses.isNotEmpty ||
-        _cachedStatuses.isNotEmpty;
+        _cachedStatuses.isNotEmpty ||
+        StatusRequest.hasResolvedForms ||
+        StatusRequest.hasResolvedFields ||
+        StatusRequest.hasResolvedStatuses;
     final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
     if (shouldShowLoadingState) {
       isLoading = true;
+      _log('overlay show section=flows');
     }
+    _log(
+      'load start section=flows visible=${!shouldShowLoadingState} forms=${forms.length}/${_cachedForms.length} fieldLibrary=${fieldLibrary.length}/${_cachedFieldLibrary.length} statuses=${statuses.length}/${_cachedStatuses.length} sharedForms=${StatusRequest.hasResolvedForms} sharedFields=${StatusRequest.hasResolvedFields} sharedStatuses=${StatusRequest.hasResolvedStatuses}',
+    );
     notifyListeners();
 
     try {
+      if (forms.isEmpty && StatusRequest.hasResolvedForms) {
+        forms = List<StatusForm>.from(StatusRequest.hydratedFormsSnapshot);
+        _sortFormsLatestFirst();
+      }
+      if (fieldLibrary.isEmpty && StatusRequest.hasResolvedFields) {
+        fieldLibrary = List<StatusField>.from(StatusRequest.hydratedFieldsSnapshot);
+        _sortFieldsLatestFirst();
+      }
+      if (statuses.isEmpty && StatusRequest.hasResolvedStatuses) {
+        statuses = List<Status>.from(StatusRequest.hydratedStatusesSnapshot);
+        _sortStatusesLatestFirst();
+      }
+      if (forms.isNotEmpty && selectedForm == null) {
+        selectedForm = forms.first;
+      }
+      if (!shouldShowLoadingState) {
+        _log(
+          'prime shared section=flows forms=${forms.length} fields=${fieldLibrary.length} statuses=${statuses.length}',
+        );
+        notifyListeners();
+      }
+      await Future.wait([
+        _warmupService.warmStatusForms(),
+        _warmupService.warmStatusFields(),
+        _warmupService.warmStatuses(),
+      ]);
       forms = await _repository.getStatusForms();
       fieldLibrary = await _optionResolver.hydrateFields(
         (await _repository.getAllFields())
@@ -354,7 +465,11 @@ class AdminFlowViewModel extends BaseViewModel {
       _cacheSnapshot();
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
+      _log(
+        'load resolved section=flows forms=${forms.length} fieldLibrary=${fieldLibrary.length} statuses=${statuses.length} selected=${selectedForm?.id ?? "-"}',
+      );
     } catch (error) {
+      _log('load error section=flows error=$error');
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the flows right now.',
@@ -365,7 +480,13 @@ class AdminFlowViewModel extends BaseViewModel {
     } finally {
       if (shouldShowLoadingState) {
         isLoading = false;
+        _log(
+          'overlay hide section=flows reason=${errorMessage == null ? "primary-data-ready" : "error"}',
+        );
       }
+      _log(
+        'load finish section=flows loading=$isLoading forms=${forms.length} fieldLibrary=${fieldLibrary.length} statuses=${statuses.length} error=${errorMessage ?? "-"}',
+      );
       notifyListeners();
     }
   }
@@ -398,6 +519,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   Future<void> _hydrateFormsSupportingDataInBackground() async {
+    _log('supporting reload start section=forms');
     try {
       fieldLibrary = await _optionResolver.hydrateFields(
         (await _repository.getAllFields())
@@ -435,10 +557,19 @@ class AdminFlowViewModel extends BaseViewModel {
         }
       }
       _cacheSnapshot();
+      _log(
+        'supporting reload done section=forms fieldLibrary=${fieldLibrary.length} statuses=${statuses.length} selectedFields=${fields.length}',
+      );
       notifyListeners();
     } catch (error) {
+      _log('supporting reload error section=forms error=$error');
       // Keep the currently visible cached form/field data if refresh fails.
     }
+  }
+
+  void _log(String message) {
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('[$timestamp][AdminFlowLoad] $message');
   }
 
   Future<void> selectForm(

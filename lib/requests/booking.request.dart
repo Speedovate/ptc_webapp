@@ -39,13 +39,17 @@ class BookingRequest implements BookingRepository {
   static const Duration _photoUploadTimeout = Duration(minutes: 1);
   static bool _didKickOffBackgroundQueueInitialization = false;
   static List<Booking> _memoryBookings = const [];
+  static bool _hasResolvedBookings = false;
   static bool _isRefreshingFromVersionSignal = false;
   StreamSubscription<String?>? _bookingsVersionSignalSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _bookingsRealtimeSnapshotSubscription;
 
   static bool get hasHydratedBookings => _memoryBookings.isNotEmpty;
+  static bool get hasResolvedBookings => _hasResolvedBookings;
   static int get hydratedBookingCount => _memoryBookings.length;
+  static List<Booking> get hydratedBookingsSnapshot =>
+      List<Booking>.unmodifiable(_memoryBookings);
 
   final FirebaseFirestore _firestore;
   final AuthRequest _authRequest;
@@ -944,6 +948,7 @@ class BookingRequest implements BookingRepository {
   ) async {
     final bookings = await _inflateBookings(visibleDocuments);
     _memoryBookings = List<Booking>.from(bookings);
+    _hasResolvedBookings = true;
     return bookings;
   }
 
@@ -951,10 +956,12 @@ class BookingRequest implements BookingRepository {
     final cachedDocuments = await _cache.readDocuments(_bookingsResourceKey);
     if (cachedDocuments == null) {
       _memoryBookings = const [];
+      _hasResolvedBookings = true;
       return;
     }
     if (cachedDocuments.isEmpty) {
       _memoryBookings = const [];
+      _hasResolvedBookings = true;
       return;
     }
     final queuedDocuments = await _readQueuedBookingDocumentsSafe();
@@ -992,6 +999,7 @@ class BookingRequest implements BookingRepository {
       return (b.id ?? '').compareTo(a.id ?? '');
     });
     _memoryBookings = nextBookings;
+    _hasResolvedBookings = true;
   }
 
   Future<List<Map<String, dynamic>>> _readQueuedBookingDocumentsSafe() async {

@@ -35,8 +35,12 @@ class VehicleRequest implements VehicleCatalogRepository {
   static const _vehicleTypesResourceKey = 'vehicle_types';
   static const _vehicleSizesResourceKey = 'vehicle_sizes';
   static const Duration _startupTimeout = Duration(seconds: 6);
+  static List<VehicleMake> _hydratedMakesSnapshot = const [];
   static List<VehicleCatalogItem> _cachedTypes = const [];
   static List<VehicleCatalogItem> _cachedSizes = const [];
+  static bool _hasResolvedMakes = false;
+  static bool _hasResolvedTypes = false;
+  static bool _hasResolvedSizes = false;
   static bool _didStartBackgroundOfflineQueueInitialization = false;
   static bool _didStartRealtimeCacheSync = false;
   static bool _isRefreshingFromVersionSignal = false;
@@ -71,6 +75,16 @@ class VehicleRequest implements VehicleCatalogRepository {
       _firestore.collection('vehicle_sizes');
   CollectionReference<Map<String, dynamic>> get _usersCollection =>
       _firestore.collection('users');
+
+  static bool get hasResolvedMakes => _hasResolvedMakes;
+  static bool get hasResolvedTypes => _hasResolvedTypes;
+  static bool get hasResolvedSizes => _hasResolvedSizes;
+  static List<VehicleMake> get hydratedMakesSnapshot =>
+      List<VehicleMake>.unmodifiable(_hydratedMakesSnapshot);
+  static List<VehicleCatalogItem> get hydratedTypesSnapshot =>
+      List<VehicleCatalogItem>.unmodifiable(_cachedTypes);
+  static List<VehicleCatalogItem> get hydratedSizesSnapshot =>
+      List<VehicleCatalogItem>.unmodifiable(_cachedSizes);
 
   Future<void> initialize() async {
     if (_didStartBackgroundOfflineQueueInitialization) {
@@ -166,6 +180,8 @@ class VehicleRequest implements VehicleCatalogRepository {
           typeDocuments: typeDocuments,
           userDocuments: userDocuments,
         );
+        _hasResolvedMakes = true;
+        _hydratedMakesSnapshot = List<VehicleMake>.from(inflated);
         return inflated;
       } catch (error) {
         final lateCachedMakes = await _cache.readDocuments(_vehicleMakesResourceKey);
@@ -181,6 +197,8 @@ class VehicleRequest implements VehicleCatalogRepository {
             typeDocuments: lateCachedTypes,
             userDocuments: lateCachedUsers,
           );
+          _hasResolvedMakes = true;
+          _hydratedMakesSnapshot = List<VehicleMake>.from(inflated);
           return inflated;
         }
         final makeDocuments = await _fetchCollectionDocumentsViaPublicRest(
@@ -203,6 +221,8 @@ class VehicleRequest implements VehicleCatalogRepository {
           typeDocuments: typeDocuments,
           userDocuments: userDocuments,
         );
+        _hasResolvedMakes = true;
+        _hydratedMakesSnapshot = List<VehicleMake>.from(inflated);
         return inflated;
       }
     }, fallback: 'We could not load the vehicle makes right now.');
@@ -233,6 +253,7 @@ class VehicleRequest implements VehicleCatalogRepository {
         final items = documents.map(VehicleCatalogItem.fromMap).toList();
         items.sort(_compareByNewestIdFirst);
         _cachedSizes = List<VehicleCatalogItem>.from(items);
+        _hasResolvedSizes = true;
         return items;
       } catch (error) {
         final lateCachedDocuments = await _cache.readDocuments(
@@ -242,6 +263,7 @@ class VehicleRequest implements VehicleCatalogRepository {
           final items = lateCachedDocuments.map(VehicleCatalogItem.fromMap).toList();
           items.sort(_compareByNewestIdFirst);
           _cachedSizes = List<VehicleCatalogItem>.from(items);
+          _hasResolvedSizes = true;
           return items;
         }
         final documents = await _fetchCollectionDocumentsViaPublicRest(
@@ -257,6 +279,7 @@ class VehicleRequest implements VehicleCatalogRepository {
         final items = documents.map(VehicleCatalogItem.fromMap).toList();
         items.sort(_compareByNewestIdFirst);
         _cachedSizes = List<VehicleCatalogItem>.from(items);
+        _hasResolvedSizes = true;
         return items;
       }
     }, fallback: 'We could not load the vehicle sizes right now.');
@@ -332,6 +355,7 @@ class VehicleRequest implements VehicleCatalogRepository {
         final items = documents.map(VehicleCatalogItem.fromMap).toList();
         items.sort(_compareByNewestIdFirst);
         _cachedTypes = List<VehicleCatalogItem>.from(items);
+        _hasResolvedTypes = true;
         return items;
       } catch (error) {
         final lateCachedDocuments = await _cache.readDocuments(
@@ -341,6 +365,7 @@ class VehicleRequest implements VehicleCatalogRepository {
           final items = lateCachedDocuments.map(VehicleCatalogItem.fromMap).toList();
           items.sort(_compareByNewestIdFirst);
           _cachedTypes = List<VehicleCatalogItem>.from(items);
+          _hasResolvedTypes = true;
           return items;
         }
         final documents = await _fetchCollectionDocumentsViaPublicRest(
@@ -356,6 +381,7 @@ class VehicleRequest implements VehicleCatalogRepository {
         final items = documents.map(VehicleCatalogItem.fromMap).toList();
         items.sort(_compareByNewestIdFirst);
         _cachedTypes = List<VehicleCatalogItem>.from(items);
+        _hasResolvedTypes = true;
         return items;
       }
     }, fallback: 'We could not load the vehicle types right now.');
@@ -444,12 +470,21 @@ class VehicleRequest implements VehicleCatalogRepository {
           .toList(growable: false)
         ..sort(_compareByNewestIdFirst);
       _cachedTypes = List<VehicleCatalogItem>.from(typeItems);
+      _hasResolvedTypes = true;
       final sizeItems = sizesSnapshot.docs
           .map(documentData)
           .map(VehicleCatalogItem.fromMap)
           .toList(growable: false)
         ..sort(_compareByNewestIdFirst);
       _cachedSizes = List<VehicleCatalogItem>.from(sizeItems);
+      _hasResolvedSizes = true;
+      final makeItems = _inflateMakes(
+        makeDocuments: makesSnapshot.docs.map(documentData).toList(growable: false),
+        typeDocuments: typesSnapshot.docs.map(documentData).toList(growable: false),
+        userDocuments: usersSnapshot.docs.map(documentData).toList(growable: false),
+      );
+      _hydratedMakesSnapshot = List<VehicleMake>.from(makeItems);
+      _hasResolvedMakes = true;
     } catch (_) {}
   }
 

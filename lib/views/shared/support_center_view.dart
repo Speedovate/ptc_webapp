@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -12,6 +13,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/support.request.dart';
+import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/services/role_access_service.dart';
@@ -107,9 +109,16 @@ class _PendingSupportAttachment {
 class _SupportCenterViewState extends State<SupportCenterView> {
   static const Duration _supportLoadTimeout = Duration(seconds: 6);
   static const Duration _supportThreadLookupTimeout = Duration(seconds: 3);
+  static List<Booking> _cachedAccessibleBookings = const [];
+  static List<UserModel> _cachedAdminUsers = const [];
+  static UserModel? _cachedSupportAgentUser;
+  static bool _cachedHasLoadedBookings = false;
+  static bool _cachedHasLoadedAdminUsers = false;
+  static bool _cachedHasLoadedSupportAgent = false;
   final SupportRequest _supportRequest = SupportRequest.instance;
   final BookingRequest _bookingRequest = BookingRequest.instance;
   final AuthRequest _authRequest = AuthRequest.instance;
+  final AppWarmupService _warmupService = AppWarmupService.instance;
   final TextEditingController _messageController = TextEditingController();
   final TextEditingController _adminSearchController = TextEditingController();
   final ScrollController _chatScrollController = ScrollController();
@@ -131,6 +140,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   String? _pendingInitialAdminUserId;
   int _chatScrollRequestTick = 0;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  bool? _lastBlockingOverlayVisible;
 
   String? get _effectiveRole =>
       _roleAccessService.effectiveRoleKey(widget.user.role);
@@ -161,9 +171,78 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       normalizeId(_selectedThreadId) != null &&
       _selectedAdminDraftUser == null;
 
+  List<UserModel> _filteredAdminUsersFrom(List<UserModel> users) {
+    final currentUserId = normalizeId(widget.user.id);
+    final filtered = users.where((user) {
+      final userId = normalizeId(user.id);
+      return userId != null && userId != currentUserId;
+    }).toList();
+    filtered.sort((left, right) {
+      final leftName = (left.name ?? '').trim().toLowerCase();
+      final rightName = (right.name ?? '').trim().toLowerCase();
+      final byName = leftName.compareTo(rightName);
+      if (byName != 0) {
+        return byName;
+      }
+      final leftId = normalizeId(left.id) ?? '';
+      final rightId = normalizeId(right.id) ?? '';
+      return leftId.compareTo(rightId);
+    });
+    return filtered;
+  }
+
+  List<SupportThread> _initialSupportThreadsForCurrentUser() {
+    if (!SupportRequest.hasResolvedAllThreads) {
+      return const <SupportThread>[];
+    }
+    final allThreads = SupportRequest.hydratedAllThreadsSnapshot;
+    if (_isAdmin) {
+      return allThreads;
+    }
+    final currentUserId = normalizeId(widget.user.id);
+    if (currentUserId == null) {
+      return const <SupportThread>[];
+    }
+    return allThreads.where((thread) {
+      return normalizeId(thread.requesterUserId) == currentUserId;
+    }).toList(growable: false)
+      ..sort((left, right) {
+        final leftDate = left.updatedAt ?? left.createdAt;
+        final rightDate = right.updatedAt ?? right.createdAt;
+        if (leftDate == null && rightDate == null) {
+          return 0;
+        }
+        if (leftDate == null) {
+          return 1;
+        }
+        if (rightDate == null) {
+          return -1;
+        }
+        return rightDate.compareTo(leftDate);
+      });
+  }
+
   @override
   void initState() {
     super.initState();
+    _accessibleBookings = List<Booking>.from(_cachedAccessibleBookings);
+    _adminUsers = List<UserModel>.from(_cachedAdminUsers);
+    _supportAgentUser = _cachedSupportAgentUser;
+    if (_isAdmin && AuthRequest.hasResolvedUsers) {
+      final sharedAdminUsers = _filteredAdminUsersFrom(
+        AuthRequest.hydratedUsersSnapshot,
+      );
+      _adminUsers = List<UserModel>.from(sharedAdminUsers);
+      _cachedAdminUsers = List<UserModel>.from(sharedAdminUsers);
+      _cachedHasLoadedAdminUsers = true;
+    } else if (!_isAdmin && AuthRequest.hasResolvedUsers) {
+      final sharedSupportAgent = AuthRequest.hydratedUsersSnapshot.where((user) {
+        return normalizeId(user.id) == '1';
+      }).firstOrNull;
+      _supportAgentUser = sharedSupportAgent;
+      _cachedSupportAgentUser = sharedSupportAgent;
+      _cachedHasLoadedSupportAgent = true;
+    }
     _selectedBookingId = normalizeId(widget.initialBookingId);
     _pendingInitialAdminUserId = normalizeId(widget.initialUserId);
     _selectedTopicKey =
@@ -308,11 +387,17 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     if (_isAdmin) {
       return;
     }
+    final shouldShowBlockingLoading =
+        !_cachedHasLoadedBookings && _accessibleBookings.isEmpty;
+    _log(
+      'load start section=support-bookings visible=${!shouldShowBlockingLoading} local=${_accessibleBookings.length} cached=${_cachedAccessibleBookings.length}',
+    );
     setState(() {
-      _isLoadingBookings = true;
+      _isLoadingBookings = shouldShowBlockingLoading;
     });
     try {
       await _bookingRequest.initialize();
+      await _warmupService.warmBookings();
       final allBookings = await _bookingRequest.getBookings().timeout(
         _supportLoadTimeout,
         onTimeout: () => const <Booking>[],
@@ -337,6 +422,8 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       }
       setState(() {
         _accessibleBookings = filtered;
+        _cachedAccessibleBookings = List<Booking>.from(filtered);
+        _cachedHasLoadedBookings = true;
         final hasSelectedBooking = filtered.any(
           (booking) =>
               normalizeId(booking.id) == normalizeId(_selectedBookingId),
@@ -345,7 +432,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
           _selectedBookingId = null;
         }
       });
+      _log('load resolved section=support-bookings count=${filtered.length}');
     } catch (error) {
+      _log('load error section=support-bookings error=$error');
       if (!mounted) {
         return;
       }
@@ -362,14 +451,33 @@ class _SupportCenterViewState extends State<SupportCenterView> {
           _isLoadingBookings = false;
         });
       }
+      _log(
+        'load finish section=support-bookings loading=$_isLoadingBookings count=${_accessibleBookings.length}',
+      );
     }
   }
 
   Future<void> _loadAdminUsers() async {
+    final sharedUsersResolved = AuthRequest.hasResolvedUsers;
+    final sharedAdminUsers = sharedUsersResolved
+        ? _filteredAdminUsersFrom(AuthRequest.hydratedUsersSnapshot)
+        : const <UserModel>[];
+    if (sharedUsersResolved &&
+        (_adminUsers.isEmpty || _cachedAdminUsers.isEmpty)) {
+      _adminUsers = List<UserModel>.from(sharedAdminUsers);
+      _cachedAdminUsers = List<UserModel>.from(sharedAdminUsers);
+      _cachedHasLoadedAdminUsers = true;
+    }
+    final shouldShowBlockingLoading =
+        !_cachedHasLoadedAdminUsers && _adminUsers.isEmpty;
+    _log(
+      'load start section=support-users visible=${!shouldShowBlockingLoading} local=${_adminUsers.length} cached=${_cachedAdminUsers.length} shared=${sharedAdminUsers.length} sharedResolved=$sharedUsersResolved',
+    );
     setState(() {
-      _isLoadingAdminUsers = true;
+      _isLoadingAdminUsers = shouldShowBlockingLoading;
     });
     try {
+      await _warmupService.warmUsers();
       final users = await _authRequest.getUsers().timeout(
         _supportLoadTimeout,
         onTimeout: () => List<UserModel>.from(_adminUsers),
@@ -377,28 +485,16 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       if (!mounted) {
         return;
       }
-      final currentUserId = normalizeId(widget.user.id);
-      final filtered =
-          users.where((user) {
-            final userId = normalizeId(user.id);
-            return userId != null && userId != currentUserId;
-          }).toList()..sort((left, right) {
-            final leftName = (left.name ?? '').trim().toLowerCase();
-            final rightName = (right.name ?? '').trim().toLowerCase();
-            final byName = leftName.compareTo(rightName);
-            if (byName != 0) {
-              return byName;
-            }
-            final leftId = normalizeId(left.id) ?? '';
-            final rightId = normalizeId(right.id) ?? '';
-            return leftId.compareTo(rightId);
-          });
+      final filtered = _filteredAdminUsersFrom(users);
       setState(() {
         _adminUsers = filtered;
+        _cachedAdminUsers = List<UserModel>.from(filtered);
+        _cachedHasLoadedAdminUsers = true;
       });
+      _log('load resolved section=support-users count=${filtered.length}');
       await _applyPendingInitialAdminUser(filtered);
-      _scheduleAdminUsersWarmRetryIfNeeded();
     } catch (error) {
+      _log('load error section=support-users error=$error');
       if (!mounted) {
         return;
       }
@@ -416,12 +512,16 @@ class _SupportCenterViewState extends State<SupportCenterView> {
           _isLoadingAdminUsers = false;
         });
       }
+      _log(
+        'load finish section=support-users loading=$_isLoadingAdminUsers count=${_adminUsers.length}',
+      );
     }
   }
 
   void _scheduleAdminUsersWarmRetryIfNeeded() {
     if (_didScheduleAdminUsersWarmRetry ||
         !currentNetworkStatus() ||
+        _cachedHasLoadedAdminUsers ||
         _adminUsers.isNotEmpty) {
       return;
     }
@@ -512,10 +612,27 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   }
 
   Future<void> _loadSupportAgentUser() async {
+    final sharedUsersResolved = AuthRequest.hasResolvedUsers;
+    final sharedSupportAgent = sharedUsersResolved
+        ? AuthRequest.hydratedUsersSnapshot.where((user) {
+            return normalizeId(user.id) == '1';
+          }).firstOrNull
+        : null;
+    if (sharedUsersResolved && _supportAgentUser == null) {
+      _supportAgentUser = sharedSupportAgent;
+      _cachedSupportAgentUser = sharedSupportAgent;
+      _cachedHasLoadedSupportAgent = true;
+    }
+    final shouldShowBlockingLoading =
+        !_cachedHasLoadedSupportAgent && _supportAgentUser == null;
+    _log(
+      'load start section=support-agent visible=${!shouldShowBlockingLoading} local=${normalizeId(_supportAgentUser?.id) ?? "-"} cached=${normalizeId(_cachedSupportAgentUser?.id) ?? "-"} shared=${normalizeId(sharedSupportAgent?.id) ?? "-"} sharedResolved=$sharedUsersResolved',
+    );
     setState(() {
-      _isLoadingSupportAgent = true;
+      _isLoadingSupportAgent = shouldShowBlockingLoading;
     });
     try {
+      await _warmupService.warmUsers();
       final users = await _authRequest.getUsers().timeout(
         _supportLoadTimeout,
         onTimeout: () => const <UserModel>[],
@@ -528,8 +645,14 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       }).firstOrNull;
       setState(() {
         _supportAgentUser = supportAgent;
+        _cachedSupportAgentUser = supportAgent;
+        _cachedHasLoadedSupportAgent = true;
       });
+      _log(
+        'load resolved section=support-agent user=${normalizeId(supportAgent?.id) ?? "-"}',
+      );
     } catch (error) {
+      _log('load error section=support-agent error=$error');
       if (!mounted) {
         return;
       }
@@ -546,6 +669,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
           _isLoadingSupportAgent = false;
         });
       }
+      _log(
+        'load finish section=support-agent loading=$_isLoadingSupportAgent user=${normalizeId(_supportAgentUser?.id) ?? "-"}',
+      );
     }
   }
 
@@ -788,6 +914,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     }
     final content = _isAdmin
         ? StreamBuilder<List<SupportThread>>(
+            initialData: _initialSupportThreadsForCurrentUser(),
             stream: _supportRequest.watchAllThreads(),
             builder: (context, snapshot) {
               final threads = (snapshot.data ?? const <SupportThread>[])
@@ -819,6 +946,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
             },
           )
         : StreamBuilder<List<SupportThread>>(
+            initialData: _initialSupportThreadsForCurrentUser(),
             stream: _supportRequest.watchThreadsForUser(widget.user.id ?? ''),
             builder: (context, snapshot) {
               final threads = snapshot.data ?? const <SupportThread>[];
@@ -866,6 +994,12 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     final hasVisibleThreadList = threads.isNotEmpty || _adminUsers.isNotEmpty;
     final showBlockingLoading =
         isLoading && !hasVisibleChatTarget && !hasVisibleThreadList;
+    if (_lastBlockingOverlayVisible != showBlockingLoading) {
+      _lastBlockingOverlayVisible = showBlockingLoading;
+      _log(
+        '${showBlockingLoading ? "overlay show" : "overlay hide"} section=support reason=isLoading=$isLoading visibleChat=$hasVisibleChatTarget visibleList=$hasVisibleThreadList threads=${threads.length} users=${_adminUsers.length} bookings=${_accessibleBookings.length}',
+      );
+    }
     return AppPageLoadingOverlay(
       isVisible: showBlockingLoading,
       message: 'Loading, please wait ...',
@@ -1117,6 +1251,11 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       return thread.id;
     }
     return threads.first.id;
+  }
+
+  void _log(String message) {
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('[$timestamp][SupportLoad] $message');
   }
 }
 

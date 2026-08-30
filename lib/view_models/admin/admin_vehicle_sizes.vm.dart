@@ -6,6 +6,7 @@ import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
@@ -20,6 +21,7 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
 
   final VehicleCatalogRepository _repository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  final AppWarmupService _warmupService = AppWarmupService.instance;
   StreamSubscription<void>? _catalogCacheUpdatesSubscription;
   static List<VehicleCatalogItem> _cachedSizes = const [];
   static String? _cachedErrorMessage;
@@ -64,13 +66,23 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
       return;
     }
     _busyMessage = 'Loading vehicle sizes ...';
-    final hasVisiblePrimaryData = _sizes.isNotEmpty || _cachedSizes.isNotEmpty;
+    final hasSharedPrimaryData = VehicleRequest.hasResolvedSizes;
+    final hasVisiblePrimaryData =
+        _sizes.isNotEmpty || _cachedSizes.isNotEmpty || hasSharedPrimaryData;
     final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
     if (shouldShowLoadingState) {
       setBusy(true);
     }
     _errorMessage = null;
     try {
+      if (hasSharedPrimaryData && _sizes.isEmpty) {
+        _sizes = List<VehicleCatalogItem>.from(
+          VehicleRequest.hydratedSizesSnapshot,
+        );
+        _sortSizes();
+        notifyListeners();
+      }
+      await _warmupService.warmVehicleSizes();
       _sizes = await _repository.getSizes();
       _sortSizes();
       _cachedSizes = List<VehicleCatalogItem>.from(_sizes);
@@ -110,6 +122,7 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
     }
     _isRealtimeRefreshing = true;
     try {
+      await _warmupService.warmVehicleSizes();
       _sizes = await _repository.getSizes();
       _sortSizes();
       _cachedSizes = List<VehicleCatalogItem>.from(_sizes);
@@ -135,6 +148,7 @@ class AdminVehicleSizesViewModel extends BaseViewModel {
   Future<void> _retryLoadAfterWarmup() async {
     await Future<void>.delayed(const Duration(milliseconds: 450));
     try {
+      await _warmupService.warmVehicleSizes();
       final refreshedSizes = await _repository.getSizes();
       if (refreshedSizes.isEmpty) {
         return;

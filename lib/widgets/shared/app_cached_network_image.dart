@@ -77,6 +77,24 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     super.dispose();
   }
 
+  void _setStateSafely(VoidCallback fn) {
+    if (!mounted) {
+      return;
+    }
+    final schedulerPhase = SchedulerBinding.instance.schedulerPhase;
+    if (schedulerPhase == SchedulerPhase.persistentCallbacks ||
+        schedulerPhase == SchedulerPhase.midFrameMicrotasks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        setState(fn);
+      });
+      return;
+    }
+    setState(fn);
+  }
+
   void _handleError(Object error) {
     if (kIsWeb) {
       unawaited(_recoverCachedImageAfterError());
@@ -106,7 +124,7 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
       return;
     }
     if (mounted) {
-      setState(() {
+      _setStateSafely(() {
         _isRecoveringCachedImage = true;
       });
     } else {
@@ -119,7 +137,7 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
       if (!isMounted) {
         _isRecoveringCachedImage = false;
       } else {
-        setState(() {
+        _setStateSafely(() {
           _isRecoveringCachedImage = false;
         });
       }
@@ -133,7 +151,7 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     final normalizedUrl = widget.imageUrl.trim();
     if (normalizedUrl.isEmpty || normalizedUrl.startsWith('data:')) {
       if (mounted && _cachedImageDataUrl != normalizedUrl) {
-        setState(() {
+        _setStateSafely(() {
           _cachedImageDataUrl = normalizedUrl.isEmpty ? null : normalizedUrl;
         });
       }
@@ -152,7 +170,7 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     if (_cachedImageDataUrl == cachedDataUrl) {
       return;
     }
-    setState(() {
+    _setStateSafely(() {
       _cachedImageDataUrl = cachedDataUrl;
     });
   }

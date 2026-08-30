@@ -57,6 +57,9 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
   void initState() {
     super.initState();
     _shellUser = widget.user;
+    _log(
+      'main entry init loggedIn=${widget.user.id != null} user=${widget.user.id ?? "-"} role=${widget.user.role ?? "-"} section=${_viewModel.selectedSection.title}',
+    );
   }
 
   @override
@@ -65,6 +68,9 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
     if (oldWidget.user.id != widget.user.id ||
         oldWidget.user.updatedAt != widget.user.updatedAt) {
       _shellUser = widget.user;
+      _log(
+        'user updated loggedIn=${widget.user.id != null} user=${widget.user.id ?? "-"} role=${widget.user.role ?? "-"}',
+      );
     }
   }
 
@@ -238,12 +244,20 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
             _selectedHistoryBooking = null;
           });
         }
+        _log(
+          'section select loggedIn=${_shellUser.id != null} user=${_shellUser.id ?? "-"} role=${_shellUser.role ?? "-"} section=${section.title}',
+        );
         vm.selectSection(section);
         if (isCompact) {
           Navigator.of(context).pop();
         }
       },
     );
+  }
+
+  void _log(String message) {
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('[$timestamp][RolePlatformMain] $message');
   }
 
   Widget _buildSelectedSection(RolePlatformSection section) {

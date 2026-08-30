@@ -29,7 +29,12 @@ import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
 class AdminDashboardView extends StatefulWidget {
-  const AdminDashboardView({super.key});
+  const AdminDashboardView({
+    super.key,
+    required this.user,
+  });
+
+  final UserModel user;
 
   @override
   State<AdminDashboardView> createState() => _AdminDashboardViewState();
@@ -62,7 +67,18 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
   void initState() {
     super.initState();
     _detailScrollController = ScrollController();
+    _viewModel.primeCurrentUser(widget.user);
     unawaited(_viewModel.load());
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminDashboardView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.user.id != widget.user.id ||
+        oldWidget.user.updatedAt != widget.user.updatedAt ||
+        oldWidget.user.role != widget.user.role) {
+      _viewModel.primeCurrentUser(widget.user);
+    }
   }
 
   @override

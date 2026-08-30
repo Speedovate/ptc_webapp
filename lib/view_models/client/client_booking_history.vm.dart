@@ -25,6 +25,7 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
     errorMessage = _cachedErrorMessage;
     _usersById.addAll(_cachedUsersById);
     _statusesByKey.addAll(_cachedStatusesByKey);
+    _hasLoadedOnce = _cachedHasLoadedOnce;
   }
 
   final BookingRepository _bookingRepository;
@@ -37,12 +38,14 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   static String? _cachedErrorMessage;
   static Map<String, UserModel> _cachedUsersById = const {};
   static Map<String, Status> _cachedStatusesByKey = const {};
+  static bool _cachedHasLoadedOnce = false;
 
   static void clearCachedState() {
     _cachedBookings = const [];
     _cachedErrorMessage = null;
     _cachedUsersById = const {};
     _cachedStatusesByKey = const {};
+    _cachedHasLoadedOnce = false;
   }
 
   List<Booking> bookings = [];
@@ -54,6 +57,7 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   DateTime? _endDate;
   DateTime? _updatedStartDate;
   DateTime? _updatedEndDate;
+  bool _hasLoadedOnce = false;
 
   String get searchQuery => _searchQuery;
   String get statusFilter => _statusFilter;
@@ -80,21 +84,28 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
     }
     final hasVisiblePrimaryData =
         bookings.isNotEmpty ||
+        BookingRequest.hasResolvedBookings ||
         _cachedBookings.isNotEmpty ||
         _usersById.isNotEmpty ||
         _cachedUsersById.isNotEmpty ||
         _statusesByKey.isNotEmpty ||
         _cachedStatusesByKey.isNotEmpty;
-    isLoading = !hasVisiblePrimaryData;
+    isLoading = !_hasLoadedOnce && !hasVisiblePrimaryData;
     errorMessage = null;
     notifyListeners();
 
     try {
       await _bookingRepository.initialize();
+      final sharedBookings = BookingRequest.hasResolvedBookings
+          ? BookingRequest.hydratedBookingsSnapshot
+          : null;
       final results = await Future.wait([
         _authRepository.getUsers(),
         _statusRepository.getStatuses(),
-        _bookingRepository.getBookings(),
+        if (sharedBookings != null)
+          Future<List<Booking>>.value(sharedBookings)
+        else
+          _bookingRepository.getBookings(),
       ]);
       final users = results[0] as List<UserModel>;
       final statuses = results[1] as List<Status>;
@@ -125,12 +136,16 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
       _cachedErrorMessage = null;
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
     } catch (error) {
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load your booking history right now.',
       );
       _cachedErrorMessage = errorMessage;
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
     } finally {
       isLoading = false;
       notifyListeners();

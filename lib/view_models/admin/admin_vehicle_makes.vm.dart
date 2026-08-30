@@ -9,6 +9,7 @@ import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
@@ -29,6 +30,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   final VehicleCatalogRepository _repository;
   final AuthRepository _authRepository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  final AppWarmupService _warmupService = AppWarmupService.instance;
   StreamSubscription<void>? _catalogCacheUpdatesSubscription;
   static List<VehicleMake> _cachedMakes = const [];
   static List<UserModel> _cachedDrivers = const [];
@@ -81,13 +83,21 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
       return;
     }
     _busyMessage = 'Loading vehicle makes ...';
-    final hasVisiblePrimaryData = _makes.isNotEmpty || _cachedMakes.isNotEmpty;
+    final hasSharedPrimaryData = VehicleRequest.hasResolvedMakes;
+    final hasVisiblePrimaryData =
+        _makes.isNotEmpty || _cachedMakes.isNotEmpty || hasSharedPrimaryData;
     final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
     if (shouldShowLoadingState) {
       setBusy(true);
     }
     _errorMessage = null;
     try {
+      if (hasSharedPrimaryData && _makes.isEmpty) {
+        _makes = List<VehicleMake>.from(VehicleRequest.hydratedMakesSnapshot);
+        _sortMakes();
+        notifyListeners();
+      }
+      await _warmupService.warmVehicleMakes();
       _makes = await _repository.getMakes();
       _sortMakes();
       _cachedMakes = List<VehicleMake>.from(_makes);
@@ -128,6 +138,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
     }
     _isRealtimeRefreshing = true;
     try {
+      await _warmupService.warmVehicleMakes();
       _makes = await _repository.getMakes();
       _sortMakes();
       _cachedMakes = List<VehicleMake>.from(_makes);
@@ -142,6 +153,10 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
 
   Future<void> _loadSupportingDataInBackground() async {
     try {
+      await Future.wait([
+        _warmupService.warmVehicleTypes(),
+        _warmupService.warmUsers(),
+      ]);
       final types = await _repository.getTypes();
       final drivers =
           (await _authRepository.getUsers())
@@ -172,6 +187,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   Future<void> _retryLoadAfterWarmup() async {
     await Future<void>.delayed(const Duration(milliseconds: 450));
     try {
+      await _warmupService.warmVehicleMakes();
       final refreshedMakes = await _repository.getMakes();
       if (refreshedMakes.isEmpty) {
         return;

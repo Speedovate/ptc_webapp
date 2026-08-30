@@ -29,6 +29,9 @@ class SupportRequest {
   static const _supportThreadsResourceKey = 'support_threads_all';
   static const Duration _startupTimeout = Duration(seconds: 6);
   static const Duration _queuedSupportReadTimeout = Duration(seconds: 1);
+  static bool _hasResolvedAllThreads = false;
+  static List<SupportThread> _hydratedAllThreadsSnapshot =
+      const <SupportThread>[];
 
   final FirebaseFirestore _firestore;
   final SupportStorageService _storage;
@@ -64,6 +67,15 @@ class SupportRequest {
   CollectionReference<Map<String, dynamic>> get _supportCollection =>
       _firestore.collection('support');
 
+  static bool get hasResolvedAllThreads => _hasResolvedAllThreads;
+  static List<SupportThread> get hydratedAllThreadsSnapshot =>
+      List<SupportThread>.unmodifiable(_hydratedAllThreadsSnapshot);
+
+  static void _storeHydratedAllThreads(List<SupportThread> threads) {
+    _hasResolvedAllThreads = true;
+    _hydratedAllThreadsSnapshot = List<SupportThread>.from(threads);
+  }
+
   CollectionReference<Map<String, dynamic>> _threadReadCollection(
     String userId,
   ) => _firestore
@@ -91,6 +103,7 @@ class SupportRequest {
     );
     final threads = documents.map(SupportThread.fromMap).toList();
     threads.sort(_compareThreadsNewestFirst);
+    _storeHydratedAllThreads(threads);
     return threads;
   }
 
@@ -122,6 +135,29 @@ class SupportRequest {
     await _mergeThreadsIntoCache(documents);
     final threads = documents.map(SupportThread.fromMap).toList();
     threads.sort(_compareThreadsNewestFirst);
+    final cachedAllThreads = _hydratedAllThreadsSnapshot;
+    if (cachedAllThreads.isEmpty) {
+      _storeHydratedAllThreads(threads);
+    } else {
+      final mergedById = <String, SupportThread>{};
+      for (final thread in cachedAllThreads) {
+        final threadId = normalizeId(thread.id);
+        if (threadId == null) {
+          continue;
+        }
+        mergedById[threadId] = thread;
+      }
+      for (final thread in threads) {
+        final threadId = normalizeId(thread.id);
+        if (threadId == null) {
+          continue;
+        }
+        mergedById[threadId] = thread;
+      }
+      final mergedThreads = mergedById.values.toList()
+        ..sort(_compareThreadsNewestFirst);
+      _storeHydratedAllThreads(mergedThreads);
+    }
     return threads;
   }
 
@@ -345,6 +381,7 @@ class SupportRequest {
         }
         final cachedThreads = cached.map(SupportThread.fromMap).toList()
           ..sort(_compareThreadsNewestFirst);
+        _storeHydratedAllThreads(cachedThreads);
         controller.add(cachedThreads);
         unawaited(_warmThreadMessagesInBackground(cachedThreads));
       }
@@ -378,6 +415,7 @@ class SupportRequest {
         }
         final threads = mergedDocuments.map(SupportThread.fromMap).toList()
           ..sort(_compareThreadsNewestFirst);
+        _storeHydratedAllThreads(threads);
         unawaited(_warmThreadMessagesInBackground(threads));
         controller.add(threads);
       }, onError: controller.addError);
@@ -417,6 +455,9 @@ class SupportRequest {
                 )
                 .toList()
               ..sort(_compareThreadsNewestFirst);
+        final allCachedThreads = cached.map(SupportThread.fromMap).toList()
+          ..sort(_compareThreadsNewestFirst);
+        _storeHydratedAllThreads(allCachedThreads);
         controller.add(cachedThreads);
         unawaited(_warmThreadMessagesInBackground(cachedThreads));
       }
@@ -448,6 +489,29 @@ class SupportRequest {
             }
             final threads = mergedDocuments.map(SupportThread.fromMap).toList();
             threads.sort(_compareThreadsNewestFirst);
+            final cachedAllThreads = _hydratedAllThreadsSnapshot;
+            if (cachedAllThreads.isEmpty) {
+              _storeHydratedAllThreads(threads);
+            } else {
+              final mergedById = <String, SupportThread>{};
+              for (final thread in cachedAllThreads) {
+                final threadId = normalizeId(thread.id);
+                if (threadId == null) {
+                  continue;
+                }
+                mergedById[threadId] = thread;
+              }
+              for (final thread in threads) {
+                final threadId = normalizeId(thread.id);
+                if (threadId == null) {
+                  continue;
+                }
+                mergedById[threadId] = thread;
+              }
+              final mergedAllThreads = mergedById.values.toList()
+                ..sort(_compareThreadsNewestFirst);
+              _storeHydratedAllThreads(mergedAllThreads);
+            }
             unawaited(_warmThreadMessagesInBackground(threads));
             controller.add(threads);
           }, onError: controller.addError);

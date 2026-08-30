@@ -71,6 +71,8 @@ class AuthRequest implements AuthRepository {
   static const Duration _photoUploadTimeout = Duration(minutes: 1);
   static const Duration _deleteTimeout = Duration(seconds: 6);
   static const Duration _remoteUserWriteTimeout = Duration(seconds: 30);
+  static bool _hasResolvedUsers = false;
+  static List<UserModel> _hydratedUsersSnapshot = const <UserModel>[];
 
   final FirebaseFirestore _firestore;
   final VehicleRequest _vehicleRequest;
@@ -96,6 +98,10 @@ class AuthRequest implements AuthRepository {
 
   CollectionReference<Map<String, dynamic>> get _usersCollection =>
       _firestore.collection('users');
+
+  static bool get hasResolvedUsers => _hasResolvedUsers;
+  static List<UserModel> get hydratedUsersSnapshot =>
+      List<UserModel>.unmodifiable(_hydratedUsersSnapshot);
 
   CollectionReference<Map<String, dynamic>> get _clientMembersCollection =>
       _firestore.collection('client_members');
@@ -189,10 +195,14 @@ class AuthRequest implements AuthRepository {
             .map((doc) => _userFromFirestoreMap(doc, typeById))
             .toList(growable: false);
         _sortUsersNewestFirst(users);
+        _hasResolvedUsers = true;
+        _hydratedUsersSnapshot = List<UserModel>.from(users);
         return users;
       } catch (error) {
         final lateCachedUsers = await _getUsersCachedOnly();
         if (lateCachedUsers.isNotEmpty) {
+          _hasResolvedUsers = true;
+          _hydratedUsersSnapshot = List<UserModel>.from(lateCachedUsers);
           return lateCachedUsers;
         }
         final publicDocuments = await _firestorePublicDocumentFetcher
@@ -214,6 +224,8 @@ class AuthRequest implements AuthRepository {
             .map((doc) => _userFromFirestoreMap(doc, typeById))
             .toList(growable: false);
         _sortUsersNewestFirst(users);
+        _hasResolvedUsers = true;
+        _hydratedUsersSnapshot = List<UserModel>.from(users);
         return users;
       }
     }, fallback: 'We could not load the users right now.');
@@ -294,45 +306,79 @@ class AuthRequest implements AuthRepository {
       final trimmedIdentifier = identifier.trim();
       final normalizedPhone = normalizePhilippinePhone(trimmedIdentifier);
       final bool isPhoneLogin = normalizedPhone != null;
+      _logLogin(
+        'start identifier=$trimmedIdentifier isPhone=$isPhoneLogin online=${currentNetworkStatus()}',
+      );
       final user = await _resolveLoginUser(
         identifier: trimmedIdentifier,
         normalizedPhone: normalizedPhone,
         isPhoneLogin: isPhoneLogin,
       );
+      _logLogin(
+        'resolved cachedOrBest user=${user.id ?? "-"} role=${user.role ?? "-"}',
+      );
       if ((user.password ?? '') != password) {
+        _logLogin(
+          'password mismatch initial user=${user.id ?? "-"} online=${currentNetworkStatus()}',
+        );
+        if (currentNetworkStatus()) {
+          final freshUser = await _resolveLoginUserFresh(
+            identifier: trimmedIdentifier,
+            normalizedPhone: normalizedPhone,
+            isPhoneLogin: isPhoneLogin,
+          );
+          if (freshUser != null) {
+            _logLogin(
+              'fresh lookup resolved user=${freshUser.id ?? "-"} role=${freshUser.role ?? "-"}',
+            );
+            if ((freshUser.password ?? '') == password) {
+              _logLogin('fresh lookup corrected stale login resolution');
+              return _completeLogin(freshUser);
+            }
+          } else {
+            _logLogin('fresh lookup returned no user after mismatch');
+          }
+        }
         throw const AuthFailure('Incorrect password.');
       }
-      if (user.isActive == false) {
-        throw const AuthFailure(
-          'This account is not active yet. Please contact your admin to activate your account.',
-        );
-      }
-      final loginUser = user.copyWith(
-        isOnline: _supportsOnline(user.role) ? true : false,
-        updatedAt: DateTime.now(),
-      );
-      final loggedInUser = await _persistUserForLogin(loginUser);
-      final bridgedUser = await _firebaseAuthBridgeService.syncSessionForUser(
-        loggedInUser,
-      );
-      await _storage.writeString(_currentUserIdKey, loggedInUser.id ?? '');
-      await _writeCurrentSessionSnapshot(bridgedUser);
-      await _rememberKnownSessionUserId(bridgedUser.id);
-      final bridgedUserId = normalizeId(bridgedUser.id);
-      if (bridgedUserId != null && currentNetworkStatus()) {
-        unawaited(_validateStoredSessionInBackground(bridgedUserId));
-      }
-      unawaited(
-        _refreshOfflineQueueScopes().then((_) {
-        }),
-      );
-      AppSessionReset.clearUserScopedState();
-      return bridgedUser;
+      return _completeLogin(user);
     } on AuthFailure {
       rethrow;
     } catch (error) {
       throw AuthFailure(error.toString());
     }
+  }
+
+  Future<UserModel> _completeLogin(UserModel user) async {
+    if (user.isActive == false) {
+      throw const AuthFailure(
+        'This account is not active yet. Please contact your admin to activate your account.',
+      );
+    }
+    final loginUser = user.copyWith(
+      isOnline: _supportsOnline(user.role) ? true : false,
+      updatedAt: DateTime.now(),
+    );
+    final loggedInUser = await _persistUserForLogin(loginUser);
+    final bridgedUser = await _firebaseAuthBridgeService.syncSessionForUser(
+      loggedInUser,
+    );
+    await _storage.writeString(_currentUserIdKey, loggedInUser.id ?? '');
+    await _writeCurrentSessionSnapshot(bridgedUser);
+    await _rememberKnownSessionUserId(bridgedUser.id);
+    final bridgedUserId = normalizeId(bridgedUser.id);
+    if (bridgedUserId != null && currentNetworkStatus()) {
+      unawaited(_validateStoredSessionInBackground(bridgedUserId));
+    }
+    unawaited(
+      _refreshOfflineQueueScopes().then((_) {
+      }),
+    );
+    AppSessionReset.clearUserScopedState();
+    _logLogin(
+      'success user=${bridgedUser.id ?? "-"} role=${bridgedUser.role ?? "-"}',
+    );
+    return bridgedUser;
   }
 
   @override
@@ -1191,6 +1237,8 @@ class AuthRequest implements AuthRepository {
         documents: documents,
       );
       await _writeUsersCacheLocally(documents);
+      _hasResolvedUsers = true;
+      _hydratedUsersSnapshot = List<UserModel>.from(users);
     } catch (error) {
       // Background cache refresh must never block startup or interactive flows.
     }
@@ -1578,6 +1626,36 @@ class AuthRequest implements AuthRepository {
     );
   }
 
+  Future<UserModel?> _resolveLoginUserFresh({
+    required String identifier,
+    required String? normalizedPhone,
+    required bool isPhoneLogin,
+  }) async {
+    final results = await Future.wait<_LoginLookupResult>([
+      _findUserByIdentifierViaFirestoreQuery(
+        identifier: identifier,
+        normalizedPhone: normalizedPhone,
+        isPhoneLogin: isPhoneLogin,
+      ),
+      _findUserByIdentifierViaDirectoryFetch(
+        identifier: identifier,
+        normalizedPhone: normalizedPhone,
+        isPhoneLogin: isPhoneLogin,
+      ),
+      _findUserByIdentifierViaPublicRestDirectory(
+        identifier: identifier,
+        normalizedPhone: normalizedPhone,
+        isPhoneLogin: isPhoneLogin,
+      ),
+    ]);
+    for (final result in results) {
+      if (result.user != null) {
+        return result.user!;
+      }
+    }
+    return null;
+  }
+
   AuthFailure _buildLoginLookupFailure(
     Object error, {
     required bool isPhoneLogin,
@@ -1685,6 +1763,10 @@ class AuthRequest implements AuthRepository {
       }
       return bDate.compareTo(aDate);
     });
+    if (users.isNotEmpty) {
+      _hasResolvedUsers = true;
+      _hydratedUsersSnapshot = List<UserModel>.from(users);
+    }
     return users;
   }
 
@@ -1831,6 +1913,11 @@ class AuthRequest implements AuthRepository {
       nextDocuments.add(Map<String, dynamic>.from(document));
     }
     await _writeUsersCacheLocally(nextDocuments);
+  }
+
+  void _logLogin(String message) {
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('[$timestamp][AuthLogin] $message');
   }
 
   Future<UserModel> _inflateUser(

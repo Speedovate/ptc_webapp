@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
@@ -30,32 +31,147 @@ class AppWarmupService {
   final VehicleRequest _vehicleRequest;
   final SupportRequest _supportRequest;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  final Map<String, Future<void>> _inFlightTasks = <String, Future<void>>{};
+  final Set<String> _completedTasks = <String>{};
+
+  static const String _taskBookings = 'bookings';
+  static const String _taskUsers = 'users';
+  static const String _taskVehicleMakes = 'vehicle_makes';
+  static const String _taskVehicleTypes = 'vehicle_types';
+  static const String _taskVehicleSizes = 'vehicle_sizes';
+  static const String _taskStatuses = 'statuses';
+  static const String _taskStatusFields = 'status_fields';
+  static const String _taskStatusForms = 'status_forms';
+  static const String _taskRoleAccess = 'role_access';
 
   Future<void> warmUpGlobalData() async {
-    await Future.wait([
-      _runSafely(() => _vehicleRequest.getTypes()),
-      _runSafely(() => _vehicleRequest.getSizes()),
-      _runSafely(() => _vehicleRequest.getMakes()),
-      _runSafely(() => _authRequest.getUsers()),
-      _runSafely(() => _bookingRequest.getBookings()),
-      _runSafely(() => _statusRequest.getStatuses()),
-      _runSafely(() => _statusRequest.getAllFields()),
-      _runSafely(() => _statusRequest.getStatusForms()),
-    ]);
+    _log('warmUpGlobalData start');
+    await warmBookings();
+    await _warmVehicleCatalogData();
+    await warmRoleAccess();
+    await _warmFlowData();
+    await warmUsers();
+    _log('warmUpGlobalData done');
   }
 
   Future<void> warmUpForUser(UserModel? user) async {
-    await warmUpGlobalData();
+    _log('warmUpForUser start user=${normalizeId(user?.id) ?? "-"} role=${user?.role ?? "-"}');
+    _log('warmUpForUser step=bookings start');
+    await warmBookings();
+    _log('warmUpForUser step=bookings done');
+    _log('warmUpForUser step=vehicles start');
+    await _warmVehicleCatalogData();
+    _log('warmUpForUser step=vehicles done');
     if (user == null) {
+      _log('warmUpForUser step=role-access start');
+      await warmRoleAccess();
+      _log('warmUpForUser step=role-access done');
+      _log('warmUpForUser step=flows start');
+      await _warmFlowData();
+      _log('warmUpForUser step=flows done');
+      _log('warmUpForUser step=users start');
+      await warmUsers();
+      _log('warmUpForUser step=users done');
+      _log('warmUpForUser done no-user');
       return;
     }
 
+    _log('warmUpForUser step=support start');
     final threads = await _prefetchSupportDataForUser(user);
     if (threads.isNotEmpty) {
-      await _runSafely(
-        () => _supportRequest.prefetchMessagesForThreads(threads),
+      await _runSharedTask<void>(
+        _supportMessagesTaskKey(threads),
+        () => _runSafely(
+          () => _supportRequest.prefetchMessagesForThreads(threads),
+        ),
       );
     }
+    _log('warmUpForUser step=support done threads=${threads.length}');
+    _log('warmUpForUser step=role-access start');
+    await warmRoleAccess();
+    _log('warmUpForUser step=role-access done');
+    _log('warmUpForUser step=flows start');
+    await _warmFlowData();
+    _log('warmUpForUser step=flows done');
+    _log('warmUpForUser step=users start');
+    await warmUsers();
+    _log('warmUpForUser step=users done');
+    _log('warmUpForUser done threads=${threads.length}');
+  }
+
+  Future<void> warmBookings() {
+    return _runSharedTask<void>(
+      _taskBookings,
+      () => _runSafely(() => _bookingRequest.getBookings()),
+    );
+  }
+
+  Future<void> warmUsers() {
+    return _runSharedTask<void>(
+      _taskUsers,
+      () => _runSafely(() => _authRequest.getUsers()),
+    );
+  }
+
+  Future<void> warmVehicleMakes() {
+    return _runSharedTask<void>(
+      _taskVehicleMakes,
+      () => _runSafely(() => _vehicleRequest.getMakes()),
+    );
+  }
+
+  Future<void> warmVehicleTypes() {
+    return _runSharedTask<void>(
+      _taskVehicleTypes,
+      () => _runSafely(() => _vehicleRequest.getTypes()),
+    );
+  }
+
+  Future<void> warmVehicleSizes() {
+    return _runSharedTask<void>(
+      _taskVehicleSizes,
+      () => _runSafely(() => _vehicleRequest.getSizes()),
+    );
+  }
+
+  Future<void> warmStatuses() {
+    return _runSharedTask<void>(
+      _taskStatuses,
+      () => _runSafely(() => _statusRequest.getStatuses()),
+    );
+  }
+
+  Future<void> warmStatusFields() {
+    return _runSharedTask<void>(
+      _taskStatusFields,
+      () => _runSafely(() => _statusRequest.getAllFields()),
+    );
+  }
+
+  Future<void> warmStatusForms() {
+    return _runSharedTask<void>(
+      _taskStatusForms,
+      () => _runSafely(() => _statusRequest.getStatusForms()),
+    );
+  }
+
+  Future<void> warmRoleAccess() {
+    return _runSharedTask<void>(
+      _taskRoleAccess,
+      () => _runSafely(() => _roleAccessService.refresh()),
+    );
+  }
+
+  Future<void> _warmVehicleCatalogData() async {
+    await warmVehicleMakes();
+    await warmVehicleTypes();
+    await warmVehicleSizes();
+  }
+
+  Future<void> _warmFlowData() async {
+    await warmStatuses();
+    await warmStatusForms();
+    await warmStatusFields();
   }
 
   Future<List<SupportThread>> _prefetchSupportDataForUser(
@@ -71,15 +187,74 @@ class AppWarmupService {
           role: user.role,
         );
     if (canViewInbox) {
-      return await _runSafelyList(() => _supportRequest.prefetchAllThreads());
+      return await _runSharedListTask<SupportThread>(
+        'support_threads:all',
+        () => _runSafelyList(() => _supportRequest.prefetchAllThreads()),
+      );
     }
     final normalizedUserId = normalizeId(user.id);
     if (normalizedUserId == null) {
       return const <SupportThread>[];
     }
-    return await _runSafelyList(
-      () => _supportRequest.prefetchThreadsForUser(normalizedUserId),
+    return await _runSharedListTask<SupportThread>(
+      'support_threads:user:$normalizedUserId',
+      () => _runSafelyList(
+        () => _supportRequest.prefetchThreadsForUser(normalizedUserId),
+      ),
     );
+  }
+
+  String _supportMessagesTaskKey(List<SupportThread> threads) {
+    final normalizedIds = threads
+        .map((thread) => normalizeId(thread.id))
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false)
+      ..sort();
+    if (normalizedIds.isEmpty) {
+      return 'support_messages:none';
+    }
+    return 'support_messages:${normalizedIds.join(",")}';
+  }
+
+  Future<void> _runSharedTask<T>(
+    String key,
+    Future<T> Function() action,
+  ) async {
+    if (_completedTasks.contains(key)) {
+      _log('task skip-completed key=$key');
+      return;
+    }
+    final existing = _inFlightTasks[key];
+    if (existing != null) {
+      _log('task join-inflight key=$key');
+      await existing;
+      return;
+    }
+    _log('task start key=$key');
+    final future = () async {
+      try {
+        await action();
+      } finally {
+        _completedTasks.add(key);
+        _inFlightTasks.remove(key);
+        _log('task done key=$key');
+      }
+    }();
+    _inFlightTasks[key] = future;
+    await future;
+  }
+
+  Future<List<T>> _runSharedListTask<T>(
+    String key,
+    Future<List<T>> Function() action,
+  ) async {
+    List<T> result = <T>[];
+    await _runSharedTask<List<T>>(key, () async {
+      result = await action();
+      return result;
+    });
+    return result;
   }
 
   Future<void> _runSafely<T>(Future<T> Function() action) async {
@@ -94,5 +269,10 @@ class AppWarmupService {
     } catch (_) {
       return <T>[];
     }
+  }
+
+  void _log(String message) {
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('[$timestamp][AppWarmup] $message');
   }
 }

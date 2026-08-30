@@ -1,10 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
-import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 
 class AppShellViewModel extends BaseViewModel {
@@ -12,7 +12,6 @@ class AppShellViewModel extends BaseViewModel {
     : _repository = repository ?? AuthRequest.instance;
 
   final AuthRepository _repository;
-  final AppWarmupService _warmupService = AppWarmupService.instance;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
 
   bool isLoading = true;
@@ -23,6 +22,7 @@ class AppShellViewModel extends BaseViewModel {
   int _sessionEpoch = 0;
 
   Future<void> initialize() async {
+    _log('initialize start loggedIn=false');
     isLoading = true;
     notifyListeners();
     try {
@@ -55,9 +55,11 @@ class AppShellViewModel extends BaseViewModel {
     } catch (error) {
       // Startup should still continue using cached/local state when background steps fail.
     }
+    _log(
+      'initialize done loggedIn=${currentUser != null} user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"} quick=$isQuickLoggedIn',
+    );
     isLoading = false;
     notifyListeners();
-    unawaited(_finishInitializationInBackground());
   }
 
   Future<void> refreshCurrentUser() async {
@@ -65,11 +67,17 @@ class AppShellViewModel extends BaseViewModel {
     _roleAccessService.setCurrentUser(currentUser);
     isQuickLoggedIn = await _repository.hasQuickLoginSource();
     await _bindCurrentSessionWatch();
+    _log(
+      'refreshCurrentUser loggedIn=${currentUser != null} user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"} quick=$isQuickLoggedIn',
+    );
     notifyListeners();
   }
 
   Future<void> completeAuthentication(UserModel user) async {
     final authEpoch = ++_sessionEpoch;
+    _log(
+      'completeAuthentication start loggedIn=true user=${user.id ?? "-"} role=${user.role ?? "-"}',
+    );
     isLoading = true;
     currentUser = user;
     _roleAccessService.setCurrentUser(user);
@@ -77,7 +85,6 @@ class AppShellViewModel extends BaseViewModel {
     try {
       isQuickLoggedIn = await _repository.hasQuickLoginSource();
       await _bindCurrentSessionWatch();
-      unawaited(_finishInitializationInBackground(userOverride: user));
       unawaited(_refreshCurrentUserInBackground(user, authEpoch));
     } catch (_) {
       if (authEpoch != _sessionEpoch) {
@@ -90,12 +97,18 @@ class AppShellViewModel extends BaseViewModel {
     } finally {
       if (authEpoch == _sessionEpoch) {
         isLoading = false;
+        _log(
+          'completeAuthentication done loggedIn=${currentUser != null} user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"} quick=$isQuickLoggedIn',
+        );
         notifyListeners();
       }
     }
   }
 
   Future<void> logout() async {
+    _log(
+      'logout start loggedIn=${currentUser != null} user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"}',
+    );
     _sessionEpoch++;
     await _sessionInvalidationSubscription?.cancel();
     _sessionInvalidationSubscription = null;
@@ -106,9 +119,13 @@ class AppShellViewModel extends BaseViewModel {
     try {
       await _repository.logout();
     } catch (_) {}
+    _log('logout done loggedIn=false');
   }
 
   Future<void> goBackFromQuickLogin() async {
+    _log(
+      'goBackFromQuickLogin start loggedIn=${currentUser != null} user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"}',
+    );
     final previousUser = currentUser;
     final previousQuickLoggedIn = isQuickLoggedIn;
     isLoading = true;
@@ -120,7 +137,6 @@ class AppShellViewModel extends BaseViewModel {
       _roleAccessService.setCurrentUser(currentUser);
       isQuickLoggedIn = await _repository.hasQuickLoginSource();
       await _bindCurrentSessionWatch();
-      unawaited(_finishInitializationInBackground());
     } catch (_) {
       currentUser = previousUser;
       _roleAccessService.setCurrentUser(currentUser);
@@ -129,6 +145,9 @@ class AppShellViewModel extends BaseViewModel {
       rethrow;
     } finally {
       isLoading = false;
+      _log(
+        'goBackFromQuickLogin done loggedIn=${currentUser != null} user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"} quick=$isQuickLoggedIn',
+      );
       notifyListeners();
     }
   }
@@ -143,19 +162,14 @@ class AppShellViewModel extends BaseViewModel {
     _sessionInvalidationSubscription = authRequest
         .watchCurrentSessionInvalidation()
         .listen((_) async {
+          _log(
+            'session invalidated loggedIn=${currentUser != null} user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"}',
+          );
           currentUser = null;
           _roleAccessService.setCurrentUser(null);
           isQuickLoggedIn = false;
           notifyListeners();
         });
-  }
-
-  Future<void> _finishInitializationInBackground({
-    UserModel? userOverride,
-  }) async {
-    try {
-      await _warmupService.warmUpForUser(userOverride ?? currentUser);
-    } catch (_) {}
   }
 
   Future<void> _refreshCurrentUserInBackground(
@@ -192,5 +206,10 @@ class AppShellViewModel extends BaseViewModel {
   void dispose() {
     _sessionInvalidationSubscription?.cancel();
     super.dispose();
+  }
+
+  void _log(String message) {
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('[$timestamp][AppShellAuth] $message');
   }
 }

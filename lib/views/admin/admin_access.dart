@@ -5,6 +5,7 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/role_access.request.dart';
+import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
@@ -37,6 +38,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
   };
   final RoleAccessService _service = RoleAccessService.instance;
   final AuthRequest _authRequest = AuthRequest.instance;
+  final AppWarmupService _warmupService = AppWarmupService.instance;
   StreamSubscription<void>? _roleAccessCacheUpdatesSubscription;
   StreamSubscription<void>? _usersCacheUpdatesSubscription;
   static List<_AccessRoleEntry> _cachedRoles = const [];
@@ -118,30 +120,56 @@ class _AdminAccessViewState extends State<AdminAccessView> {
       });
       return;
     }
+    final hasSharedRoleAccess = _service.roleAccessConfigs.isNotEmpty;
+    final hasSharedUsers = AuthRequest.hasResolvedUsers;
+    if (_roles.isEmpty && hasSharedRoleAccess && hasSharedUsers) {
+      final sharedRoleKeys = <String>{
+        ..._service.roleAccessConfigs.map((config) => config.role),
+        ...AuthRequest.hydratedUsersSnapshot.map((user) => user.role ?? ''),
+      }
+          .map(_normalizeRoleKey)
+          .whereType<String>()
+          .toSet()
+          .toList(growable: false);
+      _roles = _buildRoleEntries(sharedRoleKeys);
+    }
     final seededRoleKeys = <String>{
       ...builtInRoleKeys,
       ..._service.knownRoleKeys,
       ..._roles.map((role) => role.roleKey),
     }.where((role) => role.trim().isNotEmpty).toList(growable: false);
     final shouldShowBlockingLoading =
-        !_hasCompletedInitialLoad && _roles.isEmpty && _cachedRoles.isEmpty;
+        !_hasCompletedInitialLoad &&
+        _roles.isEmpty &&
+        _cachedRoles.isEmpty &&
+        !(hasSharedRoleAccess && hasSharedUsers);
+    _log(
+      'load start visible=${!shouldShowBlockingLoading} local=${_roles.length} cached=${_cachedRoles.length} sharedRoles=$hasSharedRoleAccess sharedUsers=$hasSharedUsers',
+    );
     setState(() {
       _isLoading = shouldShowBlockingLoading;
       _errorMessage = null;
       _roles = _buildRoleEntries(seededRoleKeys);
     });
     try {
-      await _service.refresh().timeout(
+      await _warmupService.warmRoleAccess().timeout(
         const Duration(seconds: 6),
         onTimeout: () {
         },
       );
-      final users = await _authRequest.getUsers().timeout(
+      await _warmupService.warmUsers().timeout(
         const Duration(seconds: 6),
         onTimeout: () {
-          return const [];
         },
       );
+      final users = AuthRequest.hasResolvedUsers
+          ? AuthRequest.hydratedUsersSnapshot
+          : await _authRequest.getUsers().timeout(
+              const Duration(seconds: 6),
+              onTimeout: () {
+                return const [];
+              },
+            );
       final roleKeys = <String>{
         ..._service.roleAccessConfigs.map((config) => config.role),
         ...users.map((user) => (user.role ?? '').trim()),
@@ -152,10 +180,12 @@ class _AdminAccessViewState extends State<AdminAccessView> {
           .toList();
 
       _roles = _buildRoleEntries(roleKeys);
+      _log('load resolved roles=${_roles.length} users=${users.length}');
       _cachedRoles = List<_AccessRoleEntry>.from(_roles);
       _cachedErrorMessage = null;
       _cachedHasCompletedInitialLoad = true;
     } catch (error) {
+      _log('load error error=$error');
       _errorMessage = error.toString();
       _cachedErrorMessage = _errorMessage;
     } finally {
@@ -166,7 +196,15 @@ class _AdminAccessViewState extends State<AdminAccessView> {
         });
       }
       _cachedHasCompletedInitialLoad = true;
+      _log(
+        'load finish loading=$_isLoading completed=$_hasCompletedInitialLoad roles=${_roles.length} error=${_errorMessage ?? "-"}',
+      );
     }
+  }
+
+  void _log(String message) {
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('[$timestamp][AdminRolesLoad] $message');
   }
 
   List<_AccessRoleEntry> _buildRoleEntries(Iterable<String> roleKeys) {
@@ -379,7 +417,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
           '${role.permissionCount}'.contains(query);
     }).toList(growable: false);
     final showInitialLoading =
-        _isLoading && !_hasCompletedInitialLoad && _roles.isEmpty && _errorMessage == null;
+        _isLoading && !_hasCompletedInitialLoad && _errorMessage == null;
 
     return AbsorbPointer(
       absorbing: showInitialLoading,
@@ -543,7 +581,7 @@ class _AccessListSection extends StatelessWidget {
             ),
           );
         }
-        if (isLoading && !hasCompletedInitialLoad && roles.isEmpty) {
+        if (isLoading && !hasCompletedInitialLoad) {
           return const SizedBox.shrink();
         }
         if (roles.isEmpty) {

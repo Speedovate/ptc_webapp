@@ -6,6 +6,7 @@ import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
+import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
@@ -20,6 +21,7 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
 
   final VehicleCatalogRepository _repository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  final AppWarmupService _warmupService = AppWarmupService.instance;
   StreamSubscription<void>? _catalogCacheUpdatesSubscription;
   static List<VehicleCatalogItem> _cachedTypes = const [];
   static String? _cachedErrorMessage;
@@ -64,13 +66,23 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
       return;
     }
     _busyMessage = 'Loading vehicle types ...';
-    final hasVisiblePrimaryData = _types.isNotEmpty || _cachedTypes.isNotEmpty;
+    final hasSharedPrimaryData = VehicleRequest.hasResolvedTypes;
+    final hasVisiblePrimaryData =
+        _types.isNotEmpty || _cachedTypes.isNotEmpty || hasSharedPrimaryData;
     final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
     if (shouldShowLoadingState) {
       setBusy(true);
     }
     _errorMessage = null;
     try {
+      if (hasSharedPrimaryData && _types.isEmpty) {
+        _types = List<VehicleCatalogItem>.from(
+          VehicleRequest.hydratedTypesSnapshot,
+        );
+        _sortTypes();
+        notifyListeners();
+      }
+      await _warmupService.warmVehicleTypes();
       _types = await _repository.getTypes();
       _sortTypes();
       _cachedTypes = List<VehicleCatalogItem>.from(_types);
@@ -110,6 +122,7 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
     }
     _isRealtimeRefreshing = true;
     try {
+      await _warmupService.warmVehicleTypes();
       _types = await _repository.getTypes();
       _sortTypes();
       _cachedTypes = List<VehicleCatalogItem>.from(_types);
@@ -135,6 +148,7 @@ class AdminVehicleTypesViewModel extends BaseViewModel {
   Future<void> _retryLoadAfterWarmup() async {
     await Future<void>.delayed(const Duration(milliseconds: 450));
     try {
+      await _warmupService.warmVehicleTypes();
       final refreshedTypes = await _repository.getTypes();
       if (refreshedTypes.isEmpty) {
         return;

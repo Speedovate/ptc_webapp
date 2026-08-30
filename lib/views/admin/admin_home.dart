@@ -518,7 +518,7 @@ class _AdminHomeState extends State<AdminHome> {
   Widget _buildSelectedSection(AdminSection section) {
     final resolvedSection = _resolvedSection(section);
     return switch (resolvedSection) {
-      AdminSection.dashboard => const AdminDashboardView(),
+      AdminSection.dashboard => AdminDashboardView(user: _shellUser),
       AdminSection.bookings => AdminBookingsView(user: widget.user),
       AdminSection.vehicles => switch (_resolvedVehiclesSection()) {
         AdminVehiclesSection.makes => const AdminVehicleMakesView(),

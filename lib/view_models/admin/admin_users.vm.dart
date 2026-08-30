@@ -5,6 +5,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
+import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -15,21 +16,25 @@ class AdminUsersViewModel extends BaseViewModel {
     _currentUser = _cachedCurrentUser;
     _viewedUser = _cachedViewedUser;
     _viewedUserStack.addAll(_cachedViewedUserStack);
+    _hasLoadedOnce = _cachedHasLoadedOnce;
   }
 
   final AuthRepository _repository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  final AppWarmupService _warmupService = AppWarmupService.instance;
   StreamSubscription<void>? _usersCacheUpdatesSubscription;
   static List<UserModel> _cachedUsers = const [];
   static UserModel? _cachedCurrentUser;
   static UserModel? _cachedViewedUser;
   static List<UserModel> _cachedViewedUserStack = const [];
+  static bool _cachedHasLoadedOnce = false;
 
   static void clearCachedState() {
     _cachedUsers = const [];
     _cachedCurrentUser = null;
     _cachedViewedUser = null;
     _cachedViewedUserStack = const [];
+    _cachedHasLoadedOnce = false;
   }
 
   final List<UserModel> _users = [];
@@ -47,6 +52,7 @@ class AdminUsersViewModel extends BaseViewModel {
   DateTime? _updatedEndDate;
   String _busyMessage = 'Loading, please wait ...';
   bool _isRealtimeRefreshing = false;
+  bool _hasLoadedOnce = false;
   String get searchQuery => _searchQuery;
   List<UserModel> get users => List.unmodifiable(_users);
   UserModel? get currentUser => _currentUser;
@@ -99,16 +105,25 @@ class AdminUsersViewModel extends BaseViewModel {
   Future<void> loadUsers({UserModel? fallbackCurrentUser}) async {
     _ensureUsersRealtimeSubscription();
     _busyMessage = 'Loading users ...';
+    final hasSharedUsers = AuthRequest.hasResolvedUsers;
+    if (_users.isEmpty && hasSharedUsers) {
+      _users
+        ..clear()
+        ..addAll(AuthRequest.hydratedUsersSnapshot);
+      _sortUsers();
+    }
     final hasVisiblePrimaryData =
         _users.isNotEmpty ||
         _cachedUsers.isNotEmpty ||
+        hasSharedUsers ||
         _currentUser != null ||
         _cachedCurrentUser != null;
-    final shouldShowLoadingState = !hasVisiblePrimaryData;
+    final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
     if (shouldShowLoadingState) {
       setBusy(true);
     }
     try {
+      await _warmupService.warmUsers();
       final results = await Future.wait([
         _repository.getUsers(),
         _repository.getCurrentUser(),
@@ -124,6 +139,9 @@ class AdminUsersViewModel extends BaseViewModel {
       _cachedCurrentUser = _currentUser;
       _cachedViewedUser = _viewedUser;
       _cachedViewedUserStack = List<UserModel>.from(_viewedUserStack);
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
+      notifyListeners();
     } finally {
       if (shouldShowLoadingState) {
         setBusy(false);
@@ -146,6 +164,7 @@ class AdminUsersViewModel extends BaseViewModel {
     }
     _isRealtimeRefreshing = true;
     try {
+      await _warmupService.warmUsers();
       final results = await Future.wait([
         _repository.getUsers(),
         _repository.getCurrentUser(),

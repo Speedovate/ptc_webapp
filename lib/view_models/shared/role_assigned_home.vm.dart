@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
@@ -10,6 +11,7 @@ import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
+import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -26,12 +28,14 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
     errorMessage = _cachedErrorMessage;
     _usersById.addAll(_cachedUsersById);
     _statusesByKey.addAll(_cachedStatusesByKey);
+    _hasLoadedOnce = _cachedHasLoadedOnce;
   }
 
   final AuthRepository _authRepository;
   final BookingRepository _bookingRepository;
   final StatusFormRepository _statusRepository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  final AppWarmupService _warmupService = AppWarmupService.instance;
   StreamSubscription<List<Booking>>? _bookingsSubscription;
   StreamSubscription<void>? _usersCacheUpdatesSubscription;
   StreamSubscription<void>? _statusCacheUpdatesSubscription;
@@ -40,6 +44,7 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   static String? _cachedErrorMessage;
   static Map<String, UserModel> _cachedUsersById = const {};
   static Map<String, Status> _cachedStatusesByKey = const {};
+  static bool _cachedHasLoadedOnce = false;
 
   static void clearCachedState() {
     _cachedAssignedBookings = const [];
@@ -47,6 +52,7 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
     _cachedErrorMessage = null;
     _cachedUsersById = const {};
     _cachedStatusesByKey = const {};
+    _cachedHasLoadedOnce = false;
   }
 
   final Map<String, UserModel> _usersById = {};
@@ -57,30 +63,46 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   String? errorMessage;
   String busyMessage = 'Loading, please wait ...';
   bool _isRealtimeRefreshing = false;
+  bool _hasLoadedOnce = false;
 
   Future<void> load(UserModel user) async {
+    _log(
+      'load start loggedIn=${user.id != null} user=${user.id ?? "-"} role=${user.role ?? "-"} visiblePrimary=${assignedBookings.isNotEmpty || _cachedAssignedBookings.isNotEmpty || currentUser != null || _cachedCurrentUser != null || _usersById.isNotEmpty || _cachedUsersById.isNotEmpty || _statusesByKey.isNotEmpty || _cachedStatusesByKey.isNotEmpty}',
+    );
     _ensureSupportingSubscriptions();
     busyMessage = 'Loading assigned bookings ...';
     final hasVisiblePrimaryData =
         assignedBookings.isNotEmpty ||
         _cachedAssignedBookings.isNotEmpty ||
+        BookingRequest.hasResolvedBookings ||
         currentUser != null ||
         _cachedCurrentUser != null ||
         _usersById.isNotEmpty ||
         _cachedUsersById.isNotEmpty ||
         _statusesByKey.isNotEmpty ||
         _cachedStatusesByKey.isNotEmpty;
-    final shouldShowLoadingState = !hasVisiblePrimaryData;
+    final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
     if (shouldShowLoadingState) {
       setBusy(true);
+      _log('overlay show section=assigned-home');
+    }
+    if (!shouldShowLoadingState) {
+      _log('silent load only section=assigned-home');
     }
     errorMessage = null;
     try {
+      if (BookingRequest.hasResolvedBookings && assignedBookings.isEmpty) {
+        _applyAssignedBookings(BookingRequest.hydratedBookingsSnapshot);
+        notifyListeners();
+      }
       await _bookingRepository.initialize();
       final results = await Future.wait([
         _authRepository.getUsers(),
         _statusRepository.getStatuses(),
-        _bookingRepository.getBookings(),
+        if (BookingRequest.hasResolvedBookings)
+          Future<List<Booking>>.value(BookingRequest.hydratedBookingsSnapshot)
+        else
+          _bookingRepository.getBookings(),
       ]);
       final users = results[0] as List<UserModel>;
       final statuses = results[1] as List<Status>;
@@ -114,16 +136,29 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       _cachedErrorMessage = null;
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
+      _log(
+        'load success user=${currentUser?.id ?? user.id ?? "-"} role=${currentUser?.role ?? user.role ?? "-"} bookings=${assignedBookings.length} users=${_usersById.length} statuses=${_statusesByKey.length}',
+      );
+      unawaited(_warmupService.warmUpForUser(currentUser));
     } catch (error) {
+      _log('load error user=${user.id ?? "-"} role=${user.role ?? "-"} error=$error');
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the assigned bookings right now.',
       );
       _cachedErrorMessage = errorMessage;
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
     } finally {
       if (shouldShowLoadingState) {
         setBusy(false);
+        _log('overlay hide section=assigned-home reason=load-finish');
       }
+      _log(
+        'load finish user=${currentUser?.id ?? user.id ?? "-"} role=${currentUser?.role ?? user.role ?? "-"} busy=$isBusy bookings=${assignedBookings.length} error=${errorMessage ?? "-"}',
+      );
       notifyListeners();
     }
   }
@@ -146,6 +181,9 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       return;
     }
     _isRealtimeRefreshing = true;
+    _log(
+      'realtime reload start user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"}',
+    );
     try {
       final results = await Future.wait<dynamic>([
         _authRepository.getUsers(),
@@ -172,6 +210,9 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
       _applyAssignedBookings(List<Booking>.from(assignedBookings));
+      _log(
+        'realtime reload done user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"} bookings=${assignedBookings.length}',
+      );
       notifyListeners();
     } catch (_) {
       // Keep current visible state if live support data refresh fails.
@@ -304,5 +345,10 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       return -1;
     }
     return left.compareTo(right);
+  }
+
+  void _log(String message) {
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('[$timestamp][RoleAssignedHome] $message');
   }
 }
