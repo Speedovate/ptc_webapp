@@ -91,6 +91,15 @@ class _WebAppInstallService implements WebAppInstallService {
         agent.contains('ipod');
   }
 
+  bool _isChromiumOrAndroid() {
+    final agent = html.window.navigator.userAgent.toLowerCase();
+    return agent.contains('android') ||
+        agent.contains('chrome') ||
+        agent.contains('crios') ||
+        agent.contains('edg') ||
+        agent.contains('samsungbrowser');
+  }
+
   void _handleBeforeInstall(html.Event event) {
     event.preventDefault();
     _deferredPrompt = event;
@@ -142,6 +151,15 @@ class _WebAppInstallService implements WebAppInstallService {
         didLaunchPrompt: false,
         message:
             'To install on iPhone or iPad, tap Share then Add to Home Screen.',
+        requiresManualInstall: true,
+      );
+    }
+
+    if (_isChromiumOrAndroid()) {
+      return const WebAppInstallAttemptResult(
+        didLaunchPrompt: false,
+        message:
+            'Chrome has not shown its install prompt yet. Tap the three-dot menu, then choose Install app or Add to Home screen.',
         requiresManualInstall: true,
       );
     }

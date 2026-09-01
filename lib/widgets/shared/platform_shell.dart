@@ -264,10 +264,9 @@ class _PlatformInstallAppButton extends StatelessWidget {
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Add To Home Screen'),
-          content: const Text(
-            'Tap the Share button in your browser, then choose "Add to Home Screen". '
-            'The app will open like a regular mobile app.',
+          title: const Text('Install Paltranco'),
+          content: Text(
+            '$message The app will open like a regular mobile app.',
           ),
           actions: [
             TextButton(
