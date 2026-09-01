@@ -603,8 +603,6 @@ class _ProfileIdentityHeader extends StatelessWidget {
                       children: [
                         AppProfileAvatar(
                           photo: user.photo,
-                          debugLabel:
-                              'open-user:${normalizeId(user.id) ?? '-'}',
                           memoryBytes: pendingPhotoBytes,
                           fallbackText: _ProfileViewState._initials(user.name),
                           radius: avatarRadius,

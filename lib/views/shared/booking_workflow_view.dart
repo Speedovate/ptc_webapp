@@ -59,6 +59,14 @@ class BookingWorkflowView extends StatefulWidget {
   State<BookingWorkflowView> createState() => _BookingWorkflowViewState();
 }
 
+String? _bookingFieldPlaceholder(StatusField field) {
+  final placeholder = field.placeholder?.trim();
+  if (field.required == true && placeholder?.toLowerCase() == 'optional') {
+    return null;
+  }
+  return placeholder;
+}
+
 String? _supportTargetUserIdForBooking(UserModel currentUser, Booking booking) {
   final effectiveRole = RoleAccessService.instance.effectiveRoleKey(
     currentUser.role,
@@ -2142,7 +2150,7 @@ class _WorkflowFieldCard extends StatelessWidget {
     final title = field.title?.trim();
     final subtitle = field.subtitle?.trim();
     final instructions = field.instructions?.trim();
-    final placeholder = field.placeholder?.trim();
+    final placeholder = _bookingFieldPlaceholder(field);
     final effectiveTitle = title?.isNotEmpty == true ? title! : 'Field';
     final type = (field.type ?? 'text').trim().toLowerCase();
     final fieldKey = (field.key ?? '').trim().toLowerCase();
@@ -2746,20 +2754,22 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
 
   StatusField _normalizeFieldPlaceholder(StatusField field) {
     final fieldType = (field.type ?? '').trim();
+    final isRequired = field.required ?? false;
+    final currentPlaceholder = field.placeholder?.trim() ?? '';
+    if (isRequired && currentPlaceholder.toLowerCase() == 'optional') {
+      return field.copyWith(placeholder: null);
+    }
     if (fieldType == 'photo') {
-      final currentPlaceholder = field.placeholder?.trim() ?? '';
       if (currentPlaceholder.isEmpty) {
         return field.copyWith(placeholder: 'Photo');
       }
       return field;
     }
     if (fieldType == 'dropdown' || fieldType == 'search_dropdown') {
-      final isRequired = field.required ?? false;
       if (isRequired) {
         return field.copyWith(placeholder: null);
       }
 
-      final currentPlaceholder = field.placeholder?.trim() ?? '';
       if (currentPlaceholder.isEmpty) {
         return field.copyWith(placeholder: 'Optional');
       }
@@ -2768,9 +2778,7 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
     if (fieldType != 'photo' &&
         fieldType != 'dropdown' &&
         fieldType != 'search_dropdown') {
-      final isRequired = field.required ?? false;
       if (!isRequired) {
-        final currentPlaceholder = field.placeholder?.trim() ?? '';
         if (currentPlaceholder.isEmpty) {
           return field.copyWith(placeholder: 'Optional');
         }

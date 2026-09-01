@@ -9,6 +9,14 @@ import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/booking_form_primitives.dart';
 
+String? _runtimeFieldPlaceholder(StatusField field) {
+  final placeholder = field.placeholder?.trim();
+  if (field.required == true && placeholder?.toLowerCase() == 'optional') {
+    return null;
+  }
+  return placeholder;
+}
+
 class StatusFormRuntimeFieldCard extends StatelessWidget {
   const StatusFormRuntimeFieldCard({
     super.key,
@@ -330,7 +338,7 @@ class _SearchDropdownFieldInput extends StatelessWidget {
             field.required == true
                 ? adminSelectPlaceholder(
                     fieldLabel,
-                    override: field.placeholder,
+                    override: _runtimeFieldPlaceholder(field),
                   )
                 : ((field.placeholder?.trim().isNotEmpty == true)
                       ? field.placeholder!.trim()
@@ -425,7 +433,7 @@ class _PalawanLocationFieldInput extends StatelessWidget {
                     field.title?.trim().isNotEmpty == true
                         ? field.title!.trim()
                         : 'Location',
-                    override: field.placeholder,
+                    override: _runtimeFieldPlaceholder(field),
                   )
                 : ((field.placeholder?.trim().isNotEmpty == true)
                       ? field.placeholder!.trim()
@@ -613,7 +621,7 @@ class _TextFieldInputState extends State<_TextFieldInput> {
       buttonText: widget.formButtonText,
       currentStatusKey: widget.formStatusKey,
     );
-    final placeholder = widget.field.placeholder?.trim();
+    final placeholder = _runtimeFieldPlaceholder(widget.field);
     final fieldLabel = widget.field.title?.trim().isNotEmpty == true
         ? widget.field.title!.trim()
         : 'Field';
@@ -725,7 +733,7 @@ class _DropdownFieldInput extends StatelessWidget {
       buttonText: formButtonText,
       currentStatusKey: formStatusKey,
     );
-    final placeholder = field.placeholder?.trim();
+    final placeholder = _runtimeFieldPlaceholder(field);
     final fieldLabel = field.title?.trim().isNotEmpty == true
         ? field.title!.trim()
         : 'Field';
@@ -991,7 +999,7 @@ class _DateFieldInputState extends State<_DateFieldInput> {
                   widget.field.title?.trim().isNotEmpty == true
                       ? widget.field.title!.trim()
                       : 'Date',
-                  override: widget.field.placeholder,
+                  override: _runtimeFieldPlaceholder(widget.field),
                 )
               : (widget.field.placeholder?.trim().isNotEmpty == true
                     ? widget.field.placeholder!.trim()
@@ -1080,7 +1088,7 @@ class _TimeFieldInputState extends State<_TimeFieldInput> {
                   widget.field.title?.trim().isNotEmpty == true
                       ? widget.field.title!.trim()
                       : 'Time',
-                  override: widget.field.placeholder,
+                  override: _runtimeFieldPlaceholder(widget.field),
                 )
               : (widget.field.placeholder?.trim().isNotEmpty == true
                     ? widget.field.placeholder!.trim()
@@ -1274,7 +1282,7 @@ class _PhotoFieldInputState extends State<_PhotoFieldInput> {
               widget.field.title?.trim().isNotEmpty == true
                   ? widget.field.title!.trim()
                   : 'Photo',
-              override: widget.field.placeholder,
+              override: _runtimeFieldPlaceholder(widget.field),
             )
           : (((widget.field.placeholder ?? '').trim().isNotEmpty)
                 ? widget.field.placeholder!.trim()

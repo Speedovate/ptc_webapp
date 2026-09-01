@@ -105,15 +105,17 @@ class FirestoreCollectionCache {
   FirestoreCollectionCache({
     FirebaseFirestore? firestore,
     FirestoreCacheStore? store,
-  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+  }) : _providedFirestore = firestore,
        _store = store ?? FirestoreCacheStore.instance;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _providedFirestore;
+  FirebaseFirestore get _firestore =>
+      _providedFirestore ?? FirebaseFirestore.instance;
   final FirestoreCacheStore _store;
   static const Duration _remoteVersionTimeout = Duration(seconds: 1);
 
   CollectionReference<Map<String, dynamic>> get _versionsCollection =>
-      _firestore.collection('app_cache_versions');
+      _firestore.collection('manage_cache');
 
   Stream<String?> watchResourceVersion(String resourceKey) {
     return _versionsCollection.doc(resourceKey).snapshots().map((snapshot) {

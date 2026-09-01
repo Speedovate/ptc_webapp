@@ -683,6 +683,10 @@ class AuthRequest implements AuthRepository {
       if (currentUser == null) {
         throw const AuthFailure('User not found.');
       }
+      _logProfilePhoto(
+        'save start user=$normalizedUserId existingPhoto=${currentUser.photo?.trim().isNotEmpty == true} '
+        'file=$fileName bytes=${bytes.length} online=${currentNetworkStatus()}',
+      );
       if (!currentNetworkStatus()) {
         try {
           final queued = await _offlineMediaSyncService
@@ -727,6 +731,11 @@ class AuthRequest implements AuthRepository {
               size: size,
             )
             .timeout(_photoUploadTimeout);
+        _logProfilePhoto(
+          'storage upload complete user=$normalizedUserId '
+          'path=${upload['storage_path'] ?? "-"} '
+          'hasUrl=${upload['download_url']?.toString().trim().isNotEmpty == true}',
+        );
         final uploadedUser = currentUser.copyWith(
           photo: upload['download_url']?.toString(),
           updatedAt: DateTime.now(),
@@ -734,7 +743,12 @@ class AuthRequest implements AuthRepository {
         await _applyImmediateUserPhotoState(
           uploadedUser,
         ).timeout(_localWriteTimeout, onTimeout: () {});
-        return await saveUser(uploadedUser);
+        final savedUser = await saveUser(uploadedUser);
+        _logProfilePhoto(
+          'user document saved user=${savedUser.id ?? "-"} '
+          'hasPhoto=${savedUser.photo?.trim().isNotEmpty == true}',
+        );
+        return savedUser;
       } catch (error) {
         final normalizedError = normalizeUserErrorText(
           error.toString(),
@@ -1703,30 +1717,68 @@ class AuthRequest implements AuthRepository {
     required String? normalizedPhone,
     required bool isPhoneLogin,
   }) async {
+    final users = await _getUsersCachedOnly();
+    UserModel? localCachedUser;
+    if (isPhoneLogin) {
+      for (final user in users) {
+        if (normalizePhilippinePhone(user.phone) == normalizedPhone) {
+          localCachedUser = user;
+          break;
+        }
+      }
+    } else {
+      final normalizedEmail = identifier.trim().toLowerCase();
+      for (final user in users) {
+        if ((user.email ?? '').trim().toLowerCase() == normalizedEmail) {
+          localCachedUser = user;
+          break;
+        }
+      }
+    }
     final firestoreCachedUser = await _findFirestoreSdkCachedUserByIdentifier(
       identifier: identifier,
       normalizedPhone: normalizedPhone,
       isPhoneLogin: isPhoneLogin,
     );
-    if (firestoreCachedUser != null) {
+    if (localCachedUser == null) {
+      _logProfileCacheChoice('sdk-only', firestoreCachedUser);
       return firestoreCachedUser;
     }
-    final users = await _getUsersCachedOnly();
-    if (isPhoneLogin) {
-      for (final user in users) {
-        if (normalizePhilippinePhone(user.phone) == normalizedPhone) {
-          return user;
-        }
-      }
-      return null;
+    if (firestoreCachedUser == null) {
+      _logProfileCacheChoice('local-only', localCachedUser);
+      return localCachedUser;
     }
-    final normalizedEmail = identifier.trim().toLowerCase();
-    for (final user in users) {
-      if ((user.email ?? '').trim().toLowerCase() == normalizedEmail) {
-        return user;
-      }
+    final localUpdatedAt =
+        localCachedUser.updatedAt ?? localCachedUser.createdAt;
+    final firestoreUpdatedAt =
+        firestoreCachedUser.updatedAt ?? firestoreCachedUser.createdAt;
+    if (localUpdatedAt != null &&
+        (firestoreUpdatedAt == null ||
+            localUpdatedAt.isAfter(firestoreUpdatedAt))) {
+      _logProfileCacheChoice('local-newer', localCachedUser);
+      return localCachedUser;
     }
-    return null;
+    if ((localCachedUser.photo?.trim().isNotEmpty ?? false) &&
+        !(firestoreCachedUser.photo?.trim().isNotEmpty ?? false) &&
+        localUpdatedAt == firestoreUpdatedAt) {
+      _logProfileCacheChoice('local-photo-tie-break', localCachedUser);
+      return localCachedUser;
+    }
+    _logProfileCacheChoice('sdk-newer-or-equal', firestoreCachedUser);
+    return firestoreCachedUser;
+  }
+
+  void _logProfileCacheChoice(String source, UserModel? user) {
+    _logProfilePhoto(
+      'login cache source=$source user=${user?.id ?? "-"} '
+      'hasPhoto=${user?.photo?.trim().isNotEmpty == true}',
+    );
+  }
+
+  void _logProfilePhoto(String message) {
+    debugPrint(
+      '[${DateTime.now().toIso8601String()}][AuthProfilePhoto] $message',
+    );
   }
 
   Future<UserModel?> _findFirestoreSdkCachedUserByIdentifier({

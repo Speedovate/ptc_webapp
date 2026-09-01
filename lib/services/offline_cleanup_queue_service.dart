@@ -14,7 +14,7 @@ class OfflineCleanupQueueService {
     BookingStorageBackend? backend,
     FirebaseStorage? storage,
   }) : _backend = backend ?? createBookingStorageBackend(),
-       _storage = storage ?? FirebaseStorage.instance;
+       _providedStorage = storage;
 
   static final OfflineCleanupQueueService instance =
       OfflineCleanupQueueService();
@@ -25,7 +25,8 @@ class OfflineCleanupQueueService {
   static const _retryInterval = Duration(seconds: 20);
 
   final BookingStorageBackend _backend;
-  final FirebaseStorage _storage;
+  final FirebaseStorage? _providedStorage;
+  FirebaseStorage get _storage => _providedStorage ?? FirebaseStorage.instance;
   final AuthStorageBackend _authStorage = createAuthStorageBackend();
 
   bool _isInitialized = false;
@@ -212,7 +213,9 @@ class OfflineCleanupQueueService {
   }
 
   Future<List<_OfflineCleanupEntry>> _readEntries() async {
-    final rawEntries = await _backend.readStringList(await _resolvedStorageKey());
+    final rawEntries = await _backend.readStringList(
+      await _resolvedStorageKey(),
+    );
     return rawEntries
         .map((item) => jsonDecode(item) as Map<String, dynamic>)
         .map(_OfflineCleanupEntry.fromMap)
@@ -272,7 +275,9 @@ class OfflineCleanupQueueService {
   }
 
   Future<List<String>> _allKnownStorageKeys() async {
-    final knownUsers = await _authStorage.readStringList(_knownSessionUserIdsKey);
+    final knownUsers = await _authStorage.readStringList(
+      _knownSessionUserIdsKey,
+    );
     final keys = <String>{_storageKeyForUserId(null)};
     for (final userId in knownUsers) {
       keys.add(_storageKeyForUserId(userId));

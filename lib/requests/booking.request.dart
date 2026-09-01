@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -24,7 +25,7 @@ class BookingRequest implements BookingRepository {
     AuthRequest? authRequest,
     VehicleRequest? vehicleRequest,
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
-  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+  }) : _providedFirestore = firestore,
        _authRequest = authRequest ?? AuthRequest.instance,
        _vehicleRequest = vehicleRequest ?? VehicleRequest.instance,
        _firestorePublicDocumentFetcher =
@@ -69,7 +70,9 @@ class BookingRequest implements BookingRepository {
   static List<Booking> get hydratedBookingsSnapshot =>
       List<Booking>.unmodifiable(_memoryBookings);
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _providedFirestore;
+  FirebaseFirestore get _firestore =>
+      _providedFirestore ?? FirebaseFirestore.instance;
   final AuthRequest _authRequest;
   final VehicleRequest _vehicleRequest;
   final FirestorePublicDocumentFetcher _firestorePublicDocumentFetcher;
@@ -87,9 +90,9 @@ class BookingRequest implements BookingRepository {
   CollectionReference<Map<String, dynamic>> get _bookingsCollection =>
       _firestore.collection('bookings');
   DocumentReference<Map<String, dynamic>> get _bookingsCounterRef =>
-      _firestore.collection('system').doc('bookings_counter');
-  CollectionReference<Map<String, dynamic>> get _bookingIdempotencyCollection =>
-      _firestore.collection('booking_idempotency');
+      _firestore.collection('manage_count').doc('bookings_counter');
+  CollectionReference<Map<String, dynamic>> get _idManagementCollection =>
+      _firestore.collection('manage_id');
 
   @override
   Future<void> initialize() async {
@@ -1538,13 +1541,16 @@ class BookingRequest implements BookingRepository {
       return _nextBookingId();
     }
 
-    final idempotencyRef = _bookingIdempotencyCollection.doc(submissionKey);
+    final idempotencyRef = _idManagementCollection.doc(
+      _idempotencyDocumentId('bookings', submissionKey),
+    );
+    final bootstrapNextId = await _bootstrapNextBookingIdIfCounterMissing();
     _log('booking id reservation start key=$submissionKey');
     final reservation = await _firestore
         .runTransaction<_BookingIdReservation>((transaction) async {
           final idempotencySnapshot = await transaction.get(idempotencyRef);
           final priorId = int.tryParse(
-            idempotencySnapshot.data()?['booking_id']?.toString() ?? '',
+            idempotencySnapshot.data()?['document_id']?.toString() ?? '',
           );
           if (priorId != null && priorId > 0) {
             return _BookingIdReservation('$priorId', reused: true);
@@ -1554,7 +1560,7 @@ class BookingRequest implements BookingRepository {
           final counterNextId = int.tryParse(
             counterSnapshot.data()?['next_id']?.toString() ?? '',
           );
-          var reservedId = counterNextId ?? 1;
+          var reservedId = counterNextId ?? bootstrapNextId;
           // Do not query the full bookings collection before every create.
           // This keeps the ID reservation to small document reads and avoids
           // the web SDK collection-read timeout seen on booking submission.
@@ -1569,7 +1575,9 @@ class BookingRequest implements BookingRepository {
             'updated_at': nowIso,
           }, SetOptions(merge: true));
           transaction.set(idempotencyRef, {
-            'booking_id': '$reservedId',
+            'kind': 'idempotency',
+            'resource_key': 'bookings',
+            'document_id': '$reservedId',
             'submission_key': submissionKey,
             'created_at': nowIso,
           });
@@ -1586,6 +1594,33 @@ class BookingRequest implements BookingRepository {
     return reservation.id;
   }
 
+  Future<int> _bootstrapNextBookingIdIfCounterMissing() async {
+    final counterSnapshot = await _bookingsCounterRef.get().timeout(
+      _webNextIdTimeout,
+      onTimeout: () => throw TimeoutException('booking counter read timeout'),
+    );
+    final existingNextId = int.tryParse(
+      counterSnapshot.data()?['next_id']?.toString() ?? '',
+    );
+    if (counterSnapshot.exists &&
+        existingNextId != null &&
+        existingNextId > 0) {
+      return existingNextId;
+    }
+    final bookingsSnapshot = await _bookingsCollection.get().timeout(
+      _webNextIdTimeout,
+      onTimeout: () => throw TimeoutException('booking ID bootstrap timeout'),
+    );
+    final highestId = bookingsSnapshot.docs
+        .map(
+          (document) =>
+              int.tryParse(documentData(document)['id']?.toString() ?? ''),
+        )
+        .whereType<int>()
+        .fold<int>(0, (highest, id) => id > highest ? id : highest);
+    return highestId + 1;
+  }
+
   String? _normalizedSubmissionKey(String? value) {
     final normalized = value?.trim();
     return normalized?.isNotEmpty == true ? normalized : null;
@@ -1593,6 +1628,9 @@ class BookingRequest implements BookingRepository {
 
   String _newSubmissionKey() =>
       'booking_${DateTime.now().microsecondsSinceEpoch}';
+
+  String _idempotencyDocumentId(String resourceKey, String submissionKey) =>
+      '${resourceKey}_${base64UrlEncode(utf8.encode(submissionKey))}';
 
   String _offlineBookingId(String submissionKey) =>
       'offline_${submissionKey.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}';

@@ -23,7 +23,7 @@ class OfflineMediaSyncService {
     PhotoStorageService? photoStorageService,
     SupportStorageService? supportStorageService,
   }) : _backend = backend ?? createBookingStorageBackend(),
-       _firestore = firestore ?? FirebaseFirestore.instance,
+       _providedFirestore = firestore,
        _photoStorageService =
            photoStorageService ?? PhotoStorageService.instance,
        _supportStorageService =
@@ -38,7 +38,9 @@ class OfflineMediaSyncService {
   static const Duration _queuedSupportReadTimeout = Duration(seconds: 1);
 
   final BookingStorageBackend _backend;
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _providedFirestore;
+  FirebaseFirestore get _firestore =>
+      _providedFirestore ?? FirebaseFirestore.instance;
   final PhotoStorageService _photoStorageService;
   final SupportStorageService _supportStorageService;
   final ImageUploadProcessor _imageUploadProcessor =
@@ -387,7 +389,9 @@ class OfflineMediaSyncService {
   }
 
   Future<List<_OfflineMediaQueueEntry>> _readEntries() async {
-    final rawEntries = await _backend.readStringList(await _resolvedStorageKey());
+    final rawEntries = await _backend.readStringList(
+      await _resolvedStorageKey(),
+    );
     return rawEntries
         .map((item) => jsonDecode(item) as Map<String, dynamic>)
         .map(_OfflineMediaQueueEntry.fromMap)
@@ -447,7 +451,9 @@ class OfflineMediaSyncService {
   }
 
   Future<List<String>> _allKnownStorageKeys() async {
-    final knownUsers = await _authStorage.readStringList(_knownSessionUserIdsKey);
+    final knownUsers = await _authStorage.readStringList(
+      _knownSessionUserIdsKey,
+    );
     final keys = <String>{_storageKeyForUserId(null)};
     for (final userId in knownUsers) {
       keys.add(_storageKeyForUserId(userId));

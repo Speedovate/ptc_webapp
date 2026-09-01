@@ -924,20 +924,22 @@ class AdminFlowViewModel extends BaseViewModel {
 
   StatusField _normalizeFieldPlaceholder(StatusField field) {
     final fieldType = (field.type ?? '').trim();
+    final isRequired = field.required ?? false;
+    final currentPlaceholder = field.placeholder?.trim() ?? '';
+    if (isRequired && currentPlaceholder.toLowerCase() == 'optional') {
+      return field.copyWith(placeholder: null);
+    }
     if (fieldType == 'photo') {
-      final currentPlaceholder = field.placeholder?.trim() ?? '';
       if (currentPlaceholder.isEmpty) {
         return field.copyWith(placeholder: 'Photo');
       }
       return field;
     }
     if (fieldType == 'dropdown' || fieldType == 'search_dropdown') {
-      final isRequired = field.required ?? false;
       if (isRequired) {
         return field.copyWith(placeholder: null);
       }
 
-      final currentPlaceholder = field.placeholder?.trim() ?? '';
       if (currentPlaceholder.isEmpty) {
         return field.copyWith(placeholder: 'Optional');
       }
@@ -946,9 +948,7 @@ class AdminFlowViewModel extends BaseViewModel {
     if (fieldType != 'photo' &&
         fieldType != 'dropdown' &&
         fieldType != 'search_dropdown') {
-      final isRequired = field.required ?? false;
       if (!isRequired) {
-        final currentPlaceholder = field.placeholder?.trim() ?? '';
         if (currentPlaceholder.isEmpty) {
           return field.copyWith(placeholder: 'Optional');
         }

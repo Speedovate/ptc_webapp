@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
@@ -27,32 +28,36 @@ class AppShellViewModel extends BaseViewModel {
     isLoading = true;
     notifyListeners();
     try {
-      await _repository
-          .initialize()
-          .timeout(_startupStepTimeout, onTimeout: () {
-          });
+      await _repository.initialize().timeout(
+        _startupStepTimeout,
+        onTimeout: () {},
+      );
 
-      currentUser = await _repository
-          .getCurrentUser()
-          .timeout(_startupStepTimeout, onTimeout: () {
-            return null;
-          });
+      currentUser = await _repository.getCurrentUser().timeout(
+        _startupStepTimeout,
+        onTimeout: () {
+          return null;
+        },
+      );
 
       _roleAccessService.setCurrentUser(currentUser);
       unawaited(
-        _roleAccessService.initialize().then((_) {
-        }).catchError((error, stackTrace) {
-        }),
+        _roleAccessService
+            .initialize()
+            .then((_) {})
+            .catchError((error, stackTrace) {}),
       );
-      isQuickLoggedIn = await _repository
-          .hasQuickLoginSource()
-          .timeout(_startupStepTimeout, onTimeout: () {
-            return false;
-          });
+      isQuickLoggedIn = await _repository.hasQuickLoginSource().timeout(
+        _startupStepTimeout,
+        onTimeout: () {
+          return false;
+        },
+      );
 
-      await _bindCurrentSessionWatch()
-          .timeout(_startupStepTimeout, onTimeout: () {
-          });
+      await _bindCurrentSessionWatch().timeout(
+        _startupStepTimeout,
+        onTimeout: () {},
+      );
       _startWarmupForAuthenticatedMainUi(currentUser, source: 'initialize');
     } catch (error) {
       // Startup should still continue using cached/local state when background steps fail.
@@ -80,6 +85,11 @@ class AppShellViewModel extends BaseViewModel {
     final authEpoch = ++_sessionEpoch;
     _log(
       'completeAuthentication start loggedIn=true user=${user.id ?? "-"} role=${user.role ?? "-"}',
+    );
+    debugPrint(
+      '[${DateTime.now().toIso8601String()}][RegisterProfilePhoto] '
+      'app shell received user=${user.id ?? "-"} '
+      'hasPhoto=${user.photo?.trim().isNotEmpty == true}',
     );
     isLoading = true;
     currentUser = user;
@@ -194,8 +204,16 @@ class AppShellViewModel extends BaseViewModel {
       if (authEpoch != _sessionEpoch) {
         return;
       }
-      currentUser = refreshedUser ?? fallbackUser;
+      currentUser = _preserveProfilePhoto(
+        refreshedUser ?? fallbackUser,
+        fallbackUser,
+      );
       _roleAccessService.setCurrentUser(currentUser);
+      debugPrint(
+        '[${DateTime.now().toIso8601String()}][RegisterProfilePhoto] '
+        'app shell refresh user=${currentUser?.id ?? "-"} '
+        'hasPhoto=${currentUser?.photo?.trim().isNotEmpty == true}',
+      );
       isQuickLoggedIn = await _repository.hasQuickLoginSource();
       if (authEpoch != _sessionEpoch) {
         return;
@@ -223,6 +241,24 @@ class AppShellViewModel extends BaseViewModel {
     }
   }
 
+  UserModel _preserveProfilePhoto(
+    UserModel refreshedUser,
+    UserModel fallbackUser,
+  ) {
+    final isSameUser =
+        refreshedUser.id?.trim().isNotEmpty == true &&
+        refreshedUser.id == fallbackUser.id;
+    final refreshedHasPhoto = refreshedUser.photo?.trim().isNotEmpty == true;
+    final fallbackPhoto = fallbackUser.photo?.trim();
+    if (!isSameUser ||
+        refreshedHasPhoto ||
+        fallbackPhoto == null ||
+        fallbackPhoto.isEmpty) {
+      return refreshedUser;
+    }
+    return refreshedUser.copyWith(photo: fallbackPhoto);
+  }
+
   void _startWarmupForAuthenticatedMainUi(
     UserModel? resolvedUser, {
     required String source,
@@ -233,9 +269,7 @@ class AppShellViewModel extends BaseViewModel {
     _log(
       'warmup dispatch source=$source user=${resolvedUser.id ?? "-"} role=${resolvedUser.role ?? "-"}',
     );
-    unawaited(
-      _warmupService.warmUpForUser(resolvedUser).catchError((_, _) {}),
-    );
+    unawaited(_warmupService.warmUpForUser(resolvedUser).catchError((_, _) {}));
   }
 
   @override

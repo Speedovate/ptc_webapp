@@ -16,7 +16,6 @@ class AppProfileAvatar extends StatelessWidget {
     this.enablePreview = false,
     this.previewTitle,
     this.borderColor,
-    this.debugLabel,
   });
 
   final double radius;
@@ -26,7 +25,6 @@ class AppProfileAvatar extends StatelessWidget {
   final bool enablePreview;
   final String? previewTitle;
   final Color? borderColor;
-  final String? debugLabel;
 
   static const double _borderRatio = 0.16;
 
@@ -43,11 +41,6 @@ class AppProfileAvatar extends StatelessWidget {
             normalizedPhoto.startsWith('data:'));
     final hasImageError =
         !hasMemoryImage && hasPhotoValue && !hasDisplayablePhoto;
-    _trace(
-      'build memory=$hasMemoryImage photo=$hasPhotoValue '
-      'displayable=$hasDisplayablePhoto invalid=$hasImageError '
-      'source=${_sourceFingerprint(normalizedPhoto)}',
-    );
 
     final innerBorderWidth = radius * _borderRatio;
     final diameter = radius * 2;
@@ -119,7 +112,6 @@ class AppProfileAvatar extends StatelessWidget {
     if (hasDisplayablePhoto) {
       return AppCachedNetworkImage(
         imageUrl: normalizedPhoto!,
-        debugLabel: debugLabel,
         fit: BoxFit.cover,
         errorBuilder: (context, error) {
           return _FallbackAvatarContent(
@@ -136,24 +128,6 @@ class AppProfileAvatar extends StatelessWidget {
       fallbackText: fallbackText,
       isError: hasImageError,
     );
-  }
-
-  void _trace(String message) {
-    final label = debugLabel?.trim();
-    if (label == null || label.isEmpty) {
-      return;
-    }
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][ProfileAvatarTrace][$label] $message');
-  }
-
-  String _sourceFingerprint(String? value) {
-    final normalized = value?.trim() ?? '';
-    if (normalized.isEmpty) {
-      return '-';
-    }
-    final queryIndex = normalized.indexOf('?');
-    return queryIndex < 0 ? normalized : normalized.substring(0, queryIndex);
   }
 }
 

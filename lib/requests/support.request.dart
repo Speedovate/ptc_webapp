@@ -18,7 +18,7 @@ class SupportRequest {
     FirebaseFirestore? firestore,
     SupportStorageService? storage,
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
-  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+  }) : _providedFirestore = firestore,
        _storage = storage ?? SupportStorageService.instance,
        _firestorePublicDocumentFetcher =
            firestorePublicDocumentFetcher ??
@@ -32,7 +32,9 @@ class SupportRequest {
   static List<SupportThread> _hydratedAllThreadsSnapshot =
       const <SupportThread>[];
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _providedFirestore;
+  FirebaseFirestore get _firestore =>
+      _providedFirestore ?? FirebaseFirestore.instance;
   final SupportStorageService _storage;
   final FirestorePublicDocumentFetcher _firestorePublicDocumentFetcher;
   final OfflineMediaSyncService _offlineMediaSyncService =
@@ -76,10 +78,8 @@ class SupportRequest {
 
   CollectionReference<Map<String, dynamic>> _threadReadCollection(
     String userId,
-  ) => _firestore
-      .collection('support_thread_reads')
-      .doc(userId)
-      .collection('threads');
+  ) =>
+      _firestore.collection('manage_support').doc(userId).collection('threads');
 
   Future<List<SupportThread>> prefetchAllThreads() async {
     final cachedDocuments = await _cache.readDocuments(
@@ -1353,7 +1353,7 @@ class SupportRequest {
   }
 
   String _threadReadMarkersResourceKey(String userId) =>
-      'support_thread_reads:$userId';
+      'manage_support:$userId';
 
   String _supportMarkerToken(String? value) {
     final normalized = value?.replaceAll(RegExp(r'\s+'), ' ').trim() ?? '';
@@ -1816,7 +1816,7 @@ class SupportRequest {
   ) async {
     try {
       return await _fetchCollectionDocumentsViaPublicRest(
-        'support_thread_reads/$normalizedUserId/threads',
+        'manage_support/$normalizedUserId/threads',
       );
     } catch (_) {
       return const <Map<String, dynamic>>[];

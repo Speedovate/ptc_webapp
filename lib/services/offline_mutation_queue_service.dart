@@ -74,9 +74,17 @@ class OfflineMutationQueueService {
   CollectionReference<Map<String, dynamic>> get _bookingsCollection =>
       _firestore.collection('bookings');
   DocumentReference<Map<String, dynamic>> get _bookingsCounterRef =>
-      _firestore.collection('system').doc('bookings_counter');
-  CollectionReference<Map<String, dynamic>> get _bookingIdempotencyCollection =>
-      _firestore.collection('booking_idempotency');
+      _firestore.collection('manage_count').doc('bookings_counter');
+  CollectionReference<Map<String, dynamic>> get _idManagementCollection =>
+      _firestore.collection('manage_id');
+
+  DocumentReference<Map<String, dynamic>> _resourceCounterRef(
+    String collectionKey,
+  ) => _firestore
+      .collection('manage_count')
+      .doc('resource_counters')
+      .collection('items')
+      .doc(collectionKey);
 
   /// Reserves a numeric document ID atomically for resources whose documents
   /// intentionally use sequential IDs. A retry with the same submission key
@@ -93,17 +101,17 @@ class OfflineMutationQueueService {
     if (normalizedKey.isEmpty) {
       throw ArgumentError.value(submissionKey, 'submissionKey');
     }
+    final counterRef = _resourceCounterRef(collectionKey);
+    final bootstrapNextId = await _bootstrapNextIdIfCounterMissing(
+      counterRef: counterRef,
+      collection: collection,
+    );
     final reservation = await _firestore.runTransaction<String>((
       transaction,
     ) async {
-      final counterRef = _firestore
-          .collection('system')
-          .doc('resource_counters')
-          .collection('items')
-          .doc(collectionKey);
-      final idempotencyRef = _firestore
-          .collection('resource_idempotency')
-          .doc(_resourceIdempotencyDocumentId(collectionKey, normalizedKey));
+      final idempotencyRef = _idManagementCollection.doc(
+        _idempotencyDocumentId(collectionKey, normalizedKey),
+      );
       final idempotencySnapshot = await transaction.get(idempotencyRef);
       final reserved = int.tryParse(
         idempotencySnapshot.data()?['document_id']?.toString() ?? '',
@@ -114,6 +122,7 @@ class OfflineMutationQueueService {
       final counterSnapshot = await transaction.get(counterRef);
       var nextId =
           int.tryParse(counterSnapshot.data()?['next_id']?.toString() ?? '') ??
+          bootstrapNextId ??
           1;
       while ((await transaction.get(collection.doc('$nextId'))).exists) {
         nextId++;
@@ -124,7 +133,8 @@ class OfflineMutationQueueService {
         'updated_at': now,
       }, SetOptions(merge: true));
       transaction.set(idempotencyRef, {
-        'collection_key': collectionKey,
+        'kind': 'idempotency',
+        'resource_key': collectionKey,
         'submission_key': normalizedKey,
         'document_id': '$nextId',
         'created_at': now,
@@ -134,10 +144,38 @@ class OfflineMutationQueueService {
     return reservation;
   }
 
-  String _resourceIdempotencyDocumentId(
-    String collectionKey,
-    String submissionKey,
-  ) => '${collectionKey}_${base64UrlEncode(utf8.encode(submissionKey))}';
+  Future<int?> _bootstrapNextIdIfCounterMissing({
+    required DocumentReference<Map<String, dynamic>> counterRef,
+    required CollectionReference<Map<String, dynamic>> collection,
+  }) async {
+    final counterSnapshot = await counterRef.get().timeout(
+      _remoteMutationTimeout,
+      onTimeout: () => throw TimeoutException('resource counter read timeout'),
+    );
+    final existingNextId = int.tryParse(
+      counterSnapshot.data()?['next_id']?.toString() ?? '',
+    );
+    if (counterSnapshot.exists &&
+        existingNextId != null &&
+        existingNextId > 0) {
+      return null;
+    }
+    final documents = await collection.get().timeout(
+      _remoteMutationTimeout,
+      onTimeout: () => throw TimeoutException('resource ID bootstrap timeout'),
+    );
+    final highestId = documents.docs
+        .map(
+          (document) =>
+              int.tryParse(documentData(document)['id']?.toString() ?? ''),
+        )
+        .whereType<int>()
+        .fold<int>(0, (highest, id) => id > highest ? id : highest);
+    return highestId + 1;
+  }
+
+  String _idempotencyDocumentId(String collectionKey, String submissionKey) =>
+      '${collectionKey}_${base64UrlEncode(utf8.encode(submissionKey))}';
 
   Future<List<OfflineMutationConflictRecord>> getBlockedConflicts() async {
     await initialize();
@@ -652,14 +690,18 @@ class OfflineMutationQueueService {
       throw Exception('Queued booking is missing its submission key.');
     }
 
+    final bootstrapNextId = await _bootstrapNextIdIfCounterMissing(
+      counterRef: _bookingsCounterRef,
+      collection: _bookingsCollection,
+    );
     await _firestore
         .runTransaction<void>((transaction) async {
-          final idempotencyRef = _bookingIdempotencyCollection.doc(
-            submissionKey,
+          final idempotencyRef = _idManagementCollection.doc(
+            _idempotencyDocumentId('bookings', submissionKey),
           );
           final idempotencySnapshot = await transaction.get(idempotencyRef);
           final existingId = int.tryParse(
-            idempotencySnapshot.data()?['booking_id']?.toString() ?? '',
+            idempotencySnapshot.data()?['document_id']?.toString() ?? '',
           );
 
           final counterSnapshot = await transaction.get(_bookingsCounterRef);
@@ -667,6 +709,7 @@ class OfflineMutationQueueService {
               int.tryParse(
                 counterSnapshot.data()?['next_id']?.toString() ?? '',
               ) ??
+              bootstrapNextId ??
               1;
           if (existingId != null && existingId > 0) {
             nextId = existingId;
@@ -690,7 +733,9 @@ class OfflineMutationQueueService {
             'updated_at': DateTime.now().toUtc().toIso8601String(),
           }, SetOptions(merge: true));
           transaction.set(idempotencyRef, {
-            'booking_id': finalId,
+            'kind': 'idempotency',
+            'resource_key': 'bookings',
+            'document_id': finalId,
             'submission_key': submissionKey,
             'created_at':
                 idempotencySnapshot.data()?['created_at'] ??

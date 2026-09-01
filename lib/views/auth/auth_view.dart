@@ -114,6 +114,9 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
       setState(() {
         _vehicleTypes = vehicleTypes;
       });
+    } catch (_) {
+      // Registration remains available when the optional driver catalog is
+      // temporarily unavailable during Firebase startup.
     } finally {
       if (mounted) {
         setState(() {
@@ -438,483 +441,494 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
                           alignment: Alignment.center,
                           child: ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 460),
-                            child: Stack(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    28,
-                                    26,
-                                    28,
-                                    28,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(24),
-                                    border: Border.all(
-                                      color: AppColors.primaryBorder,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(24),
+                              child: Stack(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      28,
+                                      26,
+                                      28,
+                                      28,
                                     ),
-                                  ),
-                                  child: Opacity(
-                                    opacity: isAuthBusy ? 0.5 : 1,
-                                    child: IgnorePointer(
-                                      ignoring: isAuthBusy,
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.center,
-                                            children: [
-                                              Container(
-                                                width: 56,
-                                                height: 56,
-                                                decoration: BoxDecoration(
-                                                  color: AppColors.primaryColor,
-                                                  borderRadius:
-                                                      BorderRadius.all(
-                                                        Radius.circular(18),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(24),
+                                      // BoxDecoration paints its border over the
+                                      // child, so hide it while the solid loading
+                                      // overlay is visible.
+                                      border: isAuthBusy
+                                          ? null
+                                          : Border.all(
+                                              color: AppColors.primaryBorder,
+                                            ),
+                                    ),
+                                    child: Opacity(
+                                      opacity: isAuthBusy ? 0.5 : 1,
+                                      child: IgnorePointer(
+                                        ignoring: isAuthBusy,
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.center,
+                                              children: [
+                                                Container(
+                                                  width: 56,
+                                                  height: 56,
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        AppColors.primaryColor,
+                                                    borderRadius:
+                                                        BorderRadius.all(
+                                                          Radius.circular(18),
+                                                        ),
+                                                  ),
+                                                  child: const Icon(
+                                                    Icons
+                                                        .local_shipping_rounded,
+                                                    color: Colors.white,
+                                                    size: 28,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 12),
+                                                Expanded(
+                                                  child: Column(
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .center,
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      const Text(
+                                                        'Paltranco',
+                                                        style: TextStyle(
+                                                          color: AppColors
+                                                              .primaryColor,
+                                                          fontSize: 25,
+                                                          fontWeight:
+                                                              FontWeight.w800,
+                                                          height: 1.2,
+                                                        ),
                                                       ),
+                                                      const Text(
+                                                        'Digital Platform',
+                                                        style: TextStyle(
+                                                          color: AppColors
+                                                              .textPrimary,
+                                                          fontSize: 15,
+                                                          fontWeight:
+                                                              FontWeight.w500,
+                                                          height: 1.2,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
                                                 ),
-                                                child: const Icon(
-                                                  Icons.local_shipping_rounded,
-                                                  color: Colors.white,
-                                                  size: 28,
-                                                ),
+                                                if (!_isLoginMode) ...[
+                                                  const SizedBox(width: 14),
+                                                  _AuthHeaderCameraButton(
+                                                    hasSelection:
+                                                        _registerProfilePhotoUpload !=
+                                                        null,
+                                                    previewBytes:
+                                                        _registerProfilePhotoUpload
+                                                            ?.bytes,
+                                                    onTap:
+                                                        _pickRegisterProfilePhoto,
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                            const SizedBox(height: 24),
+                                            AnimatedSwitcher(
+                                              duration: const Duration(
+                                                milliseconds: 220,
                                               ),
-                                              const SizedBox(width: 12),
-                                              Expanded(
-                                                child: Column(
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment.center,
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    const Text(
-                                                      'Paltranco',
-                                                      style: TextStyle(
-                                                        color: AppColors
-                                                            .primaryColor,
-                                                        fontSize: 25,
-                                                        fontWeight:
-                                                            FontWeight.w800,
-                                                        height: 1.2,
+                                              switchInCurve: Curves.easeOut,
+                                              switchOutCurve: Curves.easeIn,
+                                              child: _isLoginMode
+                                                  ? Form(
+                                                      key: _loginFormKey,
+                                                      child: Column(
+                                                        key: const ValueKey(
+                                                          'login_form',
+                                                        ),
+                                                        children: [
+                                                          _AuthTextField(
+                                                            controller:
+                                                                _loginEmailController,
+                                                            focusNode:
+                                                                _loginIdentifierFocusNode,
+                                                            label:
+                                                                'Email or Phone',
+                                                            keyboardType:
+                                                                TextInputType
+                                                                    .emailAddress,
+                                                            inputFormatters: const [
+                                                              EmailOrPhilippinesPhoneInputFormatter(),
+                                                            ],
+                                                            textInputAction:
+                                                                TextInputAction
+                                                                    .next,
+                                                            onSubmitted: (_) =>
+                                                                _focusNext(
+                                                                  _loginPasswordFocusNode,
+                                                                ),
+                                                          ),
+                                                          const SizedBox(
+                                                            height:
+                                                                _authFieldSpacing,
+                                                          ),
+                                                          _AuthTextField(
+                                                            controller:
+                                                                _loginPasswordController,
+                                                            focusNode:
+                                                                _loginPasswordFocusNode,
+                                                            label: 'Password',
+                                                            obscureText: true,
+                                                            textInputAction:
+                                                                TextInputAction
+                                                                    .done,
+                                                            onSubmitted: (_) {
+                                                              _unfocusCurrentField();
+                                                              _submit(vm);
+                                                            },
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    )
+                                                  : Form(
+                                                      key: _registerFormKey,
+                                                      child: Column(
+                                                        key: const ValueKey(
+                                                          'register_form',
+                                                        ),
+                                                        children: [
+                                                          _AuthDropdownField(
+                                                            label: 'Role',
+                                                            value:
+                                                                _registerRole,
+                                                            items:
+                                                                registerRoleOptions,
+                                                            onChanged: (value) {
+                                                              setState(() {
+                                                                _registerRole =
+                                                                    value;
+                                                                if (value !=
+                                                                    'driver') {
+                                                                  _registerVehicleTypeId =
+                                                                      null;
+                                                                }
+                                                              });
+                                                            },
+                                                          ),
+                                                          if (_registerRole ==
+                                                                  'driver' &&
+                                                              !_isLoadingVehicleTypes) ...[
+                                                            const SizedBox(
+                                                              height:
+                                                                  _authFieldSpacing,
+                                                            ),
+                                                            _AuthDropdownField(
+                                                              label:
+                                                                  'Vehicle Type',
+                                                              value:
+                                                                  _registerVehicleTypeId,
+                                                              items: _vehicleTypes
+                                                                  .map(
+                                                                    (item) =>
+                                                                        item.id ??
+                                                                        '',
+                                                                  )
+                                                                  .where(
+                                                                    (
+                                                                      value,
+                                                                    ) => value
+                                                                        .isNotEmpty,
+                                                                  )
+                                                                  .toList(),
+                                                              itemLabelBuilder: (value) {
+                                                                final match =
+                                                                    _vehicleTypes.where(
+                                                                      (item) =>
+                                                                          item.id ==
+                                                                          value,
+                                                                    );
+                                                                if (match
+                                                                    .isEmpty) {
+                                                                  return 'Selected vehicle type';
+                                                                }
+                                                                final item =
+                                                                    match.first;
+                                                                final name =
+                                                                    item.name
+                                                                        ?.trim() ??
+                                                                    '';
+                                                                final slug =
+                                                                    item.slug
+                                                                        ?.trim() ??
+                                                                    '';
+                                                                if (name
+                                                                    .isEmpty) {
+                                                                  return slug;
+                                                                }
+                                                                if (slug
+                                                                    .isEmpty) {
+                                                                  return name;
+                                                                }
+                                                                return '$name ($slug)';
+                                                              },
+                                                              onChanged: (value) {
+                                                                setState(
+                                                                  () =>
+                                                                      _registerVehicleTypeId =
+                                                                          value,
+                                                                );
+                                                              },
+                                                            ),
+                                                          ],
+                                                          const SizedBox(
+                                                            height:
+                                                                _authFieldSpacing,
+                                                          ),
+                                                          _AuthTextField(
+                                                            controller:
+                                                                _registerEmailController,
+                                                            focusNode:
+                                                                _registerEmailFocusNode,
+                                                            label: 'Email',
+                                                            keyboardType:
+                                                                TextInputType
+                                                                    .emailAddress,
+                                                            textInputAction:
+                                                                TextInputAction
+                                                                    .next,
+                                                            onSubmitted: (_) =>
+                                                                _focusNext(
+                                                                  _registerNameFocusNode,
+                                                                ),
+                                                          ),
+                                                          const SizedBox(
+                                                            height:
+                                                                _authFieldSpacing,
+                                                          ),
+                                                          _AuthTextField(
+                                                            controller:
+                                                                _registerNameController,
+                                                            focusNode:
+                                                                _registerNameFocusNode,
+                                                            label: 'Name',
+                                                            textCapitalization:
+                                                                TextCapitalization
+                                                                    .words,
+                                                            inputFormatters: const [
+                                                              NameCaseTextInputFormatter(),
+                                                            ],
+                                                            textInputAction:
+                                                                TextInputAction
+                                                                    .next,
+                                                            onSubmitted: (_) =>
+                                                                _focusNext(
+                                                                  _registerPhoneFocusNode,
+                                                                ),
+                                                          ),
+                                                          const SizedBox(
+                                                            height:
+                                                                _authFieldSpacing,
+                                                          ),
+                                                          _AuthTextField(
+                                                            controller:
+                                                                _registerPhoneController,
+                                                            focusNode:
+                                                                _registerPhoneFocusNode,
+                                                            label: 'Phone',
+                                                            keyboardType:
+                                                                TextInputType
+                                                                    .phone,
+                                                            inputFormatters: const [
+                                                              PhilippinesPhoneInputFormatter(),
+                                                            ],
+                                                            textInputAction:
+                                                                TextInputAction
+                                                                    .next,
+                                                            onSubmitted: (_) =>
+                                                                _focusNext(
+                                                                  _registerPasswordFocusNode,
+                                                                ),
+                                                          ),
+                                                          if (_registerRole ==
+                                                              'driver') ...[
+                                                            const SizedBox(
+                                                              height:
+                                                                  _authFieldSpacing,
+                                                            ),
+                                                            _AuthActionField(
+                                                              label: 'License',
+                                                              valueText:
+                                                                  _registerLicenseController
+                                                                      .text,
+                                                              onTap:
+                                                                  _pickRegisterLicensePhoto,
+                                                            ),
+                                                          ],
+                                                          const SizedBox(
+                                                            height:
+                                                                _authFieldSpacing,
+                                                          ),
+                                                          _AuthTextField(
+                                                            controller:
+                                                                _registerPasswordController,
+                                                            focusNode:
+                                                                _registerPasswordFocusNode,
+                                                            label: 'Password',
+                                                            obscureText: true,
+                                                            textInputAction:
+                                                                TextInputAction
+                                                                    .done,
+                                                            onSubmitted: (_) {
+                                                              _unfocusCurrentField();
+                                                              _submit(vm);
+                                                            },
+                                                          ),
+                                                        ],
                                                       ),
                                                     ),
-                                                    const Text(
-                                                      'Digital Platform',
-                                                      style: TextStyle(
-                                                        color: AppColors
-                                                            .textPrimary,
-                                                        fontSize: 15,
-                                                        fontWeight:
-                                                            FontWeight.w500,
-                                                        height: 1.2,
+                                            ),
+                                            const SizedBox(height: 16),
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: SizedBox(
+                                                    height: 52,
+                                                    child: OutlinedButton(
+                                                      onPressed: isAuthBusy
+                                                          ? null
+                                                          : _switchAuthMode,
+                                                      style: OutlinedButton.styleFrom(
+                                                        foregroundColor:
+                                                            AppColors
+                                                                .primaryColor,
+                                                        side: const BorderSide(
+                                                          color: AppColors
+                                                              .primaryBorder,
+                                                        ),
+                                                        shape: RoundedRectangleBorder(
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                18,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                      child: Text(
+                                                        _isLoginMode
+                                                            ? 'Sign Up'
+                                                            : 'Sign In',
+                                                        style: const TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.w700,
+                                                        ),
                                                       ),
                                                     ),
-                                                  ],
+                                                  ),
                                                 ),
-                                              ),
-                                              if (!_isLoginMode) ...[
-                                                const SizedBox(width: 14),
-                                                _AuthHeaderCameraButton(
-                                                  hasSelection:
-                                                      _registerProfilePhotoUpload !=
-                                                      null,
-                                                  previewBytes:
-                                                      _registerProfilePhotoUpload
-                                                          ?.bytes,
-                                                  onTap:
-                                                      _pickRegisterProfilePhoto,
+                                                const SizedBox(width: 12),
+                                                Expanded(
+                                                  child: SizedBox(
+                                                    height: 52,
+                                                    child: FilledButton(
+                                                      onPressed: isAuthBusy
+                                                          ? null
+                                                          : () => _submit(vm),
+                                                      style: FilledButton.styleFrom(
+                                                        backgroundColor:
+                                                            AppColors
+                                                                .primaryColor,
+                                                        foregroundColor:
+                                                            Colors.white,
+                                                        shape: RoundedRectangleBorder(
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                18,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                      child: isAuthBusy
+                                                          ? const SizedBox(
+                                                              width: 22,
+                                                              height: 22,
+                                                              child:
+                                                                  CircularProgressIndicator(
+                                                                    strokeWidth:
+                                                                        2.4,
+                                                                    color: Colors
+                                                                        .white,
+                                                                  ),
+                                                            )
+                                                          : Text(
+                                                              _isLoginMode
+                                                                  ? 'Sign In'
+                                                                  : 'Sign Up',
+                                                              style: const TextStyle(
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700,
+                                                              ),
+                                                            ),
+                                                    ),
+                                                  ),
                                                 ),
                                               ],
-                                            ],
-                                          ),
-                                          const SizedBox(height: 24),
-                                          AnimatedSwitcher(
-                                            duration: const Duration(
-                                              milliseconds: 220,
                                             ),
-                                            switchInCurve: Curves.easeOut,
-                                            switchOutCurve: Curves.easeIn,
-                                            child: _isLoginMode
-                                                ? Form(
-                                                    key: _loginFormKey,
-                                                    child: Column(
-                                                      key: const ValueKey(
-                                                        'login_form',
-                                                      ),
-                                                      children: [
-                                                        _AuthTextField(
-                                                          controller:
-                                                              _loginEmailController,
-                                                          focusNode:
-                                                              _loginIdentifierFocusNode,
-                                                          label:
-                                                              'Email or Phone',
-                                                          keyboardType:
-                                                              TextInputType
-                                                                  .emailAddress,
-                                                          inputFormatters: const [
-                                                            EmailOrPhilippinesPhoneInputFormatter(),
-                                                          ],
-                                                          textInputAction:
-                                                              TextInputAction
-                                                                  .next,
-                                                          onSubmitted: (_) =>
-                                                              _focusNext(
-                                                                _loginPasswordFocusNode,
-                                                              ),
-                                                        ),
-                                                        const SizedBox(
-                                                          height:
-                                                              _authFieldSpacing,
-                                                        ),
-                                                        _AuthTextField(
-                                                          controller:
-                                                              _loginPasswordController,
-                                                          focusNode:
-                                                              _loginPasswordFocusNode,
-                                                          label: 'Password',
-                                                          obscureText: true,
-                                                          textInputAction:
-                                                              TextInputAction
-                                                                  .done,
-                                                          onSubmitted: (_) {
-                                                            _unfocusCurrentField();
-                                                            _submit(vm);
-                                                          },
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  )
-                                                : Form(
-                                                    key: _registerFormKey,
-                                                    child: Column(
-                                                      key: const ValueKey(
-                                                        'register_form',
-                                                      ),
-                                                      children: [
-                                                        _AuthDropdownField(
-                                                          label: 'Role',
-                                                          value: _registerRole,
-                                                          items:
-                                                              registerRoleOptions,
-                                                          onChanged: (value) {
-                                                            setState(() {
-                                                              _registerRole =
-                                                                  value;
-                                                              if (value !=
-                                                                  'driver') {
-                                                                _registerVehicleTypeId =
-                                                                    null;
-                                                              }
-                                                            });
-                                                          },
-                                                        ),
-                                                        if (_registerRole ==
-                                                                'driver' &&
-                                                            !_isLoadingVehicleTypes) ...[
-                                                          const SizedBox(
-                                                            height:
-                                                                _authFieldSpacing,
-                                                          ),
-                                                          _AuthDropdownField(
-                                                            label:
-                                                                'Vehicle Type',
-                                                            value:
-                                                                _registerVehicleTypeId,
-                                                            items: _vehicleTypes
-                                                                .map(
-                                                                  (item) =>
-                                                                      item.id ??
-                                                                      '',
-                                                                )
-                                                                .where(
-                                                                  (
-                                                                    value,
-                                                                  ) => value
-                                                                      .isNotEmpty,
-                                                                )
-                                                                .toList(),
-                                                            itemLabelBuilder: (value) {
-                                                              final match =
-                                                                  _vehicleTypes.where(
-                                                                    (item) =>
-                                                                        item.id ==
-                                                                        value,
-                                                                  );
-                                                              if (match
-                                                                  .isEmpty) {
-                                                                return 'Selected vehicle type';
-                                                              }
-                                                              final item =
-                                                                  match.first;
-                                                              final name =
-                                                                  item.name
-                                                                      ?.trim() ??
-                                                                  '';
-                                                              final slug =
-                                                                  item.slug
-                                                                      ?.trim() ??
-                                                                  '';
-                                                              if (name
-                                                                  .isEmpty) {
-                                                                return slug;
-                                                              }
-                                                              if (slug
-                                                                  .isEmpty) {
-                                                                return name;
-                                                              }
-                                                              return '$name ($slug)';
-                                                            },
-                                                            onChanged: (value) {
-                                                              setState(
-                                                                () =>
-                                                                    _registerVehicleTypeId =
-                                                                        value,
-                                                              );
-                                                            },
-                                                          ),
-                                                        ],
-                                                        const SizedBox(
-                                                          height:
-                                                              _authFieldSpacing,
-                                                        ),
-                                                        _AuthTextField(
-                                                          controller:
-                                                              _registerEmailController,
-                                                          focusNode:
-                                                              _registerEmailFocusNode,
-                                                          label: 'Email',
-                                                          keyboardType:
-                                                              TextInputType
-                                                                  .emailAddress,
-                                                          textInputAction:
-                                                              TextInputAction
-                                                                  .next,
-                                                          onSubmitted: (_) =>
-                                                              _focusNext(
-                                                                _registerNameFocusNode,
-                                                              ),
-                                                        ),
-                                                        const SizedBox(
-                                                          height:
-                                                              _authFieldSpacing,
-                                                        ),
-                                                        _AuthTextField(
-                                                          controller:
-                                                              _registerNameController,
-                                                          focusNode:
-                                                              _registerNameFocusNode,
-                                                          label: 'Name',
-                                                          textCapitalization:
-                                                              TextCapitalization
-                                                                  .words,
-                                                          inputFormatters: const [
-                                                            NameCaseTextInputFormatter(),
-                                                          ],
-                                                          textInputAction:
-                                                              TextInputAction
-                                                                  .next,
-                                                          onSubmitted: (_) =>
-                                                              _focusNext(
-                                                                _registerPhoneFocusNode,
-                                                              ),
-                                                        ),
-                                                        const SizedBox(
-                                                          height:
-                                                              _authFieldSpacing,
-                                                        ),
-                                                        _AuthTextField(
-                                                          controller:
-                                                              _registerPhoneController,
-                                                          focusNode:
-                                                              _registerPhoneFocusNode,
-                                                          label: 'Phone',
-                                                          keyboardType:
-                                                              TextInputType
-                                                                  .phone,
-                                                          inputFormatters: const [
-                                                            PhilippinesPhoneInputFormatter(),
-                                                          ],
-                                                          textInputAction:
-                                                              TextInputAction
-                                                                  .next,
-                                                          onSubmitted: (_) =>
-                                                              _focusNext(
-                                                                _registerPasswordFocusNode,
-                                                              ),
-                                                        ),
-                                                        if (_registerRole ==
-                                                            'driver') ...[
-                                                          const SizedBox(
-                                                            height:
-                                                                _authFieldSpacing,
-                                                          ),
-                                                          _AuthActionField(
-                                                            label: 'License',
-                                                            valueText:
-                                                                _registerLicenseController
-                                                                    .text,
-                                                            onTap:
-                                                                _pickRegisterLicensePhoto,
-                                                          ),
-                                                        ],
-                                                        const SizedBox(
-                                                          height:
-                                                              _authFieldSpacing,
-                                                        ),
-                                                        _AuthTextField(
-                                                          controller:
-                                                              _registerPasswordController,
-                                                          focusNode:
-                                                              _registerPasswordFocusNode,
-                                                          label: 'Password',
-                                                          obscureText: true,
-                                                          textInputAction:
-                                                              TextInputAction
-                                                                  .done,
-                                                          onSubmitted: (_) {
-                                                            _unfocusCurrentField();
-                                                            _submit(vm);
-                                                          },
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                          ),
-                                          const SizedBox(height: 16),
-                                          Row(
-                                            children: [
-                                              Expanded(
-                                                child: SizedBox(
-                                                  height: 52,
-                                                  child: OutlinedButton(
-                                                    onPressed: isAuthBusy
-                                                        ? null
-                                                        : _switchAuthMode,
-                                                    style: OutlinedButton.styleFrom(
-                                                      foregroundColor: AppColors
-                                                          .primaryColor,
-                                                      side: const BorderSide(
-                                                        color: AppColors
-                                                            .primaryBorder,
-                                                      ),
-                                                      shape: RoundedRectangleBorder(
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              18,
-                                                            ),
-                                                      ),
-                                                    ),
-                                                    child: Text(
-                                                      _isLoginMode
-                                                          ? 'Sign Up'
-                                                          : 'Sign In',
-                                                      style: const TextStyle(
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 12),
-                                              Expanded(
-                                                child: SizedBox(
-                                                  height: 52,
-                                                  child: FilledButton(
-                                                    onPressed: isAuthBusy
-                                                        ? null
-                                                        : () => _submit(vm),
-                                                    style: FilledButton.styleFrom(
-                                                      backgroundColor: AppColors
-                                                          .primaryColor,
-                                                      foregroundColor:
-                                                          Colors.white,
-                                                      shape: RoundedRectangleBorder(
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              18,
-                                                            ),
-                                                      ),
-                                                    ),
-                                                    child: isAuthBusy
-                                                        ? const SizedBox(
-                                                            width: 22,
-                                                            height: 22,
-                                                            child:
-                                                                CircularProgressIndicator(
-                                                                  strokeWidth:
-                                                                      2.4,
-                                                                  color: Colors
-                                                                      .white,
-                                                                ),
-                                                          )
-                                                        : Text(
-                                                            _isLoginMode
-                                                                ? 'Sign In'
-                                                                : 'Sign Up',
-                                                            style:
-                                                                const TextStyle(
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .w700,
-                                                                ),
-                                                          ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (isAuthBusy)
-                                  Positioned.fill(
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: AppColors.primaryColor,
-                                        borderRadius: BorderRadius.circular(24),
-                                      ),
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(24),
-                                        child: Center(
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              const SizedBox(
-                                                width: 28,
-                                                height: 28,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 3,
-                                                  valueColor:
-                                                      AlwaysStoppedAnimation<
-                                                        Color
-                                                      >(Colors.white),
-                                                ),
-                                              ),
-                                              const SizedBox(height: 16),
-                                              Text(
-                                                _authFlowLoadingMessage,
-                                                textAlign: TextAlign.center,
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.w700,
-                                                  fontSize: 15,
-                                                  height: 1.25,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
+                                          ],
                                         ),
                                       ),
                                     ),
                                   ),
-                              ],
+                                  if (isAuthBusy)
+                                    Positioned.fill(
+                                      child: ColoredBox(
+                                        color: AppColors.primaryColor,
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(24),
+                                          child: Center(
+                                            child: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const SizedBox(
+                                                  width: 28,
+                                                  height: 28,
+                                                  child: CircularProgressIndicator(
+                                                    strokeWidth: 3,
+                                                    valueColor:
+                                                        AlwaysStoppedAnimation<
+                                                          Color
+                                                        >(Colors.white),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 16),
+                                                Text(
+                                                  _authFlowLoadingMessage,
+                                                  textAlign: TextAlign.center,
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.w700,
+                                                    fontSize: 15,
+                                                    height: 1.25,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -1007,8 +1021,17 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
               ),
       );
       if (user != null) {
+        _logRegisterPhoto(
+          'account created user=${user.id ?? "-"} role=${user.role ?? "-"} '
+          'hasPhoto=${user.photo?.trim().isNotEmpty == true}',
+        );
         final uploadResult = await _completeRegisterImageUploads(user);
         final uploadedUser = uploadResult.user;
+        _logRegisterPhoto(
+          'upload flow finished user=${uploadedUser.id ?? "-"} '
+          'hasPhoto=${uploadedUser.photo?.trim().isNotEmpty == true} '
+          'error=${uploadResult.errorMessage ?? "-"}',
+        );
         final registeredIdentifier = _registerEmailController.text.trim();
         final registeredPassword = _registerPasswordController.text;
         if (!mounted) {
@@ -1047,8 +1070,16 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
             return;
           }
           if (authenticatedUser != null) {
+            _logRegisterPhoto(
+              'automatic login resolved user=${authenticatedUser.id ?? "-"} '
+              'hasPhoto=${authenticatedUser.photo?.trim().isNotEmpty == true}',
+            );
             await widget.onAuthenticated(authenticatedUser);
           } else {
+            _logRegisterPhoto(
+              'automatic login fallback user=${uploadedUser.id ?? "-"} '
+              'hasPhoto=${uploadedUser.photo?.trim().isNotEmpty == true}',
+            );
             await widget.onAuthenticated(uploadedUser);
           }
         } else {
@@ -1194,6 +1225,10 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
         mimeType: upload.mimeType,
       );
     });
+    _logRegisterPhoto(
+      'photo selected file=${upload.fileName} bytes=${upload.bytes.length} '
+      'mime=${upload.mimeType ?? "-"}',
+    );
     await _persistDraftImmediately();
   }
 
@@ -1712,12 +1747,20 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
     try {
       final profileUpload = _registerProfilePhotoUpload;
       if (profileUpload != null && (updatedUser.id?.isNotEmpty == true)) {
+        _logRegisterPhoto(
+          'storage upload start user=${updatedUser.id} '
+          'file=${profileUpload.fileName} bytes=${profileUpload.bytes.length}',
+        );
         updatedUser = await _authRequest.saveUserPhoto(
           userId: updatedUser.id!,
           bytes: profileUpload.bytes,
           fileName: profileUpload.fileName,
           mimeType: profileUpload.mimeType,
           size: profileUpload.size,
+        );
+        _logRegisterPhoto(
+          'storage upload saved user=${updatedUser.id ?? "-"} '
+          'hasPhoto=${updatedUser.photo?.trim().isNotEmpty == true}',
         );
       }
 
@@ -1740,6 +1783,12 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
     }
 
     return _RegisterUploadResult(user: updatedUser, errorMessage: errorMessage);
+  }
+
+  void _logRegisterPhoto(String message) {
+    debugPrint(
+      '[${DateTime.now().toIso8601String()}][RegisterProfilePhoto] $message',
+    );
   }
 
   Future<String?> _rollbackFailedRegisteredUser(String? userId) async {

@@ -126,8 +126,7 @@ class AdminUsersView extends StatefulWidget {
       builder: (dialogContext) => _AdminUserDetailDialog(
         currentUser: currentUser,
         initialViewedUser: viewedUser,
-        onCurrentUserUpdated:
-            onCurrentUserUpdated ?? () async {},
+        onCurrentUserUpdated: onCurrentUserUpdated ?? () async {},
         onLogout: onLogout ?? () {},
         isQuickLoggedIn: isQuickLoggedIn,
       ),
@@ -164,10 +163,9 @@ class _AdminUsersViewState extends State<AdminUsersView> {
   bool _isUploadingViewedProfilePhoto = false;
   bool _isUploadingViewedLicensePhoto = false;
 
-  String? _effectiveCurrentRole(AdminUsersViewModel vm) =>
-      RoleAccessService.instance.effectiveRoleKey(
-        vm.currentUser?.role ?? widget.user.role,
-      );
+  String? _effectiveCurrentRole(AdminUsersViewModel vm) => RoleAccessService
+      .instance
+      .effectiveRoleKey(vm.currentUser?.role ?? widget.user.role);
 
   Future<void> _saveViewedUserProfileChanges(
     AdminUsersViewModel vm,
@@ -294,21 +292,21 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                     scrollable: false,
                     padding: EdgeInsets.zero,
                     businessUser: viewedBusinessUser,
-                    onBusinessDetailsPressed:
-                        viewedBusinessUser == null
-                            ? null
-                            : () => vm.openUserView(
-                                viewedBusinessUser,
-                                preserveCurrent: true,
-                              ),
+                    onBusinessDetailsPressed: viewedBusinessUser == null
+                        ? null
+                        : () => vm.openUserView(
+                            viewedBusinessUser,
+                            preserveCurrent: true,
+                          ),
                     isCurrentUserView: isViewingCurrentUser,
                     onLogout: widget.onLogout,
                     logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-                    onSaveProfileChanges: isViewingCurrentUser
-                        && RoleAccessService.instance.canAccess(
-                          'profile.update',
-                          role: _effectiveCurrentRole(vm),
-                        )
+                    onSaveProfileChanges:
+                        isViewingCurrentUser &&
+                            RoleAccessService.instance.canAccess(
+                              'profile.update',
+                              role: _effectiveCurrentRole(vm),
+                            )
                         ? (changes) => _saveViewedUserProfileChanges(
                             vm,
                             viewedUser,
@@ -377,56 +375,59 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                         booking: booking,
                       );
                     },
-                    onEditBooking: !RoleAccessService.instance.canAccess(
+                    onEditBooking:
+                        !RoleAccessService.instance.canAccess(
                           'bookings.update',
                           role: _effectiveCurrentRole(vm),
                         )
                         ? null
                         : (booking) async {
-                      try {
-                          await AdminBookingsView.showEditBookingDialog(
-                        context,
-                        booking: booking,
-                        currentUser: vm.currentUser ?? widget.user,
-                      );
-                      } catch (error) {
-                        if (!context.mounted) {
-                          return;
-                        }
-                        AppSnackbar.showError(
-                          context,
-                          userFacingErrorMessage(
-                            error,
-                            fallback: 'We could not open the booking editor right now.',
-                          ),
-                        );
-                      }
-                    },
-                    onNewBooking: !RoleAccessService.instance.canAccess(
+                            try {
+                              await AdminBookingsView.showEditBookingDialog(
+                                context,
+                                booking: booking,
+                                currentUser: vm.currentUser ?? widget.user,
+                              );
+                            } catch (error) {
+                              if (!context.mounted) {
+                                return;
+                              }
+                              AppSnackbar.showError(
+                                context,
+                                userFacingErrorMessage(
+                                  error,
+                                  fallback:
+                                      'We could not open the booking editor right now.',
+                                ),
+                              );
+                            }
+                          },
+                    onNewBooking:
+                        !RoleAccessService.instance.canAccess(
                           'bookings.create',
                           role: _effectiveCurrentRole(vm),
                         )
                         ? null
                         : () async {
-                      try {
-                        await AdminBookingsView.showNewBookingDialog(
-                          context,
-                          currentUser: vm.currentUser ?? widget.user,
-                        );
-                      } catch (error) {
-                        if (!context.mounted) {
-                          return;
-                        }
-                        AppSnackbar.showError(
-                          context,
-                          userFacingErrorMessage(
-                            error,
-                            fallback:
-                              'We could not open the new booking dialog right now.',
-                          ),
-                        );
-                      }
-                    },
+                            try {
+                              await AdminBookingsView.showNewBookingDialog(
+                                context,
+                                currentUser: vm.currentUser ?? widget.user,
+                              );
+                            } catch (error) {
+                              if (!context.mounted) {
+                                return;
+                              }
+                              AppSnackbar.showError(
+                                context,
+                                userFacingErrorMessage(
+                                  error,
+                                  fallback:
+                                      'We could not open the new booking dialog right now.',
+                                ),
+                              );
+                            }
+                          },
                   ),
                 ],
               ),
@@ -667,10 +668,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     );
 
     if (editedUser != null && context.mounted) {
-      AppSnackbar.showSuccess(
-        context,
-        _buildUserSaveMessage(isEditing: true),
-      );
+      AppSnackbar.showSuccess(context, _buildUserSaveMessage(isEditing: true));
     }
   }
 
@@ -707,10 +705,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     );
 
     if (newUser != null && context.mounted) {
-      AppSnackbar.showSuccess(
-        context,
-        _buildUserSaveMessage(isEditing: false),
-      );
+      AppSnackbar.showSuccess(context, _buildUserSaveMessage(isEditing: false));
     }
   }
 
@@ -895,10 +890,10 @@ class _UsersToolbar extends StatelessWidget {
           roleOptions: roleOptions,
           iconOnly: iconOnly,
         ),
-                  onNewPressed: vm.canCreateUsers
-                      ? () => AdminUsersView.showNewUserDialog(context, vm)
-                      : null,
-                ),
+        onNewPressed: vm.canCreateUsers
+            ? () => AdminUsersView.showNewUserDialog(context, vm)
+            : null,
+      ),
     );
   }
 }
@@ -1782,7 +1777,11 @@ class _UsersWideRow extends StatelessWidget {
                           ? AppColors.dangerStrong
                           : const Color(0xFF2EAD62),
                       onTap: () {
-                        AdminUsersView.handleToggleUserActive(context, vm, user);
+                        AdminUsersView.handleToggleUserActive(
+                          context,
+                          vm,
+                          user,
+                        );
                       },
                     ),
                   if (vm.canDeleteUsers)
@@ -2238,15 +2237,15 @@ class _AdminUserDetailDialogBody extends StatefulWidget {
       _AdminUserDetailDialogBodyState();
 }
 
-class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> {
+class _AdminUserDetailDialogBodyState
+    extends State<_AdminUserDetailDialogBody> {
   bool _initializedInitialViewedUser = false;
   bool _isUploadingViewedProfilePhoto = false;
   bool _isUploadingViewedLicensePhoto = false;
 
-  String? _effectiveCurrentRole(AdminUsersViewModel vm) =>
-      RoleAccessService.instance.effectiveRoleKey(
-        vm.currentUser?.role ?? widget.currentUser.role,
-      );
+  String? _effectiveCurrentRole(AdminUsersViewModel vm) => RoleAccessService
+      .instance
+      .effectiveRoleKey(vm.currentUser?.role ?? widget.currentUser.role);
 
   Future<void> _saveViewedUserProfileChanges(
     AdminUsersViewModel vm,
@@ -2312,7 +2311,9 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
           return;
         }
         final matchedUser =
-            vm.users.where((user) => user.id == widget.initialViewedUser.id).firstOrNull ??
+            vm.users
+                .where((user) => user.id == widget.initialViewedUser.id)
+                .firstOrNull ??
             widget.initialViewedUser;
         _initializedInitialViewedUser = true;
         vm.openUserView(matchedUser);
@@ -2346,21 +2347,21 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
                   scrollable: false,
                   padding: EdgeInsets.zero,
                   businessUser: viewedBusinessUser,
-                  onBusinessDetailsPressed:
-                      viewedBusinessUser == null
-                          ? null
-                          : () => vm.openUserView(
-                              viewedBusinessUser,
-                              preserveCurrent: true,
-                            ),
+                  onBusinessDetailsPressed: viewedBusinessUser == null
+                      ? null
+                      : () => vm.openUserView(
+                          viewedBusinessUser,
+                          preserveCurrent: true,
+                        ),
                   isCurrentUserView: isViewingCurrentUser,
                   onLogout: widget.onLogout,
                   logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-                  onSaveProfileChanges: isViewingCurrentUser
-                      && RoleAccessService.instance.canAccess(
-                        'profile.update',
-                        role: _effectiveCurrentRole(vm),
-                      )
+                  onSaveProfileChanges:
+                      isViewingCurrentUser &&
+                          RoleAccessService.instance.canAccess(
+                            'profile.update',
+                            role: _effectiveCurrentRole(vm),
+                          )
                       ? (changes) => _saveViewedUserProfileChanges(
                           vm,
                           viewedUser,
@@ -2396,57 +2397,59 @@ class _AdminUserDetailDialogBodyState extends State<_AdminUserDetailDialogBody> 
                       booking: booking,
                     );
                   },
-                  onEditBooking: !RoleAccessService.instance.canAccess(
+                  onEditBooking:
+                      !RoleAccessService.instance.canAccess(
                         'bookings.update',
                         role: _effectiveCurrentRole(vm),
                       )
                       ? null
                       : (booking) async {
-                    try {
-                      await AdminBookingsView.showEditBookingDialog(
-                        context,
-                        booking: booking,
-                        currentUser: vm.currentUser ?? widget.currentUser,
-                      );
-                    } catch (error) {
-                      if (!context.mounted) {
-                        return;
-                      }
-                      AppSnackbar.showError(
-                        context,
-                        userFacingErrorMessage(
-                          error,
-                          fallback:
-                              'We could not open the booking editor right now.',
-                        ),
-                      );
-                    }
-                  },
-                  onNewBooking: !RoleAccessService.instance.canAccess(
+                          try {
+                            await AdminBookingsView.showEditBookingDialog(
+                              context,
+                              booking: booking,
+                              currentUser: vm.currentUser ?? widget.currentUser,
+                            );
+                          } catch (error) {
+                            if (!context.mounted) {
+                              return;
+                            }
+                            AppSnackbar.showError(
+                              context,
+                              userFacingErrorMessage(
+                                error,
+                                fallback:
+                                    'We could not open the booking editor right now.',
+                              ),
+                            );
+                          }
+                        },
+                  onNewBooking:
+                      !RoleAccessService.instance.canAccess(
                         'bookings.create',
                         role: _effectiveCurrentRole(vm),
                       )
                       ? null
                       : () async {
-                    try {
-                      await AdminBookingsView.showNewBookingDialog(
-                        context,
-                        currentUser: vm.currentUser ?? widget.currentUser,
-                      );
-                    } catch (error) {
-                      if (!context.mounted) {
-                        return;
-                      }
-                      AppSnackbar.showError(
-                        context,
-                        userFacingErrorMessage(
-                          error,
-                          fallback:
-                              'We could not open the new booking dialog right now.',
-                        ),
-                      );
-                    }
-                  },
+                          try {
+                            await AdminBookingsView.showNewBookingDialog(
+                              context,
+                              currentUser: vm.currentUser ?? widget.currentUser,
+                            );
+                          } catch (error) {
+                            if (!context.mounted) {
+                              return;
+                            }
+                            AppSnackbar.showError(
+                              context,
+                              userFacingErrorMessage(
+                                error,
+                                fallback:
+                                    'We could not open the new booking dialog right now.',
+                              ),
+                            );
+                          }
+                        },
                 ),
               ],
             ),
@@ -2608,7 +2611,8 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     _licenseController = TextEditingController(text: driver?.license ?? '');
     _passwordController = TextEditingController(text: user.password ?? '');
     final normalizedInitialRole = normalizeRoleKey(user.role);
-    _roleValue = normalizedInitialRole.isNotEmpty &&
+    _roleValue =
+        normalizedInitialRole.isNotEmpty &&
             _roleOptions.contains(normalizedInitialRole)
         ? normalizedInitialRole
         : null;
@@ -3091,6 +3095,15 @@ class _UserFormDialogState extends State<_UserFormDialog> {
   }
 
   String? _validationMessage() {
+    if (widget.isEditing) {
+      return _validateInactiveOnline(_isActive, _isOnline) ??
+          _validateOnlineRole(_roleValue, _isOnline) ??
+          _validateOptionalEmail(_emailController.text) ??
+          _validateOptionalName(_nameController.text) ??
+          _validateOptionalPhone(_phoneController.text) ??
+          (_isDriverRole ? _validateOptionalLicense(_licenseValue) : null) ??
+          _validateOptionalPassword(_passwordController.text);
+    }
     final roleMessage = _roleValue == null || _roleValue!.isEmpty
         ? 'Role is required.'
         : null;
@@ -3110,6 +3123,26 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                   : _validateLicense(_licenseValue))
             : null) ??
         _validatePassword(_passwordController.text);
+  }
+
+  static String? _validateOptionalEmail(String? value) {
+    return (value?.trim().isEmpty ?? true) ? null : _validateEmail(value);
+  }
+
+  static String? _validateOptionalName(String? value) {
+    return (value?.trim().isEmpty ?? true) ? null : _validateName(value);
+  }
+
+  static String? _validateOptionalPhone(String? value) {
+    return (value?.trim().isEmpty ?? true) ? null : _validatePhone(value);
+  }
+
+  static String? _validateOptionalPassword(String? value) {
+    return (value?.trim().isEmpty ?? true) ? null : _validatePassword(value);
+  }
+
+  static String? _validateOptionalLicense(String? value) {
+    return (value?.trim().isEmpty ?? true) ? null : _validateLicense(value);
   }
 
   static String? _validateInactiveOnline(bool isActive, bool isOnline) {
@@ -3187,7 +3220,6 @@ class _UserFormDialogState extends State<_UserFormDialog> {
     }
     return null;
   }
-
 }
 
 class _UserActionButton extends StatelessWidget {

@@ -1744,7 +1744,6 @@ class _SupportUserThreadTile extends StatelessWidget {
               ),
               radius: 22,
               photo: user.photo,
-              debugLabel: 'support-user:${normalizeId(user.id) ?? '-'}',
               fallbackText: _supportInitials(title),
               borderColor: avatarBorderColor,
             ),
@@ -1862,8 +1861,6 @@ class _SupportThreadTile extends StatelessWidget {
               ),
               radius: 22,
               photo: requesterPhoto,
-              debugLabel:
-                  'support-thread:${normalizeId(thread.requesterUserId) ?? '-'}',
               fallbackText: _supportInitials(title),
               borderColor: avatarBorderColor,
             ),
@@ -2051,77 +2048,82 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
         (widget.thread != null
             ? _threadSubtitle(widget.thread!)
             : humanizeDropdownValue(widget.draftUser?.role));
+    const rolesWithoutChatHeader = <String>{'client', 'driver', 'helper'};
+    final showChatHeader = !rolesWithoutChatHeader.contains(
+      widget.currentUser.role?.trim().toLowerCase(),
+    );
 
     return Container(
       color: Colors.white,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-            decoration: const BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: AppColors.primaryBorder),
+          if (showChatHeader)
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+              decoration: const BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(color: AppColors.primaryBorder),
+                ),
+              ),
+              child: Row(
+                children: [
+                  if (widget.onBack != null) ...[
+                    IconButton(
+                      onPressed: widget.onBack,
+                      icon: const Icon(Icons.arrow_back_rounded),
+                      color: AppColors.primaryColor,
+                      splashRadius: 20,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 36,
+                        minHeight: 36,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  AppProfileAvatar(
+                    key: ValueKey<String>(
+                      'support-header-avatar:${normalizeId(widget.counterpartUser?.id) ?? normalizeId(widget.thread?.requesterUserId) ?? normalizeId(widget.draftUser?.id) ?? '-'}:${(widget.counterpartUser?.photo ?? widget.thread?.requesterPhoto ?? widget.draftUser?.photo ?? '').trim()}',
+                    ),
+                    radius: 22,
+                    photo:
+                        widget.counterpartUser?.photo ??
+                        widget.thread?.requesterPhoto ??
+                        widget.draftUser?.photo,
+                    fallbackText: _supportInitials(activeTitle),
+                    borderColor: AppColors.primarySurfaceAlt,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          activeTitle,
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                        Text(
+                          activeSubtitle,
+                          style: TextStyle(
+                            color: AppColors.primaryColor.withValues(
+                              alpha: 0.72,
+                            ),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
-            child: Row(
-              children: [
-                if (widget.onBack != null) ...[
-                  IconButton(
-                    onPressed: widget.onBack,
-                    icon: const Icon(Icons.arrow_back_rounded),
-                    color: AppColors.primaryColor,
-                    splashRadius: 20,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 36,
-                      minHeight: 36,
-                    ),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  const SizedBox(width: 10),
-                ],
-                AppProfileAvatar(
-                  key: ValueKey<String>(
-                    'support-header-avatar:${normalizeId(widget.counterpartUser?.id) ?? normalizeId(widget.thread?.requesterUserId) ?? normalizeId(widget.draftUser?.id) ?? '-'}:${(widget.counterpartUser?.photo ?? widget.thread?.requesterPhoto ?? widget.draftUser?.photo ?? '').trim()}',
-                  ),
-                  radius: 22,
-                  photo:
-                      widget.counterpartUser?.photo ??
-                      widget.thread?.requesterPhoto ??
-                      widget.draftUser?.photo,
-                  debugLabel:
-                      'support-header:${normalizeId(widget.counterpartUser?.id) ?? normalizeId(widget.thread?.requesterUserId) ?? normalizeId(widget.draftUser?.id) ?? '-'}',
-                  fallbackText: _supportInitials(activeTitle),
-                  borderColor: AppColors.primarySurfaceAlt,
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        activeTitle,
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 16,
-                        ),
-                      ),
-                      Text(
-                        activeSubtitle,
-                        style: TextStyle(
-                          color: AppColors.primaryColor.withValues(alpha: 0.72),
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
           Expanded(
             child: widget.thread == null
                 ? const ColoredBox(
@@ -2516,8 +2518,6 @@ class _SupportMessageBubble extends StatelessWidget {
                       ),
                       radius: 16,
                       photo: senderUser?.photo ?? message.senderPhoto,
-                      debugLabel:
-                          'support-message:${normalizeId(message.senderUserId) ?? '-'}',
                       fallbackText: _supportInitials(senderName),
                       borderColor: AppColors.primarySurfaceAlt,
                     )

@@ -242,27 +242,27 @@ class _FieldsContentState extends State<_FieldsContent> {
       final matchesCreatedStart =
           _createdStartDate == null ||
           (field.createdAt != null &&
-              !DateUtils.dateOnly(field.createdAt!).isBefore(
-                DateUtils.dateOnly(_createdStartDate!),
-              ));
+              !DateUtils.dateOnly(
+                field.createdAt!,
+              ).isBefore(DateUtils.dateOnly(_createdStartDate!)));
       final matchesCreatedEnd =
           _createdEndDate == null ||
           (field.createdAt != null &&
-              !DateUtils.dateOnly(field.createdAt!).isAfter(
-                DateUtils.dateOnly(_createdEndDate!),
-              ));
+              !DateUtils.dateOnly(
+                field.createdAt!,
+              ).isAfter(DateUtils.dateOnly(_createdEndDate!)));
       final matchesUpdatedStart =
           _updatedStartDate == null ||
           (field.updatedAt != null &&
-              !DateUtils.dateOnly(field.updatedAt!).isBefore(
-                DateUtils.dateOnly(_updatedStartDate!),
-              ));
+              !DateUtils.dateOnly(
+                field.updatedAt!,
+              ).isBefore(DateUtils.dateOnly(_updatedStartDate!)));
       final matchesUpdatedEnd =
           _updatedEndDate == null ||
           (field.updatedAt != null &&
-              !DateUtils.dateOnly(field.updatedAt!).isAfter(
-                DateUtils.dateOnly(_updatedEndDate!),
-              ));
+              !DateUtils.dateOnly(
+                field.updatedAt!,
+              ).isAfter(DateUtils.dateOnly(_updatedEndDate!)));
 
       return matchesSearch &&
           matchesType &&
@@ -838,24 +838,25 @@ class _FieldsDateFilterState extends State<_FieldsDateFilter> {
                 showCursor: false,
                 enableInteractiveSelection: false,
                 style: adminDropdownDisplayTextStyle,
-                decoration: adminFormInputDecoration(
-                  widget.label,
-                  radius: AdminFieldsView.surfaceRadius,
-                  minHeight: AdminFieldsView.controlHeight,
-                ).copyWith(
-                  suffixIcon: IconButton(
-                    onPressed: null,
-                    icon: Icon(
-                      Icons.calendar_today_outlined,
-                      size: 18,
-                      color: AppColors.primaryColor,
+                decoration:
+                    adminFormInputDecoration(
+                      widget.label,
+                      radius: AdminFieldsView.surfaceRadius,
+                      minHeight: AdminFieldsView.controlHeight,
+                    ).copyWith(
+                      suffixIcon: IconButton(
+                        onPressed: null,
+                        icon: Icon(
+                          Icons.calendar_today_outlined,
+                          size: 18,
+                          color: AppColors.primaryColor,
+                        ),
+                      ),
+                      filled: true,
+                      fillColor: _isPressed
+                          ? activeFillColor.withValues(alpha: 0.92)
+                          : (_isHovered ? activeFillColor : Colors.white),
                     ),
-                  ),
-                  filled: true,
-                  fillColor: _isPressed
-                      ? activeFillColor.withValues(alpha: 0.92)
-                      : (_isHovered ? activeFillColor : Colors.white),
-                ),
               ),
             ),
           ),
@@ -1515,7 +1516,8 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
     if (fieldType == 'checkbox' && options.isEmpty) {
       return 'Add at least one choice.';
     }
-    final visibilityControllerKey = (_field.visibilityControllerKey ?? '').trim();
+    final visibilityControllerKey = (_field.visibilityControllerKey ?? '')
+        .trim();
     final visibilityOptionValues = _field.visibilityOptionValues
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)
@@ -1572,20 +1574,22 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
 
   StatusField _normalizeFieldPlaceholder(StatusField field) {
     final fieldType = (field.type ?? '').trim();
+    final isRequired = field.required ?? false;
+    final currentPlaceholder = field.placeholder?.trim() ?? '';
+    if (isRequired && currentPlaceholder.toLowerCase() == 'optional') {
+      return field.copyWith(placeholder: null);
+    }
     if (fieldType == 'photo') {
-      final currentPlaceholder = field.placeholder?.trim() ?? '';
       if (currentPlaceholder.isEmpty) {
         return field.copyWith(placeholder: 'Photo');
       }
       return field;
     }
     if (fieldType == 'dropdown' || fieldType == 'search_dropdown') {
-      final isRequired = field.required ?? false;
       if (isRequired) {
         return field.copyWith(placeholder: null);
       }
 
-      final currentPlaceholder = field.placeholder?.trim() ?? '';
       if (currentPlaceholder.isEmpty) {
         return field.copyWith(placeholder: 'Optional');
       }
@@ -1594,9 +1598,7 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
     if (fieldType != 'photo' &&
         fieldType != 'dropdown' &&
         fieldType != 'search_dropdown') {
-      final isRequired = field.required ?? false;
       if (!isRequired) {
-        final currentPlaceholder = field.placeholder?.trim() ?? '';
         if (currentPlaceholder.isEmpty) {
           return field.copyWith(placeholder: 'Optional');
         }

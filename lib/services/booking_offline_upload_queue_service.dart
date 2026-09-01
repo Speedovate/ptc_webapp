@@ -18,7 +18,7 @@ class BookingOfflineUploadQueueService {
     FirebaseFirestore? firestore,
     PhotoStorageService? photoStorageService,
   }) : _backend = backend ?? createBookingStorageBackend(),
-       _firestore = firestore ?? FirebaseFirestore.instance,
+       _providedFirestore = firestore,
        _photoStorageService =
            photoStorageService ?? PhotoStorageService.instance;
 
@@ -31,7 +31,9 @@ class BookingOfflineUploadQueueService {
   static const _retryInterval = Duration(seconds: 20);
 
   final BookingStorageBackend _backend;
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _providedFirestore;
+  FirebaseFirestore get _firestore =>
+      _providedFirestore ?? FirebaseFirestore.instance;
   final PhotoStorageService _photoStorageService;
   final ImageUploadProcessor _imageUploadProcessor =
       ImageUploadProcessor.instance;
@@ -245,7 +247,9 @@ class BookingOfflineUploadQueueService {
   }
 
   Future<List<_PendingBookingUploadEntry>> _readEntries() async {
-    final rawEntries = await _backend.readStringList(await _resolvedStorageKey());
+    final rawEntries = await _backend.readStringList(
+      await _resolvedStorageKey(),
+    );
     return rawEntries
         .map((entry) => jsonDecode(entry) as Map<String, dynamic>)
         .map(_PendingBookingUploadEntry.fromMap)
@@ -305,7 +309,9 @@ class BookingOfflineUploadQueueService {
   }
 
   Future<List<String>> _allKnownStorageKeys() async {
-    final knownUsers = await _authStorage.readStringList(_knownSessionUserIdsKey);
+    final knownUsers = await _authStorage.readStringList(
+      _knownSessionUserIdsKey,
+    );
     final keys = <String>{_storageKeyForUserId(null)};
     for (final userId in knownUsers) {
       keys.add(_storageKeyForUserId(userId));

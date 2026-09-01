@@ -220,11 +220,6 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
 
   Future<void> _openMenu() async {
     final items = widget.items ?? <DropdownMenuItem<T>>[];
-    debugPrint(
-      '[${DateTime.now().toIso8601String()}][AdminDropdownTrace] '
-      'open type=$T items=${items.length} enabled=${widget.onChanged != null} '
-      'mounted=$mounted',
-    );
     if (items.isEmpty || widget.onChanged == null) {
       return;
     }
@@ -272,10 +267,6 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
             ),
           )
           .toList(growable: false),
-    );
-    debugPrint(
-      '[${DateTime.now().toIso8601String()}][AdminDropdownTrace] '
-      'closed type=$T selected=${result != null}',
     );
     AdminDropdownMenuCoordinator.unregisterActiveDismissCallback(
       _dismissActiveMenu,
@@ -849,7 +840,6 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
                       fillColor: Colors.white,
                     ),
               ),
-              const SizedBox(height: 14),
               Expanded(
                 child: filtered.isEmpty
                     ? const Center(

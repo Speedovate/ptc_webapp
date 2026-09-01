@@ -1278,11 +1278,10 @@ class BookingWorkflowViewModel extends BaseViewModel {
       errors = {};
       additionalFields = const [];
       resetTick += 1;
-      await load(
-        user: currentUser,
-        booking: savedBooking,
-        hydrateInitialAnswers: false,
-      );
+      booking = savedBooking;
+      // The host receives this booking and refreshes the next workflow form.
+      // Do not hold the confirmation dialog open while that background refresh runs.
+      notifyListeners();
       return savedBooking;
     } finally {
       isSubmitting = false;
@@ -1328,11 +1327,10 @@ class BookingWorkflowViewModel extends BaseViewModel {
       errors = {};
       additionalFields = const [];
       resetTick += 1;
-      await load(
-        user: currentUser,
-        booking: savedBooking,
-        hydrateInitialAnswers: false,
-      );
+      booking = savedBooking;
+      // The host receives this booking and refreshes the next workflow form.
+      // Do not hold the confirmation dialog open while that background refresh runs.
+      notifyListeners();
       return savedBooking;
     } finally {
       isSubmitting = false;
@@ -1408,7 +1406,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
       cancelAnswers = {};
       cancelErrors = {};
       cancelResetTick += 1;
-      await load(user: currentUser, booking: savedBooking);
+      booking = savedBooking;
+      // The host refreshes the next workflow state after the dialog closes.
+      notifyListeners();
       return savedBooking;
     } finally {
       isCancelSubmitting = false;

@@ -9,13 +9,14 @@ class PhotoStorageService {
   PhotoStorageService({
     FirebaseStorage? storage,
     OfflineCleanupQueueService? offlineCleanupQueueService,
-  }) : _storage = storage ?? FirebaseStorage.instance,
+  }) : _providedStorage = storage,
        _offlineCleanupQueueService =
            offlineCleanupQueueService ?? OfflineCleanupQueueService.instance;
 
   static final PhotoStorageService instance = PhotoStorageService();
 
-  final FirebaseStorage _storage;
+  final FirebaseStorage? _providedStorage;
+  FirebaseStorage get _storage => _providedStorage ?? FirebaseStorage.instance;
   final ImageUploadProcessor _imageUploadProcessor =
       ImageUploadProcessor.instance;
   final OfflineCleanupQueueService _offlineCleanupQueueService;

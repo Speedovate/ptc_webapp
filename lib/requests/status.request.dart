@@ -18,7 +18,7 @@ class StatusRequest implements StatusFormRepository {
   StatusRequest({
     FirebaseFirestore? firestore,
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
-  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+  }) : _providedFirestore = firestore,
        _firestorePublicDocumentFetcher =
            firestorePublicDocumentFetcher ??
            createFirestorePublicDocumentFetcher();
@@ -49,7 +49,9 @@ class StatusRequest implements StatusFormRepository {
     );
   }
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _providedFirestore;
+  FirebaseFirestore get _firestore =>
+      _providedFirestore ?? FirebaseFirestore.instance;
   final FirestorePublicDocumentFetcher _firestorePublicDocumentFetcher;
   final OfflineMutationQueueService _offlineMutationQueueService =
       OfflineMutationQueueService.instance;

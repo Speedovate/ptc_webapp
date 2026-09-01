@@ -6,11 +6,12 @@ import 'package:webapp/utils/functions.dart';
 
 class SupportStorageService {
   SupportStorageService({FirebaseStorage? storage})
-    : _storage = storage ?? FirebaseStorage.instance;
+    : _providedStorage = storage;
 
   static final SupportStorageService instance = SupportStorageService();
 
-  final FirebaseStorage _storage;
+  final FirebaseStorage? _providedStorage;
+  FirebaseStorage get _storage => _providedStorage ?? FirebaseStorage.instance;
 
   Future<SupportAttachment> uploadAttachment({
     required Uint8List bytes,

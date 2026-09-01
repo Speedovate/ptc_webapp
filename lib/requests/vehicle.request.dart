@@ -19,7 +19,7 @@ class VehicleRequest implements VehicleCatalogRepository {
     OfflineMutationQueueService? offlineMutationQueueService,
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
     Future<void> Function()? offlineQueueInitializer,
-  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+  }) : _providedFirestore = firestore,
        _offlineMutationQueueService =
            offlineMutationQueueService ?? OfflineMutationQueueService.instance,
        _firestorePublicDocumentFetcher =
@@ -56,7 +56,9 @@ class VehicleRequest implements VehicleCatalogRepository {
     );
   }
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _providedFirestore;
+  FirebaseFirestore get _firestore =>
+      _providedFirestore ?? FirebaseFirestore.instance;
   final OfflineMutationQueueService _offlineMutationQueueService;
   final FirestorePublicDocumentFetcher _firestorePublicDocumentFetcher;
   final Future<void> Function() _offlineQueueInitializer;
