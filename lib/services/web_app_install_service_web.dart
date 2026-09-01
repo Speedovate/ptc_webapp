@@ -170,6 +170,11 @@ class _WebAppInstallService implements WebAppInstallService {
       isError: true,
     );
   }
+
+  @override
+  void openInstallPage() {
+    html.window.location.assign('/download');
+  }
 }
 
 final WebAppInstallService webAppInstallService = _WebAppInstallService();

@@ -8,7 +8,6 @@ import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/collapsible_sidebar.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
-import 'package:webapp/widgets/shared/app_snackbar.dart';
 
 class PlatformShell extends StatelessWidget {
   const PlatformShell({
@@ -251,44 +250,14 @@ class PlatformSidebarContainer extends StatelessWidget {
 class _PlatformInstallAppButton extends StatelessWidget {
   const _PlatformInstallAppButton();
 
-  Future<void> _handleInstall(BuildContext context) async {
-    final result = await webAppInstallService.install();
-    if (!context.mounted) {
-      return;
-    }
-    final message = result.message?.trim();
-    if (message == null || message.isEmpty) {
-      return;
-    }
-    if (result.requiresManualInstall) {
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Install Paltranco'),
-          content: Text(
-            '$message The app will open like a regular mobile app.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
-    if (result.isError) {
-      AppSnackbar.showError(context, message);
-      return;
-    }
-    AppSnackbar.showSuccess(context, message);
+  void _handleInstall() {
+    webAppInstallService.openInstallPage();
   }
 
   @override
   Widget build(BuildContext context) {
     return AppMousePressable(
-      onTap: () => _handleInstall(context),
+      onTap: _handleInstall,
       borderRadius: BorderRadius.circular(16),
       child: Builder(
         builder: (context) => AnimatedContainer(

@@ -9,6 +9,9 @@ class _StubWebAppInstallService implements WebAppInstallService {
       isError: true,
     );
   }
+
+  @override
+  void openInstallPage() {}
 }
 
 final WebAppInstallService webAppInstallService = _StubWebAppInstallService();

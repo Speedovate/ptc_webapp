@@ -18,6 +18,8 @@ class WebAppInstallAttemptResult {
 
 abstract class WebAppInstallService {
   Future<WebAppInstallAttemptResult> install();
+
+  void openInstallPage();
 }
 
 WebAppInstallService get webAppInstallService => impl.webAppInstallService;
