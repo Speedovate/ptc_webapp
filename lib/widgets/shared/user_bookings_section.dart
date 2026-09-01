@@ -1080,7 +1080,7 @@ class _UserBookingsFiltersPanelState extends State<_UserBookingsFiltersPanel> {
                   const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: adminFilterFieldMinHeight,
+                    height: adminFilterClearButtonHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();

@@ -2943,7 +2943,7 @@ class _BookingsFiltersPanelState extends State<_BookingsFiltersPanel> {
                   const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: adminFilterFieldMinHeight,
+                    height: adminFilterClearButtonHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
@@ -3072,7 +3072,7 @@ class _BookingsDateFilterState extends State<_BookingsDateFilter> {
                     ).copyWith(
                       fillColor: _isHovered || _isPressed
                           ? activeFillColor
-                          : AppColors.primarySurface,
+                          : Colors.white,
                       suffixIcon: GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTap: _pickDate,

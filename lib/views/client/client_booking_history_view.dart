@@ -409,7 +409,7 @@ class _HistoryFiltersPanelState extends State<_HistoryFiltersPanel> {
                   const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: adminFilterFieldMinHeight,
+                    height: adminFilterClearButtonHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
@@ -538,7 +538,7 @@ class _HistoryDateFilterState extends State<_HistoryDateFilter> {
                     ).copyWith(
                       fillColor: _isHovered || _isPressed
                           ? activeFillColor
-                          : AppColors.primarySurface,
+                          : Colors.white,
                       suffixIcon: GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTap: _pickDate,

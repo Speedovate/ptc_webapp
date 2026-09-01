@@ -38,6 +38,7 @@ const adminFieldHelperTextStyle = TextStyle(
 );
 const double adminModalFieldMinHeight = 56;
 const double adminFilterFieldMinHeight = 52;
+const double adminFilterClearButtonHeight = 44;
 
 InputDecoration _normalizeCollapsedSelectionDecoration(
   InputDecoration baseDecoration,

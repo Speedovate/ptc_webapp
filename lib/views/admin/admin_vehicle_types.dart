@@ -1030,7 +1030,7 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
                   const SizedBox(height: 8),
                   SizedBox(
                     width: contentWidth,
-                    height: adminFilterFieldMinHeight,
+                    height: adminFilterClearButtonHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();

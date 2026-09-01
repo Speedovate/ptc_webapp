@@ -7,6 +7,16 @@ import 'package:webapp/widgets/shared/admin_shell_layout_scope.dart';
 typedef AdminToolbarFilterBuilder =
     Widget Function(BuildContext context, bool iconOnly);
 
+// Keep every list filter trigger visually identical regardless of its page.
+const double adminListFiltersButtonDesktopWidth = 116;
+const double adminListFiltersButtonMobileWidth = 48;
+
+double adminListFiltersButtonWidth(bool iconOnly) {
+  return iconOnly
+      ? adminListFiltersButtonMobileWidth
+      : adminListFiltersButtonDesktopWidth;
+}
+
 class AdminListToolbar extends StatelessWidget {
   const AdminListToolbar({
     super.key,
@@ -43,9 +53,7 @@ class AdminListToolbar extends StatelessWidget {
         final buttonWidth = iconOnly
             ? iconOnlySquareSize
             : (availableWidth >= 1000 ? 108.0 : 96.0);
-        final filterWidth = iconOnly
-            ? iconOnlySquareSize
-            : (availableWidth >= 1000 ? 132.0 : 116.0);
+        final filterWidth = adminListFiltersButtonWidth(iconOnly);
         return Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -196,7 +204,7 @@ class _AdminListSearchFieldState extends State<AdminListSearchField> {
                 filled: true,
                 fillColor: _isHovered || _isPressed
                     ? activeFillColor
-                    : AppColors.primarySurface,
+                    : Colors.white,
                 contentPadding: const EdgeInsets.only(
                   top: 18,
                   right: 14,
@@ -306,6 +314,7 @@ class AdminListFiltersButton extends StatefulWidget {
     this.menuPadding = const EdgeInsets.all(8),
     this.topGap = 4,
     this.rightGap = 44,
+    this.alignMenuToButtonRight = false,
   });
 
   final double controlHeight;
@@ -316,9 +325,245 @@ class AdminListFiltersButton extends StatefulWidget {
   final EdgeInsetsGeometry menuPadding;
   final double topGap;
   final double rightGap;
+  final bool alignMenuToButtonRight;
 
   @override
   State<AdminListFiltersButton> createState() => _AdminListFiltersButtonState();
+}
+
+class AdminDateFilterConfig {
+  const AdminDateFilterConfig({
+    required this.label,
+    required this.value,
+    required this.onSelected,
+  });
+
+  final String label;
+  final DateTime? value;
+  final ValueChanged<DateTime?> onSelected;
+}
+
+class AdminListDateFiltersPanel extends StatelessWidget {
+  const AdminListDateFiltersPanel({
+    super.key,
+    required this.iconOnly,
+    required this.filters,
+    required this.onClear,
+    this.alignMenuToButtonRight = false,
+    this.controlHeight = adminFilterFieldMinHeight,
+    this.surfaceRadius = 16,
+  });
+
+  final bool iconOnly;
+  final List<AdminDateFilterConfig> filters;
+  final VoidCallback onClear;
+  final bool alignMenuToButtonRight;
+  final double controlHeight;
+  final double surfaceRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    const overlayRightPadding = 24.0;
+    const filterItemWidth = 220.0;
+    const overlayPadding = 14.0;
+    const desiredOverlayWidth = filterItemWidth + (overlayPadding * 2);
+    final overlayWidth = (screenWidth - 32 - overlayRightPadding).clamp(
+      1.0,
+      desiredOverlayWidth,
+    );
+    final contentWidth = (overlayWidth - (overlayPadding * 2)).clamp(
+      1.0,
+      desiredOverlayWidth,
+    );
+
+    return AdminListFiltersButton(
+      controlHeight: controlHeight,
+      surfaceRadius: surfaceRadius,
+      iconOnly: iconOnly,
+      alignMenuToButtonRight: alignMenuToButtonRight,
+      menuChildren: [
+        SizedBox(
+          width: overlayWidth,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => FocusScope.of(context).unfocus(),
+            child: Padding(
+              padding: const EdgeInsets.all(overlayPadding),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final filter in filters) ...[
+                    SizedBox(
+                      width: contentWidth,
+                      child: _AdminListDateFilter(
+                        label: filter.label,
+                        value: filter.value,
+                        onSelected: filter.onSelected,
+                        controlHeight: controlHeight,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  SizedBox(
+                    width: contentWidth,
+                    height: adminFilterClearButtonHeight,
+                    child: FilledButton(
+                      onPressed: () {
+                        FocusScope.of(context).unfocus();
+                        onClear();
+                      },
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.danger,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(surfaceRadius),
+                        ),
+                      ),
+                      child: const Text(
+                        'Clear',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AdminListDateFilter extends StatefulWidget {
+  const _AdminListDateFilter({
+    required this.label,
+    required this.value,
+    required this.onSelected,
+    required this.controlHeight,
+  });
+
+  final String label;
+  final DateTime? value;
+  final ValueChanged<DateTime?> onSelected;
+  final double controlHeight;
+
+  @override
+  State<_AdminListDateFilter> createState() => _AdminListDateFilterState();
+}
+
+class _AdminListDateFilterState extends State<_AdminListDateFilter> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+    _focusNode = FocusNode()..canRequestFocus = false;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncDisplayValue();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AdminListDateFilter oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncDisplayValue();
+  }
+
+  void _syncDisplayValue() {
+    if (_controller.text != _displayValue) {
+      _controller.value = _controller.value.copyWith(
+        text: _displayValue,
+        selection: TextSelection.collapsed(offset: _displayValue.length),
+        composing: TextRange.empty,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  String get _displayValue {
+    final value = widget.value;
+    if (value == null) return '';
+    return MaterialLocalizations.of(context).formatMediumDate(value);
+  }
+
+  Future<void> _pickDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: widget.value ?? DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (context.mounted) widget.onSelected(selected);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeFillColor = appFieldInteractiveFillColor(context);
+    return SizedBox(
+      height: widget.controlHeight,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() {
+          _isHovered = false;
+          _isPressed = false;
+        }),
+        child: Listener(
+          onPointerDown: (_) => setState(() => _isPressed = true),
+          onPointerUp: (_) => setState(() => _isPressed = false),
+          onPointerCancel: (_) => setState(() => _isPressed = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _pickDate,
+            child: IgnorePointer(
+              child: TextFormField(
+                controller: _controller,
+                focusNode: _focusNode,
+                readOnly: true,
+                showCursor: false,
+                enableInteractiveSelection: false,
+                style: adminDropdownDisplayTextStyle,
+                decoration:
+                    adminFormInputDecoration(
+                      widget.label,
+                      radius: 16,
+                      minHeight: widget.controlHeight,
+                    ).copyWith(
+                      fillColor: _isHovered || _isPressed
+                          ? activeFillColor
+                          : Colors.white,
+                      suffixIcon: const Icon(
+                        Icons.calendar_today_rounded,
+                        size: 18,
+                        color: AppColors.primaryColor,
+                      ),
+                      suffixIconConstraints: const BoxConstraints(
+                        minWidth: 42,
+                        minHeight: 42,
+                      ),
+                    ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
@@ -344,11 +589,21 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
         widget.alignmentOffset.dy +
         widget.topGap -
         2;
-    final useDesktopLeftAnchor = !widget.iconOnly && screenWidth >= 520;
+    final useDesktopLeftAnchor =
+        !widget.iconOnly &&
+        screenWidth >= 520 &&
+        !widget.alignMenuToButtonRight;
     final popupContentMaxWidth = useDesktopLeftAnchor
         ? (screenWidth - buttonLeft - 12).clamp(0.0, screenWidth)
         : (screenWidth - 24).clamp(0.0, screenWidth);
-    final popupRight = useDesktopLeftAnchor
+    final popupRight = widget.alignMenuToButtonRight
+        ? (buttonBox == null
+              ? effectiveRightGap
+              : (screenWidth - buttonRight - widget.alignmentOffset.dx).clamp(
+                  12.0,
+                  screenWidth - 12.0,
+                ))
+        : useDesktopLeftAnchor
         ? (buttonBox == null
               ? effectiveRightGap
               : (screenWidth - buttonRight - widget.alignmentOffset.dx).clamp(

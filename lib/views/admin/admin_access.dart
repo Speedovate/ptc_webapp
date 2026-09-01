@@ -14,6 +14,7 @@ import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
+import 'package:webapp/views/admin/admin_users.dart';
 
 class AdminAccessView extends StatefulWidget {
   const AdminAccessView({super.key});
@@ -50,16 +51,18 @@ class _AdminAccessViewState extends State<AdminAccessView> {
   bool _hasCompletedInitialLoad = false;
   String? _errorMessage;
   String _searchQuery = '';
+  DateTime? _createdStartDate;
+  DateTime? _createdEndDate;
+  DateTime? _updatedStartDate;
+  DateTime? _updatedEndDate;
   List<_AccessRoleEntry> _roles = List<_AccessRoleEntry>.from(_cachedRoles);
   bool _isRealtimeReloading = false;
 
-  bool get _canReadRoles => _service.canAccess(
-    DispatcherAccessCapability.roleAccessRead,
-  );
+  bool get _canReadRoles =>
+      _service.canAccess(DispatcherAccessCapability.roleAccessRead);
 
-  bool get _canUpdateRoles => _service.canAccess(
-    DispatcherAccessCapability.roleAccessUpdate,
-  );
+  bool get _canUpdateRoles =>
+      _service.canAccess(DispatcherAccessCapability.roleAccessUpdate);
 
   @override
   void didChangeDependencies() {
@@ -124,14 +127,17 @@ class _AdminAccessViewState extends State<AdminAccessView> {
     final hasSharedRoleAccess = _service.roleAccessConfigs.isNotEmpty;
     final hasSharedUsers = AuthRequest.hasResolvedUsers;
     if (_roles.isEmpty && hasSharedRoleAccess && hasSharedUsers) {
-      final sharedRoleKeys = <String>{
-        ..._service.roleAccessConfigs.map((config) => config.role),
-        ...AuthRequest.hydratedUsersSnapshot.map((user) => user.role ?? ''),
-      }
-          .map(_normalizeRoleKey)
-          .whereType<String>()
-          .toSet()
-          .toList(growable: false);
+      final sharedRoleKeys =
+          <String>{
+                ..._service.roleAccessConfigs.map((config) => config.role),
+                ...AuthRequest.hydratedUsersSnapshot.map(
+                  (user) => user.role ?? '',
+                ),
+              }
+              .map(_normalizeRoleKey)
+              .whereType<String>()
+              .toSet()
+              .toList(growable: false);
       _roles = _buildRoleEntries(sharedRoleKeys);
     }
     final seededRoleKeys = <String>{
@@ -155,13 +161,11 @@ class _AdminAccessViewState extends State<AdminAccessView> {
     try {
       await _warmupService.warmRoleAccess().timeout(
         const Duration(seconds: 6),
-        onTimeout: () {
-        },
+        onTimeout: () {},
       );
       await _warmupService.warmUsers().timeout(
         const Duration(seconds: 6),
-        onTimeout: () {
-        },
+        onTimeout: () {},
       );
       final users = AuthRequest.hasResolvedUsers
           ? AuthRequest.hydratedUsersSnapshot
@@ -174,11 +178,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
       final roleKeys = <String>{
         ..._service.roleAccessConfigs.map((config) => config.role),
         ...users.map((user) => (user.role ?? '').trim()),
-      }
-          .map(_normalizeRoleKey)
-          .whereType<String>()
-          .toSet()
-          .toList();
+      }.map(_normalizeRoleKey).whereType<String>().toSet().toList();
 
       _roles = _buildRoleEntries(roleKeys);
       _log('load resolved roles=${_roles.length} users=${users.length}');
@@ -214,45 +214,58 @@ class _AdminAccessViewState extends State<AdminAccessView> {
         .where((role) => role.trim().isNotEmpty)
         .toSet()
         .toList(growable: false);
-    final sortableEntries = uniqueRoleKeys.map((roleKey) {
-      final config = _service.accessConfigForRole(roleKey);
-      final resolvedCapabilities = Map<String, bool>.from(
-        defaultAccessCapabilitiesForRole(roleKey),
-      )..addAll(config?.capabilities ?? const <String, bool>{});
-      final permissionCount = resolvedCapabilities.entries
-          .where(
-            (entry) =>
-                !_hiddenRoleEditorCapabilities.contains(entry.key) &&
-                entry.value,
-          )
-          .length;
-      final createdAt = _tryParseIsoDateTime(config?.createdAtIso);
-      final updatedAt = _tryParseIsoDateTime(config?.updatedAtIso);
-      return _SortableAccessRoleEntry(
-        roleKey: roleKey,
-        label: humanizeDropdownValue(roleKey),
-        permissionCount: permissionCount,
-        createdAt: createdAt,
-        updatedAt: updatedAt,
-      );
-    }).toList(growable: true);
+    final sortableEntries = uniqueRoleKeys
+        .map((roleKey) {
+          final config = _service.accessConfigForRole(roleKey);
+          final resolvedCapabilities = Map<String, bool>.from(
+            defaultAccessCapabilitiesForRole(roleKey),
+          )..addAll(config?.capabilities ?? const <String, bool>{});
+          final permissionCount = resolvedCapabilities.entries
+              .where(
+                (entry) =>
+                    !_hiddenRoleEditorCapabilities.contains(entry.key) &&
+                    entry.value,
+              )
+              .length;
+          final createdAt = _tryParseIsoDateTime(config?.createdAtIso);
+          final updatedAt = _tryParseIsoDateTime(config?.updatedAtIso);
+          return _SortableAccessRoleEntry(
+            roleKey: roleKey,
+            label: humanizeDropdownValue(roleKey),
+            permissionCount: permissionCount,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+          );
+        })
+        .toList(growable: true);
 
-    final oldestFirst = List<_SortableAccessRoleEntry>.from(sortableEntries)
-      ..sort(_compareRolesOldestFirst);
-    final displayIdByRole = <String, String>{
-      for (final entry in oldestFirst.asMap().entries)
-        entry.value.roleKey: '${entry.key + 1}',
-    };
-
-    sortableEntries.sort(_compareRolesLatestFirst);
-    return sortableEntries.map((entry) {
-      return _AccessRoleEntry(
-        id: displayIdByRole[entry.roleKey] ?? '',
-        roleKey: entry.roleKey,
-        label: entry.label,
-        permissionCount: entry.permissionCount,
+    // Role rows must remain stable after an access edit. Use the role name,
+    // never timestamps that change on every save, as the display ordering key.
+    sortableEntries.sort((left, right) {
+      final labelComparison = left.label.toLowerCase().compareTo(
+        right.label.toLowerCase(),
       );
-    }).toList(growable: false);
+      if (labelComparison != 0) {
+        return labelComparison;
+      }
+      return left.roleKey.compareTo(right.roleKey);
+    });
+    return sortableEntries
+        .asMap()
+        .entries
+        .map((entry) {
+          final role = entry.value;
+          return _AccessRoleEntry(
+            // Alphabetical rows stay top-to-bottom while IDs descend visually.
+            id: '${sortableEntries.length - entry.key}',
+            roleKey: role.roleKey,
+            label: role.label,
+            permissionCount: role.permissionCount,
+            createdAt: role.createdAt,
+            updatedAt: role.updatedAt,
+          );
+        })
+        .toList(growable: false);
   }
 
   static DateTime? _tryParseIsoDateTime(String? value) {
@@ -261,74 +274,6 @@ class _AdminAccessViewState extends State<AdminAccessView> {
       return null;
     }
     return DateTime.tryParse(raw)?.toUtc();
-  }
-
-  int _compareRolesLatestFirst(
-    _SortableAccessRoleEntry left,
-    _SortableAccessRoleEntry right,
-  ) {
-    final updatedComparison = _compareDateLatestFirst(
-      left.updatedAt,
-      right.updatedAt,
-    );
-    if (updatedComparison != 0) {
-      return updatedComparison;
-    }
-    final createdComparison = _compareDateLatestFirst(
-      left.createdAt,
-      right.createdAt,
-    );
-    if (createdComparison != 0) {
-      return createdComparison;
-    }
-    return left.label.toLowerCase().compareTo(right.label.toLowerCase());
-  }
-
-  int _compareRolesOldestFirst(
-    _SortableAccessRoleEntry left,
-    _SortableAccessRoleEntry right,
-  ) {
-    final updatedComparison = _compareDateOldestFirst(
-      left.updatedAt,
-      right.updatedAt,
-    );
-    if (updatedComparison != 0) {
-      return updatedComparison;
-    }
-    final createdComparison = _compareDateOldestFirst(
-      left.createdAt,
-      right.createdAt,
-    );
-    if (createdComparison != 0) {
-      return createdComparison;
-    }
-    return left.label.toLowerCase().compareTo(right.label.toLowerCase());
-  }
-
-  int _compareDateLatestFirst(DateTime? left, DateTime? right) {
-    if (left == null && right == null) {
-      return 0;
-    }
-    if (left == null) {
-      return 1;
-    }
-    if (right == null) {
-      return -1;
-    }
-    return right.compareTo(left);
-  }
-
-  int _compareDateOldestFirst(DateTime? left, DateTime? right) {
-    if (left == null && right == null) {
-      return 0;
-    }
-    if (left == null) {
-      return 1;
-    }
-    if (right == null) {
-      return -1;
-    }
-    return left.compareTo(right);
   }
 
   Future<void> _openRoleEditor(_AccessRoleEntry role) async {
@@ -341,8 +286,9 @@ class _AdminAccessViewState extends State<AdminAccessView> {
         ? _fullAccessCapabilities()
         : Map<String, bool>.from(
             existingConfig?.capabilities ??
-                DispatcherAccessConfig.defaults(roleKey: role.roleKey)
-                    .capabilities,
+                DispatcherAccessConfig.defaults(
+                  roleKey: role.roleKey,
+                ).capabilities,
           );
     final savedDraft = await showAppDialog<Map<String, bool>>(
       context: context,
@@ -398,7 +344,9 @@ class _AdminAccessViewState extends State<AdminAccessView> {
     if (!mounted) {
       return;
     }
-    final createdRole = _roles.where((role) => role.roleKey == normalizedRoleKey).firstOrNull;
+    final createdRole = _roles
+        .where((role) => role.roleKey == normalizedRoleKey)
+        .firstOrNull;
     if (createdRole != null) {
       await _openRoleEditor(createdRole);
     }
@@ -406,16 +354,30 @@ class _AdminAccessViewState extends State<AdminAccessView> {
 
   @override
   Widget build(BuildContext context) {
-    final filteredRoles = _roles.where((role) {
-      final query = _searchQuery.trim().toLowerCase();
-      if (query.isEmpty) {
-        return true;
-      }
-      return role.id.toLowerCase().contains(query) ||
-          role.roleKey.toLowerCase().contains(query) ||
-          role.label.toLowerCase().contains(query) ||
-          '${role.permissionCount}'.contains(query);
-    }).toList(growable: false);
+    final filteredRoles = _roles
+        .where((role) {
+          final query = _searchQuery.trim().toLowerCase();
+          final matchesSearch =
+              query.isEmpty ||
+              role.id.toLowerCase().contains(query) ||
+              role.roleKey.toLowerCase().contains(query) ||
+              role.label.toLowerCase().contains(query) ||
+              '${role.permissionCount}'.contains(query);
+          if (!matchesSearch) {
+            return false;
+          }
+          return _matchesDateRange(
+                role.createdAt,
+                start: _createdStartDate,
+                end: _createdEndDate,
+              ) &&
+              _matchesDateRange(
+                role.updatedAt,
+                start: _updatedStartDate,
+                end: _updatedEndDate,
+              );
+        })
+        .toList(growable: false);
     final showInitialLoading =
         _isLoading && !_hasCompletedInitialLoad && _errorMessage == null;
 
@@ -431,7 +393,26 @@ class _AdminAccessViewState extends State<AdminAccessView> {
             children: [
               _RolesToolbar(
                 searchQuery: _searchQuery,
-                onSearchChanged: (value) => setState(() => _searchQuery = value),
+                onSearchChanged: (value) =>
+                    setState(() => _searchQuery = value),
+                createdStartDate: _createdStartDate,
+                createdEndDate: _createdEndDate,
+                updatedStartDate: _updatedStartDate,
+                updatedEndDate: _updatedEndDate,
+                onCreatedStartChanged: (value) =>
+                    setState(() => _createdStartDate = value),
+                onCreatedEndChanged: (value) =>
+                    setState(() => _createdEndDate = value),
+                onUpdatedStartChanged: (value) =>
+                    setState(() => _updatedStartDate = value),
+                onUpdatedEndChanged: (value) =>
+                    setState(() => _updatedEndDate = value),
+                onClearFilters: () => setState(() {
+                  _createdStartDate = null;
+                  _createdEndDate = null;
+                  _updatedStartDate = null;
+                  _updatedEndDate = null;
+                }),
                 onNewPressed: _canUpdateRoles ? _openNewRoleDialog : null,
               ),
               const SizedBox(height: _tableSectionGap),
@@ -457,6 +438,24 @@ class _AdminAccessViewState extends State<AdminAccessView> {
     );
   }
 
+  static bool _matchesDateRange(
+    DateTime? value, {
+    required DateTime? start,
+    required DateTime? end,
+  }) {
+    if (start == null && end == null) return true;
+    if (value == null) return false;
+    final date = DateTime(value.year, value.month, value.day);
+    final normalizedStart = start == null
+        ? null
+        : DateTime(start.year, start.month, start.day);
+    final normalizedEnd = end == null
+        ? null
+        : DateTime(end.year, end.month, end.day);
+    return (normalizedStart == null || !date.isBefore(normalizedStart)) &&
+        (normalizedEnd == null || !date.isAfter(normalizedEnd));
+  }
+
   static double _measureTextWidth(
     BuildContext context,
     String label,
@@ -479,11 +478,29 @@ class _RolesToolbar extends StatelessWidget {
   const _RolesToolbar({
     required this.searchQuery,
     required this.onSearchChanged,
+    required this.createdStartDate,
+    required this.createdEndDate,
+    required this.updatedStartDate,
+    required this.updatedEndDate,
+    required this.onCreatedStartChanged,
+    required this.onCreatedEndChanged,
+    required this.onUpdatedStartChanged,
+    required this.onUpdatedEndChanged,
+    required this.onClearFilters,
     required this.onNewPressed,
   });
 
   final String searchQuery;
   final ValueChanged<String> onSearchChanged;
+  final DateTime? createdStartDate;
+  final DateTime? createdEndDate;
+  final DateTime? updatedStartDate;
+  final DateTime? updatedEndDate;
+  final ValueChanged<DateTime?> onCreatedStartChanged;
+  final ValueChanged<DateTime?> onCreatedEndChanged;
+  final ValueChanged<DateTime?> onUpdatedStartChanged;
+  final ValueChanged<DateTime?> onUpdatedEndChanged;
+  final VoidCallback onClearFilters;
   final VoidCallback? onNewPressed;
 
   @override
@@ -499,6 +516,22 @@ class _RolesToolbar extends StatelessWidget {
                 surfaceRadius: _AdminAccessViewState._toolbarSurfaceRadius,
                 initialValue: searchQuery,
                 onChanged: onSearchChanged,
+              ),
+            ),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: adminListFiltersButtonWidth(isCompact),
+              child: _RolesFilters(
+                iconOnly: isCompact,
+                createdStartDate: createdStartDate,
+                createdEndDate: createdEndDate,
+                updatedStartDate: updatedStartDate,
+                updatedEndDate: updatedEndDate,
+                onCreatedStartChanged: onCreatedStartChanged,
+                onCreatedEndChanged: onCreatedEndChanged,
+                onUpdatedStartChanged: onUpdatedStartChanged,
+                onUpdatedEndChanged: onUpdatedEndChanged,
+                onClearFilters: onClearFilters,
               ),
             ),
             const SizedBox(width: 12),
@@ -519,18 +552,80 @@ class _RolesToolbar extends StatelessWidget {
   }
 }
 
+class _RolesFilters extends StatelessWidget {
+  const _RolesFilters({
+    required this.iconOnly,
+    required this.createdStartDate,
+    required this.createdEndDate,
+    required this.updatedStartDate,
+    required this.updatedEndDate,
+    required this.onCreatedStartChanged,
+    required this.onCreatedEndChanged,
+    required this.onUpdatedStartChanged,
+    required this.onUpdatedEndChanged,
+    required this.onClearFilters,
+  });
+
+  final bool iconOnly;
+  final DateTime? createdStartDate;
+  final DateTime? createdEndDate;
+  final DateTime? updatedStartDate;
+  final DateTime? updatedEndDate;
+  final ValueChanged<DateTime?> onCreatedStartChanged;
+  final ValueChanged<DateTime?> onCreatedEndChanged;
+  final ValueChanged<DateTime?> onUpdatedStartChanged;
+  final ValueChanged<DateTime?> onUpdatedEndChanged;
+  final VoidCallback onClearFilters;
+
+  @override
+  Widget build(BuildContext context) {
+    return AdminListDateFiltersPanel(
+      iconOnly: iconOnly,
+      controlHeight: _AdminAccessViewState._toolbarControlHeight,
+      surfaceRadius: _AdminAccessViewState._toolbarSurfaceRadius,
+      filters: [
+        AdminDateFilterConfig(
+          label: 'Created Start',
+          value: createdStartDate,
+          onSelected: onCreatedStartChanged,
+        ),
+        AdminDateFilterConfig(
+          label: 'Created End',
+          value: createdEndDate,
+          onSelected: onCreatedEndChanged,
+        ),
+        AdminDateFilterConfig(
+          label: 'Updated Start',
+          value: updatedStartDate,
+          onSelected: onUpdatedStartChanged,
+        ),
+        AdminDateFilterConfig(
+          label: 'Updated End',
+          value: updatedEndDate,
+          onSelected: onUpdatedEndChanged,
+        ),
+      ],
+      onClear: onClearFilters,
+    );
+  }
+}
+
 class _AccessRoleEntry {
   const _AccessRoleEntry({
     required this.id,
     required this.roleKey,
     required this.label,
     required this.permissionCount,
+    required this.createdAt,
+    required this.updatedAt,
   });
 
   final String id;
   final String roleKey;
   final String label;
   final int permissionCount;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
 }
 
 class _SortableAccessRoleEntry {
@@ -622,10 +717,13 @@ class _AccessListSection extends StatelessWidget {
             context,
             'Role',
             _headerMeasureStyle,
-            roles.map((role) => role.label).fold<String>(
-              'Role',
-              (longest, value) => value.length > longest.length ? value : longest,
-            ),
+            roles
+                .map((role) => role.label)
+                .fold<String>(
+                  'Role',
+                  (longest, value) =>
+                      value.length > longest.length ? value : longest,
+                ),
             _valueStyle,
           ),
         );
@@ -638,6 +736,36 @@ class _AccessListSection extends StatelessWidget {
             _valueStyle,
           ),
         );
+        final createdWidth = _AdminAccessViewState._resolvedColumnWidth(
+          _AdminAccessViewState._measureTextWidth(
+            context,
+            'Created',
+            _headerMeasureStyle,
+            roles
+                .map((role) => AdminUsersView.formatCreatedAt(role.createdAt))
+                .fold<String>(
+                  'Created',
+                  (longest, value) =>
+                      value.length > longest.length ? value : longest,
+                ),
+            _valueStyle,
+          ),
+        );
+        final updatedWidth = _AdminAccessViewState._resolvedColumnWidth(
+          _AdminAccessViewState._measureTextWidth(
+            context,
+            'Updated',
+            _headerMeasureStyle,
+            roles
+                .map((role) => AdminUsersView.formatUpdatedAt(role.updatedAt))
+                .fold<String>(
+                  'Updated',
+                  (longest, value) =>
+                      value.length > longest.length ? value : longest,
+                ),
+            _valueStyle,
+          ),
+        );
 
         return Column(
           children: [
@@ -645,6 +773,8 @@ class _AccessListSection extends StatelessWidget {
               idWidth: idWidth,
               roleWidth: roleWidth,
               permissionsWidth: permissionsWidth,
+              createdWidth: createdWidth,
+              updatedWidth: updatedWidth,
               actionsWidth:
                   _AdminAccessViewState._actionsWidth +
                   _AdminAccessViewState._extraWidthAllowance,
@@ -660,6 +790,8 @@ class _AccessListSection extends StatelessWidget {
                   idWidth: idWidth,
                   roleWidth: roleWidth,
                   permissionsWidth: permissionsWidth,
+                  createdWidth: createdWidth,
+                  updatedWidth: updatedWidth,
                   onEdit: onEditPressed == null
                       ? null
                       : () => onEditPressed!(entry.value),
@@ -678,12 +810,16 @@ class _AccessHeaderRow extends StatelessWidget {
     required this.idWidth,
     required this.roleWidth,
     required this.permissionsWidth,
+    required this.createdWidth,
+    required this.updatedWidth,
     required this.actionsWidth,
   });
 
   final double idWidth;
   final double roleWidth;
   final double permissionsWidth;
+  final double createdWidth;
+  final double updatedWidth;
   final double actionsWidth;
 
   @override
@@ -704,6 +840,14 @@ class _AccessHeaderRow extends StatelessWidget {
           AdminListFixedSlot(
             width: permissionsWidth,
             child: const AdminListHeaderCell(label: 'Permissions'),
+          ),
+          AdminListFixedSlot(
+            width: createdWidth,
+            child: const AdminListHeaderCell(label: 'Created'),
+          ),
+          AdminListFixedSlot(
+            width: updatedWidth,
+            child: const AdminListHeaderCell(label: 'Updated'),
           ),
           AdminListTrailingActionsLane(
             width: actionsWidth,
@@ -726,6 +870,8 @@ class _AccessDesktopRow extends StatelessWidget {
     required this.idWidth,
     required this.roleWidth,
     required this.permissionsWidth,
+    required this.createdWidth,
+    required this.updatedWidth,
     required this.onEdit,
   });
 
@@ -733,6 +879,8 @@ class _AccessDesktopRow extends StatelessWidget {
   final double idWidth;
   final double roleWidth;
   final double permissionsWidth;
+  final double createdWidth;
+  final double updatedWidth;
   final VoidCallback? onEdit;
 
   @override
@@ -743,9 +891,7 @@ class _AccessDesktopRow extends StatelessWidget {
         children: [
           AdminListFixedSlot(
             width: idWidth,
-            child: AdminListBodyCell(
-              child: Text(role.id, style: _valueStyle),
-            ),
+            child: AdminListBodyCell(child: Text(role.id, style: _valueStyle)),
           ),
           AdminListFixedSlot(
             width: roleWidth,
@@ -757,6 +903,24 @@ class _AccessDesktopRow extends StatelessWidget {
             width: permissionsWidth,
             child: AdminListBodyCell(
               child: Text('${role.permissionCount}', style: _valueStyle),
+            ),
+          ),
+          AdminListFixedSlot(
+            width: createdWidth,
+            child: AdminListBodyCell(
+              child: Text(
+                AdminUsersView.formatCreatedAt(role.createdAt),
+                style: _valueStyle,
+              ),
+            ),
+          ),
+          AdminListFixedSlot(
+            width: updatedWidth,
+            child: AdminListBodyCell(
+              child: Text(
+                AdminUsersView.formatUpdatedAt(role.updatedAt),
+                style: _valueStyle,
+              ),
             ),
           ),
           AdminListTrailingActionsLane(
@@ -805,10 +969,7 @@ class _AccessResponsiveCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              AdminListActionButton(
-                icon: Icons.edit_rounded,
-                onTap: onEdit,
-              ),
+              AdminListActionButton(icon: Icons.edit_rounded, onTap: onEdit),
             ],
           ),
           const SizedBox(height: 18),
@@ -835,6 +996,18 @@ class _AccessResponsiveCard extends StatelessWidget {
                   AdminListResponsiveField(
                     title: 'Permissions',
                     value: '${role.permissionCount}',
+                    width: useSingleColumn ? constraints.maxWidth : 220,
+                    centered: false,
+                  ),
+                  AdminListResponsiveField(
+                    title: 'Created',
+                    value: AdminUsersView.formatCreatedAt(role.createdAt),
+                    width: useSingleColumn ? constraints.maxWidth : 220,
+                    centered: false,
+                  ),
+                  AdminListResponsiveField(
+                    title: 'Updated',
+                    value: AdminUsersView.formatUpdatedAt(role.updatedAt),
                     width: useSingleColumn ? constraints.maxWidth : 220,
                     centered: false,
                   ),
@@ -905,7 +1078,9 @@ class _NewRoleDialogState extends State<_NewRoleDialog> {
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
-                    borderSide: const BorderSide(color: AppColors.primaryBorder),
+                    borderSide: const BorderSide(
+                      color: AppColors.primaryBorder,
+                    ),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
@@ -1022,22 +1197,24 @@ class _RoleAccessDialogState extends State<_RoleAccessDialog> {
                   return Wrap(
                     spacing: spacing,
                     runSpacing: spacing,
-                    children: _allAccessOptions.map((option) {
-                      final value = _draft[option.key] ?? false;
-                      return SizedBox(
-                        width: itemWidth,
-                        child: _RoleCapabilityTile(
-                          label: _formatPermissionLabel(option.key),
-                          value: value,
-                          enabled: _isEditable,
-                          onChanged: (nextValue) {
-                            setState(() {
-                              _draft[option.key] = nextValue;
-                            });
-                          },
-                        ),
-                      );
-                    }).toList(growable: false),
+                    children: _allAccessOptions
+                        .map((option) {
+                          final value = _draft[option.key] ?? false;
+                          return SizedBox(
+                            width: itemWidth,
+                            child: _RoleCapabilityTile(
+                              label: _formatPermissionLabel(option.key),
+                              value: value,
+                              enabled: _isEditable,
+                              onChanged: (nextValue) {
+                                setState(() {
+                                  _draft[option.key] = nextValue;
+                                });
+                              },
+                            ),
+                          );
+                        })
+                        .toList(growable: false),
                   );
                 },
               ),
@@ -1099,7 +1276,8 @@ class _RoleCapabilityTile extends StatelessWidget {
 
 Map<String, bool> _fullAccessCapabilities() {
   return {
-    for (final capability in DispatcherAccessCapability.values) capability: true,
+    for (final capability in DispatcherAccessCapability.values)
+      capability: true,
   };
 }
 
@@ -1231,116 +1409,109 @@ int _compareAccessOptions(_AccessOption left, _AccessOption right) {
   return left.label.compareTo(right.label);
 }
 
-final List<_AccessOption> _allAccessOptions =
-    [
-      const _AccessOption(
-        DispatcherAccessCapability.dashboardRead,
-        'view-dashboard',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.dashboardUpdateBilling,
-        'manage-billing',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.dashboardExport,
-        'view-summary-report',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.bookingsCreate,
-        'manage-bookings',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.bookingsRead,
-        'view-bookings',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.bookingsUpdate,
-        'update-bookings',
-      ),
-      const _AccessOption(DispatcherAccessCapability.usersCreate, 'manage-users'),
-      const _AccessOption(DispatcherAccessCapability.usersRead, 'view-users'),
-      const _AccessOption(DispatcherAccessCapability.usersUpdate, 'update-users'),
-      const _AccessOption(DispatcherAccessCapability.usersDelete, 'delete-users'),
-      const _AccessOption(
-        DispatcherAccessCapability.usersImpersonate,
-        'manage-user-login',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleMakesCreate,
-        'manage-vehicle-makes',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleMakesRead,
-        'view-vehicle-makes',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleMakesUpdate,
-        'update-vehicle-makes',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleMakesDelete,
-        'delete-vehicle-makes',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleTypesCreate,
-        'manage-vehicle-types',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleTypesRead,
-        'view-vehicle-types',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleTypesUpdate,
-        'update-vehicle-types',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleTypesDelete,
-        'delete-vehicle-types',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleSizesCreate,
-        'manage-vehicle-sizes',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleSizesRead,
-        'view-vehicle-sizes',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleSizesUpdate,
-        'update-vehicle-sizes',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.vehicleSizesDelete,
-        'delete-vehicle-sizes',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.statusesCreate,
-        'manage-statuses',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.statusesRead,
-        'view-statuses',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.statusesUpdate,
-        'update-statuses',
-      ),
-      const _AccessOption(
-        DispatcherAccessCapability.statusesDelete,
-        'delete-statuses',
-      ),
-      const _AccessOption(DispatcherAccessCapability.formsCreate, 'manage-flows'),
-      const _AccessOption(DispatcherAccessCapability.formsRead, 'view-flows'),
-      const _AccessOption(DispatcherAccessCapability.formsUpdate, 'update-flows'),
-      const _AccessOption(DispatcherAccessCapability.formsDelete, 'delete-flows'),
-      const _AccessOption(DispatcherAccessCapability.fieldsCreate, 'manage-fields'),
-      const _AccessOption(DispatcherAccessCapability.fieldsRead, 'view-fields'),
-      const _AccessOption(DispatcherAccessCapability.fieldsUpdate, 'update-fields'),
-      const _AccessOption(DispatcherAccessCapability.fieldsDelete, 'delete-fields'),
-      const _AccessOption(DispatcherAccessCapability.roleAccessRead, 'view-roles'),
-      const _AccessOption(
-        DispatcherAccessCapability.roleAccessUpdate,
-        'update-roles',
-      ),
-      const _AccessOption(DispatcherAccessCapability.syncRead, 'view-sync-queue'),
-    ]..sort(_compareAccessOptions);
+final List<_AccessOption> _allAccessOptions = [
+  const _AccessOption(
+    DispatcherAccessCapability.dashboardRead,
+    'view-dashboard',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.dashboardUpdateBilling,
+    'manage-billing',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.dashboardExport,
+    'view-summary-report',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.bookingsCreate,
+    'manage-bookings',
+  ),
+  const _AccessOption(DispatcherAccessCapability.bookingsRead, 'view-bookings'),
+  const _AccessOption(
+    DispatcherAccessCapability.bookingsUpdate,
+    'update-bookings',
+  ),
+  const _AccessOption(DispatcherAccessCapability.usersCreate, 'manage-users'),
+  const _AccessOption(DispatcherAccessCapability.usersRead, 'view-users'),
+  const _AccessOption(DispatcherAccessCapability.usersUpdate, 'update-users'),
+  const _AccessOption(DispatcherAccessCapability.usersDelete, 'delete-users'),
+  const _AccessOption(
+    DispatcherAccessCapability.usersImpersonate,
+    'manage-user-login',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleMakesCreate,
+    'manage-vehicle-makes',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleMakesRead,
+    'view-vehicle-makes',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleMakesUpdate,
+    'update-vehicle-makes',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleMakesDelete,
+    'delete-vehicle-makes',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleTypesCreate,
+    'manage-vehicle-types',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleTypesRead,
+    'view-vehicle-types',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleTypesUpdate,
+    'update-vehicle-types',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleTypesDelete,
+    'delete-vehicle-types',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleSizesCreate,
+    'manage-vehicle-sizes',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleSizesRead,
+    'view-vehicle-sizes',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleSizesUpdate,
+    'update-vehicle-sizes',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.vehicleSizesDelete,
+    'delete-vehicle-sizes',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.statusesCreate,
+    'manage-statuses',
+  ),
+  const _AccessOption(DispatcherAccessCapability.statusesRead, 'view-statuses'),
+  const _AccessOption(
+    DispatcherAccessCapability.statusesUpdate,
+    'update-statuses',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.statusesDelete,
+    'delete-statuses',
+  ),
+  const _AccessOption(DispatcherAccessCapability.formsCreate, 'manage-flows'),
+  const _AccessOption(DispatcherAccessCapability.formsRead, 'view-flows'),
+  const _AccessOption(DispatcherAccessCapability.formsUpdate, 'update-flows'),
+  const _AccessOption(DispatcherAccessCapability.formsDelete, 'delete-flows'),
+  const _AccessOption(DispatcherAccessCapability.fieldsCreate, 'manage-fields'),
+  const _AccessOption(DispatcherAccessCapability.fieldsRead, 'view-fields'),
+  const _AccessOption(DispatcherAccessCapability.fieldsUpdate, 'update-fields'),
+  const _AccessOption(DispatcherAccessCapability.fieldsDelete, 'delete-fields'),
+  const _AccessOption(DispatcherAccessCapability.roleAccessRead, 'view-roles'),
+  const _AccessOption(
+    DispatcherAccessCapability.roleAccessUpdate,
+    'update-roles',
+  ),
+  const _AccessOption(DispatcherAccessCapability.syncRead, 'view-sync-queue'),
+]..sort(_compareAccessOptions);

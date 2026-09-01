@@ -8,7 +8,8 @@ enum AdminSection {
   users('Users'),
   access('Roles'),
   support('Support'),
-  profile('Profile');
+  profile('Profile'),
+  analytics('Analytics');
 
   const AdminSection(this.title);
 

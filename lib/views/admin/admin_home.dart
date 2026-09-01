@@ -12,6 +12,7 @@ import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/view_models/admin/admin_home.vm.dart';
 import 'package:webapp/views/admin/admin_bookings.dart';
 import 'package:webapp/views/admin/admin_access.dart';
+import 'package:webapp/views/admin/admin_analytics.dart';
 import 'package:webapp/views/admin/admin_dashboard.dart';
 import 'package:webapp/views/admin/admin_fields.dart';
 import 'package:webapp/views/admin/admin_forms.dart';
@@ -185,7 +186,7 @@ class _AdminHomeState extends State<AdminHome> {
     final label = count > 99 ? '99+' : '$count';
     return Container(
       constraints: const BoxConstraints(minWidth: 24),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
       decoration: BoxDecoration(
         color: const Color(0xFFE31E24),
         borderRadius: BorderRadius.circular(999),
@@ -311,6 +312,9 @@ class _AdminHomeState extends State<AdminHome> {
     role: _shellUser.role,
   );
 
+  // Analytics is a read-only view of the dashboard booking data.
+  bool get _canReadAnalytics => _canReadDashboard;
+
   bool get _canReadBookings => _roleAccessService.canAccess(
     DispatcherAccessCapability.bookingsRead,
     role: _shellUser.role,
@@ -391,6 +395,9 @@ class _AdminHomeState extends State<AdminHome> {
 
   AdminSection _resolvedSection(AdminSection section) {
     if (section == AdminSection.dashboard && !_canReadDashboard) {
+      return _fallbackSection();
+    }
+    if (section == AdminSection.analytics && !_canReadAnalytics) {
       return _fallbackSection();
     }
     if (section == AdminSection.bookings && !_canReadBookings) {
@@ -651,6 +658,18 @@ class _AdminHomeState extends State<AdminHome> {
               }
             },
           ),
+        if (_canReadAnalytics)
+          SidebarMenuItem(
+            label: AdminSection.analytics.title,
+            icon: _menuIcon(AdminSection.analytics),
+            isSelected: vm.selectedSection == AdminSection.analytics,
+            onTap: () {
+              vm.selectSection(AdminSection.analytics);
+              if (isCompact) {
+                Navigator.of(context).pop();
+              }
+            },
+          ),
       ],
     );
   }
@@ -717,6 +736,7 @@ class _AdminHomeState extends State<AdminHome> {
           ],
         ),
       ),
+      AdminSection.analytics => const AdminAnalyticsView(),
     };
   }
 
@@ -781,6 +801,7 @@ class _AdminHomeState extends State<AdminHome> {
       AdminSection.access => Icons.manage_accounts_rounded,
       AdminSection.support => Icons.support_agent_rounded,
       AdminSection.profile => Icons.account_circle_rounded,
+      AdminSection.analytics => Icons.insights_rounded,
     };
   }
 }

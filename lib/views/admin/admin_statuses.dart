@@ -677,7 +677,7 @@ class _StatusesFiltersPanelState extends State<_StatusesFiltersPanel> {
                   const SizedBox(height: 8),
                   SizedBox(
                     width: itemWidth,
-                    height: AdminStatusesView.controlHeight,
+                    height: adminFilterClearButtonHeight,
                     child: FilledButton(
                       onPressed: () {
                         _unfocusFilterFields();
