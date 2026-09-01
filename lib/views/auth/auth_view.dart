@@ -1348,28 +1348,47 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
                                         ],
                                       ),
                                     ),
-                                    IconButton(
-                                      tooltip: 'Switch camera',
-                                      onPressed: isReady && !isCapturing
-                                          ? () async {
-                                              setModalState(
-                                                () => isCapturing = true,
-                                              );
-                                              try {
-                                                await session.switchCamera();
-                                              } finally {
-                                                if (context.mounted) {
+                                    MouseRegion(
+                                      cursor: SystemMouseCursors.click,
+                                      child: Container(
+                                        width: 42,
+                                        height: 42,
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primarySurface,
+                                          borderRadius: BorderRadius.circular(
+                                            14,
+                                          ),
+                                          border: Border.all(
+                                            color: AppColors.primaryBorder,
+                                          ),
+                                        ),
+                                        child: IconButton(
+                                          tooltip: 'Switch camera',
+                                          iconSize: 20,
+                                          onPressed: isReady && !isCapturing
+                                              ? () async {
                                                   setModalState(
-                                                    () => isCapturing = false,
+                                                    () => isCapturing = true,
                                                   );
+                                                  try {
+                                                    await session
+                                                        .switchCamera();
+                                                  } finally {
+                                                    if (context.mounted) {
+                                                      setModalState(
+                                                        () =>
+                                                            isCapturing = false,
+                                                      );
+                                                    }
+                                                  }
                                                 }
-                                              }
-                                            }
-                                          : null,
-                                      icon: const Icon(
-                                        Icons.cameraswitch_outlined,
+                                              : null,
+                                          icon: const Icon(
+                                            Icons.cameraswitch_outlined,
+                                          ),
+                                          color: AppColors.primaryColor,
+                                        ),
                                       ),
-                                      color: AppColors.primaryColor,
                                     ),
                                   ],
                                 ),
@@ -1432,42 +1451,6 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
                                                     width: 2,
                                                   ),
                                                 ),
-                                              ),
-                                            ),
-                                          ),
-                                          Positioned(
-                                            top: 12,
-                                            right: 12,
-                                            child: Material(
-                                              color: Colors.white,
-                                              shape: const CircleBorder(),
-                                              child: IconButton(
-                                                tooltip: 'Switch camera',
-                                                onPressed:
-                                                    isReady && !isCapturing
-                                                    ? () async {
-                                                        setModalState(
-                                                          () => isCapturing =
-                                                              true,
-                                                        );
-                                                        try {
-                                                          await session
-                                                              .switchCamera();
-                                                        } finally {
-                                                          if (context.mounted) {
-                                                            setModalState(
-                                                              () =>
-                                                                  isCapturing =
-                                                                      false,
-                                                            );
-                                                          }
-                                                        }
-                                                      }
-                                                    : null,
-                                                icon: const Icon(
-                                                  Icons.cameraswitch_rounded,
-                                                ),
-                                                color: AppColors.primaryColor,
                                               ),
                                             ),
                                           ),
