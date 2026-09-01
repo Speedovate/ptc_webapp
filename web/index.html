@@ -27,7 +27,7 @@
     content="Transport at your fingertips."
   >
   <meta name="robots" content="index, follow">
-  <meta name="theme-color" content="#5B34D6">
+  <meta name="theme-color" content="#5B34D6" id="app-theme-color">
   <meta name="application-name" content="Paltranco Digital Platform">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -296,6 +296,9 @@
       if (splash) {
         splash.remove();
       }
+      document.documentElement.style.backgroundColor = '#FFFFFF';
+      document.body.style.backgroundColor = '#FFFFFF';
+      document.getElementById('app-theme-color')?.setAttribute('content', '#FFFFFF');
     }
 
     function flutterSurfaceReady() {
