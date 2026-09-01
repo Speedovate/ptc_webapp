@@ -1348,6 +1348,29 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
                                         ],
                                       ),
                                     ),
+                                    IconButton(
+                                      tooltip: 'Switch camera',
+                                      onPressed: isReady && !isCapturing
+                                          ? () async {
+                                              setModalState(
+                                                () => isCapturing = true,
+                                              );
+                                              try {
+                                                await session.switchCamera();
+                                              } finally {
+                                                if (context.mounted) {
+                                                  setModalState(
+                                                    () => isCapturing = false,
+                                                  );
+                                                }
+                                              }
+                                            }
+                                          : null,
+                                      icon: const Icon(
+                                        Icons.cameraswitch_outlined,
+                                      ),
+                                      color: AppColors.primaryColor,
+                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: 18),

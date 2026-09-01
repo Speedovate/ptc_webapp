@@ -13,6 +13,12 @@ class _UnsupportedAuthCameraSession implements AuthCameraSession {
   Future<void> initialize() async {}
 
   @override
+  bool get isFrontCamera => false;
+
+  @override
+  Future<void> switchCamera() async {}
+
+  @override
   Future<AuthPickedImage?> capture() async => null;
 
   @override

@@ -14,7 +14,8 @@ bool get authCameraSupported => html.window.navigator.mediaDevices != null;
 AuthCameraSession createAuthCameraSession() => _WebAuthCameraSession();
 
 class _WebAuthCameraSession implements AuthCameraSession {
-  _WebAuthCameraSession() : _viewType = 'auth-camera-${DateTime.now().microsecondsSinceEpoch}' {
+  _WebAuthCameraSession()
+    : _viewType = 'auth-camera-${DateTime.now().microsecondsSinceEpoch}' {
     _container = html.DivElement()
       ..style.width = '100%'
       ..style.height = '100%'
@@ -35,7 +36,10 @@ class _WebAuthCameraSession implements AuthCameraSession {
       ..style.transformOrigin = 'center center'
       ..style.display = 'block';
     _container.append(_video);
-    ui_web.platformViewRegistry.registerViewFactory(_viewType, (viewId) => _container);
+    ui_web.platformViewRegistry.registerViewFactory(
+      _viewType,
+      (viewId) => _container,
+    );
   }
 
   late final html.DivElement _container;
@@ -44,12 +48,16 @@ class _WebAuthCameraSession implements AuthCameraSession {
   html.MediaStream? _stream;
   bool _initialized = false;
   bool _disposed = false;
+  bool _isFrontCamera = false;
   StreamSubscription<html.Event>? _metadataSubscription;
   StreamSubscription<html.Event>? _canPlaySubscription;
   StreamSubscription<html.Event>? _errorSubscription;
 
   @override
   String get viewType => _viewType;
+
+  @override
+  bool get isFrontCamera => _isFrontCamera;
 
   @override
   Future<void> initialize() async {
@@ -61,12 +69,7 @@ class _WebAuthCameraSession implements AuthCameraSession {
       throw StateError('Camera is not supported on this browser.');
     }
     try {
-      _stream = await mediaDevices.getUserMedia(<String, dynamic>{
-        'video': <String, dynamic>{
-          'facingMode': <String, String>{'ideal': 'environment'},
-        },
-        'audio': false,
-      });
+      _stream = await mediaDevices.getUserMedia(_cameraConstraints());
     } catch (_) {
       _stream = await mediaDevices.getUserMedia(<String, dynamic>{
         'video': true,
@@ -85,6 +88,28 @@ class _WebAuthCameraSession implements AuthCameraSession {
       return;
     }
     _initialized = true;
+  }
+
+  Map<String, dynamic> _cameraConstraints() => <String, dynamic>{
+    'video': <String, dynamic>{
+      'facingMode': <String, String>{
+        'ideal': _isFrontCamera ? 'user' : 'environment',
+      },
+    },
+    'audio': false,
+  };
+
+  @override
+  Future<void> switchCamera() async {
+    if (_disposed) return;
+    _isFrontCamera = !_isFrontCamera;
+    for (final track
+        in _stream?.getTracks() ?? const <html.MediaStreamTrack>[]) {
+      track.stop();
+    }
+    _initialized = false;
+    _stream = null;
+    await initialize();
   }
 
   Future<void> _waitUntilReady() async {
@@ -142,9 +167,12 @@ class _WebAuthCameraSession implements AuthCameraSession {
       throw StateError('Camera preview is not ready.');
     }
     final canvas = html.CanvasElement(width: width, height: height);
+    if (_isFrontCamera) {
+      canvas.context2D
+        ..translate(width.toDouble(), 0)
+        ..scale(-1, 1);
+    }
     canvas.context2D
-      ..translate(width.toDouble(), 0)
-      ..scale(-1, 1)
       ..drawImageScaled(_video, 0, 0, width, height)
       ..setTransform(1, 0, 0, 1, 0, 0);
     final bytes = _canvasToJpegBytes(canvas);
