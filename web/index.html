@@ -296,9 +296,6 @@
       if (splash) {
         splash.remove();
       }
-      document.documentElement.style.backgroundColor = '#FFFFFF';
-      document.body.style.backgroundColor = '#FFFFFF';
-      document.getElementById('app-theme-color')?.setAttribute('content', '#FFFFFF');
     }
 
     function flutterSurfaceReady() {
@@ -371,6 +368,54 @@
       window.__paltrancoInstallPrompt = event;
       window.dispatchEvent(new Event('paltranco-install-available'));
     });
+
+    // Keep prompt() inside the browser click call stack. Chromium rejects
+    // deferred install prompts when an async bridge loses user activation.
+    window.__paltrancoRequestInstall = function() {
+      const promptEvent = window.__paltrancoInstallPrompt;
+      if (!promptEvent) {
+        return Promise.resolve({ launched: false, outcome: null });
+      }
+
+      try {
+        promptEvent.prompt();
+        window.__paltrancoInstallPrompt = null;
+        return Promise.resolve(promptEvent.userChoice)
+          .then(function(choice) {
+            return {
+              launched: true,
+              outcome: choice && choice.outcome ? choice.outcome : null,
+            };
+          })
+          .catch(function() {
+            return { launched: false, outcome: null };
+          });
+      } catch (_) {
+        return Promise.resolve({ launched: false, outcome: null });
+      }
+    };
+
+    window.__paltrancoInstallDiagnostics = async function() {
+      const registrations = 'serviceWorker' in navigator
+        ? await navigator.serviceWorker.getRegistrations()
+        : [];
+      return {
+        secureContext: window.isSecureContext,
+        installed: window.__paltrancoInstalled === true ||
+          window.matchMedia('(display-mode: standalone)').matches,
+        promptAvailable: !!window.__paltrancoInstallPrompt,
+        serviceWorkerController: !!navigator.serviceWorker?.controller,
+        manifest: document.querySelector('link[rel="manifest"]')?.href || null,
+        registrations: registrations.map(function(registration) {
+          return {
+            scope: registration.scope,
+            active: !!registration.active,
+            waiting: !!registration.waiting,
+            installing: !!registration.installing,
+          };
+        }),
+      };
+    };
 
     window.addEventListener('appinstalled', function() {
       window.__paltrancoInstalled = true;

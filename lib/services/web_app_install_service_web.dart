@@ -22,10 +22,7 @@ class _WebAppInstallService implements WebAppInstallService {
       'paltranco-install-available',
       _handleInstallAvailable,
     );
-    html.window.addEventListener(
-      'paltranco-installed',
-      _handleInstalledFlag,
-    );
+    html.window.addEventListener('paltranco-installed', _handleInstalledFlag);
   }
 
   Object? _readDeferredPrompt() {
@@ -49,16 +46,30 @@ class _WebAppInstallService implements WebAppInstallService {
     } catch (_) {}
   }
 
+  Future<bool> _requestBrowserInstallPrompt() async {
+    try {
+      final launched = await Future.sync(
+        () => (html.window as dynamic).__paltrancoRequestInstall(),
+      );
+      return launched?.launched == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   bool _isInstalled() {
     try {
-      final installedFlag = (html.window as dynamic).__paltrancoInstalled == true;
+      final installedFlag =
+          (html.window as dynamic).__paltrancoInstalled == true;
       if (installedFlag) {
         return true;
       }
     } catch (_) {}
 
     try {
-      final standaloneMedia = html.window.matchMedia('(display-mode: standalone)');
+      final standaloneMedia = html.window.matchMedia(
+        '(display-mode: standalone)',
+      );
       if (standaloneMedia.matches) {
         return true;
       }
@@ -115,16 +126,15 @@ class _WebAppInstallService implements WebAppInstallService {
 
     final promptEvent = _deferredPrompt ?? _readDeferredPrompt();
     if (promptEvent != null) {
-      try {
-        await Future.sync(() => (promptEvent as dynamic).prompt());
+      final didLaunchPrompt = await _requestBrowserInstallPrompt();
+      if (didLaunchPrompt) {
         _clearDeferredPrompt();
         return const WebAppInstallAttemptResult(
           didLaunchPrompt: true,
           message: 'Install prompt opened.',
         );
-      } catch (_) {
-        _clearDeferredPrompt();
       }
+      _clearDeferredPrompt();
     }
 
     if (_isIosDevice()) {
@@ -132,6 +142,7 @@ class _WebAppInstallService implements WebAppInstallService {
         didLaunchPrompt: false,
         message:
             'To install on iPhone or iPad, tap Share then Add to Home Screen.',
+        requiresManualInstall: true,
       );
     }
 

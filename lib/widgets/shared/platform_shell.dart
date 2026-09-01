@@ -54,65 +54,65 @@ class PlatformShell extends StatelessWidget {
               bottom: false,
               child: Row(
                 children: [
-            CollapsibleSidebar(
-              isVisible: showRail,
-              width: 280,
-              color: AppColors.primaryColor,
-              child: sidebar,
-            ),
-            Expanded(
-              child: Padding(
-                padding: expandMainContent
-                    ? EdgeInsets.zero
-                    : const EdgeInsets.fromLTRB(20, 28, 20, 20),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.primarySurfaceAlt,
-                    borderRadius: BorderRadius.circular(
-                      expandMainContent ? 0 : 32,
-                    ),
-                    boxShadow: expandMainContent
-                        ? null
-                        : const [
-                            BoxShadow(
-                              color: Color(0x120E0A1F),
-                              blurRadius: 30,
-                              offset: Offset(0, 16),
-                            ),
-                          ],
+                  CollapsibleSidebar(
+                    isVisible: showRail,
+                    width: 280,
+                    color: AppColors.primaryColor,
+                    child: sidebar,
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(
-                      expandMainContent ? 0 : 32,
-                    ),
-                    child: Scaffold(
-                      backgroundColor: Colors.white,
-                      appBar: PreferredSize(
-                        preferredSize: const Size.fromHeight(
-                          PlatformShell.sidebarHeaderHeight,
+                  Expanded(
+                    child: Padding(
+                      padding: expandMainContent
+                          ? EdgeInsets.zero
+                          : const EdgeInsets.fromLTRB(20, 28, 20, 20),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: AppColors.primarySurfaceAlt,
+                          borderRadius: BorderRadius.circular(
+                            expandMainContent ? 0 : 32,
+                          ),
+                          boxShadow: expandMainContent
+                              ? null
+                              : const [
+                                  BoxShadow(
+                                    color: Color(0x120E0A1F),
+                                    blurRadius: 30,
+                                    offset: Offset(0, 16),
+                                  ),
+                                ],
                         ),
-                        child: PlatformAppBar(
-                          title: title,
-                          user: user,
-                          isCompact: isCompact,
-                          onMenuPressed: () {
-                            if (isCompact) {
-                              scaffoldKey.currentState?.openDrawer();
-                              return;
-                            }
-                            onToggleNavigation();
-                          },
-                          onProfile: onProfile,
-                          onLogout: onLogout,
-                          logoutLabel: logoutLabel,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(
+                            expandMainContent ? 0 : 32,
+                          ),
+                          child: Scaffold(
+                            backgroundColor: Colors.white,
+                            appBar: PreferredSize(
+                              preferredSize: const Size.fromHeight(
+                                PlatformShell.sidebarHeaderHeight,
+                              ),
+                              child: PlatformAppBar(
+                                title: title,
+                                user: user,
+                                isCompact: isCompact,
+                                onMenuPressed: () {
+                                  if (isCompact) {
+                                    scaffoldKey.currentState?.openDrawer();
+                                    return;
+                                  }
+                                  onToggleNavigation();
+                                },
+                                onProfile: onProfile,
+                                onLogout: onLogout,
+                                logoutLabel: logoutLabel,
+                              ),
+                            ),
+                            body: body,
+                          ),
                         ),
                       ),
-                      body: body,
                     ),
                   ),
-                ),
-              ),
-            ),
                 ],
               ),
             ),
@@ -258,6 +258,25 @@ class _PlatformInstallAppButton extends StatelessWidget {
     }
     final message = result.message?.trim();
     if (message == null || message.isEmpty) {
+      return;
+    }
+    if (result.requiresManualInstall) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Add To Home Screen'),
+          content: const Text(
+            'Tap the Share button in your browser, then choose "Add to Home Screen". '
+            'The app will open like a regular mobile app.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
       return;
     }
     if (result.isError) {
