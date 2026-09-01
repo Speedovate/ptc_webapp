@@ -148007,9 +148007,6 @@ o.toString
 B.dh.C6(o,B.dh.AI(o,"object-fit"),"cover","")
 o=q.style
 o.toString
-B.dh.C6(o,B.dh.AI(o,"transform"),"scaleX(-1)","")
-o=q.style
-o.toString
 B.dh.C6(o,B.dh.AI(o,"transform-origin"),"center center","")
 o=q.style
 o.display="block"
@@ -148051,6 +148048,10 @@ break
 case 10:l=n.b
 l===$&&A.a()
 l.srcObject=n.d
+k=l.style
+k.toString
+j=n.r?"scaleX(-1)":"none"
+B.dh.C6(k,B.dh.AI(k,"transform"),j,"")
 l=l.play()
 l.toString
 s=12

@@ -32,7 +32,6 @@ class _WebAuthCameraSession implements AuthCameraSession {
       ..style.width = '100%'
       ..style.height = '100%'
       ..style.objectFit = 'cover'
-      ..style.transform = 'scaleX(-1)'
       ..style.transformOrigin = 'center center'
       ..style.display = 'block';
     _container.append(_video);
@@ -81,6 +80,7 @@ class _WebAuthCameraSession implements AuthCameraSession {
       return;
     }
     _video.srcObject = _stream;
+    _applyPreviewOrientation();
     await _video.play();
     await _waitUntilReady();
     if (_disposed) {
@@ -98,6 +98,10 @@ class _WebAuthCameraSession implements AuthCameraSession {
     },
     'audio': false,
   };
+
+  void _applyPreviewOrientation() {
+    _video.style.transform = _isFrontCamera ? 'scaleX(-1)' : 'none';
+  }
 
   @override
   Future<void> switchCamera() async {
