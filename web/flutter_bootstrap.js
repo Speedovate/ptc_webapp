@@ -35,19 +35,10 @@
       return;
     }
 
-    try {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(registrations.map((registration) => registration.unregister()));
-    } catch (_) {}
-
-    try {
-      const keys = await caches.keys();
-      await Promise.all(
-        keys
-          .filter((key) => key.startsWith('paltranco-'))
-          .map((key) => caches.delete(key)),
-      );
-    } catch (_) {}
+    // Keep the active worker during upgrades. Removing it on every deploy
+    // briefly makes the site ineligible for the browser install prompt.
+    // app_service_worker.js performs its own versioned cache cleanup on
+    // activation, so an explicit client-side cache purge is not needed.
 
     try {
       window.localStorage.setItem(swVersionKey, serviceWorkerVersion);

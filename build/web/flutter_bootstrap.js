@@ -39,7 +39,7 @@ _flutter.buildConfig = {"engineRevision":"59aa584fdf100e6c78c785d8a5b565d1de4b48
 (function () {
   const deployVersion = '2026-09-01-dropdown-refresh-1';
   const flutterServiceWorkerVersion =
-    "74330896" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
+    "3318068396" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
   const serviceWorkerVersion =
     `${deployVersion}-${flutterServiceWorkerVersion}`;
   const swVersionKey = 'paltranco_sw_version';
@@ -70,19 +70,10 @@ _flutter.buildConfig = {"engineRevision":"59aa584fdf100e6c78c785d8a5b565d1de4b48
       return;
     }
 
-    try {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(registrations.map((registration) => registration.unregister()));
-    } catch (_) {}
-
-    try {
-      const keys = await caches.keys();
-      await Promise.all(
-        keys
-          .filter((key) => key.startsWith('paltranco-'))
-          .map((key) => caches.delete(key)),
-      );
-    } catch (_) {}
+    // Keep the active worker during upgrades. Removing it on every deploy
+    // briefly makes the site ineligible for the browser install prompt.
+    // app_service_worker.js performs its own versioned cache cleanup on
+    // activation, so an explicit client-side cache purge is not needed.
 
     try {
       window.localStorage.setItem(swVersionKey, serviceWorkerVersion);
