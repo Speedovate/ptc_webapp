@@ -2,7 +2,9 @@
   var deferredPrompt = null;
   var installBtn = document.getElementById('installPwa');
   var manifestLink = document.querySelector('link[rel="manifest"]');
-  var isInstalled = false;
+  var isOpenMode = false;
+  var manifestUrl = null;
+  var appStartUrl = '/';
 
   function isIos() {
     var agent = navigator.userAgent || '';
@@ -18,9 +20,10 @@
     window.alert('To install Paltranco: open the Chrome three-dot menu, then choose Install app or Add to Home screen.');
   }
 
-  function setInstalled() {
-    isInstalled = true;
+  function setOpenMode() {
+    isOpenMode = true;
     installBtn.textContent = 'Open App';
+    installBtn.disabled = false;
   }
 
   function isStandalone() {
@@ -30,22 +33,21 @@
 
   async function checkIfInstalled() {
     if (isStandalone()) {
-      setInstalled();
+      setOpenMode();
       return true;
     }
 
-    if (!navigator.getInstalledRelatedApps || !manifestLink) {
+    if (!navigator.getInstalledRelatedApps || !manifestUrl) {
       return false;
     }
 
     try {
-      var manifestUrl = new URL(manifestLink.getAttribute('href'), window.location.href).href;
       var relatedApps = await navigator.getInstalledRelatedApps();
       var isRelatedWebAppInstalled = relatedApps.some(function (app) {
-        return app.platform === 'webapp' && app.url === manifestUrl;
+        return app.platform === 'webapp' && app.url === manifestUrl.href;
       });
       if (isRelatedWebAppInstalled) {
-        setInstalled();
+        setOpenMode();
       }
       return isRelatedWebAppInstalled;
     } catch (_) {
@@ -53,14 +55,35 @@
     }
   }
 
+  function openInstalledWebApp() {
+    if (isStandalone()) {
+      window.location.href = appStartUrl;
+      return;
+    }
+
+    var launchLink = document.createElement('a');
+    launchLink.href = appStartUrl;
+    launchLink.target = '_blank';
+    launchLink.rel = 'noopener noreferrer';
+    launchLink.style.display = 'none';
+    document.body.appendChild(launchLink);
+    launchLink.click();
+    launchLink.remove();
+  }
+
   async function validateManifest() {
     if (!manifestLink) {
       return false;
     }
     try {
-      var response = await fetch(manifestLink.href, { cache: 'no-store' });
+      manifestUrl = new URL(manifestLink.getAttribute('href'), window.location.href);
+      var response = await fetch(manifestUrl.href, { cache: 'no-store' });
       if (!response.ok) {
         throw new Error('Manifest request failed');
+      }
+      var manifest = await response.json();
+      if (manifest.start_url) {
+        appStartUrl = new URL(manifest.start_url, manifestUrl.href).href;
       }
       return true;
     } catch (_) {
@@ -85,8 +108,8 @@
   }
 
   installBtn.addEventListener('click', async function () {
-    if (isInstalled) {
-      window.location.assign('/');
+    if (isOpenMode) {
+      openInstalledWebApp();
       return;
     }
     if (deferredPrompt) {
@@ -106,7 +129,7 @@
 
   window.addEventListener('appinstalled', function () {
     deferredPrompt = null;
-    setInstalled();
+    setOpenMode();
   });
 
   (async function initialize() {
