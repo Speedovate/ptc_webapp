@@ -1,14 +1,8 @@
 (function () {
   var deferredPrompt = null;
   var installBtn = document.getElementById('installPwa');
-  var status = document.getElementById('installStatus');
-  var manualSteps = document.getElementById('manualSteps');
   var manifestLink = document.querySelector('link[rel="manifest"]');
   var isInstalled = false;
-
-  function setStatus(message) {
-    status.textContent = message;
-  }
 
   function isIos() {
     var agent = navigator.userAgent || '';
@@ -16,20 +10,17 @@
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   }
 
-  function setManualSteps() {
-    manualSteps.hidden = false;
+  function showManualInstallHelp() {
     if (isIos()) {
-      manualSteps.innerHTML = '<strong>Install on iPhone or iPad</strong><span>1. Tap the Share button.</span><span>2. Choose Add to Home Screen.</span>';
+      window.alert('To install Paltranco: tap Share, then choose Add to Home Screen.');
       return;
     }
-    manualSteps.innerHTML = '<strong>Install from Chrome</strong><span>1. Tap the three-dot menu.</span><span>2. Choose Install app or Add to Home screen.</span>';
+    window.alert('To install Paltranco: open the Chrome three-dot menu, then choose Install app or Add to Home screen.');
   }
 
   function setInstalled() {
     isInstalled = true;
-    installBtn.textContent = 'Open app';
-    setStatus('Paltranco is installed on this device.');
-    manualSteps.hidden = true;
+    installBtn.textContent = 'Open App';
   }
 
   function isStandalone() {
@@ -39,7 +30,6 @@
 
   async function validateManifest() {
     if (!manifestLink) {
-      setStatus('The app manifest could not be found.');
       return false;
     }
     try {
@@ -49,7 +39,6 @@
       }
       return true;
     } catch (_) {
-      setStatus('The app configuration could not be loaded.');
       return false;
     }
   }
@@ -79,19 +68,15 @@
       var promptEvent = deferredPrompt;
       deferredPrompt = null;
       promptEvent.prompt();
-      var choice = await promptEvent.userChoice;
-      setStatus(choice && choice.outcome === 'accepted' ? 'Installing Paltranco...' : 'Installation was cancelled.');
+      await promptEvent.userChoice;
       return;
     }
-    setManualSteps();
-    setStatus('Use your browser menu to add Paltranco to your device.');
+    showManualInstallHelp();
   });
 
   window.addEventListener('beforeinstallprompt', function (event) {
     event.preventDefault();
     deferredPrompt = event;
-    manualSteps.hidden = true;
-    setStatus('Paltranco is ready to install.');
   });
 
   window.addEventListener('appinstalled', function () {
@@ -110,10 +95,7 @@
       return;
     }
     if (!manifestReady || !workerReady) {
-      setStatus('Install may be unavailable until the page can load its offline support.');
-      setManualSteps();
       return;
     }
-    setStatus('Tap Install app, or use your browser menu to add it to your home screen.');
   })();
 })();
