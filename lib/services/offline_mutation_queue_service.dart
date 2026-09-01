@@ -14,7 +14,7 @@ class OfflineMutationQueueService {
     BookingStorageBackend? backend,
     FirebaseFirestore? firestore,
   }) : _backend = backend ?? createBookingStorageBackend(),
-       _firestore = firestore ?? FirebaseFirestore.instance;
+       _providedFirestore = firestore;
 
   static final OfflineMutationQueueService instance =
       OfflineMutationQueueService();
@@ -27,7 +27,9 @@ class OfflineMutationQueueService {
   static const _remoteMutationTimeout = Duration(seconds: 30);
 
   final BookingStorageBackend _backend;
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _providedFirestore;
+  FirebaseFirestore get _firestore =>
+      _providedFirestore ?? FirebaseFirestore.instance;
   final AuthStorageBackend _authStorage = createAuthStorageBackend();
 
   bool _isInitialized = false;
