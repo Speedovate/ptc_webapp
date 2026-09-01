@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webapp/constants/app_colors.dart';
-import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 
 const adminFieldValueTextStyle = TextStyle(
@@ -555,6 +554,7 @@ class _AdminSearchSelectFormFieldState
   late final bool _ownsFocusNode;
   late final TextEditingController _controller;
   String? _selectedValue;
+  bool _isOpeningPicker = false;
 
   @override
   void initState() {
@@ -606,18 +606,27 @@ class _AdminSearchSelectFormFieldState
   }
 
   Future<void> _openPicker() async {
-    if (!widget.enabled || widget.options.isEmpty) {
+    if (!widget.enabled || widget.options.isEmpty || _isOpeningPicker) {
       return;
     }
 
-    final selected = await showAppDialog<String>(
-      context: context,
-      builder: (context) => _AdminSearchSelectDialog(
-        title: _resolvedDialogTitle(widget.dialogTitle, widget.decoration),
-        options: widget.options,
-        initialQuery: _controller.text.trim(),
-      ),
-    );
+    _isOpeningPicker = true;
+    String? selected;
+    try {
+      // Search selection is intentionally nested inside form dialogs. Using
+      // the local navigator avoids the global modal guard/root overlay race.
+      selected = await showDialog<String>(
+        context: context,
+        useRootNavigator: false,
+        builder: (context) => _AdminSearchSelectDialog(
+          title: _resolvedDialogTitle(widget.dialogTitle, widget.decoration),
+          options: widget.options,
+          initialQuery: _controller.text.trim(),
+        ),
+      );
+    } finally {
+      _isOpeningPicker = false;
+    }
 
     if (!mounted) {
       return;
@@ -627,15 +636,16 @@ class _AdminSearchSelectFormFieldState
       _focusNode.unfocus();
       return;
     }
+    final selectedValue = selected;
 
     setState(() {
-      _selectedValue = selected;
+      _selectedValue = selectedValue;
       _controller.value = TextEditingValue(
-        text: selected,
-        selection: TextSelection.collapsed(offset: selected.length),
+        text: selectedValue,
+        selection: TextSelection.collapsed(offset: selectedValue.length),
       );
     });
-    widget.onChanged(selected);
+    widget.onChanged(selectedValue);
     _focusNode.unfocus();
   }
 
