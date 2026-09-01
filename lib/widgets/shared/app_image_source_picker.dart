@@ -45,17 +45,17 @@ Future<AuthPickedImage?> showAppImageSourcePicker(
                   _ImageSourceAction(
                     icon: Icons.photo_camera_outlined,
                     label: 'Camera',
-                    onTap: () => Navigator.of(sheetContext).pop(
-                      AuthImagePickSource.camera,
-                    ),
+                    onTap: () => Navigator.of(
+                      sheetContext,
+                    ).pop(AuthImagePickSource.camera),
                   ),
                   const SizedBox(height: 10),
                   _ImageSourceAction(
                     icon: Icons.photo_library_outlined,
                     label: 'Gallery',
-                    onTap: () => Navigator.of(sheetContext).pop(
-                      AuthImagePickSource.gallery,
-                    ),
+                    onTap: () => Navigator.of(
+                      sheetContext,
+                    ).pop(AuthImagePickSource.gallery),
                   ),
                 ],
               ),
@@ -260,6 +260,40 @@ Future<AuthPickedImage?> _captureCameraImage(
                                             ),
                                           ),
                                         ),
+                                        Positioned(
+                                          top: 12,
+                                          right: 12,
+                                          child: Material(
+                                            color: Colors.white,
+                                            shape: const CircleBorder(),
+                                            child: IconButton(
+                                              tooltip: 'Switch camera',
+                                              onPressed: isReady && !isCapturing
+                                                  ? () async {
+                                                      setModalState(
+                                                        () =>
+                                                            isCapturing = true,
+                                                      );
+                                                      try {
+                                                        await session
+                                                            .switchCamera();
+                                                      } finally {
+                                                        if (context.mounted) {
+                                                          setModalState(
+                                                            () => isCapturing =
+                                                                false,
+                                                          );
+                                                        }
+                                                      }
+                                                    }
+                                                  : null,
+                                              icon: const Icon(
+                                                Icons.cameraswitch_rounded,
+                                              ),
+                                              color: AppColors.primaryColor,
+                                            ),
+                                          ),
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -286,8 +320,9 @@ Future<AuthPickedImage?> _captureCameraImage(
                                             vertical: 15,
                                           ),
                                           shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(18),
+                                            borderRadius: BorderRadius.circular(
+                                              18,
+                                            ),
                                           ),
                                         ),
                                         child: const Text('Cancel'),
@@ -304,8 +339,8 @@ Future<AuthPickedImage?> _captureCameraImage(
                                                   isCapturing = true;
                                                 });
                                                 try {
-                                                  final image =
-                                                      await session.capture();
+                                                  final image = await session
+                                                      .capture();
                                                   if (dialogContext.mounted) {
                                                     Navigator.of(
                                                       dialogContext,
@@ -337,8 +372,9 @@ Future<AuthPickedImage?> _captureCameraImage(
                                             vertical: 16,
                                           ),
                                           shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(18),
+                                            borderRadius: BorderRadius.circular(
+                                              18,
+                                            ),
                                           ),
                                         ),
                                         child: Text(
@@ -360,8 +396,8 @@ Future<AuthPickedImage?> _captureCameraImage(
                                             isCapturing = true;
                                           });
                                           try {
-                                            final image =
-                                                await session.capture();
+                                            final image = await session
+                                                .capture();
                                             if (dialogContext.mounted) {
                                               Navigator.of(
                                                 dialogContext,
@@ -404,8 +440,9 @@ Future<AuthPickedImage?> _captureCameraImage(
                                             vertical: 14,
                                           ),
                                           shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(18),
+                                            borderRadius: BorderRadius.circular(
+                                              18,
+                                            ),
                                           ),
                                         ),
                                         child: const Text('Cancel'),
@@ -453,13 +490,9 @@ class _CaptureButton extends StatelessWidget {
         backgroundColor: AppColors.primaryColor,
         foregroundColor: Colors.white,
         padding: const EdgeInsets.symmetric(vertical: 15),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       ),
-      child: Text(
-        isCapturing ? 'Capturing ...' : 'Capture Photo',
-      ),
+      child: Text(isCapturing ? 'Capturing ...' : 'Capture Photo'),
     );
   }
 }

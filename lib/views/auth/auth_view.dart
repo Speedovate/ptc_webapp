@@ -1435,6 +1435,42 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
                                               ),
                                             ),
                                           ),
+                                          Positioned(
+                                            top: 12,
+                                            right: 12,
+                                            child: Material(
+                                              color: Colors.white,
+                                              shape: const CircleBorder(),
+                                              child: IconButton(
+                                                tooltip: 'Switch camera',
+                                                onPressed:
+                                                    isReady && !isCapturing
+                                                    ? () async {
+                                                        setModalState(
+                                                          () => isCapturing =
+                                                              true,
+                                                        );
+                                                        try {
+                                                          await session
+                                                              .switchCamera();
+                                                        } finally {
+                                                          if (context.mounted) {
+                                                            setModalState(
+                                                              () =>
+                                                                  isCapturing =
+                                                                      false,
+                                                            );
+                                                          }
+                                                        }
+                                                      }
+                                                    : null,
+                                                icon: const Icon(
+                                                  Icons.cameraswitch_rounded,
+                                                ),
+                                                color: AppColors.primaryColor,
+                                              ),
+                                            ),
+                                          ),
                                         ],
                                       ),
                                     ),
