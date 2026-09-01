@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 
 const adminFieldValueTextStyle = TextStyle(
@@ -42,8 +43,7 @@ const double adminFilterFieldMinHeight = 52;
 InputDecoration _normalizeCollapsedSelectionDecoration(
   InputDecoration baseDecoration,
 ) {
-  final normalizedHintText =
-      baseDecoration.hintText?.trim().isNotEmpty == true
+  final normalizedHintText = baseDecoration.hintText?.trim().isNotEmpty == true
       ? baseDecoration.hintText
       : baseDecoration.labelText;
   return baseDecoration.copyWith(
@@ -54,13 +54,18 @@ InputDecoration _normalizeCollapsedSelectionDecoration(
 }
 
 Color appFieldInteractiveFillColor(BuildContext context) {
-  return AppColors.primarySurfaceAlt;
+  return Colors.white;
 }
 
-String adminEnterPlaceholder(
-  String label, {
-  String? override,
-}) {
+Color appDropdownBaseFillColor(BuildContext context) {
+  return Colors.white;
+}
+
+Color appDropdownInteractiveFillColor(BuildContext context) {
+  return Colors.white;
+}
+
+String adminEnterPlaceholder(String label, {String? override}) {
   final trimmedOverride = override?.trim();
   if (trimmedOverride != null && trimmedOverride.isNotEmpty) {
     return trimmedOverride;
@@ -68,10 +73,7 @@ String adminEnterPlaceholder(
   return 'Enter $label';
 }
 
-String adminSelectPlaceholder(
-  String label, {
-  String? override,
-}) {
+String adminSelectPlaceholder(String label, {String? override}) {
   final trimmedOverride = override?.trim();
   if (trimmedOverride != null && trimmedOverride.isNotEmpty) {
     return trimmedOverride;
@@ -79,10 +81,7 @@ String adminSelectPlaceholder(
   return 'Select $label';
 }
 
-String adminUploadPlaceholder(
-  String label, {
-  String? override,
-}) {
+String adminUploadPlaceholder(String label, {String? override}) {
   final trimmedOverride = override?.trim();
   if (trimmedOverride != null && trimmedOverride.isNotEmpty) {
     return trimmedOverride;
@@ -246,10 +245,7 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
     final rect = topLeft & fieldBox.size;
     final result = await showMenu<T>(
       context: context,
-      position: RelativeRect.fromRect(
-        rect,
-        Offset.zero & overlayBox.size,
-      ),
+      position: RelativeRect.fromRect(rect, Offset.zero & overlayBox.size),
       constraints: BoxConstraints.tightFor(width: rect.width),
       color: Colors.white,
       surfaceTintColor: Colors.white,
@@ -260,18 +256,18 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
       items: items
           .map(
             (item) => PopupMenuItem<T>(
-                  value: item.value,
-                  enabled: item.enabled,
-                  padding: EdgeInsets.zero,
-                  child: _AdminDropdownMenuOption(
-                    child: DefaultTextStyle.merge(
-                      style: widget.style ?? adminDropdownDisplayTextStyle,
-                      child: item.child,
-                    ),
-                  ),
+              value: item.value,
+              enabled: item.enabled,
+              padding: EdgeInsets.zero,
+              child: _AdminDropdownMenuOption(
+                child: DefaultTextStyle.merge(
+                  style: widget.style ?? adminDropdownDisplayTextStyle,
+                  child: item.child,
                 ),
-              )
-              .toList(growable: false),
+              ),
+            ),
+          )
+          .toList(growable: false),
     );
     AdminDropdownMenuCoordinator.unregisterActiveDismissCallback(
       _dismissActiveMenu,
@@ -299,15 +295,18 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
     final errorText = decoration.errorText?.trim();
     final helperText = decoration.helperText?.trim();
     final neutralBorder = decoration.enabledBorder ?? decoration.border;
-    final activeFillColor = appFieldInteractiveFillColor(context);
+    final activeFillColor = appDropdownInteractiveFillColor(context);
     final fieldDecoration = decoration.copyWith(
       errorText: null,
       helperText: null,
       errorStyle: const TextStyle(fontSize: 0, height: 0),
       helperStyle: const TextStyle(fontSize: 0, height: 0),
     );
-    final minHeight = decoration.constraints?.minHeight ?? adminModalFieldMinHeight;
-    final verticalPadding = minHeight <= adminFilterFieldMinHeight ? 12.0 : 14.0;
+    final minHeight =
+        decoration.constraints?.minHeight ?? adminModalFieldMinHeight;
+    final verticalPadding = minHeight <= adminFilterFieldMinHeight
+        ? 12.0
+        : 14.0;
     final contentPadding = switch (decoration.contentPadding) {
       EdgeInsets edgeInsets => EdgeInsets.fromLTRB(
         edgeInsets.left,
@@ -342,7 +341,9 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
         ? null
         : _collapsedDropdownLabel(selectedItem.child);
     final hasSelectedLabel = selectedLabel?.trim().isNotEmpty == true;
-    final displayText = hasSelectedLabel ? selectedLabel!.trim() : (hintText ?? '');
+    final displayText = hasSelectedLabel
+        ? selectedLabel!.trim()
+        : (hintText ?? '');
     final displayStyle = hasSelectedLabel
         ? (widget.style ?? adminFieldValueTextStyle)
         : hintStyle;
@@ -382,11 +383,10 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
               decoration: fieldDecoration.copyWith(
                 labelText: '',
                 hintText: null,
-                floatingLabelBehavior:
-                    fieldDecoration.floatingLabelBehavior,
+                floatingLabelBehavior: fieldDecoration.floatingLabelBehavior,
                 fillColor: _isHovered || _isPressed
                     ? activeFillColor
-                    : (fieldDecoration.fillColor ?? AppColors.primarySurface),
+                    : appDropdownBaseFillColor(context),
                 contentPadding: contentPadding,
                 focusedBorder: neutralBorder,
                 focusColor: Colors.transparent,
@@ -475,19 +475,13 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
             padding: const EdgeInsets.only(top: 2),
             child: Text(
               errorText!,
-              style: const TextStyle(
-                color: AppColors.danger,
-                fontSize: 12,
-              ),
+              style: const TextStyle(color: AppColors.danger, fontSize: 12),
             ),
           )
         else if (helperText?.isNotEmpty == true)
           Padding(
             padding: const EdgeInsets.only(top: 6),
-            child: Text(
-              helperText!,
-              style: adminFieldHelperTextStyle,
-            ),
+            child: Text(helperText!, style: adminFieldHelperTextStyle),
           ),
       ],
     );
@@ -572,9 +566,7 @@ class _AdminSearchSelectFormFieldState
       _selectedValue = nextSelected;
       _controller.value = TextEditingValue(
         text: nextSelected ?? '',
-        selection: TextSelection.collapsed(
-          offset: (nextSelected ?? '').length,
-        ),
+        selection: TextSelection.collapsed(offset: (nextSelected ?? '').length),
       );
     }
   }
@@ -609,7 +601,7 @@ class _AdminSearchSelectFormFieldState
       return;
     }
 
-    final selected = await showDialog<String>(
+    final selected = await showAppDialog<String>(
       context: context,
       builder: (context) => _AdminSearchSelectDialog(
         title: _resolvedDialogTitle(widget.dialogTitle, widget.decoration),
@@ -670,7 +662,7 @@ class _AdminSearchSelectFormFieldState
     final decoration = _normalizeCollapsedSelectionDecoration(baseDecoration);
     final errorText = decoration.errorText?.trim();
     final helperText = decoration.helperText?.trim();
-    final activeFillColor = appFieldInteractiveFillColor(context);
+    final activeFillColor = appDropdownInteractiveFillColor(context);
     final fieldDecoration = decoration.copyWith(
       errorText: null,
       helperText: null,
@@ -723,7 +715,7 @@ class _AdminSearchSelectFormFieldState
               decoration: fieldDecoration.copyWith(
                 labelText: '',
                 hintText: null,
-                fillColor: fieldDecoration.fillColor ?? activeFillColor,
+                fillColor: activeFillColor,
                 contentPadding: contentPadding,
                 suffixIcon: const Icon(Icons.arrow_drop_down_rounded),
               ),
@@ -741,19 +733,13 @@ class _AdminSearchSelectFormFieldState
             padding: const EdgeInsets.only(top: 2),
             child: Text(
               errorText!,
-              style: const TextStyle(
-                color: AppColors.danger,
-                fontSize: 12,
-              ),
+              style: const TextStyle(color: AppColors.danger, fontSize: 12),
             ),
           )
         else if (helperText?.isNotEmpty == true)
           Padding(
             padding: const EdgeInsets.only(top: 6),
-            child: Text(
-              helperText!,
-              style: adminFieldHelperTextStyle,
-            ),
+            child: Text(helperText!, style: adminFieldHelperTextStyle),
           ),
       ],
     );
@@ -805,6 +791,8 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
     }).toList();
 
     return Dialog(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.white,
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520, maxHeight: 640),
@@ -824,10 +812,23 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
               const SizedBox(height: 14),
               TextField(
                 controller: _controller,
-                decoration: const InputDecoration(
-                  hintText: 'Search location',
-                  prefixIcon: Icon(Icons.search_rounded),
-                ),
+                decoration:
+                    adminFormInputDecoration(
+                      '',
+                      hintText: 'Search location',
+                    ).copyWith(
+                      labelText: null,
+                      floatingLabelBehavior: FloatingLabelBehavior.never,
+                      prefixIcon: const Icon(Icons.search_rounded),
+                      suffixIcon: _controller.text.isEmpty
+                          ? null
+                          : IconButton(
+                              tooltip: 'Clear search',
+                              onPressed: _controller.clear,
+                              icon: const Icon(Icons.close_rounded),
+                            ),
+                      fillColor: Colors.white,
+                    ),
               ),
               const SizedBox(height: 14),
               Expanded(
@@ -848,6 +849,8 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
                         itemBuilder: (context, index) {
                           final item = filtered[index];
                           return ListTile(
+                            tileColor: Colors.white,
+                            hoverColor: Colors.white,
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 16,
                             ),
@@ -856,10 +859,7 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
                               horizontal: 0,
                               vertical: -2,
                             ),
-                            title: Text(
-                              item,
-                              style: adminFieldValueTextStyle,
-                            ),
+                            title: Text(item, style: adminFieldValueTextStyle),
                             onTap: () => Navigator.of(context).pop(item),
                           );
                         },
@@ -945,7 +945,7 @@ InputDecoration adminFormInputDecoration(
     prefixIconColor: AppColors.primaryColor,
     suffixIconColor: AppColors.primaryColor,
     filled: true,
-    fillColor: AppColors.primarySurface,
+    fillColor: Colors.white,
     isDense: true,
     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
     border: OutlineInputBorder(
@@ -974,5 +974,6 @@ InputDecoration adminPlainDropdownDecoration(
   ).copyWith(
     labelText: null,
     floatingLabelBehavior: FloatingLabelBehavior.never,
+    fillColor: Colors.white,
   );
 }

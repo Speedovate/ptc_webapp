@@ -16,12 +16,19 @@ class AppShell extends StatelessWidget {
 
   static final RoleAccessService _roleAccessService = RoleAccessService.instance;
 
+  static void _log(String message) {
+    // Temporary debug logging removed.
+  }
+
   @override
   Widget build(BuildContext context) {
     return ViewModelBuilder<AppShellViewModel>.reactive(
       viewModelBuilder: AppShellViewModel.new,
       onViewModelReady: (vm) => vm.initialize(),
       builder: (context, vm, child) {
+        _log(
+          'build loading=${vm.isLoading} loggedIn=${vm.currentUser != null} user=${vm.currentUser?.id ?? "-"} role=${vm.currentUser?.role ?? "-"} quick=${vm.isQuickLoggedIn}',
+        );
         if (vm.isLoading) {
           return const SelectionArea(
             child: InAppBrowserGuard(

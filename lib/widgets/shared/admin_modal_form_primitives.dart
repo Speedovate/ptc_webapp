@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 
 class AdminModalFormBody extends StatelessWidget {
@@ -131,6 +132,25 @@ class _AdminModalTextFieldState extends State<AdminModalTextField> {
     return TextInputAction.next;
   }
 
+  bool get _isNameField =>
+      RegExp(r'\bname\b', caseSensitive: false).hasMatch(widget.label);
+
+  bool get _isPhoneField => RegExp(
+    r'phone|mobile|contact\s+number',
+    caseSensitive: false,
+  ).hasMatch(widget.label);
+
+  List<TextInputFormatter>? get _resolvedInputFormatters {
+    final explicitFormatters = widget.inputFormatters;
+    if (explicitFormatters != null) {
+      return explicitFormatters;
+    }
+    if (_isPhoneField) {
+      return const [PhilippinesPhoneInputFormatter()];
+    }
+    return _isNameField ? const [NameCaseTextInputFormatter()] : null;
+  }
+
   void _handleSubmitted(String value) {
     if (widget.onSubmitted case final onSubmitted?) {
       onSubmitted(value);
@@ -147,7 +167,7 @@ class _AdminModalTextFieldState extends State<AdminModalTextField> {
 
   @override
   Widget build(BuildContext context) {
-    final activeFillColor = appFieldInteractiveFillColor(context);
+    const activeFillColor = Colors.white;
     return AdminModalFieldSlot(
       bottomPadding: widget.bottomPadding,
       child: MouseRegion(
@@ -176,11 +196,15 @@ class _AdminModalTextFieldState extends State<AdminModalTextField> {
             focusNode: widget.focusNode,
             obscureText: widget.obscureText,
             readOnly: widget.readOnly,
-            textCapitalization: widget.textCapitalization,
-            inputFormatters: widget.inputFormatters,
+            keyboardType: _isPhoneField
+                ? TextInputType.phone
+                : widget.keyboardType,
+            textCapitalization: _isNameField
+                ? TextCapitalization.words
+                : widget.textCapitalization,
+            inputFormatters: _resolvedInputFormatters,
             minLines: widget.minLines,
             maxLines: widget.maxLines,
-            keyboardType: widget.keyboardType,
             onTap: widget.onTap,
             textInputAction: _resolvedTextInputAction,
             onFieldSubmitted: _handleSubmitted,
@@ -196,7 +220,7 @@ class _AdminModalTextFieldState extends State<AdminModalTextField> {
                   suffixIcon: widget.suffixIcon,
                   fillColor: _isPressed || _isHovered
                       ? activeFillColor
-                      : AppColors.primarySurface,
+                      : Colors.white,
                 ),
           ),
         ),
@@ -286,7 +310,7 @@ class _AdminModalActionFieldState extends State<AdminModalActionField> {
 
   @override
   Widget build(BuildContext context) {
-    final hoveredFillColor = appFieldInteractiveFillColor(context);
+    const hoveredFillColor = Colors.white;
     final decoration =
         adminFormInputDecoration(
           widget.label,
@@ -296,9 +320,7 @@ class _AdminModalActionFieldState extends State<AdminModalActionField> {
           ),
         ).copyWith(
           suffixIcon: widget.suffixIcon,
-          fillColor: _isPressed || _isHovered
-              ? hoveredFillColor
-              : AppColors.primarySurface,
+          fillColor: _isPressed || _isHovered ? hoveredFillColor : Colors.white,
         );
 
     return AdminModalFieldSlot(
@@ -413,7 +435,7 @@ class _AdminModalValueTextFieldState extends State<AdminModalValueTextField> {
 
   @override
   Widget build(BuildContext context) {
-    final activeFillColor = appFieldInteractiveFillColor(context);
+    const activeFillColor = Colors.white;
     return AdminModalFieldSlot(
       bottomPadding: widget.bottomPadding,
       child: MouseRegion(
@@ -453,7 +475,7 @@ class _AdminModalValueTextFieldState extends State<AdminModalValueTextField> {
                 ).copyWith(
                   fillColor: _isPressed || _isHovered
                       ? activeFillColor
-                      : AppColors.primarySurface,
+                      : Colors.white,
                 ),
             onChanged: widget.onChanged,
           ),
@@ -505,14 +527,15 @@ class AdminModalDropdownField<T> extends StatelessWidget {
         iconEnabledColor: iconEnabledColor ?? AppColors.primaryColor,
         style: style ?? adminDropdownDisplayTextStyle,
         isExpanded: isExpanded,
-        decoration: adminPlainDropdownDecoration(
-          adminSelectPlaceholder(label, override: hintText),
-        ).copyWith(
-          errorText: errorText,
-          constraints: const BoxConstraints(
-            minHeight: adminModalFieldMinHeight,
-          ),
-        ),
+        decoration:
+            adminPlainDropdownDecoration(
+              adminSelectPlaceholder(label, override: hintText),
+            ).copyWith(
+              errorText: errorText,
+              constraints: const BoxConstraints(
+                minHeight: adminModalFieldMinHeight,
+              ),
+            ),
         items: items,
         onChanged: (value) {
           onChanged?.call(value);

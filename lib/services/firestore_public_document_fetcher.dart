@@ -8,6 +8,8 @@ abstract class FirestorePublicDocumentFetcher {
     int pageSize = 100,
   });
 
+  Future<Map<String, dynamic>?> fetchDocument(String documentPath);
+
   Future<bool> deleteDocument(String documentPath);
 
   Future<bool> patchDocument(

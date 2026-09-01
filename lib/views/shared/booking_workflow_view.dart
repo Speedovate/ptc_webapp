@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:stacked/stacked.dart';
@@ -24,6 +26,7 @@ import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_cached_network_image.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
@@ -157,9 +160,12 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
   final FocusNode _primaryActionFocusNode = FocusNode(
     debugLabel: 'workflow_field(__cta__)',
   );
+  BookingWorkflowViewModel? _viewModel;
   ScrollPosition? _embeddedScrollPosition;
   double? _embeddedScrollOffset;
   bool _pendingExplicitAttachRetry = false;
+  bool? _lastOverlayVisible;
+  String? _lastViewFingerprint;
 
   @override
   void initState() {
@@ -187,6 +193,20 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
         );
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant BookingWorkflowView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_workflowInputFingerprint(oldWidget) ==
+        _workflowInputFingerprint(widget)) {
+      return;
+    }
+    final vm = _viewModel;
+    if (vm == null) {
+      return;
+    }
+    unawaited(vm.load(user: widget.user, booking: widget.booking));
   }
 
   void _attachEmbeddedScrollPosition(BuildContext context) {
@@ -265,6 +285,16 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
     return Scrollable.maybeOf(context)?.position;
   }
 
+  String _workflowInputFingerprint(BookingWorkflowView widget) {
+    return [
+      widget.user.id ?? '',
+      widget.user.role ?? '',
+      widget.booking.id ?? '',
+      widget.booking.clientStatus ?? '',
+      widget.booking.updatedAt?.toIso8601String() ?? '',
+    ].join('|');
+  }
+
   _WorkflowScrollSnapshot _captureScrollSnapshot(BuildContext context) {
     final position = _preferredScrollPosition(context);
     return _WorkflowScrollSnapshot(
@@ -283,7 +313,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
     required StatusField initialField,
     bool addAfterSave = false,
   }) async {
-    final savedField = await showDialog<StatusField>(
+    final savedField = await showAppDialog<StatusField>(
       context: context,
       builder: (dialogContext) => _BookingFieldEditorDialog(
         title: initialField.id == vm.nextFieldId ? 'New Field' : 'Edit Field',
@@ -356,8 +386,10 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
 
     return ViewModelBuilder<BookingWorkflowViewModel>.reactive(
       viewModelBuilder: BookingWorkflowViewModel.new,
-      onViewModelReady: (vm) =>
-          vm.load(user: widget.user, booking: widget.booking),
+      onViewModelReady: (vm) {
+        _viewModel = vm;
+        return vm.load(user: widget.user, booking: widget.booking);
+      },
       builder: (context, vm, _) {
         final currentBooking = vm.booking ?? widget.booking;
         final currentStatusLabel = vm.currentStatusLabel();
@@ -420,6 +452,18 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
         );
         final overlayVisible = vm.isBusyLoading;
         final overlayMessage = 'Loading booking ...';
+        final viewFingerprint =
+            'booking=${currentBooking.id ?? "-"} overlay=$overlayVisible forms=${vm.mainForms.length} secondary=${vm.secondaryForms.length} fields=${vm.fields.length} cancelFields=${vm.cancelFields.length} loadError=${vm.loadError ?? "-"} embedded=${widget.embedded}';
+        if (_lastViewFingerprint != viewFingerprint) {
+          _lastViewFingerprint = viewFingerprint;
+          _log('build $viewFingerprint');
+        }
+        if (_lastOverlayVisible != overlayVisible) {
+          _lastOverlayVisible = overlayVisible;
+          _log(
+            'overlay ${overlayVisible ? "show" : "hide"} booking=${currentBooking.id ?? "-"} forms=${vm.mainForms.length} fields=${vm.fields.length} loadError=${vm.loadError ?? "-"}',
+          );
+        }
 
         if (widget.embedded) {
           return AppPageLoadingOverlay(
@@ -474,9 +518,15 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
     String? guidanceMessage,
   ) {
     final canUpdateBooking = vm.canUpdateBooking;
-    final resolvedPrimaryFields = vm.form == null
+    final visiblePrimaryFields = vm.form == null
         ? vm.fields
         : vm.fieldsForForm(vm.form!, answers: vm.answers);
+    final resolvedPrimaryFields =
+        visiblePrimaryFields.isEmpty &&
+            vm.errors.isNotEmpty &&
+            vm.fields.isNotEmpty
+        ? vm.fields
+        : visiblePrimaryFields;
     final hasGuidance = guidanceMessage?.trim().isNotEmpty == true;
     final hasMultipleMainForms = vm.mainForms.length > 1;
     final hasMultipleSecondaryForms = vm.secondaryForms.length > 1;
@@ -576,14 +626,20 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                       focusNode: _primaryActionFocusNode,
                       onPressed:
                           !canUpdateBooking ||
-                                  vm.isSubmitting ||
-                                  vm.blockedMessage != null
+                              vm.isSubmitting ||
+                              vm.blockedMessage != null
                           ? null
                           : () async {
+                              _log(
+                                'primary cta pressed booking=${currentBooking.id ?? "-"} form=${vm.form?.id ?? "-"} visibleFields=${resolvedPrimaryFields.map((field) => "${field.key}:${field.required == true ? "req" : "opt"}").join(",")} answerKeys=${vm.answers.keys.join(",")}',
+                              );
                               final scrollSnapshot = _captureScrollSnapshot(
                                 context,
                               );
                               final isValid = vm.validateForSubmit();
+                              _log(
+                                'primary cta validation booking=${currentBooking.id ?? "-"} isValid=$isValid errors=${vm.errors.entries.map((entry) => "${entry.key}=${entry.value}").join(" | ")}',
+                              );
                               if (!isValid) {
                                 if (vm.errors.isNotEmpty) {
                                   AppSnackbar.showError(
@@ -887,8 +943,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                     onTapDown: (_) => _unfocusWithoutScroll(context),
                     child: _nonFocusable(
                       FilledButton(
-                        onPressed:
-                            !canUpdateBooking || vm.isCancelSubmitting
+                        onPressed: !canUpdateBooking || vm.isCancelSubmitting
                             ? null
                             : () async {
                                 final scrollSnapshot = _captureScrollSnapshot(
@@ -920,7 +975,8 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                                   confirmLabel: actionLabel,
                                   isDanger: true,
                                   onConfirmAsync: () async {
-                                    final savedBooking = await vm.submitCancel();
+                                    final savedBooking = await vm
+                                        .submitCancel();
                                     if (!context.mounted) {
                                       return false;
                                     }
@@ -965,8 +1021,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                     behavior: HitTestBehavior.opaque,
                     onTapDown: (_) => _unfocusWithoutScroll(context),
                     child: TextButton(
-                      onPressed:
-                          !canUpdateBooking || vm.isCancelSubmitting
+                      onPressed: !canUpdateBooking || vm.isCancelSubmitting
                           ? null
                           : () {
                               _unfocusWithoutScroll(context);
@@ -1011,6 +1066,10 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
         ],
       ],
     );
+  }
+
+  void _log(String message) {
+    // Temporary diagnostics removed.
   }
 }
 
@@ -1191,6 +1250,10 @@ class _WorkflowInteractiveFormSectionState
     super.dispose();
   }
 
+  void _log(String message) {
+    // Temporary diagnostics removed.
+  }
+
   @override
   Widget build(BuildContext context) {
     final vm = widget.vm;
@@ -1284,8 +1347,13 @@ class _WorkflowInteractiveFormSectionState
                     ? null
                     : () async {
                         final validationErrors = vm.validateAnswersForForm(
-                          fields,
+                          fields.isEmpty && widget.vm.fields.isNotEmpty
+                              ? widget.vm.fields
+                              : fields,
                           _answers,
+                        );
+                        _log(
+                          'section cta validation booking=${vm.booking?.id ?? "-"} form=${form.id ?? "-"} fields=${fields.map((field) => "${field.key}:${field.required == true ? "req" : "opt"}").join(",")} answerKeys=${_answers.keys.join(",")} errors=${validationErrors.entries.map((entry) => "${entry.key}=${entry.value}").join(" | ")}',
                         );
                         final scrollSnapshot = widget.captureScrollSnapshot();
                         if (validationErrors.isNotEmpty ||
@@ -1505,7 +1573,11 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
         }),
       );
     }
-    return StatusFormEngine.visibleFields(ordered, widget.answers);
+    final visible = StatusFormEngine.visibleFields(ordered, widget.answers);
+    if (visible.isEmpty && widget.errors.isNotEmpty && ordered.isNotEmpty) {
+      return ordered;
+    }
+    return visible;
   }
 
   void _syncFocusNodes(List<StatusField> fields) {
@@ -1725,7 +1797,7 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
     required StatusField initialField,
     bool addAfterSave = false,
   }) async {
-    final savedField = await showDialog<StatusField>(
+    final savedField = await showAppDialog<StatusField>(
       context: context,
       builder: (dialogContext) => _BookingFieldEditorDialog(
         title: initialField.id == vm.nextFieldId ? 'New Field' : 'Edit Field',
@@ -1774,9 +1846,9 @@ class _WorkflowAddFieldButton extends StatelessWidget {
         return TextButton(
           onPressed: () async {
             final button = buttonContext.findRenderObject() as RenderBox?;
-            final overlay = Overlay.of(buttonContext)
-                .context
-                .findRenderObject() as RenderBox?;
+            final overlay =
+                Overlay.of(buttonContext).context.findRenderObject()
+                    as RenderBox?;
             if (button == null || overlay == null) {
               return;
             }
@@ -2098,6 +2170,7 @@ class _WorkflowFieldCard extends StatelessWidget {
       buttonText: formButtonText,
       paletteOverride: palette,
       required: field.required ?? false,
+      hasError: errorText?.trim().isNotEmpty == true,
       subtitle: subtitle,
       instructions: instructions,
       inputTopSpacing: usesCompactDropdownCard ? 10 : 14,
@@ -2142,6 +2215,15 @@ class _WorkflowFieldCard extends StatelessWidget {
     final fieldLabel = field.title?.trim().isNotEmpty == true
         ? field.title!.trim()
         : 'Field';
+    final isNameField =
+        (field.key ?? '').trim().toLowerCase().contains('name') ||
+        RegExp(r'\bname\b', caseSensitive: false).hasMatch(fieldLabel);
+    final phoneFieldHaystack = '${field.key ?? ''} $fieldLabel'.toLowerCase();
+    final isPhoneField =
+        type == 'phone' ||
+        phoneFieldHaystack.contains('phone') ||
+        phoneFieldHaystack.contains('mobile') ||
+        phoneFieldHaystack.contains('contact number');
     final optionSourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
       field,
     );
@@ -2171,7 +2253,9 @@ class _WorkflowFieldCard extends StatelessWidget {
         decoration: _bookingDropdownDecoration(
           (field.required ?? false)
               ? adminSelectPlaceholder(fieldLabel, override: placeholder)
-              : (placeholder?.trim().isNotEmpty == true ? placeholder! : 'Optional'),
+              : (placeholder?.trim().isNotEmpty == true
+                    ? placeholder!
+                    : 'Optional'),
           palette,
         ).copyWith(errorText: errorText),
         options: palawanLocationOptions,
@@ -2234,7 +2318,9 @@ class _WorkflowFieldCard extends StatelessWidget {
           keyboardType: TextInputType.number,
           hintText: (field.required ?? false)
               ? adminEnterPlaceholder(fieldLabel, override: placeholder)
-              : (placeholder?.trim().isNotEmpty == true ? placeholder : 'Optional'),
+              : (placeholder?.trim().isNotEmpty == true
+                    ? placeholder
+                    : 'Optional'),
           errorText: errorText,
           onChanged: (value) => onChanged(value.trim()),
         );
@@ -2251,7 +2337,9 @@ class _WorkflowFieldCard extends StatelessWidget {
           keyboardType: TextInputType.emailAddress,
           hintText: (field.required ?? false)
               ? adminEnterPlaceholder(fieldLabel, override: placeholder)
-              : (placeholder?.trim().isNotEmpty == true ? placeholder : 'Optional'),
+              : (placeholder?.trim().isNotEmpty == true
+                    ? placeholder
+                    : 'Optional'),
           errorText: errorText,
           onChanged: (value) => onChanged(value.trim()),
         );
@@ -2269,7 +2357,9 @@ class _WorkflowFieldCard extends StatelessWidget {
           inputFormatters: const [PhilippinesPhoneInputFormatter()],
           hintText: (field.required ?? false)
               ? adminEnterPlaceholder(fieldLabel, override: placeholder)
-              : (placeholder?.trim().isNotEmpty == true ? placeholder : 'Optional'),
+              : (placeholder?.trim().isNotEmpty == true
+                    ? placeholder
+                    : 'Optional'),
           errorText: errorText,
           onChanged: (value) => onChanged(value.trim()),
         );
@@ -2283,9 +2373,15 @@ class _WorkflowFieldCard extends StatelessWidget {
           focusNode: focusNode,
           nextFocusNode: nextFocusNode,
           activateNextFocus: activateNextFocus,
+          keyboardType: isPhoneField ? TextInputType.phone : null,
+          inputFormatters: isPhoneField
+              ? const [PhilippinesPhoneInputFormatter()]
+              : (isNameField ? const [NameCaseTextInputFormatter()] : null),
           hintText: (field.required ?? false)
               ? adminEnterPlaceholder(fieldLabel, override: placeholder)
-              : (placeholder?.trim().isNotEmpty == true ? placeholder : 'Optional'),
+              : (placeholder?.trim().isNotEmpty == true
+                    ? placeholder
+                    : 'Optional'),
           errorText: errorText,
           onChanged: (value) => onChanged(value.trim()),
         );
@@ -2300,7 +2396,9 @@ class _WorkflowFieldCard extends StatelessWidget {
           decoration: _bookingDropdownDecoration(
             (field.required ?? false)
                 ? adminSelectPlaceholder(fieldLabel, override: placeholder)
-                : (placeholder?.trim().isNotEmpty == true ? placeholder! : 'Optional'),
+                : (placeholder?.trim().isNotEmpty == true
+                      ? placeholder!
+                      : 'Optional'),
             palette,
           ).copyWith(errorText: errorText),
           style: adminDropdownDisplayTextStyle,
@@ -2362,7 +2460,8 @@ class _WorkflowFieldCard extends StatelessWidget {
           formButtonText: formButtonText,
           formStatusKey: formStatusKey,
           focusNode: focusNode,
-          label: initialValue?.toString() ??
+          label:
+              initialValue?.toString() ??
               ((field.required ?? false)
                   ? adminSelectPlaceholder(fieldLabel, override: placeholder)
                   : (placeholder?.trim().isNotEmpty == true
@@ -2389,7 +2488,8 @@ class _WorkflowFieldCard extends StatelessWidget {
           formButtonText: formButtonText,
           formStatusKey: formStatusKey,
           focusNode: focusNode,
-          label: initialValue?.toString() ??
+          label:
+              initialValue?.toString() ??
               ((field.required ?? false)
                   ? adminSelectPlaceholder(fieldLabel, override: placeholder)
                   : (placeholder?.trim().isNotEmpty == true
@@ -2421,7 +2521,9 @@ class _WorkflowFieldCard extends StatelessWidget {
           onChanged: onChanged,
           placeholder: (field.required ?? false)
               ? adminUploadPlaceholder(fieldLabel, override: placeholder)
-              : (placeholder?.trim().isNotEmpty == true ? placeholder! : 'Optional'),
+              : (placeholder?.trim().isNotEmpty == true
+                    ? placeholder!
+                    : 'Optional'),
         );
       default:
         return _UnderlineTextField(
@@ -2435,7 +2537,9 @@ class _WorkflowFieldCard extends StatelessWidget {
           activateNextFocus: activateNextFocus,
           hintText: (field.required ?? false)
               ? adminEnterPlaceholder(fieldLabel, override: placeholder)
-              : (placeholder?.trim().isNotEmpty == true ? placeholder : 'Optional'),
+              : (placeholder?.trim().isNotEmpty == true
+                    ? placeholder
+                    : 'Optional'),
           errorText: errorText,
           onChanged: (value) => onChanged(value.trim()),
         );
@@ -2544,7 +2648,7 @@ class _WorkflowFieldCard extends StatelessWidget {
     BookingFormPalette palette,
   ) {
     return adminPlainDropdownDecoration(hintText, radius: 16).copyWith(
-      fillColor: palette.surface,
+      fillColor: Colors.white,
       hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
@@ -2616,7 +2720,8 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
     if (fieldType == 'checkbox' && options.isEmpty) {
       return 'Add at least one choice.';
     }
-    final visibilityControllerKey = (_field.visibilityControllerKey ?? '').trim();
+    final visibilityControllerKey = (_field.visibilityControllerKey ?? '')
+        .trim();
     final visibilityOptionValues = _field.visibilityOptionValues
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)

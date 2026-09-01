@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
@@ -15,7 +14,6 @@ import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
 import 'package:webapp/services/app_warmup_service.dart';
-import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -35,6 +33,28 @@ class AdminBookingsViewModel extends BaseViewModel {
     _usersById.addAll(_cachedUsersById);
     _statusesByKey.addAll(_cachedStatusesByKey);
     _vehicleSizes = List<VehicleCatalogItem>.from(_cachedVehicleSizes);
+    if (_usersById.isEmpty && AuthRequest.hasResolvedUsers) {
+      _usersById.addEntries(
+        AuthRequest.hydratedUsersSnapshot
+            .where((user) => (user.id ?? '').isNotEmpty)
+            .map((user) => MapEntry(user.id!, user)),
+      );
+      _cachedUsersById = Map<String, UserModel>.from(_usersById);
+    }
+    if (_statusesByKey.isEmpty && StatusRequest.hasResolvedStatuses) {
+      _statusesByKey.addEntries(
+        StatusRequest.hydratedStatusesSnapshot
+            .where((status) => (status.key ?? '').isNotEmpty)
+            .map((status) => MapEntry(status.key!, status)),
+      );
+      _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
+    }
+    if (_vehicleSizes.isEmpty && VehicleRequest.hasResolvedSizes) {
+      _vehicleSizes = List<VehicleCatalogItem>.from(
+        VehicleRequest.hydratedSizesSnapshot,
+      );
+      _cachedVehicleSizes = List<VehicleCatalogItem>.from(_vehicleSizes);
+    }
     errorMessage = _cachedErrorMessage;
     _hasLoadedOnce = _cachedHasLoadedOnce;
   }
@@ -49,7 +69,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   StreamSubscription<void>? _usersCacheUpdatesSubscription;
   StreamSubscription<void>? _statusCacheUpdatesSubscription;
   StreamSubscription<void>? _catalogCacheUpdatesSubscription;
-  bool _didScheduleWarmRetry = false;
+  Future<void>? _activeLoadFuture;
   bool _isRealtimeRefreshing = false;
   static List<Booking> _cachedBookings = const [];
   static Map<String, UserModel> _cachedUsersById = const {};
@@ -92,7 +112,8 @@ class AdminBookingsViewModel extends BaseViewModel {
   List<String> get statusOptions => [
     'All',
     if (_bookings.any(
-      (booking) => (booking.localSyncStatus ?? '').trim().toLowerCase() == 'queued',
+      (booking) =>
+          (booking.localSyncStatus ?? '').trim().toLowerCase() == 'queued',
     ))
       'Queued',
     ..._statusesByKey.values
@@ -103,13 +124,29 @@ class AdminBookingsViewModel extends BaseViewModel {
   ];
 
   Future<void> load() async {
+    final existingLoad = _activeLoadFuture;
+    if (existingLoad != null) {
+      _log('load join-inflight');
+      await existingLoad;
+      return;
+    }
+    final loadFuture = _loadInternal();
+    _activeLoadFuture = loadFuture;
+    try {
+      await loadFuture;
+    } finally {
+      if (identical(_activeLoadFuture, loadFuture)) {
+        _activeLoadFuture = null;
+      }
+    }
+  }
+
+  Future<void> _loadInternal() async {
     _ensureSupportingSubscriptions();
     _busyMessage = 'Loading bookings ...';
-    final hasSharedBookings = BookingRequest.hasResolvedBookings;
+    var hasSharedBookings = BookingRequest.hasAuthoritativeBookings;
     final hasVisiblePrimaryData =
-        _bookings.isNotEmpty ||
-        _cachedBookings.isNotEmpty ||
-        hasSharedBookings;
+        _bookings.isNotEmpty || _cachedBookings.isNotEmpty || hasSharedBookings;
     final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
     if (shouldShowLoadingState) {
       setBusy(true);
@@ -129,60 +166,22 @@ class AdminBookingsViewModel extends BaseViewModel {
       }
       await _bookingRepository.initialize();
       await _ensureBookingsSubscription();
+      hasSharedBookings = BookingRequest.hasAuthoritativeBookings;
       if (!hasSharedBookings) {
-        await _warmupService.warmBookings();
-        final initialBookings = await _bookingRepository
-            .getBookings()
-            .timeout(
-              _loadStepTimeout,
-              onTimeout: () => List<Booking>.from(_cachedBookings),
-            );
-        _log('primary bookings resolved count=${initialBookings.length}');
-        _applyBookings(initialBookings);
-        if (shouldShowLoadingState && isBusy) {
-          setBusy(false);
-          _log('overlay hide section=bookings reason=primary-bookings-ready');
-          notifyListeners();
-        }
+        // Dashboard owns the shared booking read. This page subscribes only,
+        // avoiding another request whenever the menu is opened.
       } else {
         _log(
           'primary bookings reused shared count=${BookingRequest.hydratedBookingsSnapshot.length}',
         );
-        unawaited(_refreshPrimaryBookingsSilently());
       }
 
-      final results = await Future.wait<dynamic>([
-        _loadUsersSafe(),
-        _loadStatusesSafe(),
-        _loadVehicleSizesSafe(),
-      ]);
-      final users = results[0] as List<UserModel>;
-      final statuses = results[1] as List<Status>;
-      _vehicleSizes = results[2] as List<VehicleCatalogItem>;
-      _usersById
-        ..clear()
-        ..addEntries(
-          users
-              .where((user) => (user.id ?? '').isNotEmpty)
-              .map((user) => MapEntry(user.id!, user)),
-        );
-      _statusesByKey
-        ..clear()
-        ..addEntries(
-          statuses
-              .where((status) => (status.key ?? '').isNotEmpty)
-              .map((status) => MapEntry(status.key!, status)),
-        );
-      _cachedUsersById = Map<String, UserModel>.from(_usersById);
-      _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
-      _cachedVehicleSizes = List<VehicleCatalogItem>.from(_vehicleSizes);
+      // Supporting catalogs populate silently and must not extend the booking
+      // list's visible loading state.
+      unawaited(_reloadSupportingData());
       _cachedErrorMessage = null;
-      _log(
-        'supporting resolved users=${_usersById.length} statuses=${_statusesByKey.length} sizes=${_vehicleSizes.length}',
-      );
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
-      _scheduleWarmRetryIfNeeded();
     } catch (error) {
       _log('load error error=$error');
       errorMessage = userFacingErrorMessage(
@@ -192,7 +191,6 @@ class AdminBookingsViewModel extends BaseViewModel {
       _cachedErrorMessage = errorMessage;
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
-      _scheduleWarmRetryIfNeeded();
     } finally {
       if (shouldShowLoadingState) {
         setBusy(false);
@@ -276,7 +274,7 @@ class AdminBookingsViewModel extends BaseViewModel {
     ) {
       _applyBookings(bookings);
       errorMessage = null;
-      if (isBusy && _bookings.isNotEmpty) {
+      if (isBusy) {
         setBusy(false);
       }
       notifyListeners();
@@ -322,51 +320,14 @@ class AdminBookingsViewModel extends BaseViewModel {
     }
   }
 
-  Future<void> _refreshPrimaryBookingsSilently() async {
-    try {
-      final bookings = await _bookingRepository.getBookings().timeout(
-        _loadStepTimeout,
-        onTimeout: () => List<Booking>.from(_cachedBookings),
-      );
-      _log('primary bookings silent refresh count=${bookings.length}');
-      _applyBookings(bookings);
-      _cachedBookings = List<Booking>.from(_bookings);
-      notifyListeners();
-    } catch (_) {
-      // Keep the current shared snapshot if the silent refresh fails.
-    }
-  }
-
-  void _scheduleWarmRetryIfNeeded() {
-    if (_didScheduleWarmRetry ||
-        !currentNetworkStatus() ||
-        _bookings.isNotEmpty ||
-        _cachedBookings.isNotEmpty) {
-      return;
-    }
-    _didScheduleWarmRetry = true;
-    unawaited(_retryLoadAfterWarmup());
-  }
-
-  Future<void> _retryLoadAfterWarmup() async {
-    await Future<void>.delayed(const Duration(milliseconds: 450));
-    try {
-      final refreshedBookings = await _bookingRepository.getBookings();
-      if (refreshedBookings.isEmpty) {
-        return;
-      }
-      _applyBookings(refreshedBookings);
-      _cachedBookings = List<Booking>.from(_bookings);
-      notifyListeners();
-    } catch (_) {}
-  }
-
   void _applyBookings(List<Booking> bookings) {
     _bookings
       ..clear()
       ..addAll(bookings);
     _cachedBookings = List<Booking>.from(_bookings);
-    _log('apply bookings count=${_bookings.length}');
+    _log(
+      'apply bookings count=${_bookings.length} ids=${_bookings.map((booking) => normalizeId(booking.id) ?? "-").join(",")} statuses=${_bookings.map((booking) => booking.clientStatus?.trim().toLowerCase() ?? "-").join(",")}',
+    );
   }
 
   void ingestSubmittedBooking(Booking booking) {
@@ -418,8 +379,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   }
 
   void _log(String message) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][AdminBookingsLoad] $message');
+    // Temporary debug logging removed.
   }
 
   void setStatusFilter(String value) {
@@ -673,7 +633,12 @@ class AdminBookingsViewModel extends BaseViewModel {
   }
 
   List<UserModel> clientUsers() {
-    return _usersById.values
+    final sourceUsers = _usersById.isNotEmpty
+        ? _usersById.values
+        : AuthRequest.hasResolvedUsers
+        ? AuthRequest.hydratedUsersSnapshot
+        : const <UserModel>[];
+    return sourceUsers
         .where(
           (user) =>
               normalizeRoleKey(user.role) == 'client' &&

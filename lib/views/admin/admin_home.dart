@@ -55,6 +55,10 @@ class _AdminHomeState extends State<AdminHome> {
   String? _supportInitialUserId;
   int _supportViewTick = 0;
 
+  void _log(String message) {
+    // Temporary debug logging removed.
+  }
+
   @override
   void initState() {
     super.initState();
@@ -122,6 +126,10 @@ class _AdminHomeState extends State<AdminHome> {
             final isCompact = width < 1100;
             final showRail = !isCompact && vm.showDrawer;
             final overlayVisible = _isUploadingProfilePhoto;
+            final resolvedSection = _resolvedSection(vm.selectedSection);
+            _log(
+              'build user=${_shellUser.id ?? "-"} role=${_shellUser.role ?? "-"} selected=${vm.selectedSection.name} resolved=${resolvedSection.name} compact=$isCompact showRail=$showRail overlay=$overlayVisible',
+            );
 
             return PlatformShell(
               scaffoldKey: _scaffoldKey,
@@ -517,6 +525,9 @@ class _AdminHomeState extends State<AdminHome> {
 
   Widget _buildSelectedSection(AdminSection section) {
     final resolvedSection = _resolvedSection(section);
+    _log(
+      'build section selected=${section.name} resolved=${resolvedSection.name}',
+    );
     return switch (resolvedSection) {
       AdminSection.dashboard => AdminDashboardView(user: _shellUser),
       AdminSection.bookings => AdminBookingsView(user: widget.user),

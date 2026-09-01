@@ -291,6 +291,48 @@
   </div>
   <div id="bootstrap-loader" aria-live="polite"></div>
   <script>
+    function removeStartupSplash() {
+      const splash = document.getElementById('app-startup-splash');
+      if (splash) {
+        splash.remove();
+      }
+    }
+
+    function flutterSurfaceReady() {
+      return Boolean(
+        document.querySelector(
+          'flutter-view, flt-glass-pane, flt-scene-host, flt-scene',
+        ),
+      );
+    }
+
+    function watchFlutterSurfaceAndDismissSplash() {
+      if (flutterSurfaceReady()) {
+        removeStartupSplash();
+        return;
+      }
+
+      const observer = new MutationObserver(function() {
+        if (!flutterSurfaceReady()) {
+          return;
+        }
+        observer.disconnect();
+        removeStartupSplash();
+      });
+
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+
+      window.setTimeout(function() {
+        observer.disconnect();
+        if (flutterSurfaceReady()) {
+          removeStartupSplash();
+        }
+      }, 12000);
+    }
+
     function isSocialInAppBrowser() {
       const userAgent = navigator.userAgent || '';
       return /FBAN|FBAV|Instagram|Line\/|Messenger|wv\)|WebView|MiuiBrowser|Snapchat|Twitter/i.test(userAgent);
@@ -334,6 +376,7 @@
     });
 
     window.addEventListener('DOMContentLoaded', function() {
+      watchFlutterSurfaceAndDismissSplash();
       const isSocialInApp = window.__PALTRANCO_SOCIAL_INAPP__ === true;
       const openButton = document.getElementById('social-browser-gate__open');
 
@@ -349,10 +392,7 @@
     });
 
     window.addEventListener('flutter-first-frame', function() {
-      const splash = document.getElementById('app-startup-splash');
-      if (splash) {
-        splash.remove();
-      }
+      removeStartupSplash();
     });
   </script>
   <!--

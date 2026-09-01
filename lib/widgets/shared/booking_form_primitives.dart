@@ -345,6 +345,7 @@ class BookingFormFieldCard extends StatelessWidget {
     this.buttonText,
     this.paletteOverride,
     this.required = false,
+    this.hasError = false,
     this.subtitle,
     this.instructions,
     this.headerTrailing,
@@ -358,6 +359,7 @@ class BookingFormFieldCard extends StatelessWidget {
   final String? buttonText;
   final BookingFormPalette? paletteOverride;
   final bool required;
+  final bool hasError;
   final String? subtitle;
   final String? instructions;
   final Widget input;
@@ -397,7 +399,7 @@ class BookingFormFieldCard extends StatelessWidget {
                       TextSpan(
                         text: ' *',
                         style: TextStyle(
-                          color: palette.accent,
+                          color: hasError ? AppColors.danger : palette.accent,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -447,7 +449,10 @@ class BookingFormFieldCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: containerColor ?? Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: palette.border),
+        border: Border.all(
+          color: hasError ? AppColors.danger : palette.border,
+          width: hasError ? 1.5 : 1,
+        ),
       ),
       child: content,
     );

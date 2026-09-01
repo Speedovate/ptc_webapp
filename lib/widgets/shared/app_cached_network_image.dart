@@ -18,6 +18,7 @@ class AppCachedNetworkImage extends StatefulWidget {
     this.fit,
     this.alignment = Alignment.center,
     this.errorBuilder,
+    this.debugLabel,
   });
 
   final String imageUrl;
@@ -26,6 +27,7 @@ class AppCachedNetworkImage extends StatefulWidget {
   final BoxFit? fit;
   final Alignment alignment;
   final Widget Function(BuildContext context, Object error)? errorBuilder;
+  final String? debugLabel;
 
   @override
   State<AppCachedNetworkImage> createState() => _AppCachedNetworkImageState();
@@ -34,6 +36,7 @@ class AppCachedNetworkImage extends StatefulWidget {
 class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   StreamSubscription<void>? _onlineSubscription;
   bool _hasError = false;
+  Object? _lastError;
   bool _isRecoveringCachedImage = false;
   int _reloadToken = 0;
   String? _cachedImageDataUrl;
@@ -42,6 +45,7 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   @override
   void initState() {
     super.initState();
+    _trace('init source=${_sourceFingerprint(widget.imageUrl)} web=$kIsWeb');
     if (kIsWeb) {
       unawaited(_refreshWebImageSource());
       _onlineSubscription = onlineEvents().listen((_) {
@@ -50,8 +54,10 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
         }
         setState(() {
           _hasError = false;
+          _lastError = null;
           _reloadToken++;
         });
+        _trace('online retry token=$_reloadToken');
         unawaited(_refreshWebImageSource(forceRefresh: true));
       });
     }
@@ -61,7 +67,12 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   void didUpdateWidget(covariant AppCachedNetworkImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.imageUrl != widget.imageUrl) {
+      _trace(
+        'source update previous=${_sourceFingerprint(oldWidget.imageUrl)} '
+        'next=${_sourceFingerprint(widget.imageUrl)}',
+      );
       _hasError = false;
+      _lastError = null;
       _isRecoveringCachedImage = false;
       _reloadToken = 0;
       _cachedImageDataUrl = null;
@@ -96,6 +107,8 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   }
 
   void _handleError(Object error) {
+    _trace('load error type=${error.runtimeType}');
+    _lastError = error;
     if (kIsWeb) {
       unawaited(_recoverCachedImageAfterError());
     }
@@ -158,6 +171,9 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
       return;
     }
     final requestSerial = ++_webImageLoadSerial;
+    _trace(
+      'cache lookup start forceRefresh=$forceRefresh serial=$requestSerial',
+    );
     final cachedDataUrl = await PersistentImageCacheService.instance
         .getImageDataUrl(
           cacheKey: normalizedUrl,
@@ -165,11 +181,14 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
           forceRefresh: forceRefresh,
         );
     if (!mounted || requestSerial != _webImageLoadSerial) {
+      _trace('cache lookup ignored serial=$requestSerial');
       return;
     }
     if (_cachedImageDataUrl == cachedDataUrl) {
+      _trace('cache lookup done hit=${cachedDataUrl != null} unchanged=true');
       return;
     }
+    _trace('cache lookup done hit=${cachedDataUrl != null} unchanged=false');
     _setStateSafely(() {
       _cachedImageDataUrl = cachedDataUrl;
     });
@@ -212,6 +231,9 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
       if (cachedImageDataUrl != null && cachedImageDataUrl.isNotEmpty) {
         return _buildMemoryImage(cachedImageDataUrl);
       }
+      if (_hasError) {
+        return _buildErrorFallback(_lastError);
+      }
       return Image.network(
         _resolvedImageUrl,
         key: ValueKey<String>(
@@ -239,6 +261,10 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
       );
     }
 
+    if (_hasError) {
+      return _buildErrorFallback(_lastError);
+    }
+
     return CachedNetworkImage(
       imageUrl: _resolvedImageUrl,
       width: widget.width,
@@ -254,5 +280,30 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
         return const SizedBox.shrink();
       },
     );
+  }
+
+  Widget _buildErrorFallback(Object? error) {
+    if (widget.errorBuilder != null) {
+      return widget.errorBuilder!(
+        context,
+        error ?? StateError('Image could not be loaded.'),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  void _trace(String message) {
+    final label = widget.debugLabel?.trim();
+    if (label == null || label.isEmpty) {
+      return;
+    }
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('[$timestamp][CachedImageTrace][$label] $message');
+  }
+
+  String _sourceFingerprint(String value) {
+    final normalized = value.trim();
+    final queryIndex = normalized.indexOf('?');
+    return queryIndex < 0 ? normalized : normalized.substring(0, queryIndex);
   }
 }

@@ -51,6 +51,8 @@ _ClientFormHeaderPalette? _terminalClientHeaderPalette(String? statusKey) {
   }
 }
 
+void _logBookingSubmit(String _) {}
+
 class ClientBookingHomeView extends StatefulWidget {
   const ClientBookingHomeView({
     super.key,
@@ -138,6 +140,9 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
     final oldClientUser = oldWidget.bookingClientUser ?? oldWidget.user;
     if (oldClientUser.id != _effectiveClientUser.id ||
         oldClientUser.updatedAt != _effectiveClientUser.updatedAt) {
+      _log(
+        'didUpdateWidget oldClient=${oldClientUser.id ?? "-"} nextClient=${_effectiveClientUser.id ?? "-"} submittedBy=$_effectiveSubmittedByUserId',
+      );
       _viewModel?.syncClient(_effectiveClientUser);
       _viewModel?.load(_effectiveClientUser);
     }
@@ -149,10 +154,16 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
       viewModelBuilder: ClientBookingHomeViewModel.new,
       onViewModelReady: (vm) {
         _viewModel = vm;
+        _log(
+          'onViewModelReady client=${_effectiveClientUser.id ?? "-"} bookingClient=${widget.bookingClientUser?.id ?? "-"} submittedBy=$_effectiveSubmittedByUserId',
+        );
         vm.load(_effectiveClientUser);
       },
       builder: (context, vm, _) {
         _viewModel = vm;
+        _log(
+          'build client=${_effectiveClientUser.id ?? "-"} bookingClient=${widget.bookingClientUser?.id ?? "-"} busy=${vm.isBusyLoading} forms=${vm.mainForms.length} activeForm=${vm.form?.id ?? "-"} loadError=${vm.loadError ?? "-"}',
+        );
         final loadError = vm.loadError;
         if (loadError != null) {
           return AppPageLoadingOverlay(
@@ -251,6 +262,8 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
       },
     );
   }
+
+  void _log(String _) {}
 }
 
 class _ClientBookingFormSection extends StatefulWidget {
@@ -406,9 +419,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
     );
   }
 
-  Future<void> _handleDraftIdentityChange({
-    required String oldDraftKey,
-  }) async {
+  Future<void> _handleDraftIdentityChange({required String oldDraftKey}) async {
     final nextDraftKey = _draftKey;
     if (nextDraftKey.isEmpty) {
       return;
@@ -478,8 +489,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
       final key = (field.key ?? '').trim().toLowerCase();
       return key == 'van_size' || key == 'van_size_id' || key == 'vehicle_size';
     }).firstOrNull;
-    if (vanSizeField != null) {
-    }
+    if (vanSizeField != null) {}
     _syncFocusNodes(fields);
     final blockedMessage = vm.blockedMessageForForm(form, widget.clientUser);
     final terminalPalette = form.nextStatusKey == null
@@ -530,7 +540,9 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                   : (nextFocusKey == null
                         ? null
                         : _fieldFocusNodes[nextFocusKey]);
-              final nextFieldType = (nextField?.type ?? '').trim().toLowerCase();
+              final nextFieldType = (nextField?.type ?? '')
+                  .trim()
+                  .toLowerCase();
               final activateNextFocus =
                   isLastField ||
                   nextFieldType == 'date' ||
@@ -540,10 +552,10 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
               final normalizedFieldKey = fieldKeyValue.toLowerCase();
               if (normalizedFieldKey == 'van_size' ||
                   normalizedFieldKey == 'van_size_id' ||
-                  normalizedFieldKey == 'vehicle_size') {
-              }
+                  normalizedFieldKey == 'vehicle_size') {}
               final shouldRedirectRepresentativeTap =
-                  fieldKeyValue == ClientBookingHomeViewModel.representativeNameKey &&
+                  fieldKeyValue ==
+                      ClientBookingHomeViewModel.representativeNameKey &&
                   widget.onRepresentativeTapWithoutClient != null &&
                   (widget.clientUser.id?.trim().isNotEmpty != true);
               return Padding(
@@ -595,12 +607,13 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
           isBlocked: blockedMessage != null,
           title: vm.resolvedTitleForForm(form),
           focusNode: _submitFocusNode,
-          submitLabel: _isSubmitting
-              ? 'Submitting ...'
-              : vm.submitLabelForForm(form),
+          submitLabel: vm.submitLabelForForm(form),
           onSubmit: () async {
             final externalBlockMessage = widget.submitBlockMessage?.call();
             final validationErrors = vm.validateAnswersForForm(form, _answers);
+            _logBookingSubmit(
+              'cta pressed form=${form.id ?? "-"} errors=${validationErrors.length} blocked=${blockedMessage != null || externalBlockMessage != null}',
+            );
             if (validationErrors.isNotEmpty ||
                 blockedMessage != null ||
                 externalBlockMessage != null) {
@@ -620,12 +633,16 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
               return;
             }
             final actionLabel = vm.submitLabelForForm(form);
+            _logBookingSubmit('confirmation open form=${form.id ?? "-"}');
             final confirmed = await showAdminActionConfirmation(
               context,
               title: 'Confirm Action',
               message: 'Are you sure you want to ${actionLabel.toLowerCase()}?',
               confirmLabel: actionLabel,
               onConfirmAsync: () async {
+                _logBookingSubmit(
+                  'confirmation accepted form=${form.id ?? "-"}',
+                );
                 widget.onUnfocusWithoutScroll();
                 setState(() {
                   _isSubmitting = true;
@@ -637,6 +654,9 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                     clientUser: widget.clientUser,
                     submittedByUserId: widget.submittedByUserId,
                     submittedByUserRole: widget.submittedByUserRole,
+                  );
+                  _logBookingSubmit(
+                    'submit returned form=${form.id ?? "-"} booking=${booking?.id ?? "-"}',
                   );
                   if (!mounted) {
                     return false;
@@ -652,8 +672,9 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                       }
                       AppSnackbar.showError(context, latestBlockedMessage);
                     } else {
-                      final latestExternalBlockMessage =
-                          widget.submitBlockMessage?.call();
+                      final latestExternalBlockMessage = widget
+                          .submitBlockMessage
+                          ?.call();
                       if (latestExternalBlockMessage != null &&
                           context.mounted) {
                         AppSnackbar.showError(
@@ -768,7 +789,16 @@ class _ClientBookingActions extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 18),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
-      child: Text(submitLabel),
+      child: isSubmitting
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            )
+          : Text(submitLabel),
     );
 
     final clearColor = bookingFormResolvedActionColor(

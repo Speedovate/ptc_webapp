@@ -18,12 +18,11 @@ class SupportRequest {
     FirebaseFirestore? firestore,
     SupportStorageService? storage,
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
-  })
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _storage = storage ?? SupportStorageService.instance,
-      _firestorePublicDocumentFetcher =
-          firestorePublicDocumentFetcher ??
-          createFirestorePublicDocumentFetcher();
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _storage = storage ?? SupportStorageService.instance,
+       _firestorePublicDocumentFetcher =
+           firestorePublicDocumentFetcher ??
+           createFirestorePublicDocumentFetcher();
 
   static final SupportRequest instance = SupportRequest();
   static const _supportThreadsResourceKey = 'support_threads_all';
@@ -53,8 +52,7 @@ class SupportRequest {
   _messageRemoteSubscriptionsByThreadId =
       <String, StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>{};
   final Map<String, StreamSubscription<String>>
-  _messageLocalSubscriptionsByThreadId =
-      <String, StreamSubscription<String>>{};
+  _messageLocalSubscriptionsByThreadId = <String, StreamSubscription<String>>{};
   final Map<String, List<SupportMessage>> _lastVisibleMessagesByThreadId =
       <String, List<SupportMessage>>{};
   final Set<String> _messagePrefetchInFlightThreadIds = <String>{};
@@ -84,11 +82,22 @@ class SupportRequest {
       .collection('threads');
 
   Future<List<SupportThread>> prefetchAllThreads() async {
+    final cachedDocuments = await _cache.readDocuments(
+      _supportThreadsResourceKey,
+    );
+    if (cachedDocuments != null) {
+      final cachedThreads = cachedDocuments.map(SupportThread.fromMap).toList()
+        ..sort(_compareThreadsNewestFirst);
+      _storeHydratedAllThreads(cachedThreads);
+      unawaited(_warmThreadMessagesInBackground(cachedThreads));
+      return cachedThreads;
+    }
     List<Map<String, dynamic>> documents;
     try {
       final snapshot = await _supportCollection.get().timeout(
         _startupTimeout,
-        onTimeout: () => throw TimeoutException('support threads fetch timeout'),
+        onTimeout: () =>
+            throw TimeoutException('support threads fetch timeout'),
       );
       documents = snapshot.docs.map(documentData).toList(growable: false);
     } catch (error) {
@@ -112,6 +121,26 @@ class SupportRequest {
     if (normalizedUserId == null) {
       return const <SupportThread>[];
     }
+    final cachedDocuments = await _cache.readDocuments(
+      _supportThreadsResourceKey,
+    );
+    if (cachedDocuments != null) {
+      final cachedThreads =
+          cachedDocuments
+              .map(SupportThread.fromMap)
+              .where(
+                (thread) =>
+                    normalizeId(thread.requesterUserId) == normalizedUserId,
+              )
+              .toList()
+            ..sort(_compareThreadsNewestFirst);
+      final allCachedThreads =
+          cachedDocuments.map(SupportThread.fromMap).toList()
+            ..sort(_compareThreadsNewestFirst);
+      _storeHydratedAllThreads(allCachedThreads);
+      unawaited(_warmThreadMessagesInBackground(cachedThreads));
+      return cachedThreads;
+    }
     List<Map<String, dynamic>> documents;
     try {
       final snapshot = await _supportCollection
@@ -119,15 +148,21 @@ class SupportRequest {
           .get()
           .timeout(
             _startupTimeout,
-            onTimeout: () => throw TimeoutException('support user threads fetch timeout'),
+            onTimeout: () =>
+                throw TimeoutException('support user threads fetch timeout'),
           );
       documents = snapshot.docs.map(documentData).toList(growable: false);
     } catch (error) {
-      final allDocuments = await _fetchCollectionDocumentsViaPublicRest('support');
-      documents = allDocuments.where((document) {
-        return normalizeId(document['requester_user_id']?.toString()) ==
-            normalizedUserId;
-      }).map((document) => Map<String, dynamic>.from(document)).toList(growable: false);
+      final allDocuments = await _fetchCollectionDocumentsViaPublicRest(
+        'support',
+      );
+      documents = allDocuments
+          .where((document) {
+            return normalizeId(document['requester_user_id']?.toString()) ==
+                normalizedUserId;
+          })
+          .map((document) => Map<String, dynamic>.from(document))
+          .toList(growable: false);
       if (documents.isEmpty) {
         rethrow;
       }
@@ -166,6 +201,12 @@ class SupportRequest {
     if (normalizedThreadId == null) {
       return const <SupportMessage>[];
     }
+    final cachedDocuments = await _cache.readDocuments(
+      _messageResourceKey(normalizedThreadId),
+    );
+    if (cachedDocuments != null) {
+      return _storeVisibleMessages(normalizedThreadId, cachedDocuments);
+    }
     List<Map<String, dynamic>> documents;
     try {
       final snapshot = await _supportCollection
@@ -174,7 +215,8 @@ class SupportRequest {
           .get()
           .timeout(
             _startupTimeout,
-            onTimeout: () => throw TimeoutException('support messages fetch timeout'),
+            onTimeout: () =>
+                throw TimeoutException('support messages fetch timeout'),
           );
       documents = snapshot.docs.map(documentData).toList(growable: false);
     } catch (error) {
@@ -189,9 +231,7 @@ class SupportRequest {
       resourceKey: _messageResourceKey(normalizedThreadId),
       documents: documents,
     );
-    final messages = documents.map(SupportMessage.fromMap).toList()
-      ..sort(_compareMessagesOldestFirst);
-    return messages;
+    return _storeVisibleMessages(normalizedThreadId, documents);
   }
 
   Future<void> prefetchMessagesForThreads(List<SupportThread> threads) async {
@@ -227,10 +267,13 @@ class SupportRequest {
     }
     if (currentNetworkStatus()) {
       try {
-        final snapshot = await _threadReadCollection(normalizedUserId).get().timeout(
-          _startupTimeout,
-          onTimeout: () => throw TimeoutException('support thread reads fetch timeout'),
-        );
+        final snapshot = await _threadReadCollection(normalizedUserId)
+            .get()
+            .timeout(
+              _startupTimeout,
+              onTimeout: () =>
+                  throw TimeoutException('support thread reads fetch timeout'),
+            );
         for (final document in snapshot.docs) {
           final data = documentData(document);
           final threadId =
@@ -340,9 +383,9 @@ class SupportRequest {
       next.add(nextDocument);
     }
     await FirestoreCacheStore.instance.writeDocumentMaps(resourceKey, next);
-    final remoteWrite = _threadReadCollection(normalizedUserId)
-        .doc(normalizedThreadId)
-        .set(nextDocument, SetOptions(merge: true));
+    final remoteWrite = _threadReadCollection(
+      normalizedUserId,
+    ).doc(normalizedThreadId).set(nextDocument, SetOptions(merge: true));
     if (currentNetworkStatus()) {
       try {
         await remoteWrite.timeout(const Duration(seconds: 6));
@@ -387,13 +430,6 @@ class SupportRequest {
       }
 
       unawaited(emitCachedThreads());
-      if (currentNetworkStatus()) {
-        unawaited(
-          prefetchAllThreads().then((_) {
-            _threadCacheUpdates.add(null);
-          }).catchError((error, stackTrace) {}),
-        );
-      }
 
       final remoteSubscription = _supportCollection.snapshots().listen((
         snapshot,
@@ -463,13 +499,6 @@ class SupportRequest {
       }
 
       unawaited(emitCachedThreads());
-      if (currentNetworkStatus()) {
-        unawaited(
-          prefetchThreadsForUser(normalizedUserId).then((_) {
-            _threadCacheUpdates.add(null);
-          }).catchError((error, stackTrace) {}),
-        );
-      }
 
       final remoteSubscription = _supportCollection
           .where('requester_user_id', isEqualTo: normalizedUserId)
@@ -550,11 +579,8 @@ class SupportRequest {
         if (controller.hasListener) {
           return;
         }
-        await _messageRemoteSubscriptionsByThreadId.remove(normalizedThreadId)
-            ?.cancel();
-        await _messageLocalSubscriptionsByThreadId.remove(normalizedThreadId)
-            ?.cancel();
-        _messageWatchControllersByThreadId.remove(normalizedThreadId);
+        // Keep the shared listener and its in-memory snapshot alive so
+        // reopening a visited chat is cache-first and listener-driven.
       },
     );
     _messageWatchControllersByThreadId[normalizedThreadId] = controller;
@@ -585,20 +611,12 @@ class SupportRequest {
       }
       final messages = visibleDocuments.map(SupportMessage.fromMap).toList()
         ..sort(_compareMessagesOldestFirst);
-      _lastVisibleMessagesByThreadId[normalizedThreadId] = List<SupportMessage>.from(
-        messages,
-      );
+      _lastVisibleMessagesByThreadId[normalizedThreadId] =
+          List<SupportMessage>.from(messages);
       controller.add(messages);
     }
 
     unawaited(emitCachedMessages());
-    if (currentNetworkStatus()) {
-      unawaited(
-        prefetchMessages(normalizedThreadId).then((_) {
-          _emitMessageCacheUpdate(normalizedThreadId);
-        }).catchError((error, stackTrace) {}),
-      );
-    }
 
     final remoteSubscription = _supportCollection
         .doc(normalizedThreadId)
@@ -667,7 +685,15 @@ class SupportRequest {
       }
       final hasVisibleMessages =
           (_lastVisibleMessagesByThreadId[threadId]?.isNotEmpty ?? false);
-      if (hasVisibleMessages || await _hasPersistedMessages(threadId)) {
+      if (hasVisibleMessages) {
+        _messageWarmThreadIds.add(threadId);
+        continue;
+      }
+      final persistedDocuments = await _cache.readDocuments(
+        _messageResourceKey(threadId),
+      );
+      if (persistedDocuments != null) {
+        _storeVisibleMessages(threadId, persistedDocuments);
         _messageWarmThreadIds.add(threadId);
         continue;
       }
@@ -690,13 +716,17 @@ class SupportRequest {
     await Future.wait(futures);
   }
 
-  Future<bool> _hasPersistedMessages(String threadId) async {
-    final cached = await _cache.readDocuments(_messageResourceKey(threadId));
-    if (cached != null && cached.isNotEmpty) {
-      return true;
-    }
-    final volatile = _volatileMessageDocumentsByThreadId[threadId];
-    return volatile != null && volatile.isNotEmpty;
+  List<SupportMessage> _storeVisibleMessages(
+    String threadId,
+    List<Map<String, dynamic>> documents,
+  ) {
+    final messages = documents.map(SupportMessage.fromMap).toList()
+      ..sort(_compareMessagesOldestFirst);
+    _lastVisibleMessagesByThreadId[threadId] = List<SupportMessage>.from(
+      messages,
+    );
+    _messageWarmThreadIds.add(threadId);
+    return messages;
   }
 
   Future<SupportThread> ensureThread({
@@ -786,7 +816,8 @@ class SupportRequest {
         .get()
         .timeout(
           _startupTimeout,
-          onTimeout: () => throw TimeoutException('support direct thread lookup timeout'),
+          onTimeout: () =>
+              throw TimeoutException('support direct thread lookup timeout'),
         );
     final existingThreads =
         existingSnapshot.docs
@@ -1079,10 +1110,7 @@ class SupportRequest {
       createdAt: now,
       updatedAt: now,
     );
-    _storeVolatileMessageDocument(
-      normalizedThreadId,
-      message.toMap(),
-    );
+    _storeVolatileMessageDocument(normalizedThreadId, message.toMap());
     await _cache.upsertDocument(
       resourceKey: _messageResourceKey(normalizedThreadId),
       document: message.toMap(),
@@ -1177,10 +1205,9 @@ class SupportRequest {
   }) async {
     final now = DateTime.now().toUtc();
     final thread = SupportThread(
-      id:
-          preferredThreadId?.trim().isNotEmpty == true
-              ? preferredThreadId!.trim()
-              : 'local_thread_${now.microsecondsSinceEpoch}',
+      id: preferredThreadId?.trim().isNotEmpty == true
+          ? preferredThreadId!.trim()
+          : 'local_thread_${now.microsecondsSinceEpoch}',
       requesterUserId: normalizeId(requester.id),
       requesterRole: requester.role,
       requesterName: requester.name,
@@ -1215,10 +1242,9 @@ class SupportRequest {
   }) async {
     final now = DateTime.now().toUtc();
     final thread = SupportThread(
-      id:
-          preferredThreadId?.trim().isNotEmpty == true
-              ? preferredThreadId!.trim()
-              : 'local_thread_${now.microsecondsSinceEpoch}',
+      id: preferredThreadId?.trim().isNotEmpty == true
+          ? preferredThreadId!.trim()
+          : 'local_thread_${now.microsecondsSinceEpoch}',
       requesterUserId: normalizeId(targetUser.id),
       requesterRole: targetUser.role,
       requesterName: targetUser.name,
@@ -1320,7 +1346,9 @@ class SupportRequest {
         message.updatedAt?.toUtc().toIso8601String() ??
         '';
     final senderId = normalizeId(message.senderUserId) ?? '';
-    final text = _supportMarkerToken(_supportThreadPreviewTokenForMessage(message));
+    final text = _supportMarkerToken(
+      _supportThreadPreviewTokenForMessage(message),
+    );
     return '$timestamp|$senderId|$text';
   }
 
@@ -1332,9 +1360,7 @@ class SupportRequest {
     if (normalized.isEmpty) {
       return '';
     }
-    return normalized.length <= 120
-        ? normalized
-        : normalized.substring(0, 120);
+    return normalized.length <= 120 ? normalized : normalized.substring(0, 120);
   }
 
   String _supportThreadPreviewTokenForMessage(SupportMessage message) {
@@ -1358,7 +1384,8 @@ class SupportRequest {
       return value.toDate().toUtc();
     }
     final parsed = DateTime.tryParse(value?.toString() ?? '');
-    return parsed?.toUtc() ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    return parsed?.toUtc() ??
+        DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
   }
 
   Future<void> _replaceCachedMessageDocument({
@@ -1385,7 +1412,10 @@ class SupportRequest {
       pendingMessageId: pendingMessageId,
       documents: nextDocuments,
     );
-    await _cache.writeDocuments(resourceKey: resourceKey, documents: nextDocuments);
+    await _cache.writeDocuments(
+      resourceKey: resourceKey,
+      documents: nextDocuments,
+    );
   }
 
   Future<List<Map<String, dynamic>>> _readVisibleMessageDocuments(
@@ -1773,9 +1803,12 @@ class SupportRequest {
   ) async {
     return _firestorePublicDocumentFetcher
         .fetchCollectionDocuments(collectionPath)
-        .timeout(_startupTimeout, onTimeout: () {
-          throw TimeoutException('public rest $collectionPath fetch timeout');
-        });
+        .timeout(
+          _startupTimeout,
+          onTimeout: () {
+            throw TimeoutException('public rest $collectionPath fetch timeout');
+          },
+        );
   }
 
   Future<List<Map<String, dynamic>>> _readThreadReadMarkersViaPublicRest(

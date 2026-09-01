@@ -13,9 +13,15 @@ import 'package:webapp/utils/functions.dart';
 
 const Duration _firebaseBootstrapTimeout = Duration(seconds: 6);
 const Duration _firestoreBootstrapTimeout = Duration(seconds: 4);
+const Duration _applicationBootstrapTimeout = Duration(seconds: 8);
+
+void _bootstrapLog(String message) {
+  // Temporary debug logging removed.
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _bootstrapLog('main start');
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
   };
@@ -37,41 +43,71 @@ Future<void> main() async {
     );
   });
 
+  _bootstrapLog('runApp start');
   runApp(MyApp(bootstrapFuture: bootstrapFuture));
 }
 
 Future<void> _bootstrapApplication() async {
+  _bootstrapLog('bootstrap start');
   try {
-    if (Firebase.apps.isEmpty) {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      ).timeout(_firebaseBootstrapTimeout);
-    }
-  } catch (error) {
-    // Ignore bootstrap init failures here; the app handles degraded startup.
-  }
-  try {
-    await FirestoreOfflineService.initialize().timeout(
-      _firestoreBootstrapTimeout,
-    );
-  } catch (error) {
-    // Ignore offline bootstrap failures here; runtime requests can still recover.
-  }
-  unawaited(
-    () async {
+    await () async {
       try {
-        await OfflineQueueCoordinatorService.instance.initialize();
+        if (Firebase.apps.isEmpty) {
+          _bootstrapLog('firebase initialize start');
+          await Firebase.initializeApp(
+            options: DefaultFirebaseOptions.currentPlatform,
+          ).timeout(_firebaseBootstrapTimeout);
+          _bootstrapLog('firebase initialize done');
+        } else {
+          _bootstrapLog('firebase initialize skipped existing-app');
+        }
       } catch (error) {
-        // Ignore background queue bootstrap failures here.
+        _bootstrapLog('firebase initialize error error=$error');
       }
-    }(),
-  );
-  unawaited(
-    FirebaseAnalytics.instance
-        .setAnalyticsCollectionEnabled(true)
-        .then((_) {})
-        .catchError((error, stackTrace) {}),
-  );
+      try {
+        _bootstrapLog('firestore offline init start');
+        await FirestoreOfflineService.initialize().timeout(
+          _firestoreBootstrapTimeout,
+        );
+        _bootstrapLog('firestore offline init done');
+      } catch (error) {
+        _bootstrapLog('firestore offline init error error=$error');
+      }
+      unawaited(
+        () async {
+          try {
+            _bootstrapLog('offline queue init start');
+            await OfflineQueueCoordinatorService.instance.initialize();
+            _bootstrapLog('offline queue init done');
+          } catch (error) {
+            _bootstrapLog('offline queue init error error=$error');
+          }
+        }(),
+      );
+      if (Firebase.apps.isNotEmpty) {
+        unawaited(
+          () async {
+            try {
+              _bootstrapLog('analytics init start');
+              await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(
+                true,
+              );
+              _bootstrapLog('analytics init done');
+            } catch (error) {
+              _bootstrapLog('analytics init error error=$error');
+            }
+          }(),
+        );
+      }
+    }().timeout(
+      _applicationBootstrapTimeout,
+      onTimeout: () {
+        _bootstrapLog('bootstrap timeout continue-degraded');
+      },
+    );
+  } finally {
+    _bootstrapLog('bootstrap finish');
+  }
 }
 
 TextTheme _withTextHeight(TextTheme textTheme, double height) {
@@ -310,6 +346,9 @@ class _BootstrapGate extends StatelessWidget {
     return FutureBuilder<void>(
       future: bootstrapFuture,
       builder: (context, snapshot) {
+        _bootstrapLog(
+          'gate state=${snapshot.connectionState} hasError=${snapshot.hasError}',
+        );
         if (snapshot.hasError) {
           return _AppErrorFallback(
             details: FlutterErrorDetails(

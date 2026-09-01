@@ -9,6 +9,13 @@
     `${deployVersion}-${flutterServiceWorkerVersion}`;
   const swVersionKey = 'paltranco_sw_version';
   const refreshFlagKey = 'paltranco_sw_forced_refresh_done';
+  const flutterConfig = {
+    canvasKitBaseUrl: 'canvaskit/',
+    canvasKitVariant: 'chromium',
+  };
+  const isLocalDevelopmentHost =
+    typeof window !== 'undefined' &&
+    ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
 
   async function clearStaleWebCachesIfNeeded() {
     if (
@@ -64,39 +71,53 @@
     return true;
   }
 
-  clearStaleWebCachesIfNeeded()
+  function loadFlutterWithSettings(useServiceWorker) {
+    const options = useServiceWorker
+      ? {
+          config: flutterConfig,
+          serviceWorkerSettings: {
+            serviceWorkerVersion,
+            serviceWorkerUrl: `app_service_worker.js?v=${serviceWorkerVersion}`,
+            timeoutMillis: 10000,
+          },
+        }
+      : {
+          config: flutterConfig,
+        };
+    return _flutter.loader.load(options);
+  }
+
+  function finalizeCacheBustUrl() {
+    if (
+      typeof window !== 'undefined' &&
+      window.localStorage.getItem(swVersionKey) === serviceWorkerVersion &&
+      new URL(window.location.href).searchParams.get('pv') === deployVersion
+    ) {
+      try {
+        window.history.replaceState(
+          {},
+          '',
+          window.location.pathname + window.location.hash,
+        );
+      } catch (_) {}
+    }
+  }
+
+  const bootstrapStart = isLocalDevelopmentHost
+    ? Promise.resolve(true)
+    : clearStaleWebCachesIfNeeded();
+
+  bootstrapStart
     .then(function (shouldLoadFlutter) {
       if (shouldLoadFlutter === false) {
         return;
       }
-      if (
-        typeof window !== 'undefined' &&
-        window.localStorage.getItem(swVersionKey) === serviceWorkerVersion &&
-        new URL(window.location.href).searchParams.get('pv') === deployVersion
-      ) {
-        try {
-          window.history.replaceState(
-            {},
-            '',
-            window.location.pathname + window.location.hash,
-          );
-        } catch (_) {}
-      }
-      _flutter.loader.load({
-        serviceWorkerSettings: {
-          serviceWorkerVersion,
-          serviceWorkerUrl: `app_service_worker.js?v=${serviceWorkerVersion}`,
-          timeoutMillis: 10000,
-        },
+      finalizeCacheBustUrl();
+      return loadFlutterWithSettings(!isLocalDevelopmentHost).catch(function () {
+        return loadFlutterWithSettings(false);
       });
     })
     .catch(function () {
-      _flutter.loader.load({
-        serviceWorkerSettings: {
-          serviceWorkerVersion,
-          serviceWorkerUrl: `app_service_worker.js?v=${serviceWorkerVersion}`,
-          timeoutMillis: 10000,
-        },
-      });
+      return loadFlutterWithSettings(false);
     });
 })();

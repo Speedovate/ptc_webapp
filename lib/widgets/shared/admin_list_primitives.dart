@@ -105,6 +105,7 @@ class _AdminListSearchFieldState extends State<AdminListSearchField> {
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialValue);
+    _controller.addListener(_handleTextChanged);
   }
 
   @override
@@ -120,8 +121,20 @@ class _AdminListSearchFieldState extends State<AdminListSearchField> {
 
   @override
   void dispose() {
+    _controller.removeListener(_handleTextChanged);
     _controller.dispose();
     super.dispose();
+  }
+
+  void _handleTextChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _clearSearch() {
+    _controller.clear();
+    widget.onChanged('');
   }
 
   @override
@@ -173,6 +186,13 @@ class _AdminListSearchFieldState extends State<AdminListSearchField> {
                   minWidth: 46,
                   minHeight: _toolbarVisualHeight,
                 ),
+                suffixIcon: _controller.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        onPressed: _clearSearch,
+                        icon: const Icon(Icons.close_rounded),
+                      ),
                 filled: true,
                 fillColor: _isHovered || _isPressed
                     ? activeFillColor
@@ -319,7 +339,11 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
     final buttonRight = buttonOrigin.dx + (buttonBox?.size.width ?? 0);
     final buttonHeight = buttonBox?.size.height ?? widget.controlHeight;
     final popupTop =
-        buttonTop + buttonHeight + widget.alignmentOffset.dy + widget.topGap - 2;
+        buttonTop +
+        buttonHeight +
+        widget.alignmentOffset.dy +
+        widget.topGap -
+        2;
     final useDesktopLeftAnchor = !widget.iconOnly && screenWidth >= 520;
     final popupContentMaxWidth = useDesktopLeftAnchor
         ? (screenWidth - buttonLeft - 12).clamp(0.0, screenWidth)

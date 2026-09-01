@@ -130,6 +130,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
   bool isCancelSubmitting = false;
   int resetTick = 0;
   int cancelResetTick = 0;
+  String? _lastHydratedWorkflowFingerprint;
 
   void _restoreCachedState() {
     final snapshot = _cacheByBookingId[booking?.id ?? ''];
@@ -186,8 +187,38 @@ class BookingWorkflowViewModel extends BaseViewModel {
     bool hydrateInitialAnswers = true,
   }) async {
     if (isBusyLoading) {
+      _log('load skipped booking=${booking.id ?? "-"} reason=already-busy');
       return;
     }
+    final previousUser = this.user;
+    final previousBooking = this.booking;
+    final sameWorkflowSnapshot =
+        _workflowSnapshotFingerprint(previousUser, previousBooking) ==
+        _workflowSnapshotFingerprint(user, booking);
+    final preservedAnswers = sameWorkflowSnapshot
+        ? Map<String, dynamic>.from(answers)
+        : null;
+    final preservedErrors = sameWorkflowSnapshot
+        ? Map<String, String>.from(errors)
+        : null;
+    final preservedAdditionalFields = sameWorkflowSnapshot
+        ? List<StatusField>.from(additionalFields)
+        : null;
+    final requestedFingerprint = _workflowSnapshotFingerprint(user, booking);
+    final alreadyHydratedForTarget =
+        sameWorkflowSnapshot &&
+        _lastHydratedWorkflowFingerprint == requestedFingerprint &&
+        fieldLibrary.isNotEmpty &&
+        (mainForms.isNotEmpty || secondaryForms.isNotEmpty || form != null);
+    if (alreadyHydratedForTarget) {
+      _log(
+        'load skipped booking=${booking.id ?? "-"} reason=already-hydrated',
+      );
+      return;
+    }
+    _log(
+      'load start booking=${booking.id ?? "-"} status=${booking.clientStatus ?? "-"} role=${user.role ?? "-"} cached=${_cacheByBookingId.containsKey(booking.id ?? "")} visibleForms=${mainForms.length} visibleSecondary=${secondaryForms.length} visibleFields=${fields.length}',
+    );
     final cachedSnapshot = _cacheByBookingId[booking.id ?? ''];
     if (cachedSnapshot != null) {
       this.user = cachedSnapshot.user ?? user;
@@ -199,9 +230,34 @@ class BookingWorkflowViewModel extends BaseViewModel {
         additionalFields = const [];
         resetTick += 1;
       }
+      _log(
+        'cache restore booking=${booking.id ?? "-"} forms=${mainForms.length} secondary=${secondaryForms.length} fields=${fields.length}',
+      );
+    }
+    final previousStatusKey = previousBooking?.clientStatus?.trim();
+    final requestedStatusKey = booking.clientStatus?.trim();
+    final statusChanged = previousStatusKey != requestedStatusKey;
+    if (statusChanged) {
+      _clearVisibleWorkflowStateForStatusTransition();
+      _log(
+        'status transition reset booking=${booking.id ?? "-"} from=${previousStatusKey ?? "-"} to=${requestedStatusKey ?? "-"}',
+      );
     }
     this.user = user;
     this.booking = booking;
+    await _primeSharedRequestSnapshotsFromCacheIfNeeded();
+    _primeSharedWorkflowData(
+      user: user,
+      booking: booking,
+      hydrateInitialAnswers: hydrateInitialAnswers,
+    );
+    if (sameWorkflowSnapshot) {
+      _restoreLocalDraftState(
+        preservedAnswers: preservedAnswers,
+        preservedErrors: preservedErrors,
+        preservedAdditionalFields: preservedAdditionalFields,
+      );
+    }
     final hasVisiblePrimaryData =
         mainForms.isNotEmpty ||
         secondaryForms.isNotEmpty ||
@@ -212,13 +268,47 @@ class BookingWorkflowViewModel extends BaseViewModel {
         fieldLibrary.isNotEmpty ||
         cachedSnapshot != null;
     isBusyLoading = !hasVisiblePrimaryData;
+    _log(
+      'load mode booking=${booking.id ?? "-"} busy=$isBusyLoading visiblePrimary=$hasVisiblePrimaryData forms=${mainForms.length} secondary=${secondaryForms.length} fields=${fields.length} library=${fieldLibrary.length}',
+    );
     loadError = null;
     blockedMessage = null;
     notifyListeners();
 
     try {
+      if (_sharedFieldsNeedOptionHydration()) {
+        _log(
+          'shared field option hydration start booking=${booking.id ?? "-"} library=${fieldLibrary.length}',
+        );
+        fieldLibrary = await _optionResolver.hydrateFields(fieldLibrary);
+        _rebuildResolvedSharedFormFields();
+        if (sameWorkflowSnapshot) {
+          _restoreLocalDraftState(
+            preservedAnswers: preservedAnswers,
+            preservedErrors: preservedErrors,
+            preservedAdditionalFields: preservedAdditionalFields,
+          );
+        }
+        _log(
+          'shared field option hydration done booking=${booking.id ?? "-"} library=${fieldLibrary.length}',
+        );
+        notifyListeners();
+      }
+      if (_canResolveEntireWorkflowFromSharedState()) {
+        _log(
+          'load satisfied from shared state booking=${booking.id ?? "-"} forms=${mainForms.length} secondary=${secondaryForms.length} fields=${fields.length} library=${fieldLibrary.length}',
+        );
+        _lastHydratedWorkflowFingerprint = requestedFingerprint;
+        _cacheCurrentState();
+        return;
+      }
+      _log('initialize start booking=${booking.id ?? "-"}');
       await _bookingRepository.initialize();
+      _log('initialize done booking=${booking.id ?? "-"}');
       final currentKey = currentStatusKey;
+      _log(
+        'primary queries start booking=${booking.id ?? "-"} status=${currentKey ?? "-"}',
+      );
       final baseResults = await Future.wait([
         _authRepository.getUsers(),
         _statusRepository.getStatuses(),
@@ -229,13 +319,20 @@ class BookingWorkflowViewModel extends BaseViewModel {
             currentKey,
           ),
       ]);
+      _log('primary queries done booking=${booking.id ?? "-"}');
       final users = baseResults[0] as List<UserModel>;
       final statuses = baseResults[1] as List<Status>;
       final allFields = baseResults[2] as List<StatusField>;
       final matchingForms = currentKey != null && currentKey.isNotEmpty
           ? baseResults[3] as List<StatusForm>
           : const <StatusForm>[];
+      _log(
+        'primary resolved booking=${booking.id ?? "-"} users=${users.length} statuses=${statuses.length} library=${allFields.length} matchingForms=${matchingForms.length}',
+      );
       fieldLibrary = await _optionResolver.hydrateFields(allFields);
+      _log(
+        'field library hydration done booking=${booking.id ?? "-"} hydratedLibrary=${fieldLibrary.length}',
+      );
       _usersById
         ..clear()
         ..addEntries(
@@ -252,6 +349,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
         );
 
       if (currentKey == null || currentKey.isEmpty) {
+        _log('load end booking=${booking.id ?? "-"} reason=no-current-status');
         form = null;
         cancelForm = null;
         mainForms = const [];
@@ -273,6 +371,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
           .where((item) => !item.resolvedIsMainForm)
           .firstOrNull;
       if (loadedForm == null && loadedCancelForm == null) {
+        _log(
+          'load end booking=${booking.id ?? "-"} reason=no-matching-forms',
+        );
         form = null;
         cancelForm = null;
         mainForms = const [];
@@ -296,7 +397,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
           .toList();
       form = loadedForm;
       cancelForm = loadedCancelForm;
-      _fieldsByFormId.clear();
+      _log(
+        'per-form hydration start booking=${booking.id ?? "-"} forms=${matchingForms.length}',
+      );
       final fieldEntries = await Future.wait(
         matchingForms.map((activeForm) async {
           final formId = activeForm.id ?? '';
@@ -309,15 +412,28 @@ class BookingWorkflowViewModel extends BaseViewModel {
           return MapEntry(formId, hydratedFields);
         }),
       );
+      final nextFieldsByFormId = <String, List<StatusField>>{};
+      _log(
+        'per-form hydration done booking=${booking.id ?? "-"} entries=${fieldEntries.length}',
+      );
       for (final entry in fieldEntries) {
-        _fieldsByFormId[entry.key] = entry.value;
+        nextFieldsByFormId[entry.key] = entry.value;
       }
-      answers = !hydrateInitialAnswers || loadedForm == null
-          ? {}
+      _fieldsByFormId
+        ..clear()
+        ..addAll(nextFieldsByFormId);
+      final initialAnswers = !hydrateInitialAnswers || loadedForm == null
+          ? <String, dynamic>{}
           : _initialAnswersForBooking(
               booking,
               fieldLibrary: fieldLibrary,
             );
+      answers = sameWorkflowSnapshot
+          ? {
+              ...initialAnswers,
+              ...?preservedAnswers,
+            }
+          : initialAnswers;
       fields = loadedForm == null
           ? const []
           : fieldsForForm(loadedForm, answers: answers);
@@ -328,19 +444,272 @@ class BookingWorkflowViewModel extends BaseViewModel {
       blockedMessage = loadedForm == null
           ? null
           : _engine.getBlockedMessage(booking, loadedForm);
-      additionalFields = const [];
-      errors = {};
+      additionalFields = sameWorkflowSnapshot
+          ? List<StatusField>.from(preservedAdditionalFields ?? const [])
+          : const [];
+      errors = sameWorkflowSnapshot
+          ? Map<String, String>.from(preservedErrors ?? const {})
+          : {};
       cancelErrors = {};
+      _lastHydratedWorkflowFingerprint = requestedFingerprint;
       _cacheCurrentState();
+      _log(
+        'load success booking=${booking.id ?? "-"} mainForms=${mainForms.length} secondaryForms=${secondaryForms.length} fields=${fields.length} cancelFields=${cancelFields.length} blocked=${blockedMessage != null}',
+      );
     } catch (error) {
+      _log('load error booking=${booking.id ?? "-"} error=$error');
       loadError = userFacingErrorMessage(
         error,
         fallback: 'We could not load the booking workflow right now.',
       );
     } finally {
       isBusyLoading = false;
+      _log(
+        'load finish booking=${booking.id ?? "-"} busy=$isBusyLoading loadError=${loadError ?? "-"} forms=${mainForms.length} secondary=${secondaryForms.length} fields=${fields.length}',
+      );
       notifyListeners();
     }
+  }
+
+  void _primeSharedWorkflowData({
+    required UserModel user,
+    required Booking booking,
+    required bool hydrateInitialAnswers,
+  }) {
+    final currentKey = booking.clientStatus?.trim();
+    _log(
+      'prime start booking=${booking.id ?? "-"} status=${currentKey ?? "-"} hasUsers=${AuthRequest.hasResolvedUsers} hasStatuses=${StatusRequest.hasResolvedStatuses} hasFields=${StatusRequest.hasResolvedFields} hasForms=${StatusRequest.hasResolvedForms}',
+    );
+    if (AuthRequest.hasResolvedUsers) {
+      _usersById
+        ..clear()
+        ..addEntries(
+          AuthRequest.hydratedUsersSnapshot
+              .where((item) => (item.id ?? '').isNotEmpty)
+              .map((item) => MapEntry(item.id!, item)),
+        );
+    }
+    if (StatusRequest.hasResolvedStatuses) {
+      _statusesByKey
+        ..clear()
+        ..addEntries(
+          StatusRequest.hydratedStatusesSnapshot
+              .where((item) => (item.key ?? '').isNotEmpty)
+              .map((item) => MapEntry(item.key!, item)),
+        );
+    }
+    if (StatusRequest.hasResolvedFields) {
+      fieldLibrary = _optionResolver.hydrateFieldsFromResolvedSnapshots(
+        List<StatusField>.from(StatusRequest.hydratedFieldsSnapshot),
+      );
+    }
+    if (currentKey == null || currentKey.isEmpty) {
+      _log('prime end booking=${booking.id ?? "-"} reason=no-current-status');
+      return;
+    }
+    if (mainForms.isNotEmpty || secondaryForms.isNotEmpty || form != null) {
+      _log(
+        'prime end booking=${booking.id ?? "-"} reason=already-visible forms=${mainForms.length} secondary=${secondaryForms.length}',
+      );
+      return;
+    }
+    if (!StatusRequest.hasResolvedForms) {
+      _log('prime end booking=${booking.id ?? "-"} reason=no-shared-forms');
+      return;
+    }
+    final sharedForms = _sharedMatchingForms(
+      role: user.role ?? '',
+      currentStatusKey: currentKey,
+    );
+    if (sharedForms.isEmpty) {
+      _log('prime end booking=${booking.id ?? "-"} reason=no-shared-match');
+      return;
+    }
+    mainForms = sharedForms.where((item) => item.resolvedIsMainForm).toList();
+    secondaryForms = sharedForms
+        .where((item) => !item.resolvedIsMainForm)
+        .toList();
+    form = mainForms.firstOrNull;
+    cancelForm = secondaryForms.firstOrNull;
+    _fieldsByFormId.clear();
+    for (final activeForm in sharedForms) {
+      final formId = activeForm.id ?? '';
+      if (formId.isEmpty) {
+        continue;
+      }
+      _fieldsByFormId[formId] = activeForm.fields
+          .map(
+            (field) => field.copyWith(statusForm: activeForm.toReferenceForm()),
+          )
+          .toList(growable: false);
+    }
+    _rebuildResolvedSharedFormFields();
+    answers = !hydrateInitialAnswers || form == null
+        ? {}
+        : _initialAnswersForBooking(
+            booking,
+            fieldLibrary: fieldLibrary,
+          );
+    fields = form == null ? const [] : fieldsForForm(form!, answers: answers);
+    cancelAnswers = {};
+    cancelFields = cancelForm == null
+        ? const []
+        : fieldsForForm(cancelForm!, answers: cancelAnswers);
+    blockedMessage = form == null ? null : _engine.getBlockedMessage(booking, form!);
+    additionalFields = const [];
+    errors = {};
+    cancelErrors = {};
+    _log(
+      'prime success booking=${booking.id ?? "-"} mainForms=${mainForms.length} secondaryForms=${secondaryForms.length} fields=${fields.length} cancelFields=${cancelFields.length}',
+    );
+  }
+
+  Future<void> _primeSharedRequestSnapshotsFromCacheIfNeeded() async {
+    if (StatusRequest.hasResolvedStatuses &&
+        StatusRequest.hasResolvedFields &&
+        StatusRequest.hasResolvedForms) {
+      return;
+    }
+    if (_statusRepository is! StatusRequest) {
+      return;
+    }
+    await _statusRepository.primeResolvedSnapshotsFromLocalCache();
+  }
+
+  bool _canResolveEntireWorkflowFromSharedState() {
+    if (!AuthRequest.hasResolvedUsers ||
+        !StatusRequest.hasResolvedStatuses ||
+        !StatusRequest.hasResolvedFields ||
+        !StatusRequest.hasResolvedForms) {
+      return false;
+    }
+    if (_usersById.isEmpty || _statusesByKey.isEmpty || fieldLibrary.isEmpty) {
+      return false;
+    }
+    if (form == null && cancelForm == null) {
+      return false;
+    }
+    final hasPrimaryFormFields =
+        form == null || (_fieldsByFormId[form!.id ?? '']?.isNotEmpty ?? false);
+    final hasCancelFormFields =
+        cancelForm == null ||
+        (_fieldsByFormId[cancelForm!.id ?? '']?.isNotEmpty ?? false);
+    return hasPrimaryFormFields && hasCancelFormFields;
+  }
+
+  bool _sharedFieldsNeedOptionHydration() {
+    if (fieldLibrary.isEmpty) {
+      return false;
+    }
+    for (final field in fieldLibrary) {
+      final type = (field.type ?? '').trim().toLowerCase();
+      if (type != 'dropdown' && type != 'search_dropdown') {
+        continue;
+      }
+      final sourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(field);
+      if (sourceKey == null || sourceKey.isEmpty) {
+        continue;
+      }
+      if (field.options.isEmpty) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _rebuildResolvedSharedFormFields() {
+    if (mainForms.isEmpty && secondaryForms.isEmpty && form == null && cancelForm == null) {
+      return;
+    }
+    final resolvedFieldByIdentity = <String, StatusField>{};
+    for (final field in fieldLibrary) {
+      final fieldId = normalizeId(field.id);
+      final fieldKey = normalizeId(field.key);
+      if (fieldId != null) {
+        resolvedFieldByIdentity['id:$fieldId'] = field;
+      }
+      if (fieldKey != null) {
+        resolvedFieldByIdentity['key:$fieldKey'] = field;
+      }
+    }
+
+    List<StatusField> resolveFieldsForForm(StatusForm activeForm) {
+      return activeForm.fields.map((field) {
+        final resolved =
+            resolvedFieldByIdentity['id:${normalizeId(field.id) ?? ""}'] ??
+            resolvedFieldByIdentity['key:${normalizeId(field.key) ?? ""}'] ??
+            field;
+        return resolved.copyWith(statusForm: activeForm.toReferenceForm());
+      }).toList(growable: false);
+    }
+
+    final sharedForms = [...mainForms, ...secondaryForms];
+    _fieldsByFormId.clear();
+    for (final activeForm in sharedForms) {
+      final formId = activeForm.id ?? '';
+      if (formId.isEmpty) {
+        continue;
+      }
+      _fieldsByFormId[formId] = resolveFieldsForForm(activeForm);
+    }
+    if (form != null) {
+      fields = fieldsForForm(form!, answers: answers);
+    }
+    if (cancelForm != null) {
+      cancelFields = fieldsForForm(cancelForm!, answers: cancelAnswers);
+    }
+  }
+
+  List<StatusForm> _sharedMatchingForms({
+    required String role,
+    required String currentStatusKey,
+  }) {
+    final statuses = StatusRequest.hydratedStatusesSnapshot;
+    final resolvedRoles = _roleAccessService.workflowResolutionRoles(role);
+    final normalizedCurrentStatusKey = currentStatusKey.trim().toLowerCase();
+
+    bool isKnownActiveStatus(String? statusKey) {
+      final normalizedStatusKey = statusKey?.trim().toLowerCase() ?? '';
+      if (normalizedStatusKey.isEmpty) {
+        return false;
+      }
+      for (final status in statuses) {
+        if ((status.key?.trim().toLowerCase() ?? '') == normalizedStatusKey) {
+          return status.isActive != false;
+        }
+      }
+      return false;
+    }
+
+    bool isKnownActiveStatusOrTerminal(String? statusKey) {
+      final normalizedStatusKey = statusKey?.trim() ?? '';
+      if (normalizedStatusKey.isEmpty) {
+        return true;
+      }
+      return isKnownActiveStatus(normalizedStatusKey);
+    }
+
+    final matchingForms = StatusRequest.hydratedFormsSnapshot
+        .where(
+          (item) =>
+              resolvedRoles.any(item.resolvedRoles.contains) &&
+              (item.currentStatusKey?.trim().toLowerCase() ?? '') ==
+                  normalizedCurrentStatusKey &&
+              isKnownActiveStatus(item.currentStatusKey) &&
+              isKnownActiveStatusOrTerminal(item.nextStatusKey),
+        )
+        .map((item) => item.copyWith())
+        .toList(growable: false);
+    matchingForms.sort((left, right) {
+      final leftUpdated = left.updatedAt ?? left.createdAt ?? DateTime(0);
+      final rightUpdated = right.updatedAt ?? right.createdAt ?? DateTime(0);
+      return leftUpdated.compareTo(rightUpdated);
+    });
+    return matchingForms;
+  }
+
+  void _log(String message) {
+    // Temporary diagnostics removed.
   }
 
   void _cacheCurrentState() {
@@ -373,6 +742,49 @@ class BookingWorkflowViewModel extends BaseViewModel {
       usersById: Map<String, UserModel>.from(_usersById),
       statusesByKey: Map<String, Status>.from(_statusesByKey),
     );
+  }
+
+  String _workflowSnapshotFingerprint(UserModel? user, Booking? booking) {
+    return [
+      user?.id ?? '',
+      user?.role ?? '',
+      booking?.id ?? '',
+      booking?.clientStatus ?? '',
+      booking?.updatedAt?.toIso8601String() ?? '',
+    ].join('|');
+  }
+
+  void _restoreLocalDraftState({
+    required Map<String, dynamic>? preservedAnswers,
+    required Map<String, String>? preservedErrors,
+    required List<StatusField>? preservedAdditionalFields,
+  }) {
+    if (preservedAnswers != null) {
+      answers = Map<String, dynamic>.from(preservedAnswers);
+    }
+    if (preservedErrors != null) {
+      errors = Map<String, String>.from(preservedErrors);
+    }
+    if (preservedAdditionalFields != null) {
+      additionalFields = List<StatusField>.from(preservedAdditionalFields);
+    }
+    if (form != null) {
+      fields = fieldsForForm(form!, answers: answers);
+    }
+  }
+
+  void _clearVisibleWorkflowStateForStatusTransition() {
+    mainForms = const [];
+    secondaryForms = const [];
+    _fieldsByFormId.clear();
+    form = null;
+    cancelForm = null;
+    fields = const [];
+    cancelFields = const [];
+    additionalFields = const [];
+    errors = {};
+    cancelErrors = {};
+    blockedMessage = null;
   }
 
   String? get currentStatusKey {
@@ -527,12 +939,18 @@ class BookingWorkflowViewModel extends BaseViewModel {
     Map<String, dynamic> formAnswers, {
     List<StatusField> additionalFields = const [],
   }) {
+    _log(
+      'validateAnswersForForm booking=${booking?.id ?? "-"} activeFields=${activeFields.map((field) => "${field.key}:${field.required == true ? "req" : "opt"}").join(",")} answerKeys=${formAnswers.keys.join(",")}',
+    );
     final validationErrors = _engine.validateFields(activeFields, formAnswers);
     if (additionalFields.isNotEmpty) {
       validationErrors.addAll(
         _engine.validateFields(additionalFields, formAnswers),
       );
     }
+    _log(
+      'validateAnswersForForm result booking=${booking?.id ?? "-"} errors=${validationErrors.entries.map((entry) => "${entry.key}=${entry.value}").join(" | ")}',
+    );
     return validationErrors;
   }
 
@@ -924,6 +1342,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
 
   bool validateForSubmit() {
     if (blockedMessage != null) {
+      _log(
+        'validateForSubmit blocked booking=${booking?.id ?? "-"} message=${blockedMessage ?? "-"}',
+      );
       notifyListeners();
       return false;
     }
@@ -932,9 +1353,21 @@ class BookingWorkflowViewModel extends BaseViewModel {
     final activeFields = activeForm == null
         ? fields
         : fieldsForForm(activeForm, answers: answers);
-    final validationErrors = _engine.validateFields(activeFields, answers);
+    final effectiveActiveFields = activeFields.isEmpty && fields.isNotEmpty
+        ? fields
+        : activeFields;
+    _log(
+      'validateForSubmit start booking=${booking?.id ?? "-"} form=${activeForm?.id ?? "-"} activeFields=${effectiveActiveFields.map((field) => "${field.key}:${field.required == true ? "req" : "opt"}").join(",")} answerKeys=${answers.keys.join(",")}',
+    );
+    final validationErrors = _engine.validateFields(
+      effectiveActiveFields,
+      answers,
+    );
     validationErrors.addAll(_engine.validateFields(additionalFields, answers));
     errors = validationErrors;
+    _log(
+      'validateForSubmit result booking=${booking?.id ?? "-"} errors=${validationErrors.entries.map((entry) => "${entry.key}=${entry.value}").join(" | ")}',
+    );
     notifyListeners();
     return validationErrors.isEmpty;
   }

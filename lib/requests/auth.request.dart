@@ -1916,8 +1916,7 @@ class AuthRequest implements AuthRepository {
   }
 
   void _logLogin(String message) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][AuthLogin] $message');
+    // Temporary debug logging removed.
   }
 
   Future<UserModel> _inflateUser(

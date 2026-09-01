@@ -11,6 +11,7 @@ import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 
@@ -203,8 +204,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
   }
 
   void _log(String message) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][AdminRolesLoad] $message');
+    // Temporary debug logging removed.
   }
 
   List<_AccessRoleEntry> _buildRoleEntries(Iterable<String> roleKeys) {
@@ -344,7 +344,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
                 DispatcherAccessConfig.defaults(roleKey: role.roleKey)
                     .capabilities,
           );
-    final savedDraft = await showDialog<Map<String, bool>>(
+    final savedDraft = await showAppDialog<Map<String, bool>>(
       context: context,
       builder: (dialogContext) => _RoleAccessDialog(
         role: role,
@@ -376,7 +376,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
       AppSnackbar.showError(context, 'You do not have access to update roles.');
       return;
     }
-    final createdRoleKey = await showDialog<String>(
+    final createdRoleKey = await showAppDialog<String>(
       context: context,
       builder: (dialogContext) => const _NewRoleDialog(),
     );

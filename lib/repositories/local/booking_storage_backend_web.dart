@@ -11,7 +11,8 @@ BookingStorageBackend createBookingStorageBackend() =>
     _IndexedDbBookingStorageBackend();
 
 class _IndexedDbBookingStorageBackend implements BookingStorageBackend {
-  Object? _database;
+  static Future<Object>? _databaseFuture;
+  static Future<void> _operationTail = Future<void>.value();
 
   @override
   Future<void> initialize() async {
@@ -19,33 +20,34 @@ class _IndexedDbBookingStorageBackend implements BookingStorageBackend {
   }
 
   @override
-  Future<List<String>> readStringList(String key) async {
+  Future<List<String>> readStringList(String key) => _runSerialized(() async {
     final db = await _openDatabase() as dynamic;
     final transaction = db.transaction(_storeName, 'readonly');
     final store = transaction.objectStore(_storeName);
+    // A completed read request already has its result. Waiting for the whole
+    // transaction here can hang behind another service's write transaction.
     final value = await store.getObject(key);
-    await transaction.completed;
     if (value is List) {
       return value.map((item) => item.toString()).toList();
     }
-    return const [];
-  }
+    return const <String>[];
+  });
 
   @override
-  Future<void> writeStringList(String key, List<String> values) async {
-    final db = await _openDatabase() as dynamic;
-    final transaction = db.transaction(_storeName, 'readwrite');
-    final store = transaction.objectStore(_storeName);
-    await store.put(values, key);
-    await transaction.completed;
-  }
+  Future<void> writeStringList(String key, List<String> values) =>
+      _runSerialized(() async {
+        final db = await _openDatabase() as dynamic;
+        final transaction = db.transaction(_storeName, 'readwrite');
+        final store = transaction.objectStore(_storeName);
+        await store.put(values, key);
+        await transaction.completed;
+      });
 
   Future<Object> _openDatabase() async {
-    final existing = _database;
-    if (existing != null) {
-      return existing;
-    }
+    return _databaseFuture ??= _openSharedDatabase();
+  }
 
+  Future<Object> _openSharedDatabase() async {
     final factory = html.window.indexedDB;
     if (factory == null) {
       throw StateError('IndexedDB is not available in this browser.');
@@ -62,7 +64,12 @@ class _IndexedDbBookingStorageBackend implements BookingStorageBackend {
         }
       },
     );
-    _database = database;
     return database;
+  }
+
+  Future<T> _runSerialized<T>(Future<T> Function() operation) {
+    final scheduled = _operationTail.then((_) => operation());
+    _operationTail = scheduled.then<void>((_) {}, onError: (Object _) {});
+    return scheduled;
   }
 }

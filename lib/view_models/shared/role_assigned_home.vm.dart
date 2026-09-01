@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
@@ -348,7 +347,6 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   }
 
   void _log(String message) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][RoleAssignedHome] $message');
+    // Temporary debug logging removed.
   }
 }

@@ -9,6 +9,7 @@ import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
@@ -160,7 +161,7 @@ class AdminFieldsView extends StatelessWidget {
         !(initialField == null ? vm.canCreateFields : vm.canUpdateFields)) {
       return;
     }
-    final savedField = await showDialog<StatusField>(
+    final savedField = await showAppDialog<StatusField>(
       context: context,
       builder: (dialogContext) => _FieldEditorDialog(
         title: title,

@@ -63,6 +63,7 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
       buttonText: formButtonText,
       paletteOverride: palette,
       required: field.required == true,
+      hasError: errorText?.trim().isNotEmpty == true,
       subtitle: subtitle,
       instructions: instructions,
       inputTopSpacing: usesDropdownCard ? 10 : 14,
@@ -318,36 +319,41 @@ class _SearchDropdownFieldInput extends StatelessWidget {
         ? field.title!.trim()
         : 'Field';
     if (field.options.isEmpty) {
-    } else {
-    }
+    } else {}
 
     return AdminSearchSelectFormField(
       initialValue: initialValue?.toString(),
       focusNode: focusNode,
       dialogTitle: adminSelectPlaceholder(fieldLabel),
-      decoration: adminPlainDropdownDecoration(
-        field.required == true
-            ? adminSelectPlaceholder(fieldLabel, override: field.placeholder)
-            : ((field.placeholder?.trim().isNotEmpty == true)
-                  ? field.placeholder!.trim()
-                  : 'Optional'),
-      ).copyWith(
-        fillColor: palette.surface,
-        hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: palette.border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: palette.accent),
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: palette.border),
-        ),
-        errorText: errorText,
-      ),
+      decoration:
+          adminPlainDropdownDecoration(
+            field.required == true
+                ? adminSelectPlaceholder(
+                    fieldLabel,
+                    override: field.placeholder,
+                  )
+                : ((field.placeholder?.trim().isNotEmpty == true)
+                      ? field.placeholder!.trim()
+                      : 'Optional'),
+          ).copyWith(
+            fillColor: Colors.white,
+            hintStyle: adminFieldHintTextStyle.copyWith(
+              color: palette.accentMuted,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: palette.border),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: palette.accent),
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: palette.border),
+            ),
+            errorText: errorText,
+          ),
       options: field.options,
       onChanged: (value) => _closeSelectionFlow(context, value),
     );
@@ -408,36 +414,41 @@ class _PalawanLocationFieldInput extends StatelessWidget {
       initialValue: initialValue?.toString(),
       focusNode: focusNode,
       dialogTitle: adminSelectPlaceholder(
-        field.title?.trim().isNotEmpty == true ? field.title!.trim() : 'Location',
+        field.title?.trim().isNotEmpty == true
+            ? field.title!.trim()
+            : 'Location',
       ),
-      decoration: adminPlainDropdownDecoration(
-        field.required == true
-            ? adminSelectPlaceholder(
-                field.title?.trim().isNotEmpty == true
-                    ? field.title!.trim()
-                    : 'Location',
-                override: field.placeholder,
-              )
-            : ((field.placeholder?.trim().isNotEmpty == true)
-                  ? field.placeholder!.trim()
-                  : 'Optional'),
-      ).copyWith(
-        fillColor: palette.surface,
-        hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: palette.border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: palette.accent),
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: palette.border),
-        ),
-        errorText: errorText,
-      ),
+      decoration:
+          adminPlainDropdownDecoration(
+            field.required == true
+                ? adminSelectPlaceholder(
+                    field.title?.trim().isNotEmpty == true
+                        ? field.title!.trim()
+                        : 'Location',
+                    override: field.placeholder,
+                  )
+                : ((field.placeholder?.trim().isNotEmpty == true)
+                      ? field.placeholder!.trim()
+                      : 'Optional'),
+          ).copyWith(
+            fillColor: Colors.white,
+            hintStyle: adminFieldHintTextStyle.copyWith(
+              color: palette.accentMuted,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: palette.border),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: palette.accent),
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: palette.border),
+            ),
+            errorText: errorText,
+          ),
       options: palawanLocationOptions,
       onChanged: (value) => _closeSelectionFlow(context, value),
     );
@@ -577,7 +588,22 @@ class _TextFieldInputState extends State<_TextFieldInput> {
     widget.onChanged(raw);
   }
 
-  void _handleFocusChanged() {
+  void _handleFocusChanged() {}
+
+  bool get _isNameField {
+    final key = (widget.field.key ?? '').trim().toLowerCase();
+    final title = (widget.field.title ?? '').trim();
+    return key.contains('name') ||
+        RegExp(r'\bname\b', caseSensitive: false).hasMatch(title);
+  }
+
+  bool get _isPhoneField {
+    final haystack = '${widget.field.key ?? ''} ${widget.field.title ?? ''}'
+        .toLowerCase();
+    return widget.field.type == 'phone' ||
+        haystack.contains('phone') ||
+        haystack.contains('mobile') ||
+        haystack.contains('contact number');
   }
 
   @override
@@ -600,13 +626,16 @@ class _TextFieldInputState extends State<_TextFieldInput> {
     return TextField(
       controller: _controller,
       focusNode: _focusNode,
-      keyboardType: widget.keyboardType,
+      keyboardType: _isPhoneField ? TextInputType.phone : widget.keyboardType,
       textInputAction: widget.nextFocusNode != null
           ? TextInputAction.next
           : TextInputAction.done,
-      inputFormatters: widget.field.type == 'phone'
+      textCapitalization: _isNameField
+          ? TextCapitalization.words
+          : TextCapitalization.none,
+      inputFormatters: _isPhoneField
           ? const [PhilippinesPhoneInputFormatter()]
-          : null,
+          : (_isNameField ? const [NameCaseTextInputFormatter()] : null),
       onSubmitted: (_) {
         final nextFocusNode = widget.nextFocusNode;
         if (nextFocusNode != null) {
@@ -701,8 +730,7 @@ class _DropdownFieldInput extends StatelessWidget {
         ? field.title!.trim()
         : 'Field';
     if (effectiveOptions.isEmpty) {
-    } else {
-    }
+    } else {}
     final hintText = placeholder?.isNotEmpty == true
         ? placeholder!
         : field.required == true
@@ -731,7 +759,7 @@ class _DropdownFieldInput extends StatelessWidget {
       iconEnabledColor: palette.accent,
       style: adminDropdownDisplayTextStyle,
       decoration: adminPlainDropdownDecoration(hintText).copyWith(
-        fillColor: palette.surface,
+        fillColor: Colors.white,
         hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
@@ -762,7 +790,7 @@ class _DropdownFieldInput extends StatelessWidget {
           ),
         );
       }).toList(),
-        onChanged: (value) => closeSelectionFlow(value),
+      onChanged: (value) => closeSelectionFlow(value),
       onDisabledTap: onDisabledTap,
     );
   }
@@ -809,7 +837,8 @@ class _CheckboxFieldInputState extends State<_CheckboxFieldInput> {
         ? List<String>.from(widget.initialValue as List)
         : <String>[];
     if (_selected.length == nextSelected.length) {
-      final sameValues = _selected.toSet().containsAll(nextSelected) &&
+      final sameValues =
+          _selected.toSet().containsAll(nextSelected) &&
           nextSelected.toSet().containsAll(_selected);
       if (sameValues) {
         return;

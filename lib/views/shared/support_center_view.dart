@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -145,26 +144,18 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   String? get _effectiveRole =>
       _roleAccessService.effectiveRoleKey(widget.user.role);
 
-  bool get _canReadSupport => _roleAccessService.canAccess(
-    'support.read',
-    role: _effectiveRole,
-  );
+  bool get _canReadSupport =>
+      _roleAccessService.canAccess('support.read', role: _effectiveRole);
 
-  bool get _canCreateSupport => _roleAccessService.canAccess(
-    'support.create',
-    role: _effectiveRole,
-  );
+  bool get _canCreateSupport =>
+      _roleAccessService.canAccess('support.create', role: _effectiveRole);
 
-  bool get _canUpdateSupport => _roleAccessService.canAccess(
-    'support.update',
-    role: _effectiveRole,
-  );
+  bool get _canUpdateSupport =>
+      _roleAccessService.canAccess('support.update', role: _effectiveRole);
 
-  bool get _isAdmin => _canReadSupport &&
-      _roleAccessService.canAccess(
-        'users.read',
-        role: _effectiveRole,
-      );
+  bool get _isAdmin =>
+      _canReadSupport &&
+      _roleAccessService.canAccess('users.read', role: _effectiveRole);
 
   bool get _hasStableAdminSelection =>
       _isAdmin &&
@@ -203,9 +194,11 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     if (currentUserId == null) {
       return const <SupportThread>[];
     }
-    return allThreads.where((thread) {
-      return normalizeId(thread.requesterUserId) == currentUserId;
-    }).toList(growable: false)
+    return allThreads
+        .where((thread) {
+          return normalizeId(thread.requesterUserId) == currentUserId;
+        })
+        .toList(growable: false)
       ..sort((left, right) {
         final leftDate = left.updatedAt ?? left.createdAt;
         final rightDate = right.updatedAt ?? right.createdAt;
@@ -236,7 +229,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       _cachedAdminUsers = List<UserModel>.from(sharedAdminUsers);
       _cachedHasLoadedAdminUsers = true;
     } else if (!_isAdmin && AuthRequest.hasResolvedUsers) {
-      final sharedSupportAgent = AuthRequest.hydratedUsersSnapshot.where((user) {
+      final sharedSupportAgent = AuthRequest.hydratedUsersSnapshot.where((
+        user,
+      ) {
         return normalizeId(user.id) == '1';
       }).firstOrNull;
       _supportAgentUser = sharedSupportAgent;
@@ -309,7 +304,10 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     if (marker.isEmpty || _threadReadMarkersById[threadId] == marker) {
       return;
     }
-    final nextMarkers = <String, String>{..._threadReadMarkersById, threadId: marker};
+    final nextMarkers = <String, String>{
+      ..._threadReadMarkersById,
+      threadId: marker,
+    };
     if (mounted) {
       setState(() {
         _threadReadMarkersById = nextMarkers;
@@ -339,7 +337,8 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       return;
     }
     final marker = _supportRequest.threadReadMarkerForMessage(latestMessage);
-    if (marker.isEmpty || _threadReadMarkersById[normalizedThreadId] == marker) {
+    if (marker.isEmpty ||
+        _threadReadMarkersById[normalizedThreadId] == marker) {
       return;
     }
     final nextMarkers = <String, String>{
@@ -567,12 +566,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       return;
     }
     try {
-      final thread = await _supportRequest.findAdminDirectThread(
-        targetUser: targetUser,
-      ).timeout(
-        _supportThreadLookupTimeout,
-        onTimeout: () => null,
-      );
+      final thread = await _supportRequest
+          .findAdminDirectThread(targetUser: targetUser)
+          .timeout(_supportThreadLookupTimeout, onTimeout: () => null);
       if (!mounted) {
         _pendingInitialAdminUserId = null;
         return;
@@ -755,8 +751,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         ? const <SupportMessage>[]
         : (_supportRequest.peekLastVisibleMessages(threadId) ??
               const <SupportMessage>[]);
-    final isStartingConversation =
-        threadId == null || cachedMessages.isEmpty;
+    final isStartingConversation = threadId == null || cachedMessages.isEmpty;
     final canSendCurrentMessage = isStartingConversation
         ? _canCreateSupport
         : _canUpdateSupport;
@@ -771,9 +766,10 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     }
     if (_isAdmin && threadId == null && _selectedAdminDraftUser != null) {
       try {
-        final thread = await _supportRequest.createLocalAdminDirectThreadForSend(
-          targetUser: _selectedAdminDraftUser!,
-        );
+        final thread = await _supportRequest
+            .createLocalAdminDirectThreadForSend(
+              targetUser: _selectedAdminDraftUser!,
+            );
         if (!mounted) {
           return;
         }
@@ -917,19 +913,19 @@ class _SupportCenterViewState extends State<SupportCenterView> {
             initialData: _initialSupportThreadsForCurrentUser(),
             stream: _supportRequest.watchAllThreads(),
             builder: (context, snapshot) {
-              final threads = (snapshot.data ?? const <SupportThread>[])
-                  .where((thread) {
-                    final isSelectedThread =
-                        normalizeId(thread.id) == normalizeId(_selectedThreadId);
-                    final matchesDraftUser =
-                        _selectedAdminDraftUser != null &&
-                        normalizeId(thread.requesterUserId) ==
-                            normalizeId(_selectedAdminDraftUser!.id);
-                    return thread.hasConversation ||
-                        isSelectedThread ||
-                        matchesDraftUser;
-                  })
-                  .toList();
+              final threads = (snapshot.data ?? const <SupportThread>[]).where((
+                thread,
+              ) {
+                final isSelectedThread =
+                    normalizeId(thread.id) == normalizeId(_selectedThreadId);
+                final matchesDraftUser =
+                    _selectedAdminDraftUser != null &&
+                    normalizeId(thread.requesterUserId) ==
+                        normalizeId(_selectedAdminDraftUser!.id);
+                return thread.hasConversation ||
+                    isSelectedThread ||
+                    matchesDraftUser;
+              }).toList();
               _selectedThreadId = _resolvedSelectedThreadId(
                 currentSelectedThreadId: _selectedThreadId,
                 threads: threads,
@@ -1072,6 +1068,10 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                         },
                         onOpenThread: _ensureSelectedThread,
                       );
+                final selectedCounterpartUser = _isAdmin
+                    ? _resolvedThreadRequesterUser(selectedThread)
+                    : _supportAgentUser;
+                final supportUsersById = _supportUsersById();
                 final chatPanel = _SupportChatPanel(
                   key: ValueKey(
                     '${selectedThread?.id ?? 'none'}:'
@@ -1083,7 +1083,8 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                   draftUser: _isAdmin
                       ? _selectedAdminDraftUser
                       : _supportAgentUser,
-                  counterpartUser: _isAdmin ? null : _supportAgentUser,
+                  counterpartUser: selectedCounterpartUser,
+                  usersById: supportUsersById,
                   subtitleOverride: _isAdmin ? null : 'Client Support',
                   onBack: _isAdmin
                       ? () {
@@ -1147,7 +1148,8 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                                       currentUser: widget.user,
                                       thread: selectedThread,
                                       draftUser: _selectedAdminDraftUser,
-                                      counterpartUser: null,
+                                      counterpartUser: selectedCounterpartUser,
+                                      usersById: supportUsersById,
                                       subtitleOverride: null,
                                       onBack: null,
                                       messageController: _messageController,
@@ -1164,25 +1166,26 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                                           _pendingAttachments = next;
                                         });
                                       },
-                                    onSend: _sendMessage,
-                                    canCompose:
-                                        _canCreateSupport || _canUpdateSupport,
-                                    supportRequest: _supportRequest,
-                                    onMessagesVisible: (messages) {
-                                      final threadId = selectedThread?.id;
-                                      if (threadId == null) {
-                                        return;
-                                      }
-                                      unawaited(
-                                        _markThreadReadFromMessages(
-                                          threadId,
-                                          messages,
-                                        ),
-                                      );
-                                    },
-                                    scrollController: _chatScrollController,
-                                    scrollRequestTick: _chatScrollRequestTick,
-                                  ),
+                                      onSend: _sendMessage,
+                                      canCompose:
+                                          _canCreateSupport ||
+                                          _canUpdateSupport,
+                                      supportRequest: _supportRequest,
+                                      onMessagesVisible: (messages) {
+                                        final threadId = selectedThread?.id;
+                                        if (threadId == null) {
+                                          return;
+                                        }
+                                        unawaited(
+                                          _markThreadReadFromMessages(
+                                            threadId,
+                                            messages,
+                                          ),
+                                        );
+                                      },
+                                      scrollController: _chatScrollController,
+                                      scrollRequestTick: _chatScrollRequestTick,
+                                    ),
                                   ),
                                 ],
                               );
@@ -1216,6 +1219,39 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         ],
       ),
     );
+  }
+
+  UserModel? _resolvedThreadRequesterUser(SupportThread? thread) {
+    final requesterId = normalizeId(thread?.requesterUserId);
+    if (requesterId == null) {
+      return null;
+    }
+    return _adminUsers
+            .where((user) => normalizeId(user.id) == requesterId)
+            .firstOrNull ??
+        AuthRequest.hydratedUsersSnapshot
+            .where((user) => normalizeId(user.id) == requesterId)
+            .firstOrNull;
+  }
+
+  Map<String, UserModel> _supportUsersById() {
+    final usersById = <String, UserModel>{};
+    void addUser(UserModel? user) {
+      final userId = normalizeId(user?.id);
+      if (userId != null && user != null) {
+        usersById[userId] = user;
+      }
+    }
+
+    addUser(widget.user);
+    addUser(_supportAgentUser);
+    for (final user in _adminUsers) {
+      addUser(user);
+    }
+    for (final user in AuthRequest.hydratedUsersSnapshot) {
+      addUser(user);
+    }
+    return usersById;
   }
 
   String? _resolvedSelectedThreadId({
@@ -1254,8 +1290,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   }
 
   void _log(String message) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][SupportLoad] $message');
+    // Temporary debug logging removed.
   }
 }
 
@@ -1485,6 +1520,10 @@ class _AdminSupportThreadList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final usersById = <String, UserModel>{
+      for (final user in users)
+        if (normalizeId(user.id) != null) normalizeId(user.id)!: user,
+    };
     final searchQuery = searchController.text.trim().toLowerCase();
     final latestThreadByUserId = <String, SupportThread>{};
     for (final thread in threads) {
@@ -1524,6 +1563,16 @@ class _AdminSupportThreadList extends StatelessWidget {
             decoration: InputDecoration(
               hintText: 'Search user',
               prefixIcon: const Icon(Icons.search_rounded),
+              suffixIcon: searchController.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        searchController.clear();
+                        onSearchChanged();
+                      },
+                      icon: const Icon(Icons.close_rounded),
+                    ),
               filled: true,
               fillColor: Colors.white,
               contentPadding: const EdgeInsets.symmetric(
@@ -1604,6 +1653,8 @@ class _AdminSupportThreadList extends StatelessWidget {
                     return _SupportThreadTile(
                       currentUser: currentUser,
                       thread: thread,
+                      requesterUser:
+                          usersById[normalizeId(thread.requesterUserId)],
                       isUnread: isThreadUnread(thread),
                       isSelected:
                           normalizeId(thread.id) ==
@@ -1669,9 +1720,7 @@ class _SupportUserThreadTile extends StatelessWidget {
       fontWeight: isUnread ? FontWeight.w800 : FontWeight.w600,
     );
     final subtitleStyle = TextStyle(
-      color: AppColors.primaryColor.withValues(
-        alpha: isUnread ? 0.88 : 0.68,
-      ),
+      color: AppColors.primaryColor.withValues(alpha: isUnread ? 0.88 : 0.68),
       fontWeight: isUnread ? FontWeight.w700 : FontWeight.w500,
     );
     return AppMousePressable(
@@ -1683,17 +1732,19 @@ class _SupportUserThreadTile extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: isSelected
-                ? AppColors.primaryColor
-                : unselectedBorderColor,
+            color: isSelected ? AppColors.primaryColor : unselectedBorderColor,
           ),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             AppProfileAvatar(
+              key: ValueKey<String>(
+                'support-user-avatar:${normalizeId(user.id) ?? '-'}:${user.photo?.trim() ?? ''}',
+              ),
               radius: 22,
               photo: user.photo,
+              debugLabel: 'support-user:${normalizeId(user.id) ?? '-'}',
               fallbackText: _supportInitials(title),
               borderColor: avatarBorderColor,
             ),
@@ -1744,6 +1795,7 @@ class _SupportThreadTile extends StatelessWidget {
   const _SupportThreadTile({
     required this.currentUser,
     required this.thread,
+    this.requesterUser,
     required this.isUnread,
     required this.isSelected,
     required this.onTap,
@@ -1751,12 +1803,14 @@ class _SupportThreadTile extends StatelessWidget {
 
   final UserModel currentUser;
   final SupportThread thread;
+  final UserModel? requesterUser;
   final bool isUnread;
   final bool isSelected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final requesterPhoto = requesterUser?.photo ?? thread.requesterPhoto;
     final unselectedBorderColor = AppColors.primaryBorder.withValues(
       alpha: 0.58,
     );
@@ -1784,9 +1838,7 @@ class _SupportThreadTile extends StatelessWidget {
       fontWeight: isUnread ? FontWeight.w800 : FontWeight.w600,
     );
     final subtitleStyle = TextStyle(
-      color: AppColors.primaryColor.withValues(
-        alpha: isUnread ? 0.88 : 0.68,
-      ),
+      color: AppColors.primaryColor.withValues(alpha: isUnread ? 0.88 : 0.68),
       fontWeight: isUnread ? FontWeight.w700 : FontWeight.w500,
     );
     return AppMousePressable(
@@ -1798,17 +1850,20 @@ class _SupportThreadTile extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: isSelected
-                ? AppColors.primaryColor
-                : unselectedBorderColor,
+            color: isSelected ? AppColors.primaryColor : unselectedBorderColor,
           ),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             AppProfileAvatar(
+              key: ValueKey<String>(
+                'support-thread-avatar:${normalizeId(thread.id) ?? '-'}:${requesterPhoto?.trim() ?? ''}',
+              ),
               radius: 22,
-              photo: thread.requesterPhoto,
+              photo: requesterPhoto,
+              debugLabel:
+                  'support-thread:${normalizeId(thread.requesterUserId) ?? '-'}',
               fallbackText: _supportInitials(title),
               borderColor: avatarBorderColor,
             ),
@@ -1861,6 +1916,7 @@ class _SupportChatPanel extends StatefulWidget {
     required this.thread,
     required this.draftUser,
     required this.counterpartUser,
+    required this.usersById,
     required this.subtitleOverride,
     required this.onBack,
     required this.messageController,
@@ -1880,6 +1936,7 @@ class _SupportChatPanel extends StatefulWidget {
   final SupportThread? thread;
   final UserModel? draftUser;
   final UserModel? counterpartUser;
+  final Map<String, UserModel> usersById;
   final String? subtitleOverride;
   final VoidCallback? onBack;
   final TextEditingController messageController;
@@ -2025,11 +2082,16 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                   const SizedBox(width: 10),
                 ],
                 AppProfileAvatar(
+                  key: ValueKey<String>(
+                    'support-header-avatar:${normalizeId(widget.counterpartUser?.id) ?? normalizeId(widget.thread?.requesterUserId) ?? normalizeId(widget.draftUser?.id) ?? '-'}:${(widget.counterpartUser?.photo ?? widget.thread?.requesterPhoto ?? widget.draftUser?.photo ?? '').trim()}',
+                  ),
                   radius: 22,
                   photo:
                       widget.counterpartUser?.photo ??
                       widget.thread?.requesterPhoto ??
                       widget.draftUser?.photo,
+                  debugLabel:
+                      'support-header:${normalizeId(widget.counterpartUser?.id) ?? normalizeId(widget.thread?.requesterUserId) ?? normalizeId(widget.draftUser?.id) ?? '-'}',
                   fallbackText: _supportInitials(activeTitle),
                   borderColor: AppColors.primarySurfaceAlt,
                 ),
@@ -2176,7 +2238,9 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                                   padding: EdgeInsets.only(
                                     bottom: index == messages.length - 1
                                         ? 0
-                                        : (isFollowedBySameVisualGroup ? 6 : 12),
+                                        : (isFollowedBySameVisualGroup
+                                              ? 6
+                                              : 12),
                                   ),
                                   child: _SupportMessageBubble(
                                     currentUser: widget.currentUser,
@@ -2185,6 +2249,10 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                                         widget.thread?.requesterUserId ??
                                         widget.draftUser?.id,
                                     message: message,
+                                    senderUser:
+                                        widget.usersById[normalizeId(
+                                          message.senderUserId,
+                                        )],
                                     isMine: isMine,
                                     showSenderMeta:
                                         _shouldShowSupportMessageSenderMeta(
@@ -2196,12 +2264,11 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                                               widget.thread?.requesterUserId ??
                                               widget.draftUser?.id,
                                         ),
-                                    showAvatar:
-                                        _shouldShowSupportMessageAvatar(
-                                          messages: messages,
-                                          index: index,
-                                          currentUser: widget.currentUser,
-                                        ),
+                                    showAvatar: _shouldShowSupportMessageAvatar(
+                                      messages: messages,
+                                      index: index,
+                                      currentUser: widget.currentUser,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -2229,9 +2296,8 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                     ) {
                       return _PendingAttachmentPreviewCard(
                         attachment: entry.value,
-                        onRemove: () => widget.onRemovePendingAttachment(
-                          entry.key,
-                        ),
+                        onRemove: () =>
+                            widget.onRemovePendingAttachment(entry.key),
                       );
                     }).toList(),
                   ),
@@ -2255,8 +2321,7 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                               event.logicalKey == LogicalKeyboardKey.enter ||
                               event.logicalKey ==
                                   LogicalKeyboardKey.numpadEnter;
-                          if (event is KeyDownEvent) {
-                          }
+                          if (event is KeyDownEvent) {}
                           if (event is KeyDownEvent &&
                               isEnter &&
                               !HardwareKeyboard.instance.isShiftPressed) {
@@ -2273,8 +2338,9 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                             if (!mounted) {
                               return;
                             }
-                            final nextHasContent =
-                                widget.messageController.text.trim().isNotEmpty;
+                            final nextHasContent = widget.messageController.text
+                                .trim()
+                                .isNotEmpty;
                             if (nextHasContent == _hasComposerContent) {
                               return;
                             }
@@ -2290,7 +2356,7 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                                 ? 'Type your message'
                                 : 'Messaging is unavailable for this role',
                             filled: true,
-                            fillColor: AppColors.primarySurface,
+                            fillColor: Colors.white,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(18),
                               borderSide: const BorderSide(
@@ -2370,6 +2436,7 @@ class _SupportMessageBubble extends StatelessWidget {
     required this.currentUser,
     required this.primaryCounterpartUserId,
     required this.message,
+    this.senderUser,
     required this.isMine,
     required this.showSenderMeta,
     required this.showAvatar,
@@ -2378,6 +2445,7 @@ class _SupportMessageBubble extends StatelessWidget {
   final UserModel currentUser;
   final String? primaryCounterpartUserId;
   final SupportMessage message;
+  final UserModel? senderUser;
   final bool isMine;
   final bool showSenderMeta;
   final bool showAvatar;
@@ -2397,13 +2465,18 @@ class _SupportMessageBubble extends StatelessWidget {
         .toList(growable: false);
     final hasBubbleContent = hasText || fileAttachments.isNotEmpty;
     final canShowSenderMeta = !isMine;
-    final senderName = (message.senderName?.trim().isNotEmpty == true)
-        ? _supportShortPersonName(message.senderName!)
+    final resolvedSenderName = senderUser?.name ?? message.senderName;
+    final senderName = (resolvedSenderName?.trim().isNotEmpty == true)
+        ? _supportShortPersonName(resolvedSenderName!)
         : (() {
-            final fallback = humanizeDropdownValue(message.senderRole);
+            final fallback = humanizeDropdownValue(
+              senderUser?.role ?? message.senderRole,
+            );
             return fallback.trim().isNotEmpty ? fallback : 'Support';
           })();
-    final senderRoleLabel = humanizeDropdownValue(message.senderRole).trim();
+    final senderRoleLabel = humanizeDropdownValue(
+      senderUser?.role ?? message.senderRole,
+    ).trim();
     final senderMetaLabel = senderRoleLabel.isNotEmpty
         ? '$senderName | $senderRoleLabel'
         : senderName;
@@ -2438,8 +2511,13 @@ class _SupportMessageBubble extends StatelessWidget {
                 if (canShowSenderMeta) ...[
                   if (showAvatar)
                     AppProfileAvatar(
+                      key: ValueKey<String>(
+                        'support-message-avatar:${normalizeId(message.id) ?? '-'}:${normalizeId(message.senderUserId) ?? '-'}:${(senderUser?.photo ?? message.senderPhoto ?? '').trim()}',
+                      ),
                       radius: 16,
-                      photo: message.senderPhoto,
+                      photo: senderUser?.photo ?? message.senderPhoto,
+                      debugLabel:
+                          'support-message:${normalizeId(message.senderUserId) ?? '-'}',
                       fallbackText: _supportInitials(senderName),
                       borderColor: AppColors.primarySurfaceAlt,
                     )
@@ -2480,11 +2558,14 @@ class _SupportMessageBubble extends StatelessWidget {
                                   ),
                                 if (fileAttachments.isNotEmpty) ...[
                                   if (hasText) const SizedBox(height: 10),
-                                  ...fileAttachments.asMap().entries.map((entry) {
+                                  ...fileAttachments.asMap().entries.map((
+                                    entry,
+                                  ) {
                                     return Padding(
                                       padding: EdgeInsets.only(
                                         bottom:
-                                            entry.key == fileAttachments.length - 1
+                                            entry.key ==
+                                                fileAttachments.length - 1
                                             ? 0
                                             : 10,
                                       ),
@@ -2503,8 +2584,9 @@ class _SupportMessageBubble extends StatelessWidget {
                           ...imageAttachments.asMap().entries.map((entry) {
                             return Padding(
                               padding: EdgeInsets.only(
-                                bottom:
-                                    entry.key == imageAttachments.length - 1 ? 0 : 10,
+                                bottom: entry.key == imageAttachments.length - 1
+                                    ? 0
+                                    : 10,
                               ),
                               child: _SupportAttachmentCard(
                                 attachment: entry.value,
@@ -2635,10 +2717,7 @@ class _SupportAttachmentCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               'Photo sending',
-              style: TextStyle(
-                color: textColor,
-                fontWeight: FontWeight.w700,
-              ),
+              style: TextStyle(color: textColor, fontWeight: FontWeight.w700),
             ),
           ],
         ),
@@ -2813,10 +2892,7 @@ class _SupportTopicDropdown extends StatelessWidget {
       initialValue: selectedTopicKey,
       iconEnabledColor: AppColors.primaryColor,
       style: adminDropdownDisplayTextStyle,
-      decoration: adminPlainDropdownDecoration(
-        'Topic',
-        radius: 16,
-      ).copyWith(
+      decoration: adminPlainDropdownDecoration('Topic', radius: 16).copyWith(
         constraints: const BoxConstraints(minHeight: adminModalFieldMinHeight),
       ),
       items: supportTopicKeys
@@ -2857,10 +2933,7 @@ class _SupportBookingDropdown extends StatelessWidget {
       initialValue: selectedBookingId,
       iconEnabledColor: AppColors.primaryColor,
       style: adminDropdownDisplayTextStyle,
-      decoration: adminPlainDropdownDecoration(
-        'Booking',
-        radius: 16,
-      ).copyWith(
+      decoration: adminPlainDropdownDecoration('Booking', radius: 16).copyWith(
         constraints: const BoxConstraints(minHeight: adminModalFieldMinHeight),
       ),
       items: bookings

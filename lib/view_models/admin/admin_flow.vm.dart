@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/status_field.dart';
@@ -129,42 +128,30 @@ class AdminFlowViewModel extends BaseViewModel {
       _cachedFieldLibrary.isEmpty &&
       statuses.isEmpty &&
       _cachedStatuses.isEmpty;
-  bool get canReadForms => _roleAccessService.canAccess(
-    DispatcherAccessCapability.formsRead,
-  );
-  bool get canCreateForms => _roleAccessService.canAccess(
-    DispatcherAccessCapability.formsCreate,
-  );
-  bool get canUpdateForms => _roleAccessService.canAccess(
-    DispatcherAccessCapability.formsUpdate,
-  );
-  bool get canDeleteForms => _roleAccessService.canAccess(
-    DispatcherAccessCapability.formsDelete,
-  );
-  bool get canReadFields => _roleAccessService.canAccess(
-    DispatcherAccessCapability.fieldsRead,
-  );
-  bool get canCreateFields => _roleAccessService.canAccess(
-    DispatcherAccessCapability.fieldsCreate,
-  );
-  bool get canUpdateFields => _roleAccessService.canAccess(
-    DispatcherAccessCapability.fieldsUpdate,
-  );
-  bool get canDeleteFields => _roleAccessService.canAccess(
-    DispatcherAccessCapability.fieldsDelete,
-  );
-  bool get canReadStatuses => _roleAccessService.canAccess(
-    DispatcherAccessCapability.statusesRead,
-  );
-  bool get canCreateStatuses => _roleAccessService.canAccess(
-    DispatcherAccessCapability.statusesCreate,
-  );
-  bool get canUpdateStatuses => _roleAccessService.canAccess(
-    DispatcherAccessCapability.statusesUpdate,
-  );
-  bool get canDeleteStatuses => _roleAccessService.canAccess(
-    DispatcherAccessCapability.statusesDelete,
-  );
+  bool get canReadForms =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.formsRead);
+  bool get canCreateForms =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.formsCreate);
+  bool get canUpdateForms =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.formsUpdate);
+  bool get canDeleteForms =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.formsDelete);
+  bool get canReadFields =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.fieldsRead);
+  bool get canCreateFields =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.fieldsCreate);
+  bool get canUpdateFields =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.fieldsUpdate);
+  bool get canDeleteFields =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.fieldsDelete);
+  bool get canReadStatuses =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.statusesRead);
+  bool get canCreateStatuses =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.statusesCreate);
+  bool get canUpdateStatuses =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.statusesUpdate);
+  bool get canDeleteStatuses =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.statusesDelete);
   bool get canReadAnyFlowAdminData =>
       canReadForms || canReadFields || canReadStatuses;
 
@@ -406,7 +393,9 @@ class AdminFlowViewModel extends BaseViewModel {
         _sortFormsLatestFirst();
       }
       if (fieldLibrary.isEmpty && StatusRequest.hasResolvedFields) {
-        fieldLibrary = List<StatusField>.from(StatusRequest.hydratedFieldsSnapshot);
+        fieldLibrary = List<StatusField>.from(
+          StatusRequest.hydratedFieldsSnapshot,
+        );
         _sortFieldsLatestFirst();
       }
       if (statuses.isEmpty && StatusRequest.hasResolvedStatuses) {
@@ -568,8 +557,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   void _log(String message) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][AdminFlowLoad] $message');
+    // Temporary debug logging removed.
   }
 
   Future<void> selectForm(
@@ -1251,8 +1239,11 @@ class AdminFlowViewModel extends BaseViewModel {
     if (form == null || fieldId.trim().isEmpty) {
       return;
     }
-    final baseField = fieldById(fieldId);
-    final baseRequired = baseField?.required;
+    final assignedField = fields
+        .where((field) => field.id == fieldId)
+        .firstOrNull;
+    final baseRequired =
+        assignedField?.required ?? fieldById(fieldId)?.required;
     final currentOverride = form.fieldOverrides[fieldId];
     final nextOverrides = Map<String, StatusFieldOverride>.from(
       form.fieldOverrides,

@@ -23,6 +23,8 @@ class OfflineMutationQueueService {
   static const _currentUserIdKey = 'paltranco_current_user_id';
   static const _knownSessionUserIdsKey = 'paltranco_known_session_user_ids';
   static const _retryInterval = Duration(seconds: 20);
+  static const _localStorageTimeout = Duration(seconds: 30);
+  static const _remoteMutationTimeout = Duration(seconds: 30);
 
   final BookingStorageBackend _backend;
   final FirebaseFirestore _firestore;
@@ -69,6 +71,10 @@ class OfflineMutationQueueService {
       _firestore.collection('users');
   CollectionReference<Map<String, dynamic>> get _bookingsCollection =>
       _firestore.collection('bookings');
+  DocumentReference<Map<String, dynamic>> get _bookingsCounterRef =>
+      _firestore.collection('system').doc('bookings_counter');
+  CollectionReference<Map<String, dynamic>> get _bookingIdempotencyCollection =>
+      _firestore.collection('booking_idempotency');
 
   Future<List<OfflineMutationConflictRecord>> getBlockedConflicts() async {
     await initialize();
@@ -121,7 +127,6 @@ class OfflineMutationQueueService {
   Future<void> initialize() async {
     await _authStorage.initialize();
     if (_isInitialized) {
-      await _refreshStatusFromStorage();
       return;
     }
     await _backend.initialize();
@@ -277,6 +282,33 @@ class OfflineMutationQueueService {
   }) async {
     await initialize();
     final entries = await _readEntries();
+    final queuedBookingCreateIndex = collectionKey == 'bookings'
+        ? entries.indexWhere(
+            (entry) =>
+                entry.kind == _OfflineMutationKind.bookingCreate &&
+                entry.targetId == documentId,
+          )
+        : -1;
+    if (queuedBookingCreateIndex >= 0) {
+      final queuedCreate = entries[queuedBookingCreateIndex];
+      entries[queuedBookingCreateIndex] = _OfflineMutationEntry(
+        id: queuedCreate.id,
+        kind: queuedCreate.kind,
+        targetId: queuedCreate.targetId,
+        collectionKey: queuedCreate.collectionKey,
+        payload: Map<String, dynamic>.from(document)
+          ..['id'] = queuedCreate.targetId
+          ..['submission_key'] = queuedCreate.payload['submission_key'],
+        createdAtIso: queuedCreate.createdAtIso,
+        retryCount: queuedCreate.retryCount,
+        isBlocked: queuedCreate.isBlocked,
+        lastError: queuedCreate.lastError,
+      );
+      await _writeEntries(entries);
+      _setStatus(_snapshotForEntries(entries));
+      unawaited(flushPendingMutations());
+      return;
+    }
     entries.removeWhere(
       (entry) =>
           entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
@@ -300,12 +332,69 @@ class OfflineMutationQueueService {
     unawaited(flushPendingMutations());
   }
 
+  /// Queues a new booking without reserving a numeric ID while offline.
+  /// The reconnect transaction assigns the next free ID atomically.
+  Future<void> queueOfflineBookingCreate({
+    required String provisionalId,
+    required String submissionKey,
+    required Map<String, dynamic> document,
+  }) async {
+    _log('booking create queue start id=$provisionalId');
+    await _localStorageOperation('booking create initialize', initialize);
+    final entries = await _localStorageOperation(
+      'booking create read',
+      _readEntries,
+    );
+    entries.removeWhere(
+      (entry) =>
+          entry.kind == _OfflineMutationKind.bookingCreate &&
+          entry.payload['submission_key']?.toString() == submissionKey,
+    );
+    entries.add(
+      _OfflineMutationEntry(
+        id: _nextEntryId('booking_create'),
+        kind: _OfflineMutationKind.bookingCreate,
+        targetId: provisionalId,
+        collectionKey: 'bookings',
+        payload: Map<String, dynamic>.from(document)
+          ..['id'] = provisionalId
+          ..['submission_key'] = submissionKey,
+        createdAtIso: DateTime.now().toUtc().toIso8601String(),
+        retryCount: 0,
+      ),
+    );
+    await _localStorageOperation(
+      'booking create write entries=${entries.length}',
+      () => _writeEntries(entries),
+    );
+    _setStatus(_snapshotForEntries(entries));
+    _log('booking create queue persisted id=$provisionalId');
+    unawaited(flushPendingMutations());
+  }
+
   Future<void> queueCollectionDocumentDelete({
     required String collectionKey,
     required String documentId,
   }) async {
     await initialize();
     final entries = await _readEntries();
+    final queuedBookingCreate =
+        collectionKey == 'bookings' &&
+        entries.any(
+          (entry) =>
+              entry.kind == _OfflineMutationKind.bookingCreate &&
+              entry.targetId == documentId,
+        );
+    if (queuedBookingCreate) {
+      entries.removeWhere(
+        (entry) =>
+            entry.kind == _OfflineMutationKind.bookingCreate &&
+            entry.targetId == documentId,
+      );
+      await _writeEntries(entries);
+      _setStatus(_snapshotForEntries(entries));
+      return;
+    }
     entries.removeWhere(
       (entry) =>
           (entry.kind == _OfflineMutationKind.collectionDocumentUpsert ||
@@ -339,7 +428,8 @@ class OfflineMutationQueueService {
         .where((entry) => !entry.isBlocked)
         .where(
           (entry) =>
-              entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+              (entry.kind == _OfflineMutationKind.collectionDocumentUpsert ||
+                  entry.kind == _OfflineMutationKind.bookingCreate) &&
               entry.collectionKey == normalizedCollectionKey,
         )
         .map((entry) {
@@ -426,6 +516,8 @@ class OfflineMutationQueueService {
           'billing_status': nextStatus.trim(),
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         });
+      case _OfflineMutationKind.bookingCreate:
+        await _applyOfflineBookingCreate(entry);
       case _OfflineMutationKind.collectionDocumentUpsert:
         final collection = _collectionForKey(entry.collectionKey);
         if (collection == null) {
@@ -437,7 +529,15 @@ class OfflineMutationQueueService {
           baseUpdatedAt: entry.baseUpdatedAt,
           nextUpdatedAt: entry.payload['updated_at']?.toString(),
         );
-        await collection.doc(entry.targetId).set(entry.payload);
+        await collection
+            .doc(entry.targetId)
+            .set(entry.payload)
+            .timeout(
+              _remoteMutationTimeout,
+              onTimeout: () => throw TimeoutException(
+                'queued ${entry.collectionKey} write timeout for ${entry.targetId}',
+              ),
+            );
       case _OfflineMutationKind.collectionDocumentDelete:
         final collection = _collectionForKey(entry.collectionKey);
         if (collection == null) {
@@ -445,6 +545,66 @@ class OfflineMutationQueueService {
         }
         await collection.doc(entry.targetId).delete();
     }
+  }
+
+  Future<void> _applyOfflineBookingCreate(_OfflineMutationEntry entry) async {
+    final submissionKey = entry.payload['submission_key']?.toString().trim();
+    if (submissionKey == null || submissionKey.isEmpty) {
+      throw Exception('Queued booking is missing its submission key.');
+    }
+
+    await _firestore
+        .runTransaction<void>((transaction) async {
+          final idempotencyRef = _bookingIdempotencyCollection.doc(
+            submissionKey,
+          );
+          final idempotencySnapshot = await transaction.get(idempotencyRef);
+          final existingId = int.tryParse(
+            idempotencySnapshot.data()?['booking_id']?.toString() ?? '',
+          );
+
+          final counterSnapshot = await transaction.get(_bookingsCounterRef);
+          var nextId =
+              int.tryParse(
+                counterSnapshot.data()?['next_id']?.toString() ?? '',
+              ) ??
+              1;
+          if (existingId != null && existingId > 0) {
+            nextId = existingId;
+          } else {
+            // Older deployments may not have a counter yet. Avoid overwriting an
+            // existing numeric booking while establishing the counter.
+            while ((await transaction.get(
+              _bookingsCollection.doc('$nextId'),
+            )).exists) {
+              nextId++;
+            }
+          }
+
+          final finalId = '$nextId';
+          final finalDocument = Map<String, dynamic>.from(entry.payload)
+            ..['id'] = finalId
+            ..remove('local_sync_status');
+          transaction.set(_bookingsCollection.doc(finalId), finalDocument);
+          transaction.set(_bookingsCounterRef, {
+            'next_id': nextId + 1,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          }, SetOptions(merge: true));
+          transaction.set(idempotencyRef, {
+            'booking_id': finalId,
+            'submission_key': submissionKey,
+            'created_at':
+                idempotencySnapshot.data()?['created_at'] ??
+                DateTime.now().toUtc().toIso8601String(),
+            'synced_at': DateTime.now().toUtc().toIso8601String(),
+          }, SetOptions(merge: true));
+        })
+        .timeout(
+          _remoteMutationTimeout,
+          onTimeout: () => throw TimeoutException(
+            'queued booking create transaction timeout',
+          ),
+        );
   }
 
   CollectionReference<Map<String, dynamic>>? _collectionForKey(
@@ -464,7 +624,9 @@ class OfflineMutationQueueService {
   }
 
   Future<List<_OfflineMutationEntry>> _readEntries() async {
-    final rawEntries = await _backend.readStringList(await _resolvedStorageKey());
+    final rawEntries = await _backend.readStringList(
+      await _resolvedStorageKey(),
+    );
     return rawEntries
         .map((item) => jsonDecode(item) as Map<String, dynamic>)
         .map(_OfflineMutationEntry.fromMap)
@@ -498,6 +660,28 @@ class OfflineMutationQueueService {
     );
   }
 
+  Future<T> _localStorageOperation<T>(
+    String label,
+    Future<T> Function() operation,
+  ) async {
+    _log('$label start');
+    try {
+      final result = await operation().timeout(_localStorageTimeout);
+      _log('$label done');
+      return result;
+    } on TimeoutException {
+      _log('$label timeout after ${_localStorageTimeout.inSeconds}s');
+      rethrow;
+    } catch (error) {
+      _log('$label error=$error');
+      rethrow;
+    }
+  }
+
+  void _log(String message) {
+    // Temporary diagnostics removed.
+  }
+
   Future<String> _resolvedStorageKey() async {
     final normalizedUserId = normalizeId(
       await _authStorage.readString(_currentUserIdKey),
@@ -524,7 +708,9 @@ class OfflineMutationQueueService {
   }
 
   Future<List<String>> _allKnownStorageKeys() async {
-    final knownUsers = await _authStorage.readStringList(_knownSessionUserIdsKey);
+    final knownUsers = await _authStorage.readStringList(
+      _knownSessionUserIdsKey,
+    );
     final keys = <String>{_storageKeyForUserId(null)};
     for (final userId in knownUsers) {
       keys.add(_storageKeyForUserId(userId));
@@ -568,7 +754,9 @@ class OfflineMutationQueueService {
           fallback: 'Something went wrong. Please try again.',
         );
         if (_isConflictError(normalizedError)) {
-          remaining.add(entry.copyWith(isBlocked: true, lastError: normalizedError));
+          remaining.add(
+            entry.copyWith(isBlocked: true, lastError: normalizedError),
+          );
         } else if (_isRetryable(normalizedError)) {
           remaining.add(
             entry.copyWith(
@@ -683,6 +871,7 @@ enum _OfflineMutationKind {
   userUpsert,
   userDelete,
   bookingBillingStatusUpdate,
+  bookingCreate,
   collectionDocumentUpsert,
   collectionDocumentDelete,
 }

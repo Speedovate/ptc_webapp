@@ -20,6 +20,7 @@ class Booking {
     this.createdAt,
     this.updatedAt,
     this.localSyncStatus,
+    this.submissionKey,
   });
 
   final String? id;
@@ -35,6 +36,7 @@ class Booking {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final String? localSyncStatus;
+  final String? submissionKey;
 
   Booking copyWith({
     Object? id = _bookingUndefined,
@@ -50,6 +52,7 @@ class Booking {
     Object? createdAt = _bookingUndefined,
     Object? updatedAt = _bookingUndefined,
     Object? localSyncStatus = _bookingUndefined,
+    Object? submissionKey = _bookingUndefined,
   }) {
     return Booking(
       id: identical(id, _bookingUndefined) ? this.id : id as String?,
@@ -89,6 +92,9 @@ class Booking {
       localSyncStatus: identical(localSyncStatus, _bookingUndefined)
           ? this.localSyncStatus
           : localSyncStatus as String?,
+      submissionKey: identical(submissionKey, _bookingUndefined)
+          ? this.submissionKey
+          : submissionKey as String?,
     );
   }
 
@@ -107,6 +113,7 @@ class Booking {
       'created_at': createdAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
       'local_sync_status': localSyncStatus,
+      'submission_key': submissionKey,
     };
   }
 
@@ -127,6 +134,7 @@ class Booking {
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),
       localSyncStatus: map['local_sync_status']?.toString(),
+      submissionKey: map['submission_key']?.toString(),
     );
   }
 

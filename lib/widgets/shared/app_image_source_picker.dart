@@ -4,6 +4,7 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/services/auth_camera_service.dart';
 import 'package:webapp/services/auth_image_picker_service.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 
@@ -12,8 +13,9 @@ Future<AuthPickedImage?> showAppImageSourcePicker(
   String chooserTitle = 'Choose Photo Source',
   String captureTitle = 'Take Photo',
 }) async {
-  final source = await showModalBottomSheet<AuthImagePickSource>(
+  final source = await showAppModalBottomSheet<AuthImagePickSource>(
     context: context,
+    modalKey: 'image-source-picker:${chooserTitle.trim()}',
     backgroundColor: Colors.transparent,
     builder: (sheetContext) {
       return SafeArea(
@@ -93,8 +95,9 @@ Future<AuthPickedImage?> _captureCameraImage(
   final session = createAuthCameraSession();
   final initializeFuture = session.initialize();
   try {
-    final image = await showDialog<AuthPickedImage>(
+    final image = await showAppDialog<AuthPickedImage>(
       context: context,
+      modalKey: 'camera-capture:${captureTitle.trim()}',
       barrierDismissible: true,
       builder: (dialogContext) {
         var isCapturing = false;

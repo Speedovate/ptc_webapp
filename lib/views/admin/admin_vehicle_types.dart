@@ -9,6 +9,7 @@ import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
@@ -1300,7 +1301,7 @@ Future<VehicleCatalogItem?> _showCatalogItemDialog(
     }
   }
 
-  final result = await showDialog<VehicleCatalogItem>(
+  final result = await showAppDialog<VehicleCatalogItem>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AdminModalShell(

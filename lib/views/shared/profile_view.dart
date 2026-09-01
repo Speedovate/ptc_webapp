@@ -16,6 +16,7 @@ import 'package:webapp/widgets/shared/app_cached_network_image.dart';
 import 'package:webapp/widgets/shared/app_image_source_picker.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_image_viewer.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
@@ -283,7 +284,7 @@ class _ProfileViewState extends State<ProfileView> {
       AppSnackbar.showError(context, 'User ID is required.');
       return;
     }
-    await showDialog<void>(
+    await showAppDialog<void>(
       context: context,
       builder: (dialogContext) => _ChangePasswordDialog(
         onSave: (result) async {
@@ -602,6 +603,8 @@ class _ProfileIdentityHeader extends StatelessWidget {
                       children: [
                         AppProfileAvatar(
                           photo: user.photo,
+                          debugLabel:
+                              'open-user:${normalizeId(user.id) ?? '-'}',
                           memoryBytes: pendingPhotoBytes,
                           fallbackText: _ProfileViewState._initials(user.name),
                           radius: avatarRadius,
@@ -876,11 +879,7 @@ class _SectionIconButton extends StatelessWidget {
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
           ),
-          child: Icon(
-            icon,
-            size: 18,
-            color: AppColors.primaryColor,
-          ),
+          child: Icon(icon, size: 18, color: AppColors.primaryColor),
         ),
       ),
     );

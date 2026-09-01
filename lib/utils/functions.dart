@@ -239,34 +239,61 @@ class PhilippinesPhoneInputFormatter extends TextInputFormatter {
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    final text = newValue.text;
-    if (text.isEmpty) {
-      return newValue;
+    final raw = newValue.text;
+    final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) {
+      return const TextEditingValue();
     }
 
-    final buffer = StringBuffer();
-    for (var index = 0; index < text.length; index++) {
-      final char = text[index];
-      if (char == '+' && buffer.isEmpty) {
-        buffer.write(char);
-        continue;
-      }
-      if (RegExp(r'\d').hasMatch(char)) {
-        buffer.write(char);
-      }
+    var localDigits = digits;
+    if (raw.trimLeft().startsWith('+') && localDigits.startsWith('63')) {
+      localDigits = localDigits.substring(2);
+    } else if (localDigits.startsWith('63')) {
+      localDigits = localDigits.substring(2);
+    } else if (localDigits.startsWith('0')) {
+      localDigits = localDigits.substring(1);
     }
-    final transformed = buffer.toString();
-
-    if (transformed == newValue.text) {
-      return newValue;
+    if (localDigits.length > 10) {
+      localDigits = localDigits.substring(0, 10);
     }
-
-    final offset = newValue.selection.baseOffset.clamp(0, transformed.length);
+    // Keep the country-code prefix after an initial local 0 so the next 9
+    // produces +639 instead of dropping the mobile prefix mid-typing.
+    final transformed = localDigits.isEmpty ? '+63' : '+63$localDigits';
+    final offset = transformed.length;
     return TextEditingValue(
       text: transformed,
       selection: TextSelection.collapsed(offset: offset),
       composing: TextRange.empty,
     );
+  }
+}
+
+/// Keeps the mixed login identifier usable for email while formatting values
+/// that clearly start as a Philippine mobile number.
+class EmailOrPhilippinesPhoneInputFormatter extends TextInputFormatter {
+  const EmailOrPhilippinesPhoneInputFormatter();
+
+  static const _phoneFormatter = PhilippinesPhoneInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+    if (RegExp(r'[A-Za-z@]').hasMatch(text)) {
+      return newValue;
+    }
+
+    final digits = text.replaceAll(RegExp(r'[^0-9]'), '');
+    final isPhonePrefix =
+        text.startsWith('+') ||
+        digits.startsWith('0') ||
+        digits.startsWith('9') ||
+        digits.startsWith('63');
+    return isPhonePrefix
+        ? _phoneFormatter.formatEditUpdate(oldValue, newValue)
+        : newValue;
   }
 }
 
@@ -283,10 +310,7 @@ String _titleCasePart(String part) {
       .join('-');
 }
 
-String userFacingErrorMessage(
-  Object error, {
-  String fallback = '',
-}) {
+String userFacingErrorMessage(Object error, {String fallback = ''}) {
   final message = exactUserErrorMessage(error, fallback: fallback);
   if (message.trim().isNotEmpty) {
     return message.trim();
@@ -294,10 +318,7 @@ String userFacingErrorMessage(
   return error.toString().trim();
 }
 
-String exactUserErrorMessage(
-  Object error, {
-  String fallback = '',
-}) {
+String exactUserErrorMessage(Object error, {String fallback = ''}) {
   if (error is FirebaseException) {
     final raw = error.message ?? error.code;
     final normalized = _normalizeRawErrorText(raw, '');
@@ -321,10 +342,7 @@ String exactUserErrorMessage(
   return error.toString().trim();
 }
 
-String normalizeUserErrorText(
-  String? rawMessage, {
-  String fallback = '',
-}) {
+String normalizeUserErrorText(String? rawMessage, {String fallback = ''}) {
   final text = (rawMessage ?? '').trim();
   if (text.isEmpty) {
     return fallback;
@@ -362,7 +380,9 @@ String _normalizeRawErrorText(String? rawMessage, String fallback) {
 
   final normalized = text
       .replaceFirst(
-        RegExp(r'^(Exception|Error|StateError|AuthFailure|FirebaseException):\s*'),
+        RegExp(
+          r'^(Exception|Error|StateError|AuthFailure|FirebaseException):\s*',
+        ),
         '',
       )
       .replaceFirst(RegExp(r'^\[[^\]]+\]\s*'), '')

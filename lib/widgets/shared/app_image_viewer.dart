@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/widgets/shared/app_cached_network_image.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 
 Future<void> showAppImageViewer(
   BuildContext context, {
@@ -25,8 +26,10 @@ Future<void> showAppImageViewer(
     return Future.value();
   }
 
-  return showDialog<void>(
+  return showAppDialog<void>(
     context: context,
+    modalKey:
+        'image-viewer:${title.trim()}:${resolvedImageUrl ?? (hasMemoryImage ? "memory" : "none")}',
     barrierColor: Colors.black.withValues(alpha: 0.78),
     builder: (dialogContext) {
       return Dialog(

@@ -10,6 +10,7 @@ import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
@@ -172,8 +173,12 @@ class AdminStatusesView extends StatelessWidget {
         !(initialStatus == null ? vm.canCreateStatuses : vm.canUpdateStatuses)) {
       return;
     }
-    final savedStatus = await showDialog<Status>(
+    final savedStatus = await showAppDialog<Status>(
       context: context,
+      modalKey:
+          initialStatus == null
+          ? 'status-new'
+          : 'status-${readOnly ? "view" : "edit"}:${initialStatus.id ?? "-"}',
       builder: (dialogContext) => _StatusEditorDialog(
         title: title,
         initialStatus: initialStatus ?? vm.draftNewStatus,

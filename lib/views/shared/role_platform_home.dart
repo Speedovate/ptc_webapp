@@ -256,8 +256,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
   }
 
   void _log(String message) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][RolePlatformMain] $message');
+    // Temporary debug logging removed.
   }
 
   Widget _buildSelectedSection(RolePlatformSection section) {

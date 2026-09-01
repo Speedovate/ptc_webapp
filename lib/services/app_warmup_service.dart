@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
@@ -46,19 +45,24 @@ class AppWarmupService {
 
   Future<void> warmUpGlobalData() async {
     _log('warmUpGlobalData start');
-    await warmBookings();
-    await _warmVehicleCatalogData();
-    await warmRoleAccess();
-    await _warmFlowData();
-    await warmUsers();
+    final bookingsWarmup = warmBookings();
+    final flowWarmup = _warmFlowData();
+    final vehicleWarmup = _warmVehicleCatalogData();
+    final roleAccessWarmup = warmRoleAccess();
+    final usersWarmup = warmUsers();
+    await bookingsWarmup;
+    await flowWarmup;
+    await vehicleWarmup;
+    await roleAccessWarmup;
+    await usersWarmup;
     _log('warmUpGlobalData done');
   }
 
   Future<void> warmUpForUser(UserModel? user) async {
-    _log('warmUpForUser start user=${normalizeId(user?.id) ?? "-"} role=${user?.role ?? "-"}');
-    _log('warmUpForUser step=bookings start');
-    await warmBookings();
-    _log('warmUpForUser step=bookings done');
+    _log(
+      'warmUpForUser start user=${normalizeId(user?.id) ?? "-"} role=${user?.role ?? "-"}',
+    );
+    final flowWarmup = _warmFlowData();
     _log('warmUpForUser step=vehicles start');
     await _warmVehicleCatalogData();
     _log('warmUpForUser step=vehicles done');
@@ -67,7 +71,7 @@ class AppWarmupService {
       await warmRoleAccess();
       _log('warmUpForUser step=role-access done');
       _log('warmUpForUser step=flows start');
-      await _warmFlowData();
+      await flowWarmup;
       _log('warmUpForUser step=flows done');
       _log('warmUpForUser step=users start');
       await warmUsers();
@@ -91,7 +95,7 @@ class AppWarmupService {
     await warmRoleAccess();
     _log('warmUpForUser step=role-access done');
     _log('warmUpForUser step=flows start');
-    await _warmFlowData();
+    await flowWarmup;
     _log('warmUpForUser step=flows done');
     _log('warmUpForUser step=users start');
     await warmUsers();
@@ -102,63 +106,60 @@ class AppWarmupService {
   Future<void> warmBookings() {
     return _runSharedTask<void>(
       _taskBookings,
-      () => _runSafely(() => _bookingRequest.getBookings()),
+      () => _bookingRequest.getBookings(),
     );
   }
 
   Future<void> warmUsers() {
-    return _runSharedTask<void>(
-      _taskUsers,
-      () => _runSafely(() => _authRequest.getUsers()),
-    );
+    return _runSharedTask<void>(_taskUsers, () => _authRequest.getUsers());
   }
 
   Future<void> warmVehicleMakes() {
     return _runSharedTask<void>(
       _taskVehicleMakes,
-      () => _runSafely(() => _vehicleRequest.getMakes()),
+      () => _vehicleRequest.getMakes(),
     );
   }
 
   Future<void> warmVehicleTypes() {
     return _runSharedTask<void>(
       _taskVehicleTypes,
-      () => _runSafely(() => _vehicleRequest.getTypes()),
+      () => _vehicleRequest.getTypes(),
     );
   }
 
   Future<void> warmVehicleSizes() {
     return _runSharedTask<void>(
       _taskVehicleSizes,
-      () => _runSafely(() => _vehicleRequest.getSizes()),
+      () => _vehicleRequest.getSizes(),
     );
   }
 
   Future<void> warmStatuses() {
     return _runSharedTask<void>(
       _taskStatuses,
-      () => _runSafely(() => _statusRequest.getStatuses()),
+      () => _statusRequest.getStatuses(),
     );
   }
 
   Future<void> warmStatusFields() {
     return _runSharedTask<void>(
       _taskStatusFields,
-      () => _runSafely(() => _statusRequest.getAllFields()),
+      () => _statusRequest.getAllFields(),
     );
   }
 
   Future<void> warmStatusForms() {
     return _runSharedTask<void>(
       _taskStatusForms,
-      () => _runSafely(() => _statusRequest.getStatusForms()),
+      () => _statusRequest.getStatusForms(),
     );
   }
 
   Future<void> warmRoleAccess() {
     return _runSharedTask<void>(
       _taskRoleAccess,
-      () => _runSafely(() => _roleAccessService.refresh()),
+      () => _roleAccessService.refresh(),
     );
   }
 
@@ -205,12 +206,13 @@ class AppWarmupService {
   }
 
   String _supportMessagesTaskKey(List<SupportThread> threads) {
-    final normalizedIds = threads
-        .map((thread) => normalizeId(thread.id))
-        .whereType<String>()
-        .where((id) => id.isNotEmpty)
-        .toList(growable: false)
-      ..sort();
+    final normalizedIds =
+        threads
+            .map((thread) => normalizeId(thread.id))
+            .whereType<String>()
+            .where((id) => id.isNotEmpty)
+            .toList(growable: false)
+          ..sort();
     if (normalizedIds.isEmpty) {
       return 'support_messages:none';
     }
@@ -233,12 +235,18 @@ class AppWarmupService {
     }
     _log('task start key=$key');
     final future = () async {
+      var succeeded = false;
       try {
         await action();
+        succeeded = true;
+      } catch (_) {
+        _log('task error key=$key');
       } finally {
-        _completedTasks.add(key);
+        if (succeeded) {
+          _completedTasks.add(key);
+        }
         _inFlightTasks.remove(key);
-        _log('task done key=$key');
+        _log(succeeded ? 'task done key=$key' : 'task incomplete key=$key');
       }
     }();
     _inFlightTasks[key] = future;
@@ -272,7 +280,6 @@ class AppWarmupService {
   }
 
   void _log(String message) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][AppWarmup] $message');
+    // Temporary debug logging removed.
   }
 }

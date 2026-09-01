@@ -1,10 +1,10 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
+import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 
 class AppShellViewModel extends BaseViewModel {
@@ -13,6 +13,7 @@ class AppShellViewModel extends BaseViewModel {
 
   final AuthRepository _repository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  final AppWarmupService _warmupService = AppWarmupService.instance;
 
   bool isLoading = true;
   UserModel? currentUser;
@@ -52,6 +53,7 @@ class AppShellViewModel extends BaseViewModel {
       await _bindCurrentSessionWatch()
           .timeout(_startupStepTimeout, onTimeout: () {
           });
+      _startWarmupForAuthenticatedMainUi(currentUser, source: 'initialize');
     } catch (error) {
       // Startup should still continue using cached/local state when background steps fail.
     }
@@ -67,6 +69,7 @@ class AppShellViewModel extends BaseViewModel {
     _roleAccessService.setCurrentUser(currentUser);
     isQuickLoggedIn = await _repository.hasQuickLoginSource();
     await _bindCurrentSessionWatch();
+    _startWarmupForAuthenticatedMainUi(currentUser, source: 'refresh');
     _log(
       'refreshCurrentUser loggedIn=${currentUser != null} user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"} quick=$isQuickLoggedIn',
     );
@@ -85,6 +88,7 @@ class AppShellViewModel extends BaseViewModel {
     try {
       isQuickLoggedIn = await _repository.hasQuickLoginSource();
       await _bindCurrentSessionWatch();
+      _startWarmupForAuthenticatedMainUi(currentUser, source: 'complete');
       unawaited(_refreshCurrentUserInBackground(user, authEpoch));
     } catch (_) {
       if (authEpoch != _sessionEpoch) {
@@ -94,6 +98,10 @@ class AppShellViewModel extends BaseViewModel {
       _roleAccessService.setCurrentUser(currentUser);
       isQuickLoggedIn = await _repository.hasQuickLoginSource();
       await _bindCurrentSessionWatch();
+      _startWarmupForAuthenticatedMainUi(
+        currentUser,
+        source: 'complete-fallback',
+      );
     } finally {
       if (authEpoch == _sessionEpoch) {
         isLoading = false;
@@ -137,11 +145,16 @@ class AppShellViewModel extends BaseViewModel {
       _roleAccessService.setCurrentUser(currentUser);
       isQuickLoggedIn = await _repository.hasQuickLoginSource();
       await _bindCurrentSessionWatch();
+      _startWarmupForAuthenticatedMainUi(currentUser, source: 'go-back');
     } catch (_) {
       currentUser = previousUser;
       _roleAccessService.setCurrentUser(currentUser);
       isQuickLoggedIn = previousQuickLoggedIn;
       await _bindCurrentSessionWatch();
+      _startWarmupForAuthenticatedMainUi(
+        currentUser,
+        source: 'go-back-fallback',
+      );
       rethrow;
     } finally {
       isLoading = false;
@@ -191,6 +204,10 @@ class AppShellViewModel extends BaseViewModel {
       if (authEpoch != _sessionEpoch) {
         return;
       }
+      _startWarmupForAuthenticatedMainUi(
+        currentUser,
+        source: 'background-refresh',
+      );
       notifyListeners();
     } catch (_) {
       if (authEpoch != _sessionEpoch) {
@@ -198,8 +215,27 @@ class AppShellViewModel extends BaseViewModel {
       }
       currentUser = fallbackUser;
       _roleAccessService.setCurrentUser(currentUser);
+      _startWarmupForAuthenticatedMainUi(
+        currentUser,
+        source: 'background-fallback',
+      );
       notifyListeners();
     }
+  }
+
+  void _startWarmupForAuthenticatedMainUi(
+    UserModel? resolvedUser, {
+    required String source,
+  }) {
+    if (resolvedUser == null) {
+      return;
+    }
+    _log(
+      'warmup dispatch source=$source user=${resolvedUser.id ?? "-"} role=${resolvedUser.role ?? "-"}',
+    );
+    unawaited(
+      _warmupService.warmUpForUser(resolvedUser).catchError((_, _) {}),
+    );
   }
 
   @override
@@ -209,7 +245,6 @@ class AppShellViewModel extends BaseViewModel {
   }
 
   void _log(String message) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][AppShellAuth] $message');
+    // Temporary debug logging removed.
   }
 }

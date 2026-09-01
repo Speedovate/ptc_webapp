@@ -78,6 +78,42 @@ class StatusRequest implements StatusFormRepository {
   static List<Status> get hydratedStatusesSnapshot =>
       List<Status>.unmodifiable(_hydratedStatusesSnapshot);
 
+  Future<void> primeResolvedSnapshotsFromLocalCache() async {
+    initialize();
+    final formsDocuments =
+        await _cache.readDocuments(_statusFormsResourceKey) ??
+        await _readCollectionSdkCacheOnly(_formsCollection);
+    final fieldsDocuments =
+        await _cache.readDocuments(_statusFieldsResourceKey) ??
+        await _readCollectionSdkCacheOnly(_fieldsCollection);
+    final statusesDocuments =
+        await _cache.readDocuments(_statusesResourceKey) ??
+        await _readCollectionSdkCacheOnly(_statusesCollection);
+
+    if (fieldsDocuments.isNotEmpty) {
+      final fields = fieldsDocuments.map(StatusField.fromMap).toList()
+        ..sort(
+          (a, b) =>
+              (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+        );
+      _hydratedFieldsSnapshot = List<StatusField>.from(fields);
+      _hasResolvedFields = true;
+    }
+    if (statusesDocuments.isNotEmpty) {
+      final statuses = statusesDocuments.map(Status.fromMap).toList();
+      _hydratedStatusesSnapshot = List<Status>.from(statuses);
+      _hasResolvedStatuses = true;
+    }
+    if (formsDocuments.isNotEmpty && fieldsDocuments.isNotEmpty) {
+      final forms = _inflateForms(
+        formDocuments: formsDocuments,
+        fieldDocuments: fieldsDocuments,
+      );
+      _hydratedFormsSnapshot = List<StatusForm>.from(forms);
+      _hasResolvedForms = true;
+    }
+  }
+
   Future<void> initialize() async {
     if (_didStartBackgroundOfflineQueueInitialization) {
       return;
@@ -150,7 +186,7 @@ class StatusRequest implements StatusFormRepository {
     return _runRequest(() async {
       initialize();
       try {
-        final documents = await _cache.getDocumentsVerifiedOnlineFirst(
+        final documents = await _cache.getDocuments(
           resourceKey: _statusFieldsResourceKey,
           fetchDocuments: () async {
             final sdkCachedDocuments = await _readCollectionSdkCacheOnly(
@@ -203,7 +239,7 @@ class StatusRequest implements StatusFormRepository {
     return _runRequest(() async {
       initialize();
       try {
-        final documents = await _cache.getDocumentsVerifiedOnlineFirst(
+        final documents = await _cache.getDocuments(
           resourceKey: _statusesResourceKey,
           fetchDocuments: () async {
             final sdkCachedDocuments = await _readCollectionSdkCacheOnly(
@@ -833,7 +869,7 @@ class StatusRequest implements StatusFormRepository {
   Future<List<StatusForm>> _getHydratedForms() async {
     try {
       final results = await Future.wait([
-        _cache.getDocumentsVerifiedOnlineFirst(
+        _cache.getDocuments(
           resourceKey: _statusFormsResourceKey,
           fetchDocuments: () async {
             final sdkCachedForms = await _readCollectionSdkCacheOnly(
@@ -852,7 +888,7 @@ class StatusRequest implements StatusFormRepository {
                 .toList(growable: false);
           },
         ),
-        _cache.getDocumentsVerifiedOnlineFirst(
+        _cache.getDocuments(
           resourceKey: _statusFieldsResourceKey,
           fetchDocuments: () async {
             final sdkCachedFields = await _readCollectionSdkCacheOnly(

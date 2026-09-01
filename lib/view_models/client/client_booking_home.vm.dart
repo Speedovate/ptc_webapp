@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/status.dart';
@@ -12,6 +11,7 @@ import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/services/app_warmup_service.dart';
@@ -28,9 +28,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     VehicleCatalogRepository? vehicleCatalogRepository,
   }) : _statusRepository = statusRepository ?? StatusRequest.instance,
        _bookingRepository = bookingRepository ?? BookingRequest.instance,
-       _authRepository = authRepository ?? AuthRequest.instance,
-       _vehicleCatalogRepository =
-           vehicleCatalogRepository ?? VehicleRequest.instance,
        _engine = StatusFormEngine(statusRepository ?? StatusRequest.instance) {
     mainForms = List<StatusForm>.from(_cachedMainForms);
     form = _cachedForm;
@@ -49,14 +46,13 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
   final StatusFormRepository _statusRepository;
   final BookingRepository _bookingRepository;
-  final AuthRepository _authRepository;
-  final VehicleCatalogRepository _vehicleCatalogRepository;
   final StatusFormEngine _engine;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
   final AppWarmupService _warmupService = AppWarmupService.instance;
   StreamSubscription<void>? _statusCacheUpdatesSubscription;
   StreamSubscription<void>? _usersCacheUpdatesSubscription;
   StreamSubscription<void>? _catalogCacheUpdatesSubscription;
+  Timer? _realtimeReloadDebounce;
   static List<StatusForm> _cachedMainForms = const [];
   static Map<String, List<StatusField>> _cachedFieldsByFormId = const {};
   static StatusForm? _cachedForm;
@@ -90,6 +86,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   String? blockedMessage;
   bool isBusyLoading = false;
   bool isSubmitting = false;
+  String? _pendingSubmissionKey;
   int resetTick = 0;
   UserModel? _activeClientUser;
   UserModel? _pendingClientUser;
@@ -100,11 +97,24 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
   Future<void> load(UserModel clientUser) async {
     _log(
-      'load start loggedIn=${clientUser.id != null} user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} visiblePrimary=${mainForms.isNotEmpty || form != null || fields.isNotEmpty || _cachedMainForms.isNotEmpty || _cachedForm != null || _cachedFields.isNotEmpty}',
+      'load start user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} visiblePrimary=${mainForms.isNotEmpty || form != null || fields.isNotEmpty || _cachedMainForms.isNotEmpty || _cachedForm != null || _cachedFields.isNotEmpty} cachedForms=${_cachedMainForms.length} cachedFields=${_cachedFields.length}',
     );
     _ensureRealtimeSubscriptions();
     if (isBusyLoading) {
       _pendingClientUser = clientUser;
+      _log('load queued pendingClient=${clientUser.id ?? "-"}');
+      return;
+    }
+
+    final canReuseLoadedForm =
+        _hasLoadedOnce &&
+        _activeClientUser?.id == clientUser.id &&
+        _activeClientUser?.updatedAt == clientUser.updatedAt &&
+        mainForms.isNotEmpty &&
+        form != null &&
+        fields.isNotEmpty;
+    if (canReuseLoadedForm) {
+      _log('load skip reused shared form client=${clientUser.id ?? "-"}');
       return;
     }
 
@@ -116,24 +126,25 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         _cachedForm != null ||
         _cachedFields.isNotEmpty;
     isBusyLoading = !_hasLoadedOnce && !hasVisiblePrimaryData;
-    if (isBusyLoading) {
-      _log('overlay show section=client-home');
-    } else {
-      _log('silent load only section=client-home');
-    }
+    _log(
+      'load mode busy=$isBusyLoading hasLoadedOnce=$_hasLoadedOnce activeClient=${_activeClientUser?.id ?? "-"}',
+    );
     loadError = null;
     blockedMessage = null;
+    _primeSharedBookFormData(clientUser);
     notifyListeners();
 
     try {
-      await Future.wait([
-        _bookingRepository.initialize(),
-      ]);
+      _log('initialize repositories start');
+      await Future.wait([_bookingRepository.initialize()]);
+      _log('initialize repositories done');
 
+      _log('primary queries start');
       final results = await Future.wait([
         _statusRepository.getStatuses(),
         _statusRepository.getStatusFormsByRoleAndStatus('client', 'book'),
       ]);
+      _log('primary queries done');
       statuses = results[0] as List<Status>;
       final bookForms = results[1] as List<StatusForm>;
       final loadedMainForms = bookForms
@@ -141,16 +152,21 @@ class ClientBookingHomeViewModel extends BaseViewModel {
           .toList();
       mainForms = loadedMainForms;
       form = mainForms.firstOrNull;
+      _log(
+        'primary resolved forms=${mainForms.length} activeForm=${form?.id ?? "-"} statuses=${statuses.length}',
+      );
       if (form == null) {
         mainForms = [];
         _fieldsByFormId.clear();
         fields = [];
         answers = {};
         errors = {};
+        _log('load ended no-form');
         return;
       }
 
       _fieldsByFormId.clear();
+      _log('field hydration start forms=${mainForms.length}');
       final fieldEntries = await Future.wait(
         mainForms.map((loadedForm) async {
           final formId = loadedForm.id ?? '';
@@ -163,6 +179,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
           return MapEntry(formId, resolvedFields);
         }),
       );
+      _log('field hydration done entries=${fieldEntries.length}');
       for (final entry in fieldEntries) {
         _fieldsByFormId[entry.key] = entry.value;
       }
@@ -182,7 +199,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
       _log(
-        'load success user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} forms=${mainForms.length} activeForm=${form?.id ?? "-"} statuses=${statuses.length}',
+        'load success user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} forms=${mainForms.length} activeForm=${form?.id ?? "-"} visibleFields=${fields.length} statuses=${statuses.length} blocked=${blockedMessage != null}',
       );
       unawaited(_warmupService.warmUpForUser(clientUser));
     } catch (error) {
@@ -198,9 +215,8 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       _cachedHasLoadedOnce = true;
     } finally {
       isBusyLoading = false;
-      _log('overlay hide section=client-home reason=load-finish');
       _log(
-        'load finish user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} busy=$isBusyLoading error=${loadError ?? "-"}',
+        'load finish user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} busy=$isBusyLoading error=${loadError ?? "-"} pendingClient=${_pendingClientUser?.id ?? "-"}',
       );
       notifyListeners();
       final pendingClientUser = _pendingClientUser;
@@ -214,22 +230,133 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     }
   }
 
+  void _primeSharedBookFormData(UserModel clientUser) {
+    final hasSharedStatuses = StatusRequest.hasResolvedStatuses;
+    final hasSharedForms = StatusRequest.hasResolvedForms;
+    if ((!hasSharedStatuses && !hasSharedForms) || mainForms.isNotEmpty) {
+      return;
+    }
+    if (hasSharedStatuses && statuses.isEmpty) {
+      statuses = List<Status>.from(StatusRequest.hydratedStatusesSnapshot);
+    }
+    if (hasSharedForms && mainForms.isEmpty) {
+      final sharedBookForms = _sharedBookForms();
+      if (sharedBookForms.isNotEmpty) {
+        mainForms = sharedBookForms;
+        form = mainForms.firstOrNull;
+        final hydratedSharedLibrary = _optionResolver
+            .hydrateFieldsFromResolvedSnapshots(
+              List<StatusField>.from(StatusRequest.hydratedFieldsSnapshot),
+            );
+        _fieldsByFormId.clear();
+        for (final sharedForm in mainForms) {
+          final formId = sharedForm.id ?? '';
+          if (formId.isEmpty) {
+            continue;
+          }
+          final resolvedFields = sharedForm.fields
+              .map((field) {
+                final normalizedId = normalizeId(field.id);
+                final normalizedKey = normalizeId(field.key);
+                final hydratedField = hydratedSharedLibrary.firstWhere(
+                  (candidate) =>
+                      (normalizedId != null &&
+                          normalizeId(candidate.id) == normalizedId) ||
+                      (normalizedKey != null &&
+                          normalizeId(candidate.key) == normalizedKey),
+                  orElse: () => field,
+                );
+                return hydratedField.copyWith(
+                  statusForm: sharedForm.toReferenceForm(),
+                );
+              })
+              .toList(growable: false);
+          _fieldsByFormId[formId] = resolvedFields;
+        }
+        if (form != null) {
+          fields = fieldsForForm(form!);
+        }
+      }
+    }
+    _activeClientUser = clientUser;
+    blockedMessage = _resolveBlockedMessage(clientUser);
+  }
+
+  List<StatusForm> _sharedBookForms() {
+    final statuses = StatusRequest.hydratedStatusesSnapshot;
+    bool isKnownActiveStatus(String? statusKey) {
+      final normalizedStatusKey = statusKey?.trim().toLowerCase() ?? '';
+      if (normalizedStatusKey.isEmpty) {
+        return false;
+      }
+      for (final status in statuses) {
+        if ((status.key?.trim().toLowerCase() ?? '') == normalizedStatusKey) {
+          return status.isActive != false;
+        }
+      }
+      return false;
+    }
+
+    bool isKnownActiveStatusOrTerminal(String? statusKey) {
+      final normalizedStatusKey = statusKey?.trim() ?? '';
+      if (normalizedStatusKey.isEmpty) {
+        return true;
+      }
+      return isKnownActiveStatus(normalizedStatusKey);
+    }
+
+    final resolvedRoles = RoleAccessService.instance.workflowResolutionRoles(
+      'client',
+    );
+    final matchingForms = StatusRequest.hydratedFormsSnapshot
+        .where((form) {
+          return resolvedRoles.any(form.resolvedRoles.contains) &&
+              (form.currentStatusKey?.trim().toLowerCase() ?? '') == 'book' &&
+              form.isActive != false &&
+              form.resolvedIsMainForm &&
+              isKnownActiveStatus(form.currentStatusKey) &&
+              isKnownActiveStatusOrTerminal(form.nextStatusKey);
+        })
+        .map((form) => form.copyWith())
+        .toList(growable: false);
+    matchingForms.sort((left, right) {
+      final leftUpdated = left.updatedAt ?? left.createdAt ?? DateTime(0);
+      final rightUpdated = right.updatedAt ?? right.createdAt ?? DateTime(0);
+      return leftUpdated.compareTo(rightUpdated);
+    });
+    return matchingForms;
+  }
+
   void _ensureRealtimeSubscriptions() {
     _statusCacheUpdatesSubscription ??= StatusRequest.instance
         .watchStatusCacheUpdates()
         .listen((_) {
-          unawaited(_reloadFromRealtime());
+          _scheduleRealtimeReload();
         });
     _usersCacheUpdatesSubscription ??= AuthRequest.instance
         .watchUsersCacheUpdates()
         .listen((_) {
-          unawaited(_reloadFromRealtime());
+          _scheduleRealtimeReload();
         });
     _catalogCacheUpdatesSubscription ??= VehicleRequest.instance
         .watchCatalogCacheUpdates()
         .listen((_) {
-          unawaited(_reloadFromRealtime());
+          _scheduleRealtimeReload();
         });
+  }
+
+  void _scheduleRealtimeReload() {
+    // The form is already backed by shared snapshots. Replaying every catalog
+    // cache event after it is visible only starves UI work and submission.
+    if (_hasLoadedOnce && mainForms.isNotEmpty && fields.isNotEmpty) {
+      return;
+    }
+    if (_realtimeReloadDebounce?.isActive ?? false) {
+      return;
+    }
+    _realtimeReloadDebounce = Timer(const Duration(milliseconds: 250), () {
+      unawaited(_reloadFromRealtime());
+    });
   }
 
   Future<void> _reloadFromRealtime() async {
@@ -241,11 +368,14 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       'realtime reload start user=${_activeClientUser?.id ?? "-"} role=${_activeClientUser?.role ?? "-"}',
     );
     try {
-      final users = await _authRepository.getUsers();
+      // These subscriptions are notified after their repositories update the
+      // shared cache. Reading those repositories again here emits another
+      // cache update and creates a reload loop.
       final refreshedClient =
-          users.where((item) => item.id == _activeClientUser?.id).firstOrNull ??
+          AuthRequest.hydratedUsersSnapshot
+              .where((item) => item.id == _activeClientUser?.id)
+              .firstOrNull ??
           _activeClientUser;
-      await _vehicleCatalogRepository.getSizes();
       await load(refreshedClient!);
     } catch (_) {
       // Keep current visible state if live support data refresh fails.
@@ -284,11 +414,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     errors = {};
     resetTick += 1;
     notifyListeners();
-  }
-
-  void _log(String message) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][RoleClientHome] $message');
   }
 
   List<StatusField> fieldsForForm(
@@ -331,6 +456,9 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     required String submittedByUserId,
     required String? submittedByUserRole,
   }) async {
+    if (isSubmitting) {
+      return null;
+    }
     final blocked = blockedMessageForForm(activeForm, clientUser);
     if (blocked != null) {
       notifyListeners();
@@ -343,12 +471,18 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
     try {
       final now = DateTime.now();
+      final submissionKey = _pendingSubmissionKey ??= _createSubmissionKey(
+        submittedByUserId: submittedByUserId,
+        clientUserId: clientUser.id,
+        formId: activeForm.id,
+      );
       final normalizedAnswers = _normalizeRepresentativeAnswers(formAnswers);
       final baseBooking = Booking(
         client: clientUser,
         clientStatus: activeForm.currentStatusKey,
         createdAt: now,
         updatedAt: now,
+        submissionKey: submissionKey,
       );
       final nextBooking = _engine.applyOutputToBooking(
         baseBooking,
@@ -359,6 +493,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         submittedByUserRole,
       );
       final saved = await _bookingRepository.saveBooking(nextBooking);
+      _pendingSubmissionKey = null;
       return saved;
     } catch (error) {
       rethrow;
@@ -370,6 +505,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
   @override
   void dispose() {
+    _realtimeReloadDebounce?.cancel();
     _statusCacheUpdatesSubscription?.cancel();
     _usersCacheUpdatesSubscription?.cancel();
     _catalogCacheUpdatesSubscription?.cancel();
@@ -381,6 +517,9 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     required String submittedByUserId,
     required String? submittedByUserRole,
   }) async {
+    if (isSubmitting) {
+      return null;
+    }
     final activeForm = form;
     if (activeForm == null) {
       loadError = 'No client booking form is available yet.';
@@ -397,12 +536,18 @@ class ClientBookingHomeViewModel extends BaseViewModel {
 
     try {
       final now = DateTime.now();
+      final submissionKey = _pendingSubmissionKey ??= _createSubmissionKey(
+        submittedByUserId: submittedByUserId,
+        clientUserId: clientUser.id,
+        formId: activeForm.id,
+      );
       final normalizedAnswers = _normalizeRepresentativeAnswers(answers);
       final baseBooking = Booking(
         client: clientUser,
         clientStatus: activeForm.currentStatusKey,
         createdAt: now,
         updatedAt: now,
+        submissionKey: submissionKey,
       );
       final nextBooking = _engine.applyOutputToBooking(
         baseBooking,
@@ -416,6 +561,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       answers = {};
       errors = {};
       resetTick += 1;
+      _pendingSubmissionKey = null;
       return savedBooking;
     } finally {
       isSubmitting = false;
@@ -433,6 +579,21 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     errors = validationErrors;
     notifyListeners();
     return validationErrors.isEmpty;
+  }
+
+  String _createSubmissionKey({
+    required String submittedByUserId,
+    required String? clientUserId,
+    required String? formId,
+  }) {
+    final submitter = submittedByUserId.trim().isEmpty
+        ? 'anonymous'
+        : submittedByUserId.trim();
+    final client = clientUserId?.trim().isNotEmpty == true
+        ? clientUserId!.trim()
+        : 'unknown-client';
+    final form = formId?.trim().isNotEmpty == true ? formId!.trim() : 'form';
+    return 'booking_${submitter}_${client}_${form}_${DateTime.now().microsecondsSinceEpoch}';
   }
 
   String resolvedTitle() {
@@ -547,4 +708,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     }
     return nextAnswers;
   }
+
+  void _log(String _) {}
 }

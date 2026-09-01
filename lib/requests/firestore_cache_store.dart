@@ -135,6 +135,14 @@ class FirestoreCollectionCache {
     return localVersion != remoteVersion;
   }
 
+  Future<String?> readStoredVersion(String resourceKey) {
+    return _store.readVersion(resourceKey);
+  }
+
+  Future<String?> readRemoteVersionSafe(String resourceKey) {
+    return _tryReadRemoteVersion(resourceKey);
+  }
+
   Future<List<Map<String, dynamic>>> getDocuments({
     required String resourceKey,
     required Future<List<Map<String, dynamic>>> Function() fetchDocuments,
@@ -153,10 +161,6 @@ class FirestoreCollectionCache {
             _store.writeDocumentMaps(resourceKey, freshDocuments),
             _store.writeVersion(resourceKey, resolvedVersion),
           ]);
-
-          if (remoteVersion == null) {
-            await _tryWriteRemoteVersion(resourceKey, resolvedVersion);
-          }
 
           return freshDocuments;
         } catch (_) {
@@ -182,10 +186,6 @@ class FirestoreCollectionCache {
       _store.writeVersion(resourceKey, resolvedVersion),
     ]);
 
-    if (remoteVersion == null) {
-      await _tryWriteRemoteVersion(resourceKey, resolvedVersion);
-    }
-
     return freshDocuments;
   }
 
@@ -207,10 +207,6 @@ class FirestoreCollectionCache {
           _store.writeVersion(resourceKey, resolvedVersion),
         ]);
 
-        if (remoteVersion == null) {
-          await _tryWriteRemoteVersion(resourceKey, resolvedVersion);
-        }
-
         return freshDocuments;
       } catch (_) {
         if (cachedDocuments != null) {
@@ -231,10 +227,6 @@ class FirestoreCollectionCache {
       _store.writeDocumentMaps(resourceKey, freshDocuments),
       _store.writeVersion(resourceKey, resolvedVersion),
     ]);
-
-    if (remoteVersion == null) {
-      await _tryWriteRemoteVersion(resourceKey, resolvedVersion);
-    }
 
     return freshDocuments;
   }
@@ -321,13 +313,20 @@ class FirestoreCollectionCache {
   Future<void> writeDocuments({
     required String resourceKey,
     required List<Map<String, dynamic>> documents,
-  }) {
-    return _writeLocalAndRemoteVersion(
-      resourceKey: resourceKey,
-      documents: documents
-          .map((document) => Map<String, dynamic>.from(document))
-          .toList(),
-    );
+  }) async {
+    // Realtime snapshots and collection reads must never publish a new remote
+    // version. Doing so feeds the version listener back into another refresh.
+    final localVersion = await _store.readVersion(resourceKey);
+    final resolvedVersion = localVersion ?? _bootstrapVersion(documents);
+    await Future.wait([
+      _store.writeDocumentMaps(
+        resourceKey,
+        documents
+            .map((document) => Map<String, dynamic>.from(document))
+            .toList(),
+      ),
+      _store.writeVersion(resourceKey, resolvedVersion),
+    ]);
   }
 
   Future<void> clearResource(String resourceKey) {
@@ -335,10 +334,13 @@ class FirestoreCollectionCache {
   }
 
   Future<String?> _readRemoteVersion(String resourceKey) async {
-    final snapshot = await _versionsCollection.doc(resourceKey).get().timeout(
-      _remoteVersionTimeout,
-      onTimeout: () => throw TimeoutException('cache version read timeout'),
-    );
+    final snapshot = await _versionsCollection
+        .doc(resourceKey)
+        .get()
+        .timeout(
+          _remoteVersionTimeout,
+          onTimeout: () => throw TimeoutException('cache version read timeout'),
+        );
     if (!snapshot.exists) {
       return null;
     }
@@ -349,6 +351,8 @@ class FirestoreCollectionCache {
     try {
       return await _readRemoteVersion(resourceKey);
     } on FirebaseException {
+      return null;
+    } on TimeoutException {
       return null;
     }
   }
@@ -374,10 +378,6 @@ class FirestoreCollectionCache {
         _store.writeDocumentMaps(resourceKey, freshDocuments),
         _store.writeVersion(resourceKey, resolvedVersion),
       ]);
-
-      if (remoteVersion == null) {
-        await _tryWriteRemoteVersion(resourceKey, resolvedVersion);
-      }
     } catch (_) {
       // Background refresh should never block or break cached UI rendering.
     }

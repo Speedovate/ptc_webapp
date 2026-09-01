@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
@@ -10,7 +9,6 @@ import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/services/app_warmup_service.dart';
-import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
@@ -19,9 +17,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   static const billingStatusBilled = 'billed';
   static const billingStatusUnbilled = 'unbilled';
 
-  AdminDashboardViewModel({
-    AuthRepository? authRepository,
-  })
+  AdminDashboardViewModel({AuthRepository? authRepository})
     : _authRepository = authRepository ?? AuthRequest.instance,
       _bookingRepository = BookingRequest.instance {
     _completedBookings.addAll(_cachedCompletedBookings);
@@ -37,7 +33,6 @@ class AdminDashboardViewModel extends BaseViewModel {
   StreamSubscription<List<Booking>>? _bookingsSubscription;
   StreamSubscription<void>? _usersCacheUpdatesSubscription;
   Future<void>? _activeLoadFuture;
-  bool _didScheduleWarmRetry = false;
   bool _isRealtimeRefreshing = false;
   static List<Booking> _cachedCompletedBookings = const [];
   static Map<String, UserModel> _cachedUsersById = const {};
@@ -130,9 +125,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   }
 
   void endExport() {
-    if (!_isExporting &&
-        _exportTotalSteps == 0 &&
-        _exportCompletedSteps == 0) {
+    if (!_isExporting && _exportTotalSteps == 0 && _exportCompletedSteps == 0) {
       return;
     }
     _isExporting = false;
@@ -147,8 +140,8 @@ class AdminDashboardViewModel extends BaseViewModel {
     }
     final normalizedIncomingId = normalizeId(user.id);
     final normalizedCurrentId = normalizeId(_currentUser?.id);
-    final roleChanged = normalizeRoleKey(_currentUser?.role) !=
-        normalizeRoleKey(user.role);
+    final roleChanged =
+        normalizeRoleKey(_currentUser?.role) != normalizeRoleKey(user.role);
     final shouldUpdate =
         normalizedCurrentId != normalizedIncomingId ||
         roleChanged ||
@@ -186,7 +179,7 @@ class AdminDashboardViewModel extends BaseViewModel {
     _ensureSupportingSubscriptions();
     busyMessage = 'Loading dashboard ...';
     var overlayHidden = false;
-    var hasSharedBookings = BookingRequest.hasResolvedBookings;
+    var hasSharedBookings = BookingRequest.hasAuthoritativeBookings;
     final hasVisiblePrimaryData =
         _completedBookings.isNotEmpty ||
         _cachedCompletedBookings.isNotEmpty ||
@@ -209,39 +202,23 @@ class AdminDashboardViewModel extends BaseViewModel {
         notifyListeners();
       }
       unawaited(
-        _bookingRepository.initialize().then((_) {
-        }).catchError((error, stackTrace) {
-        }),
+        _bookingRepository
+            .initialize()
+            .then((_) {})
+            .catchError((error, stackTrace) {}),
       );
       await _ensureBookingsSubscription();
-      hasSharedBookings = BookingRequest.hasResolvedBookings;
+      hasSharedBookings = BookingRequest.hasAuthoritativeBookings;
       if (!hasSharedBookings) {
-        final warmedBookings = await _warmBookingsForPrimaryLoad();
-        if (warmedBookings != null) {
-          _log('bookings resolved from warmup count=${warmedBookings.length}');
-          _applyCompletedBookings(warmedBookings);
-          if (shouldShowLoadingState && isBusy) {
-            setBusy(false);
-            overlayHidden = true;
-            _log('overlay hide section=dashboard reason=primary-bookings-ready');
-          }
-          notifyListeners();
-        } else {
-          final bookings = await _loadBookingsSafe();
-          _log('bookings resolved count=${bookings.length}');
-          _applyCompletedBookings(bookings);
-          if (shouldShowLoadingState && isBusy) {
-            setBusy(false);
-            overlayHidden = true;
-            _log('overlay hide section=dashboard reason=primary-bookings-ready');
-          }
-          notifyListeners();
-        }
+        // Dashboard owns the shared booking read. The stream controls the
+        // visible state, so a slow SDK request cannot hold this overlay.
+        unawaited(
+          _bookingRepository.getBookings().catchError((_) => <Booking>[]),
+        );
       } else {
         _log(
           'bookings reused shared count=${BookingRequest.hydratedBookingsSnapshot.length}',
         );
-        unawaited(_refreshPrimaryBookingsSilently());
       }
       unawaited(_reloadSupportingData());
       if (_currentUser != null) {
@@ -251,7 +228,6 @@ class AdminDashboardViewModel extends BaseViewModel {
       _cachedErrorMessage = null;
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
-      _scheduleWarmRetryIfNeeded();
     } catch (error) {
       _log('load error error=$error');
       errorMessage = userFacingErrorMessage(
@@ -270,21 +246,6 @@ class AdminDashboardViewModel extends BaseViewModel {
         'load finish busy=$isBusy completed=${_completedBookings.length} users=${_usersById.length} error=${errorMessage ?? "-"}',
       );
       notifyListeners();
-    }
-  }
-
-  Future<List<Booking>?> _warmBookingsForPrimaryLoad() async {
-    try {
-      await _warmupService.warmBookings();
-      if (!BookingRequest.hasResolvedBookings) {
-        return null;
-      }
-      return List<Booking>.from(BookingRequest.hydratedBookingsSnapshot);
-    } catch (_) {
-      if (!BookingRequest.hasResolvedBookings) {
-        return null;
-      }
-      return List<Booking>.from(BookingRequest.hydratedBookingsSnapshot);
     }
   }
 
@@ -332,11 +293,12 @@ class AdminDashboardViewModel extends BaseViewModel {
 
   Future<UserModel?> _loadCurrentUserSafe() async {
     try {
-      final currentUser = await _authRepository
-          .getCurrentUser()
-          .timeout(_loadStepTimeout, onTimeout: () {
-            return _cachedCurrentUser;
-          });
+      final currentUser = await _authRepository.getCurrentUser().timeout(
+        _loadStepTimeout,
+        onTimeout: () {
+          return _cachedCurrentUser;
+        },
+      );
       return currentUser ?? _cachedCurrentUser;
     } catch (error) {
       return _cachedCurrentUser;
@@ -346,40 +308,15 @@ class AdminDashboardViewModel extends BaseViewModel {
   Future<List<UserModel>> _loadUsersSafe() async {
     try {
       await _warmupService.warmUsers();
-      final users = await _authRepository
-          .getUsers()
-          .timeout(_loadStepTimeout, onTimeout: () {
-            return List<UserModel>.from(_cachedUsersById.values);
-          });
+      final users = await _authRepository.getUsers().timeout(
+        _loadStepTimeout,
+        onTimeout: () {
+          return List<UserModel>.from(_cachedUsersById.values);
+        },
+      );
       return users;
     } catch (error) {
       return List<UserModel>.from(_cachedUsersById.values);
-    }
-  }
-
-  Future<List<Booking>> _loadBookingsSafe() async {
-    try {
-      await _warmupService.warmBookings();
-      final bookings = await _bookingRepository
-          .getBookings()
-          .timeout(_loadStepTimeout, onTimeout: () {
-            return List<Booking>.from(_cachedCompletedBookings);
-          });
-      return bookings;
-    } catch (error) {
-      return List<Booking>.from(_cachedCompletedBookings);
-    }
-  }
-
-  Future<void> _refreshPrimaryBookingsSilently() async {
-    try {
-      final bookings = await _loadBookingsSafe();
-      _log('bookings silent refresh count=${bookings.length}');
-      _applyCompletedBookings(bookings);
-      _cachedCompletedBookings = List<Booking>.from(_completedBookings);
-      notifyListeners();
-    } catch (_) {
-      // Keep the current shared snapshot if the silent refresh fails.
     }
   }
 
@@ -392,37 +329,11 @@ class AdminDashboardViewModel extends BaseViewModel {
     ) {
       _applyCompletedBookings(liveBookings);
       errorMessage = null;
-      if (isBusy && _completedBookings.isNotEmpty) {
+      if (isBusy) {
         setBusy(false);
       }
       notifyListeners();
     });
-  }
-
-  void _scheduleWarmRetryIfNeeded() {
-    if (_didScheduleWarmRetry ||
-        !currentNetworkStatus() ||
-        _completedBookings.isNotEmpty ||
-        _cachedCompletedBookings.isNotEmpty) {
-      return;
-    }
-    _didScheduleWarmRetry = true;
-    unawaited(_retryLoadAfterWarmup());
-  }
-
-  Future<void> _retryLoadAfterWarmup() async {
-    await Future<void>.delayed(const Duration(milliseconds: 450));
-    try {
-      final bookings = await _bookingRepository.getBookings();
-      if (bookings.isEmpty) {
-        return;
-      }
-      _applyCompletedBookings(bookings);
-      _cachedCompletedBookings = List<Booking>.from(_completedBookings);
-      notifyListeners();
-    } catch (_) {
-      // Ignore cache warm-up issues and keep the visible data intact.
-    }
   }
 
   void _applyCompletedBookings(List<Booking> bookings) {
@@ -711,7 +622,8 @@ class AdminDashboardViewModel extends BaseViewModel {
     final merged = byId.values.toList();
     merged.sort((left, right) {
       final leftDate = deliveredAt(left) ?? left.updatedAt ?? left.createdAt;
-      final rightDate = deliveredAt(right) ?? right.updatedAt ?? right.createdAt;
+      final rightDate =
+          deliveredAt(right) ?? right.updatedAt ?? right.createdAt;
       final dateComparison = _compareLatestFirst(leftDate, rightDate);
       if (dateComparison != 0) {
         return dateComparison;
@@ -862,8 +774,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   }
 
   void _log(String message) {
-    final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp][AdminDashboardLoad] $message');
+    // Temporary debug logging removed.
   }
 
   static String deliveryFormNumber(Booking booking) =>
@@ -962,7 +873,9 @@ class AdminDashboardViewModel extends BaseViewModel {
   }
 
   void _replaceBooking(Booking booking) {
-    final index = _completedBookings.indexWhere((item) => item.id == booking.id);
+    final index = _completedBookings.indexWhere(
+      (item) => item.id == booking.id,
+    );
     if (index < 0) {
       return;
     }
@@ -970,5 +883,4 @@ class AdminDashboardViewModel extends BaseViewModel {
     _cachedCompletedBookings = List<Booking>.from(_completedBookings);
     notifyListeners();
   }
-
 }

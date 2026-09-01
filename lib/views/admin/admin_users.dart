@@ -22,6 +22,7 @@ import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/user_bookings_section.dart';
 
 class _PendingImageUpload {
@@ -119,8 +120,9 @@ class AdminUsersView extends StatefulWidget {
     VoidCallback? onLogout,
     bool isQuickLoggedIn = false,
   }) {
-    return showDialog<void>(
+    return showAppDialog<void>(
       context: context,
+      modalKey: 'user-detail:${viewedUser.id ?? "-"}',
       builder: (dialogContext) => _AdminUserDetailDialog(
         currentUser: currentUser,
         initialViewedUser: viewedUser,
@@ -642,8 +644,9 @@ class _AdminUsersViewState extends State<AdminUsersView> {
       AppSnackbar.showError(context, 'You do not have access to edit users.');
       return;
     }
-    final editedUser = await showDialog<_UserFormDialogResult>(
+    final editedUser = await showAppDialog<_UserFormDialogResult>(
       context: context,
+      modalKey: 'user-edit:${user.id ?? "-"}',
       builder: (dialogContext) => _UserFormDialog(
         title: _userDialogTitle('Edit', user),
         initialUser: user,
@@ -679,8 +682,9 @@ class _AdminUsersViewState extends State<AdminUsersView> {
       AppSnackbar.showError(context, 'You do not have access to create users.');
       return;
     }
-    final newUser = await showDialog<_UserFormDialogResult>(
+    final newUser = await showAppDialog<_UserFormDialogResult>(
       context: context,
+      modalKey: 'user-new',
       builder: (dialogContext) => _UserFormDialog(
         title: _userDialogTitle('New', vm.draftNewUser),
         isEditing: false,
@@ -840,7 +844,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     required String confirmLabel,
     bool isDanger = false,
   }) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showAppDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(title),

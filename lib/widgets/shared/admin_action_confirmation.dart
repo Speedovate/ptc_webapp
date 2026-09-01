@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 
 Future<bool> showAdminActionConfirmation(
   BuildContext context, {
@@ -8,9 +9,13 @@ Future<bool> showAdminActionConfirmation(
   required String confirmLabel,
   bool isDanger = false,
   Future<bool> Function()? onConfirmAsync,
+  String? modalKey,
 }) async {
-  final confirmed = await showDialog<bool>(
+  final confirmed = await showAppDialog<bool>(
     context: context,
+    modalKey:
+        modalKey ??
+        'admin-action-confirmation:${title.trim()}:${confirmLabel.trim()}:${isDanger ? "danger" : "default"}',
     builder: (dialogContext) => _AdminActionConfirmationDialog(
       title: title,
       message: message,

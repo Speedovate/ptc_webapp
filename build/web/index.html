@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="/">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+  >
+  <meta
+    name="description"
+    content="Transport at your fingertips."
+  >
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#5B34D6">
+  <meta name="application-name" content="Paltranco Digital Platform">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Paltranco Digital Platform">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Paltranco Digital Platform">
+  <meta property="og:title" content="Paltranco Digital Platform">
+  <meta property="og:description" content="Transport at your fingertips.">
+  <meta property="og:url" content="https://paltranco.vercel.app/">
+  <meta property="og:image" content="https://paltranco.vercel.app/social-preview.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1080">
+  <meta property="og:image:height" content="1080">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Paltranco Digital Platform">
+  <meta name="twitter:description" content="Transport at your fingertips.">
+  <meta name="twitter:image" content="https://paltranco.vercel.app/social-preview.png">
+  <link rel="canonical" href="https://paltranco.vercel.app/">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon-180.png">
+  <link rel="apple-touch-icon" sizes="167x167" href="icons/apple-touch-icon-167.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="icons/apple-touch-icon-152.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>Paltranco Digital Platform</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    :root {
+      --startup-logo-width: 180px;
+    }
+
+    @media (max-width: 640px) {
+      :root {
+        --startup-logo-width: 120px;
+      }
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overscroll-behavior-x: none;
+      background: #5c33cf;
+    }
+
+    body {
+      overflow: hidden;
+    }
+
+    body,
+    flt-glass-pane,
+    flt-scene-host,
+    flt-semantics-host,
+    flt-semantics,
+    [flt-semantics-identifier] {
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
+    #app-startup-splash {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #5c33cf;
+      z-index: 9999;
+    }
+
+    #app-startup-splash__content {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+
+    #app-startup-splash__logo-wrap {
+      position: absolute;
+      left: 24px;
+      right: 24px;
+      top: 24px;
+      bottom: 108px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #app-startup-splash__logo {
+      width: var(--startup-logo-width);
+      height: auto;
+      display: block;
+      image-rendering: auto;
+    }
+
+    #app-startup-splash__footer {
+      position: absolute;
+      left: 24px;
+      right: 24px;
+      bottom: 34px;
+      display: flex;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    #app-startup-splash__footer img {
+      width: var(--startup-logo-width);
+      height: auto;
+      display: block;
+      opacity: 0.9;
+    }
+
+    #social-browser-gate {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
+      background: #5c33cf;
+      z-index: 10000;
+    }
+
+    html[data-social-inapp="true"] #social-browser-gate {
+      display: flex;
+    }
+
+    html[data-social-inapp="true"] #app-startup-splash {
+      display: none;
+    }
+
+    #social-browser-gate__card {
+      width: min(100%, 420px);
+      padding: 28px 24px;
+      border-radius: 28px;
+      border: 1px solid rgba(255, 255, 255, 0.24);
+      background: #FFFFFF;
+      box-shadow: 0 28px 80px rgba(16, 24, 40, 0.24);
+      box-sizing: border-box;
+      text-align: center;
+    }
+
+    #social-browser-gate__logo {
+      width: min(180px, 52vw);
+      height: auto;
+      display: block;
+      margin: 0 auto 24px;
+    }
+
+    #social-browser-gate__title {
+      margin: 0 0 12px;
+      color: #5c33cf;
+      font: 700 30px/1.05 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    #social-browser-gate__body {
+      margin: 0;
+      color: rgba(16, 24, 40, 0.88);
+      font: 500 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #social-browser-gate__actions {
+      display: flex;
+      flex-direction: column;
+      margin-top: 24px;
+    }
+
+    .social-browser-gate__button {
+      width: 100%;
+      border: 0;
+      border-radius: 999px;
+      padding: 15px 18px;
+      cursor: pointer;
+      font: 700 16px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      transition: transform 160ms ease, opacity 160ms ease, background 160ms ease;
+    }
+
+    .social-browser-gate__button:hover {
+      transform: translateY(-1px);
+    }
+
+    .social-browser-gate__button--primary {
+      background: #5c33cf;
+      color: #FFFFFF;
+    }
+
+    .social-browser-gate__button--secondary {
+      border: 1px solid rgba(92, 51, 207, 0.24);
+      background: transparent;
+      color: #5c33cf;
+    }
+
+    #social-browser-gate__hint {
+      margin: 16px 0 0;
+      color: rgba(52, 64, 84, 0.72);
+      font: 500 12px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #bootstrap-loader {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body>
+  <div id="app-startup-splash" aria-label="Loading Paltranco Digital Platform">
+    <div id="app-startup-splash__content">
+      <div id="app-startup-splash__logo-wrap">
+        <img
+          id="app-startup-splash__logo"
+          src="assets/assets/icon.png"
+          alt="Paltranco Digital Platform"
+        >
+      </div>
+      <div id="app-startup-splash__footer" aria-hidden="true">
+        <img src="assets/assets/sdv_footer_lite.png" alt="">
+      </div>
+    </div>
+  </div>
+  <div id="social-browser-gate" aria-modal="true" role="dialog" aria-labelledby="social-browser-gate__title">
+    <div id="social-browser-gate__card">
+      <img
+        id="social-browser-gate__logo"
+        src="assets/assets/icon.png"
+        alt="Paltranco Digital Platform"
+      >
+      <h1 id="social-browser-gate__title">Open In Chrome</h1>
+      <p id="social-browser-gate__body">
+        This website may not render correctly inside social media browsers.
+        Open it in Chrome for the best experience.
+      </p>
+      <div id="social-browser-gate__actions">
+        <button
+          id="social-browser-gate__open"
+          class="social-browser-gate__button social-browser-gate__button--primary"
+          type="button"
+        >
+          Open In Chrome
+        </button>
+      </div>
+      <p id="social-browser-gate__hint">
+        If Chrome does not open automatically, tap your browser menu and choose
+        “Open in browser”.
+      </p>
+    </div>
+  </div>
+  <div id="bootstrap-loader" aria-live="polite"></div>
+  <script>
+    function removeStartupSplash() {
+      const splash = document.getElementById('app-startup-splash');
+      if (splash) {
+        splash.remove();
+      }
+    }
+
+    function flutterSurfaceReady() {
+      return Boolean(
+        document.querySelector(
+          'flutter-view, flt-glass-pane, flt-scene-host, flt-scene',
+        ),
+      );
+    }
+
+    function watchFlutterSurfaceAndDismissSplash() {
+      if (flutterSurfaceReady()) {
+        removeStartupSplash();
+        return;
+      }
+
+      const observer = new MutationObserver(function() {
+        if (!flutterSurfaceReady()) {
+          return;
+        }
+        observer.disconnect();
+        removeStartupSplash();
+      });
+
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+
+      window.setTimeout(function() {
+        observer.disconnect();
+        if (flutterSurfaceReady()) {
+          removeStartupSplash();
+        }
+      }, 12000);
+    }
+
+    function isSocialInAppBrowser() {
+      const userAgent = navigator.userAgent || '';
+      return /FBAN|FBAV|Instagram|Line\/|Messenger|wv\)|WebView|MiuiBrowser|Snapchat|Twitter/i.test(userAgent);
+    }
+
+    function getChromeOpenUrl() {
+      const href = window.location.href;
+      const isAndroid = /Android/i.test(navigator.userAgent || '');
+      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+
+      if (isAndroid) {
+        const cleanUrl = href.replace(/^https?:\/\//, '');
+        return 'intent://' + cleanUrl + '#Intent;scheme=https;package=com.android.chrome;end';
+      }
+
+      if (isIOS) {
+        return href.replace(/^https:\/\//, 'googlechromes://').replace(/^http:\/\//, 'googlechrome://');
+      }
+
+      return href;
+    }
+
+    window.__paltrancoInstallPrompt = null;
+    window.__paltrancoInstalled = false;
+    window.__PALTRANCO_SOCIAL_INAPP__ = isSocialInAppBrowser();
+
+    if (window.__PALTRANCO_SOCIAL_INAPP__) {
+      document.documentElement.setAttribute('data-social-inapp', 'true');
+    }
+
+    window.addEventListener('beforeinstallprompt', function(event) {
+      event.preventDefault();
+      window.__paltrancoInstallPrompt = event;
+      window.dispatchEvent(new Event('paltranco-install-available'));
+    });
+
+    window.addEventListener('appinstalled', function() {
+      window.__paltrancoInstalled = true;
+      window.__paltrancoInstallPrompt = null;
+      window.dispatchEvent(new Event('paltranco-installed'));
+    });
+
+    window.addEventListener('DOMContentLoaded', function() {
+      watchFlutterSurfaceAndDismissSplash();
+      const isSocialInApp = window.__PALTRANCO_SOCIAL_INAPP__ === true;
+      const openButton = document.getElementById('social-browser-gate__open');
+
+      if (openButton) {
+        openButton.addEventListener('click', function() {
+          window.location.href = getChromeOpenUrl();
+        });
+      }
+
+      if (!isSocialInApp) {
+        return;
+      }
+    });
+
+    window.addEventListener('flutter-first-frame', function() {
+      removeStartupSplash();
+    });
+  </script>
+  <!--
+    You can customize the "flutter_bootstrap.js" script.
+    This is useful to provide a custom configuration to the Flutter loader
+    or to give the user feedback during the initialization process.
+
+    For more details:
+    * https://docs.flutter.dev/platform-integration/web/initialization
+  -->
+  <script src="flutter_bootstrap.js?v=2026-08-28-login-rollout-2" async></script>
+</body>
+</html>

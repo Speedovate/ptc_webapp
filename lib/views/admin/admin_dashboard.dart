@@ -22,6 +22,7 @@ import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
@@ -96,8 +97,7 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
             ? null
             : vm.completedBookings
                       .where((booking) => booking.id == _selectedBooking!.id)
-                      .firstOrNull ??
-                  _selectedBooking;
+                      .firstOrNull;
         final filteredBookings = vm.filteredCompletedBookings();
         final showInitialLoading =
             vm.isBusy &&
@@ -145,7 +145,7 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                   const SizedBox(height: 16),
                   BookingWorkflowView(
                     key: ValueKey(
-                      'admin-dashboard-booking-workflow-${selectedBooking.id ?? ''}-${selectedBooking.updatedAt?.toIso8601String() ?? ''}',
+                      'admin-dashboard-booking-workflow-${selectedBooking.id ?? ''}',
                     ),
                     user: vm.currentUser!,
                     booking: selectedBooking,
@@ -470,7 +470,7 @@ Future<void> _exportBookings(
     );
     return;
   }
-  await showDialog<void>(
+  await showAppDialog<void>(
     context: context,
     builder: (dialogContext) => _DashboardExportDialog(
       bookings: availableBookings,
@@ -1548,27 +1548,7 @@ class _DashboardExportCandidateRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'DR ${AdminDashboardViewModel.deliveryFormNumber(booking)}',
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${AdminDashboardViewModel.dropOffDateDisplay(booking)} | ${AdminDashboardViewModel.waybillNumber(booking)}',
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  _AdminDashboardCompletedBookingsTable._displayClientName(
-                    vm.client(booking),
-                  ),
+                  vm.client(booking).replaceFirst(RegExp(r'\s+\('), ' ('),
                   style: const TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 14,
@@ -1578,7 +1558,23 @@ class _DashboardExportCandidateRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '${vm.vanSize(booking)} | ${AdminDashboardViewModel.amount(booking)} | ${vm.billingStatusLabel(booking)}',
+                  '${AdminDashboardViewModel.deliveryFormNumber(booking)} | '
+                  '${AdminDashboardViewModel.dropOffDateDisplay(booking)} | '
+                  '${AdminDashboardViewModel.waybillNumber(booking)} | '
+                  '${AdminDashboardViewModel.vanNumber(booking)}',
+                  style: TextStyle(
+                    color: isExcluded
+                        ? AppColors.danger
+                        : AppColors.primaryColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${vm.vanSize(booking)} | '
+                  '${vm.billingStatusLabel(booking)} | '
+                  '${AdminDashboardViewModel.amount(booking)}',
                   style: TextStyle(
                     color: isExcluded
                         ? AppColors.danger
@@ -1650,17 +1646,18 @@ class _DashboardBillingStatusAction extends StatelessWidget {
     required this.onTap,
   });
 
-  static const Color _billedColor = Color(0xFF2EAD62);
+  static const Color _unbilledColor = Color(0xFF2EAD62);
 
   final String value;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final isBilled = value == AdminDashboardViewModel.billingStatusBilled;
+    final isUnbilled =
+        value == AdminDashboardViewModel.billingStatusUnbilled;
     return AdminListActionButton(
-      icon: isBilled ? Icons.check_rounded : Icons.close_rounded,
-      backgroundColor: isBilled ? _billedColor : AppColors.dangerStrong,
+      icon: isUnbilled ? Icons.check_rounded : Icons.close_rounded,
+      backgroundColor: isUnbilled ? _unbilledColor : AppColors.dangerStrong,
       onTap: onTap,
       size: 38,
     );

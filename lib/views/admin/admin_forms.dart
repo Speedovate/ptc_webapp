@@ -11,6 +11,7 @@ import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
@@ -235,7 +236,7 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
       return;
     }
 
-    await showDialog<void>(
+    await showAppDialog<void>(
       context: context,
       builder: (dialogContext) {
         return AnimatedBuilder(
@@ -331,7 +332,7 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
       return;
     }
 
-    await showDialog<void>(
+    await showAppDialog<void>(
       context: context,
       builder: (dialogContext) {
         return AnimatedBuilder(
@@ -432,7 +433,7 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
       return;
     }
 
-    await showDialog<void>(
+    await showAppDialog<void>(
       context: context,
       builder: (dialogContext) {
         return AnimatedBuilder(

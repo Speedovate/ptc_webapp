@@ -11,6 +11,11 @@ class _NoopFirestorePublicDocumentFetcher
   }
 
   @override
+  Future<Map<String, dynamic>?> fetchDocument(String documentPath) async {
+    return null;
+  }
+
+  @override
   Future<bool> deleteDocument(String documentPath) async {
     return false;
   }

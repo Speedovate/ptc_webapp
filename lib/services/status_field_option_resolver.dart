@@ -21,8 +21,7 @@ class StatusFieldOptionResolver {
   }) : _authRepository = authRepository ?? AuthRequest.instance,
        _vehicleCatalogRepository =
            vehicleCatalogRepository ?? VehicleRequest.instance,
-       _statusFormRepository =
-           statusFormRepository ?? StatusRequest.instance,
+       _statusFormRepository = statusFormRepository ?? StatusRequest.instance,
        _bookingRepository = bookingRepository ?? BookingRequest.instance;
 
   final AuthRepository _authRepository;
@@ -30,6 +29,38 @@ class StatusFieldOptionResolver {
   final StatusFormRepository _statusFormRepository;
   final BookingRepository _bookingRepository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+
+  List<StatusField> hydrateFieldsFromResolvedSnapshots(
+    List<StatusField> fields,
+  ) {
+    return _hydrateFieldsWithResolvedSources(
+      fields,
+      users: AuthRequest.hasResolvedUsers
+          ? AuthRequest.hydratedUsersSnapshot
+          : const [],
+      makes: VehicleRequest.hasResolvedMakes
+          ? VehicleRequest.hydratedMakesSnapshot
+          : const [],
+      types: VehicleRequest.hasResolvedTypes
+          ? VehicleRequest.hydratedTypesSnapshot
+          : const [],
+      sizes: VehicleRequest.hasResolvedSizes
+          ? VehicleRequest.hydratedSizesSnapshot
+          : const [],
+      statuses: StatusRequest.hasResolvedStatuses
+          ? StatusRequest.hydratedStatusesSnapshot
+          : const [],
+      forms: StatusRequest.hasResolvedForms
+          ? StatusRequest.hydratedFormsSnapshot
+          : const [],
+      fieldLibrary: StatusRequest.hasResolvedFields
+          ? StatusRequest.hydratedFieldsSnapshot
+          : const [],
+      bookings: BookingRequest.hasResolvedBookings
+          ? BookingRequest.hydratedBookingsSnapshot
+          : const [],
+    );
+  }
 
   Future<List<StatusField>> hydrateFields(List<StatusField> fields) async {
     final sourceKeys = fields
@@ -47,56 +78,81 @@ class StatusFieldOptionResolver {
     List<dynamic> bookings = const [];
 
     final tasks = <Future<void>>[];
-    if (_needsUsers(sourceKeys)) {
+    if (_needsUsers(sourceKeys) && AuthRequest.hasResolvedUsers) {
+      users = AuthRequest.hydratedUsersSnapshot;
+    } else if (_needsUsers(sourceKeys)) {
       tasks.add(
         _authRepository.getUsers().then((value) {
           users = value;
         }),
       );
     }
-    if (sourceKeys.contains(statusFieldOptionSourceVehicleMakes)) {
+    if (sourceKeys.contains(statusFieldOptionSourceVehicleMakes) &&
+        VehicleRequest.hasResolvedMakes) {
+      makes = VehicleRequest.hydratedMakesSnapshot;
+    } else if (sourceKeys.contains(statusFieldOptionSourceVehicleMakes)) {
       tasks.add(
         _vehicleCatalogRepository.getMakes().then((value) {
           makes = value;
         }),
       );
     }
-    if (sourceKeys.contains(statusFieldOptionSourceVehicleTypes)) {
+    if (sourceKeys.contains(statusFieldOptionSourceVehicleTypes) &&
+        VehicleRequest.hasResolvedTypes) {
+      types = VehicleRequest.hydratedTypesSnapshot;
+    } else if (sourceKeys.contains(statusFieldOptionSourceVehicleTypes)) {
       tasks.add(
         _vehicleCatalogRepository.getTypes().then((value) {
           types = value;
         }),
       );
     }
-    if (sourceKeys.contains(statusFieldOptionSourceVehicleSizes)) {
+    if (sourceKeys.contains(statusFieldOptionSourceVehicleSizes) &&
+        VehicleRequest.hasResolvedSizes) {
+      sizes = VehicleRequest.hydratedSizesSnapshot;
+    } else if (sourceKeys.contains(statusFieldOptionSourceVehicleSizes)) {
       tasks.add(
         _vehicleCatalogRepository.getSizes().then((value) {
           sizes = value;
         }),
       );
     }
-    if (sourceKeys.contains(statusFieldOptionSourceStatuses)) {
+    if (sourceKeys.contains(statusFieldOptionSourceStatuses) &&
+        StatusRequest.hasResolvedStatuses) {
+      statuses = StatusRequest.hydratedStatusesSnapshot;
+    } else if (sourceKeys.contains(statusFieldOptionSourceStatuses)) {
       tasks.add(
         _statusFormRepository.getStatuses().then((value) {
           statuses = value;
         }),
       );
     }
-    if (sourceKeys.contains(statusFieldOptionSourceForms)) {
+    if (sourceKeys.contains(statusFieldOptionSourceForms) &&
+        StatusRequest.hasResolvedForms) {
+      forms = StatusRequest.hydratedFormsSnapshot;
+    } else if (sourceKeys.contains(statusFieldOptionSourceForms)) {
       tasks.add(
         _statusFormRepository.getStatusForms().then((value) {
           forms = value;
         }),
       );
     }
-    if (sourceKeys.contains(statusFieldOptionSourceFields)) {
+    if (sourceKeys.contains(statusFieldOptionSourceFields) &&
+        StatusRequest.hasResolvedFields) {
+      fieldLibrary = StatusRequest.hydratedFieldsSnapshot;
+    } else if (sourceKeys.contains(statusFieldOptionSourceFields)) {
       tasks.add(
         _statusFormRepository.getAllFields().then((value) {
           fieldLibrary = value;
         }),
       );
     }
-    if (sourceKeys.contains(statusFieldOptionSourceBookings)) {
+    if (sourceKeys.contains(statusFieldOptionSourceBookings) &&
+        (BookingRequest.hasResolvedBookings ||
+            BookingRequest.isAuthoritativeSyncInFlight)) {
+      // Use the dashboard-owned booking request while it is still resolving.
+      bookings = BookingRequest.hydratedBookingsSnapshot;
+    } else if (sourceKeys.contains(statusFieldOptionSourceBookings)) {
       tasks.add(
         _bookingRepository.getBookings().then((value) {
           bookings = value;
@@ -107,6 +163,30 @@ class StatusFieldOptionResolver {
       await Future.wait(tasks);
     }
 
+    return _hydrateFieldsWithResolvedSources(
+      fields,
+      users: users,
+      makes: makes,
+      types: types,
+      sizes: sizes,
+      statuses: statuses,
+      forms: forms,
+      fieldLibrary: fieldLibrary,
+      bookings: bookings,
+    );
+  }
+
+  List<StatusField> _hydrateFieldsWithResolvedSources(
+    List<StatusField> fields, {
+    required List<dynamic> users,
+    required List<dynamic> makes,
+    required List<dynamic> types,
+    required List<dynamic> sizes,
+    required List<dynamic> statuses,
+    required List<StatusForm> forms,
+    required List<StatusField> fieldLibrary,
+    required List<dynamic> bookings,
+  }) {
     final userOptions = _uniqueSortedOptions(
       users
           .where((item) => item.isActive != false)
@@ -116,8 +196,7 @@ class StatusFieldOptionResolver {
     final clientOptions = _uniqueSortedOptions(
       users
           .where(
-            (item) =>
-                isPrimaryClientRole(item.role) && item.isActive != false,
+            (item) => isPrimaryClientRole(item.role) && item.isActive != false,
           )
           .map(_userDisplay)
           .whereType<String>(),
@@ -175,9 +254,7 @@ class StatusFieldOptionResolver {
     final statusOptions = _uniqueSortedOptions(
       statuses
           .where((item) => item.isActive != false)
-          .map(
-            (item) => _catalogItemDisplay(item.label, item.key, item.id),
-          )
+          .map((item) => _catalogItemDisplay(item.label, item.key, item.id))
           .whereType<String>(),
     );
     final formOptions = _uniqueSortedOptions(
@@ -189,9 +266,7 @@ class StatusFieldOptionResolver {
     final fieldOptions = _uniqueSortedOptions(
       fieldLibrary
           .where((item) => item.isActive != false)
-          .map(
-            (item) => _catalogItemDisplay(item.title, item.key, item.id),
-          )
+          .map((item) => _catalogItemDisplay(item.title, item.key, item.id))
           .whereType<String>(),
     );
     final bookingOptions = _uniqueSortedOptions(
