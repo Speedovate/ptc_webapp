@@ -76,6 +76,67 @@ class OfflineMutationQueueService {
   CollectionReference<Map<String, dynamic>> get _bookingIdempotencyCollection =>
       _firestore.collection('booking_idempotency');
 
+  /// Reserves a numeric document ID atomically for resources whose documents
+  /// intentionally use sequential IDs. A retry with the same submission key
+  /// always returns the original reservation.
+  Future<String> reserveNumericDocumentId({
+    required String collectionKey,
+    required String submissionKey,
+  }) async {
+    final collection = _collectionForKey(collectionKey);
+    if (collection == null) {
+      throw ArgumentError.value(collectionKey, 'collectionKey');
+    }
+    final normalizedKey = submissionKey.trim();
+    if (normalizedKey.isEmpty) {
+      throw ArgumentError.value(submissionKey, 'submissionKey');
+    }
+    final reservation = await _firestore.runTransaction<String>((
+      transaction,
+    ) async {
+      final counterRef = _firestore
+          .collection('system')
+          .doc('resource_counters')
+          .collection('items')
+          .doc(collectionKey);
+      final idempotencyRef = _firestore
+          .collection('resource_idempotency')
+          .doc(_resourceIdempotencyDocumentId(collectionKey, normalizedKey));
+      final idempotencySnapshot = await transaction.get(idempotencyRef);
+      final reserved = int.tryParse(
+        idempotencySnapshot.data()?['document_id']?.toString() ?? '',
+      );
+      if (reserved != null && reserved > 0) {
+        return '$reserved';
+      }
+      final counterSnapshot = await transaction.get(counterRef);
+      var nextId =
+          int.tryParse(counterSnapshot.data()?['next_id']?.toString() ?? '') ??
+          1;
+      while ((await transaction.get(collection.doc('$nextId'))).exists) {
+        nextId++;
+      }
+      final now = DateTime.now().toUtc().toIso8601String();
+      transaction.set(counterRef, {
+        'next_id': nextId + 1,
+        'updated_at': now,
+      }, SetOptions(merge: true));
+      transaction.set(idempotencyRef, {
+        'collection_key': collectionKey,
+        'submission_key': normalizedKey,
+        'document_id': '$nextId',
+        'created_at': now,
+      });
+      return '$nextId';
+    });
+    return reservation;
+  }
+
+  String _resourceIdempotencyDocumentId(
+    String collectionKey,
+    String submissionKey,
+  ) => '${collectionKey}_${base64UrlEncode(utf8.encode(submissionKey))}';
+
   Future<List<OfflineMutationConflictRecord>> getBlockedConflicts() async {
     await initialize();
     final entries = await _readEntries();
@@ -332,6 +393,40 @@ class OfflineMutationQueueService {
     unawaited(flushPendingMutations());
   }
 
+  /// Stores one offline create attempt. Its final numeric ID is reserved only
+  /// when Firestore is reachable again.
+  Future<void> queueOfflineCollectionDocumentCreate({
+    required String collectionKey,
+    required String provisionalId,
+    required String submissionKey,
+    required Map<String, dynamic> document,
+  }) async {
+    await initialize();
+    final entries = await _readEntries();
+    entries.removeWhere(
+      (entry) =>
+          entry.kind == _OfflineMutationKind.collectionDocumentCreate &&
+          entry.collectionKey == collectionKey &&
+          entry.payload['submission_key']?.toString() == submissionKey,
+    );
+    entries.add(
+      _OfflineMutationEntry(
+        id: _nextEntryId('collection_create'),
+        kind: _OfflineMutationKind.collectionDocumentCreate,
+        targetId: provisionalId,
+        collectionKey: collectionKey,
+        payload: Map<String, dynamic>.from(document)
+          ..['id'] = provisionalId
+          ..['submission_key'] = submissionKey,
+        createdAtIso: DateTime.now().toUtc().toIso8601String(),
+        retryCount: 0,
+      ),
+    );
+    await _writeEntries(entries);
+    _setStatus(_snapshotForEntries(entries));
+    unawaited(flushPendingMutations());
+  }
+
   /// Queues a new booking without reserving a numeric ID while offline.
   /// The reconnect transaction assigns the next free ID atomically.
   Future<void> queueOfflineBookingCreate({
@@ -518,6 +613,8 @@ class OfflineMutationQueueService {
         });
       case _OfflineMutationKind.bookingCreate:
         await _applyOfflineBookingCreate(entry);
+      case _OfflineMutationKind.collectionDocumentCreate:
+        await _applyOfflineCollectionDocumentCreate(entry);
       case _OfflineMutationKind.collectionDocumentUpsert:
         final collection = _collectionForKey(entry.collectionKey);
         if (collection == null) {
@@ -607,10 +704,39 @@ class OfflineMutationQueueService {
         );
   }
 
+  Future<void> _applyOfflineCollectionDocumentCreate(
+    _OfflineMutationEntry entry,
+  ) async {
+    final collectionKey = entry.collectionKey;
+    final submissionKey = entry.payload['submission_key']?.toString().trim();
+    final collection = collectionKey == null
+        ? null
+        : _collectionForKey(collectionKey);
+    if (collectionKey == null ||
+        collection == null ||
+        submissionKey == null ||
+        submissionKey.isEmpty) {
+      throw Exception('Queued resource create is missing reservation data.');
+    }
+    final finalId = await reserveNumericDocumentId(
+      collectionKey: collectionKey,
+      submissionKey: submissionKey,
+    );
+    await collection
+        .doc(finalId)
+        .set(
+          Map<String, dynamic>.from(entry.payload)
+            ..['id'] = finalId
+            ..remove('submission_key')
+            ..remove('local_sync_status'),
+        );
+  }
+
   CollectionReference<Map<String, dynamic>>? _collectionForKey(
     String? collectionKey,
   ) {
     return switch (collectionKey) {
+      'users' => _usersCollection,
       'bookings' => _bookingsCollection,
       'role_access' => _firestore.collection('role_access'),
       'vehicle_makes' => _firestore.collection('vehicle_makes'),
@@ -872,6 +998,7 @@ enum _OfflineMutationKind {
   userDelete,
   bookingBillingStatusUpdate,
   bookingCreate,
+  collectionDocumentCreate,
   collectionDocumentUpsert,
   collectionDocumentDelete,
 }

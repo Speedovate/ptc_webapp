@@ -32,25 +32,26 @@ class AuthRequest implements AuthRepository {
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
     Future<void> Function()? offlineQueueInitializer,
     Future<void> Function()? offlineQueueFlusher,
-  })
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _vehicleRequest = vehicleRequest ?? VehicleRequest.instance,
-      _storage = storageBackend ?? createAuthStorageBackend(),
-      _photoStorageService = photoStorageService ?? PhotoStorageService.instance,
-      _firebaseAuthBridgeService =
-          firebaseAuthBridgeService ?? FirebaseAuthBridgeService.instance,
-      _firestorePublicDocumentFetcher =
-          firestorePublicDocumentFetcher ??
-          createFirestorePublicDocumentFetcher(),
-      _offlineMutationQueueService =
-          offlineMutationQueueService ?? OfflineMutationQueueService.instance,
-      _offlineMediaSyncService =
-          offlineMediaSyncService ?? OfflineMediaSyncService.instance,
-      _offlineQueueInitializer =
-          offlineQueueInitializer ??
-          OfflineQueueCoordinatorService.instance.initialize,
-      _offlineQueueFlusher =
-          offlineQueueFlusher ?? OfflineQueueCoordinatorService.instance.flushAll;
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _vehicleRequest = vehicleRequest ?? VehicleRequest.instance,
+       _storage = storageBackend ?? createAuthStorageBackend(),
+       _photoStorageService =
+           photoStorageService ?? PhotoStorageService.instance,
+       _firebaseAuthBridgeService =
+           firebaseAuthBridgeService ?? FirebaseAuthBridgeService.instance,
+       _firestorePublicDocumentFetcher =
+           firestorePublicDocumentFetcher ??
+           createFirestorePublicDocumentFetcher(),
+       _offlineMutationQueueService =
+           offlineMutationQueueService ?? OfflineMutationQueueService.instance,
+       _offlineMediaSyncService =
+           offlineMediaSyncService ?? OfflineMediaSyncService.instance,
+       _offlineQueueInitializer =
+           offlineQueueInitializer ??
+           OfflineQueueCoordinatorService.instance.initialize,
+       _offlineQueueFlusher =
+           offlineQueueFlusher ??
+           OfflineQueueCoordinatorService.instance.flushAll;
 
   static final AuthRequest instance = AuthRequest();
 
@@ -132,9 +133,9 @@ class AuthRequest implements AuthRepository {
     _ensureUsersRealtimeCacheSync();
     await _rememberStoredSessionAnchors();
     unawaited(
-      _offlineQueueInitializer().then((_) {
-      }).catchError((error, stackTrace) {
-      }),
+      _offlineQueueInitializer()
+          .then((_) {})
+          .catchError((error, stackTrace) {}),
     );
   }
 
@@ -170,12 +171,10 @@ class AuthRequest implements AuthRepository {
   Future<List<UserModel>> getUsers() async {
     return _runAuthRequest(() async {
       await initialize();
-      final typeByIdFuture = _vehicleRequest
-          .getTypeByIdCachedFirst()
-          .timeout(
-            _startupTimeout,
-            onTimeout: () => <String, VehicleCatalogItem>{},
-          );
+      final typeByIdFuture = _vehicleRequest.getTypeByIdCachedFirst().timeout(
+        _startupTimeout,
+        onTimeout: () => <String, VehicleCatalogItem>{},
+      );
       try {
         final rawDocuments = await _cache.getDocumentsVerifiedOnlineFirst(
           resourceKey: _usersResourceKey,
@@ -273,15 +272,21 @@ class AuthRequest implements AuthRepository {
 
   Stream<void> watchCurrentSessionInvalidation() async* {
     await initialize();
-    final currentUserId = normalizeId(await _storage.readString(_currentUserIdKey));
+    final currentUserId = normalizeId(
+      await _storage.readString(_currentUserIdKey),
+    );
     if (currentUserId == null) {
       return;
     }
-    yield* _usersCollection.doc(currentUserId).snapshots().asyncExpand((snapshot) async* {
+    yield* _usersCollection.doc(currentUserId).snapshots().asyncExpand((
+      snapshot,
+    ) async* {
       if (snapshot.metadata.isFromCache) {
         return;
       }
-      final activeUserId = normalizeId(await _storage.readString(_currentUserIdKey));
+      final activeUserId = normalizeId(
+        await _storage.readString(_currentUserIdKey),
+      );
       if (activeUserId != currentUserId) {
         return;
       }
@@ -370,10 +375,7 @@ class AuthRequest implements AuthRepository {
     if (bridgedUserId != null && currentNetworkStatus()) {
       unawaited(_validateStoredSessionInBackground(bridgedUserId));
     }
-    unawaited(
-      _refreshOfflineQueueScopes().then((_) {
-      }),
-    );
+    unawaited(_refreshOfflineQueueScopes().then((_) {}));
     AppSessionReset.clearUserScopedState();
     _logLogin(
       'success user=${bridgedUser.id ?? "-"} role=${bridgedUser.role ?? "-"}',
@@ -383,142 +385,136 @@ class AuthRequest implements AuthRepository {
 
   @override
   Future<UserModel> register(UserModel user) async {
-    return _runAuthRequest(
-      () async {
-        await initialize();
-        AppSessionReset.clearUserScopedState();
-        var users = await _getUsersCachedOnly();
-        if (users.isEmpty && currentNetworkStatus()) {
-          try {
-            users = await _getUsersFresh().timeout(
-              _startupTimeout,
-              onTimeout: () => const <UserModel>[],
-            );
-          } catch (error) {
-            // Best-effort remote refresh only; local cache path continues.
-          }
-        } else if (currentNetworkStatus()) {
-          unawaited(_refreshUsersCacheInBackground());
-        }
-        final normalizedRole = normalizeRoleKey(user.role);
-        final isPendingApprovalRole =
-            normalizedRole == 'driver' || normalizedRole == 'helper';
-        final normalizedEmail = (user.email ?? '').trim().toLowerCase();
-        final normalizedPhone =
-            normalizePhilippinePhone(user.phone) ?? user.phone?.trim() ?? '';
-        final normalizedName = _normalizeTitleCase(user.name);
-        final emailTaken = users.any(
-          (item) => (item.email ?? '').trim().toLowerCase() == normalizedEmail,
-        );
-        if (emailTaken) {
-          throw const AuthFailure('That email is already registered.');
-        }
-        final phoneTaken = users.any((item) {
-          final itemPhone =
-              normalizePhilippinePhone(item.phone) ?? item.phone?.trim() ?? '';
-          return itemPhone.isNotEmpty &&
-              normalizedPhone.isNotEmpty &&
-              itemPhone == normalizedPhone;
-        });
-        if (phoneTaken) {
-          throw const AuthFailure('That phone number is already registered.');
-        }
-        final nextId =
-            users
-                .map((item) => int.tryParse(item.id ?? ''))
-                .whereType<int>()
-                .fold<int>(0, (max, value) => value > max ? value : max) +
-            1;
-        final now = DateTime.now();
-        final savedUser = user.copyWith(
-          id: '$nextId',
-          role: normalizedRole,
-          parentClientId: normalizeId(user.parentClientId),
-          email: normalizedEmail,
-          name: normalizedName,
-          phone: normalizedPhone,
-          position: _normalizeFlexibleText(user.position),
-          isActive: isPendingApprovalRole ? false : true,
-          isOnline: false,
-          createdAt: user.createdAt ?? now,
-          updatedAt: now,
-        );
-        final document = _toFirestoreMap(savedUser);
-        if (currentNetworkStatus()) {
-          try {
-            await _writeUserDocumentOnline(savedUser.id!, document);
-          } catch (error) {
-            throw AuthFailure(
-              userFacingErrorMessage(
-                error,
-                fallback:
-                    'We could not create your account right now. Please try again.',
-              ),
-            );
-          }
-        } else {
-          try {
-            await _offlineMutationQueueService
-                .queueUserUpsert(
-                  userId: savedUser.id!,
-                  document: document,
-                  baseUpdatedAt: null,
-                )
-                .timeout(_localWriteTimeout);
-          } catch (queueError) {
-            // Queue persistence is best-effort; cache/session writes still proceed.
-          }
-        }
+    return _runAuthRequest(() async {
+      await initialize();
+      AppSessionReset.clearUserScopedState();
+      var users = await _getUsersCachedOnly();
+      if (users.isEmpty && currentNetworkStatus()) {
         try {
-          await _cache
-              .upsertDocument(
-                resourceKey: _usersResourceKey,
+          users = await _getUsersFresh().timeout(
+            _startupTimeout,
+            onTimeout: () => const <UserModel>[],
+          );
+        } catch (error) {
+          // Best-effort remote refresh only; local cache path continues.
+        }
+      } else if (currentNetworkStatus()) {
+        unawaited(_refreshUsersCacheInBackground());
+      }
+      final normalizedRole = normalizeRoleKey(user.role);
+      final isPendingApprovalRole =
+          normalizedRole == 'driver' || normalizedRole == 'helper';
+      final normalizedEmail = (user.email ?? '').trim().toLowerCase();
+      final normalizedPhone =
+          normalizePhilippinePhone(user.phone) ?? user.phone?.trim() ?? '';
+      final normalizedName = _normalizeTitleCase(user.name);
+      final emailTaken = users.any(
+        (item) => (item.email ?? '').trim().toLowerCase() == normalizedEmail,
+      );
+      if (emailTaken) {
+        throw const AuthFailure('That email is already registered.');
+      }
+      final phoneTaken = users.any((item) {
+        final itemPhone =
+            normalizePhilippinePhone(item.phone) ?? item.phone?.trim() ?? '';
+        return itemPhone.isNotEmpty &&
+            normalizedPhone.isNotEmpty &&
+            itemPhone == normalizedPhone;
+      });
+      if (phoneTaken) {
+        throw const AuthFailure('That phone number is already registered.');
+      }
+      final nextId = currentNetworkStatus()
+          ? await _offlineMutationQueueService.reserveNumericDocumentId(
+              collectionKey: 'users',
+              submissionKey: 'register:$normalizedEmail:$normalizedPhone',
+            )
+          : '${users.map((item) => int.tryParse(item.id ?? '')).whereType<int>().fold<int>(0, (max, value) => value > max ? value : max) + 1}';
+      final now = DateTime.now();
+      final savedUser = user.copyWith(
+        id: nextId,
+        role: normalizedRole,
+        parentClientId: normalizeId(user.parentClientId),
+        email: normalizedEmail,
+        name: normalizedName,
+        phone: normalizedPhone,
+        position: _normalizeFlexibleText(user.position),
+        isActive: isPendingApprovalRole ? false : true,
+        isOnline: false,
+        createdAt: user.createdAt ?? now,
+        updatedAt: now,
+      );
+      final document = _toFirestoreMap(savedUser);
+      if (currentNetworkStatus()) {
+        try {
+          await _writeUserDocumentOnline(savedUser.id!, document);
+        } catch (error) {
+          throw AuthFailure(
+            userFacingErrorMessage(
+              error,
+              fallback:
+                  'We could not create your account right now. Please try again.',
+            ),
+          );
+        }
+      } else {
+        try {
+          await _offlineMutationQueueService
+              .queueUserUpsert(
+                userId: savedUser.id!,
                 document: document,
+                baseUpdatedAt: null,
               )
               .timeout(_localWriteTimeout);
-        } catch (cacheError) {
-          // Cache write failure should not block registration success.
+        } catch (queueError) {
+          // Queue persistence is best-effort; cache/session writes still proceed.
         }
-        try {
-          await _upsertUserCacheLocally(document).timeout(_localWriteTimeout);
-        } catch (localCacheError) {
-          // Secondary local cache write is best-effort only.
-        }
-        UserModel bridgedUser = savedUser;
-        try {
-          bridgedUser = await _firebaseAuthBridgeService
-              .syncSessionForUser(savedUser)
-              .timeout(_loginFallbackLookupTimeout, onTimeout: () => savedUser);
-        } catch (error) {
-          // Session bridge is best-effort only for compatibility with older data.
-        }
-        await _storage
-            .writeString(_currentUserIdKey, savedUser.id ?? '')
+      }
+      try {
+        await _cache
+            .upsertDocument(resourceKey: _usersResourceKey, document: document)
             .timeout(_localWriteTimeout);
-        try {
-          await _writeCurrentSessionSnapshot(bridgedUser).timeout(
-            _localWriteTimeout,
-          );
-        } catch (sessionSnapshotError) {
-          // Session snapshot write is best-effort only.
-        }
-        try {
-          await _rememberKnownSessionUserId(bridgedUser.id).timeout(
-            _localWriteTimeout,
-          );
-        } catch (knownUserError) {
-          // Known-session tracking is best-effort only.
-        }
-        unawaited(
-          _refreshOfflineQueueScopes().then((_) {
-          }).catchError((error, stackTrace) {
-          }),
-        );
-        AppSessionReset.clearUserScopedState();
-        return bridgedUser;
-      },
-      fallback: 'We could not create your account right now. Please try again.',
-    );
+      } catch (cacheError) {
+        // Cache write failure should not block registration success.
+      }
+      try {
+        await _upsertUserCacheLocally(document).timeout(_localWriteTimeout);
+      } catch (localCacheError) {
+        // Secondary local cache write is best-effort only.
+      }
+      UserModel bridgedUser = savedUser;
+      try {
+        bridgedUser = await _firebaseAuthBridgeService
+            .syncSessionForUser(savedUser)
+            .timeout(_loginFallbackLookupTimeout, onTimeout: () => savedUser);
+      } catch (error) {
+        // Session bridge is best-effort only for compatibility with older data.
+      }
+      await _storage
+          .writeString(_currentUserIdKey, savedUser.id ?? '')
+          .timeout(_localWriteTimeout);
+      try {
+        await _writeCurrentSessionSnapshot(
+          bridgedUser,
+        ).timeout(_localWriteTimeout);
+      } catch (sessionSnapshotError) {
+        // Session snapshot write is best-effort only.
+      }
+      try {
+        await _rememberKnownSessionUserId(
+          bridgedUser.id,
+        ).timeout(_localWriteTimeout);
+      } catch (knownUserError) {
+        // Known-session tracking is best-effort only.
+      }
+      unawaited(
+        _refreshOfflineQueueScopes()
+            .then((_) {})
+            .catchError((error, stackTrace) {}),
+      );
+      AppSessionReset.clearUserScopedState();
+      return bridgedUser;
+    }, fallback: 'We could not create your account right now. Please try again.');
   }
 
   @override
@@ -552,7 +548,14 @@ class AuthRequest implements AuthRepository {
         throw const AuthFailure('That phone number is already registered.');
       }
       final now = DateTime.now();
-      final nextId = normalizeId(user.id) ?? await _nextUserId(users);
+      final nextId =
+          normalizeId(user.id) ??
+          (currentNetworkStatus()
+              ? await _offlineMutationQueueService.reserveNumericDocumentId(
+                  collectionKey: 'users',
+                  submissionKey: 'user:$normalizedEmail:$normalizedPhone',
+                )
+              : await _nextUserId(users));
       final existing = users.where((item) => item.id == nextId).firstOrNull;
       final saved = user.copyWith(
         id: nextId,
@@ -571,7 +574,9 @@ class AuthRequest implements AuthRepository {
       final baseUpdatedAtIso =
           existing?.updatedAt?.toUtc().toIso8601String() ??
           user.updatedAt?.toUtc().toIso8601String();
-      final currentUserId = normalizeId(await _storage.readString(_currentUserIdKey));
+      final currentUserId = normalizeId(
+        await _storage.readString(_currentUserIdKey),
+      );
       final isCurrentUserUpdate = currentUserId == nextId;
       if (isCurrentUserUpdate) {
         _stagePendingSelfSessionSnapshot(saved);
@@ -589,32 +594,30 @@ class AuthRequest implements AuthRepository {
               .timeout(_localWriteTimeout);
         }
       } else {
-        await _offlineMutationQueueService.queueUserUpsert(
-          userId: nextId,
-          document: document,
-          baseUpdatedAt: baseUpdatedAtIso,
-        ).timeout(_localWriteTimeout);
+        await _offlineMutationQueueService
+            .queueUserUpsert(
+              userId: nextId,
+              document: document,
+              baseUpdatedAt: baseUpdatedAtIso,
+            )
+            .timeout(_localWriteTimeout);
       }
-      await _cache.upsertDocument(
-        resourceKey: _usersResourceKey,
-        document: document,
-      ).timeout(_localWriteTimeout, onTimeout: () {});
-      await _firebaseAuthBridgeService.syncUserLink(saved).timeout(
-        _localWriteTimeout,
-        onTimeout: () => saved,
-      );
+      await _cache
+          .upsertDocument(resourceKey: _usersResourceKey, document: document)
+          .timeout(_localWriteTimeout, onTimeout: () {});
+      await _firebaseAuthBridgeService
+          .syncUserLink(saved)
+          .timeout(_localWriteTimeout, onTimeout: () => saved);
       if (isCurrentUserUpdate) {
-        await _storage.writeString(_currentUserIdKey, nextId).timeout(
-          _localWriteTimeout,
-          onTimeout: () {},
-        );
+        await _storage
+            .writeString(_currentUserIdKey, nextId)
+            .timeout(_localWriteTimeout, onTimeout: () {});
         final bridgedCurrentUser = await _firebaseAuthBridgeService
             .syncSessionForUser(saved)
             .timeout(_localWriteTimeout, onTimeout: () => saved);
-        await _writeCurrentSessionSnapshot(bridgedCurrentUser).timeout(
-          _localWriteTimeout,
-          onTimeout: () {},
-        );
+        await _writeCurrentSessionSnapshot(
+          bridgedCurrentUser,
+        ).timeout(_localWriteTimeout, onTimeout: () {});
         _clearPendingSelfSessionSnapshot();
       }
       return saved;
@@ -693,9 +696,9 @@ class AuthRequest implements AuthRepository {
             photo: queued.previewUrl,
             updatedAt: queued.queuedAt,
           );
-          await _applyImmediateUserPhotoState(queuedUser).timeout(
-            _localWriteTimeout,
-          );
+          await _applyImmediateUserPhotoState(
+            queuedUser,
+          ).timeout(_localWriteTimeout);
           return queuedUser;
         } catch (queueError) {
           final previewUser = _userWithImmediatePhotoPreview(
@@ -703,31 +706,30 @@ class AuthRequest implements AuthRepository {
             bytes: bytes,
             mimeType: mimeType,
           );
-          await _applyImmediateUserPhotoState(previewUser).timeout(
-            _localWriteTimeout,
-          );
+          await _applyImmediateUserPhotoState(
+            previewUser,
+          ).timeout(_localWriteTimeout);
           return previewUser;
         }
       }
       try {
         final upload = await _photoStorageService
             .uploadUserPhoto(
-          bytes: bytes,
-          userId: normalizedUserId,
-          fieldKey: 'profile_photo',
-          fileName: fileName,
-          mimeType: mimeType,
-          size: size,
-        )
+              bytes: bytes,
+              userId: normalizedUserId,
+              fieldKey: 'profile_photo',
+              fileName: fileName,
+              mimeType: mimeType,
+              size: size,
+            )
             .timeout(_photoUploadTimeout);
         final uploadedUser = currentUser.copyWith(
           photo: upload['download_url']?.toString(),
           updatedAt: DateTime.now(),
         );
-        await _applyImmediateUserPhotoState(uploadedUser).timeout(
-          _localWriteTimeout,
-          onTimeout: () {},
-        );
+        await _applyImmediateUserPhotoState(
+          uploadedUser,
+        ).timeout(_localWriteTimeout, onTimeout: () {});
         return await saveUser(uploadedUser);
       } catch (error) {
         final normalizedError = normalizeUserErrorText(
@@ -753,9 +755,9 @@ class AuthRequest implements AuthRepository {
             photo: queued.previewUrl,
             updatedAt: queued.queuedAt,
           );
-          await _applyImmediateUserPhotoState(queuedUser).timeout(
-            _localWriteTimeout,
-          );
+          await _applyImmediateUserPhotoState(
+            queuedUser,
+          ).timeout(_localWriteTimeout);
           return queuedUser;
         } catch (queueError) {
           final previewUser = _userWithImmediatePhotoPreview(
@@ -763,9 +765,9 @@ class AuthRequest implements AuthRepository {
             bytes: bytes,
             mimeType: mimeType,
           );
-          await _applyImmediateUserPhotoState(previewUser).timeout(
-            _localWriteTimeout,
-          );
+          await _applyImmediateUserPhotoState(
+            previewUser,
+          ).timeout(_localWriteTimeout);
           return previewUser;
         }
       }
@@ -815,22 +817,24 @@ class AuthRequest implements AuthRepository {
           license: queued.previewUrl,
           updatedAt: queued.queuedAt,
         );
-        await _cache.upsertDocument(
-          resourceKey: _usersResourceKey,
-          document: _toFirestoreMap(queuedUser),
-        ).timeout(_localWriteTimeout);
+        await _cache
+            .upsertDocument(
+              resourceKey: _usersResourceKey,
+              document: _toFirestoreMap(queuedUser),
+            )
+            .timeout(_localWriteTimeout);
         return queuedUser;
       }
       try {
         final upload = await _photoStorageService
             .uploadUserPhoto(
-          bytes: bytes,
-          userId: normalizedUserId,
-          fieldKey: 'license_photo',
-          fileName: fileName,
-          mimeType: mimeType,
-          size: size,
-        )
+              bytes: bytes,
+              userId: normalizedUserId,
+              fieldKey: 'license_photo',
+              fileName: fileName,
+              mimeType: mimeType,
+              size: size,
+            )
             .timeout(_photoUploadTimeout);
         return await saveUser(
           driver.copyWith(
@@ -862,10 +866,12 @@ class AuthRequest implements AuthRepository {
             license: queued.previewUrl,
             updatedAt: queued.queuedAt,
           );
-          await _cache.upsertDocument(
-            resourceKey: _usersResourceKey,
-            document: _toFirestoreMap(queuedUser),
-          ).timeout(_localWriteTimeout);
+          await _cache
+              .upsertDocument(
+                resourceKey: _usersResourceKey,
+                document: _toFirestoreMap(queuedUser),
+              )
+              .timeout(_localWriteTimeout);
           return queuedUser;
         } catch (queueError) {
           return driver;
@@ -939,18 +945,18 @@ class AuthRequest implements AuthRepository {
       }
       final deletedUser =
           await _getCachedUserById(normalized) ??
-          await _getUserById(normalized).timeout(
-            _startupTimeout,
-            onTimeout: () => null,
-          );
+          await _getUserById(
+            normalized,
+          ).timeout(_startupTimeout, onTimeout: () => null);
       if (currentNetworkStatus()) {
         unawaited(
-          _deleteLinkedClientMemberRecords(normalized)
-              .timeout(_deleteTimeout)
-              .catchError((_) {}),
+          _deleteLinkedClientMemberRecords(
+            normalized,
+          ).timeout(_deleteTimeout).catchError((_) {}),
         );
         unawaited(
-          _photoStorageService.deleteUserAssets(normalized)
+          _photoStorageService
+              .deleteUserAssets(normalized)
               .timeout(_deleteTimeout)
               .catchError((_) {}),
         );
@@ -966,15 +972,17 @@ class AuthRequest implements AuthRepository {
             .queueUserDelete(userId: normalized)
             .timeout(_localWriteTimeout);
       }
-      await _cache.removeDocument(
-        resourceKey: _usersResourceKey,
-        documentId: normalized,
-      ).timeout(_localWriteTimeout, onTimeout: () {});
+      await _cache
+          .removeDocument(
+            resourceKey: _usersResourceKey,
+            documentId: normalized,
+          )
+          .timeout(_localWriteTimeout, onTimeout: () {});
       final parentClientId = normalizeId(deletedUser?.parentClientId);
       if (parentClientId != null) {
-        await FirestoreCacheStore.instance.clearResource(
-          '$_clientMembersResourceKeyPrefix:$parentClientId',
-        ).timeout(_localWriteTimeout, onTimeout: () {});
+        await FirestoreCacheStore.instance
+            .clearResource('$_clientMembersResourceKeyPrefix:$parentClientId')
+            .timeout(_localWriteTimeout, onTimeout: () {});
       }
       if (await _storage.readString(_currentUserIdKey) == normalized) {
         await _storage.remove(_currentUserIdKey);
@@ -1003,8 +1011,7 @@ class AuthRequest implements AuthRepository {
       final currentUserId = await _storage.readString(_currentUserIdKey);
       if (normalizeId(currentUserId) != null && currentUserId != normalized) {
         final currentSnapshot = await _readCurrentSessionSnapshot();
-        final currentSourceUser =
-            currentSnapshot != null
+        final currentSourceUser = currentSnapshot != null
             ? _userFromSessionSnapshot(currentSnapshot)
             : await _getCachedUserById(currentUserId!);
         await _rememberKnownSessionUserId(currentUserId);
@@ -1049,8 +1056,7 @@ class AuthRequest implements AuthRepository {
         await _storage.readString(_currentUserIdKey),
       );
       final activeSessionSnapshot = await _readCurrentSessionSnapshot();
-      final activeSessionFallbackUser =
-          activeSessionUserId == null
+      final activeSessionFallbackUser = activeSessionUserId == null
           ? _userFromSessionSnapshot(activeSessionSnapshot)
           : await _getCachedUserById(activeSessionUserId) ??
                 _userFromSessionSnapshot(activeSessionSnapshot);
@@ -1100,18 +1106,13 @@ class AuthRequest implements AuthRepository {
       await initialize();
       final currentUser = await getCurrentUser();
       if (currentUser != null && _supportsOnline(currentUser.role)) {
-        unawaited(
-          () async {
-            try {
-              await _persistUserDirect(
-                currentUser.copyWith(
-                  isOnline: false,
-                  updatedAt: DateTime.now(),
-                ),
-              );
-            } catch (_) {}
-          }(),
-        );
+        unawaited(() async {
+          try {
+            await _persistUserDirect(
+              currentUser.copyWith(isOnline: false, updatedAt: DateTime.now()),
+            );
+          } catch (_) {}
+        }());
       }
       await _firebaseAuthBridgeService.clearSession();
       await _clearStoredSession();
@@ -1186,9 +1187,7 @@ class AuthRequest implements AuthRepository {
 
   Future<void> _refreshOfflineQueueScopes() async {
     await _offlineQueueInitializer();
-    unawaited(
-      _offlineQueueFlusher().catchError((error, stackTrace) {}),
-    );
+    unawaited(_offlineQueueFlusher().catchError((error, stackTrace) {}));
   }
 
   Future<List<UserModel>> _getUsersFresh() async {
@@ -1271,10 +1270,14 @@ class AuthRequest implements AuthRepository {
       final fetchTimeout = kIsWeb
           ? const Duration(seconds: 4)
           : _startupTimeout;
-      final snapshot = await _usersCollection.doc(id).get().timeout(
-        fetchTimeout,
-        onTimeout: () => throw TimeoutException('user fetch timeout for $id'),
-      );
+      final snapshot = await _usersCollection
+          .doc(id)
+          .get()
+          .timeout(
+            fetchTimeout,
+            onTimeout: () =>
+                throw TimeoutException('user fetch timeout for $id'),
+          );
       if (!snapshot.exists) {
         return null;
       }
@@ -1305,11 +1308,12 @@ class AuthRequest implements AuthRepository {
 
   Future<UserModel?> _getStartupSafeCurrentUser(String currentUserId) async {
     try {
-      final freshUser = await _getFreshUserById(
-        currentUserId,
-      ).timeout(_startupTimeout, onTimeout: () {
-        return null;
-      });
+      final freshUser = await _getFreshUserById(currentUserId).timeout(
+        _startupTimeout,
+        onTimeout: () {
+          return null;
+        },
+      );
       if (freshUser == null) {
         final cachedUser = await _getCachedUserById(currentUserId);
         if (cachedUser != null) {
@@ -1324,13 +1328,17 @@ class AuthRequest implements AuthRepository {
           }
         }
       }
-      final validatedUser = await _validateCurrentSessionWithFreshUser(
-        currentUserId,
-        freshUser,
-        allowSessionClear: false,
-      ).timeout(_startupTimeout, onTimeout: () {
-        return freshUser;
-      });
+      final validatedUser =
+          await _validateCurrentSessionWithFreshUser(
+            currentUserId,
+            freshUser,
+            allowSessionClear: false,
+          ).timeout(
+            _startupTimeout,
+            onTimeout: () {
+              return freshUser;
+            },
+          );
       return validatedUser;
     } catch (error) {
       final cachedUser = await _getCachedUserById(currentUserId);
@@ -1354,9 +1362,9 @@ class AuthRequest implements AuthRepository {
 
   Future<UserModel?> _validateCurrentSessionWithFreshUser(
     String currentUserId,
-    UserModel? freshUser,
-    {bool allowSessionClear = true}
-  ) async {
+    UserModel? freshUser, {
+    bool allowSessionClear = true,
+  }) async {
     if (!currentNetworkStatus()) {
       final cachedUser = await _getCachedUserById(currentUserId);
       if (cachedUser != null) {
@@ -1378,7 +1386,9 @@ class AuthRequest implements AuthRepository {
       await _clearStoredSessionPreservingState();
       return null;
     }
-    if (await _offlineMutationQueueService.hasPendingUserMutation(currentUserId)) {
+    if (await _offlineMutationQueueService.hasPendingUserMutation(
+      currentUserId,
+    )) {
       return freshUser;
     }
     final storedSnapshot = await _readCurrentSessionSnapshot();
@@ -1468,12 +1478,15 @@ class AuthRequest implements AuthRepository {
       final sdkTimeout = kIsWeb
           ? const Duration(seconds: 8)
           : _remoteUserWriteTimeout;
-      await _usersCollection.doc(userId).set(document).timeout(
-        sdkTimeout,
-        onTimeout: () => throw TimeoutException(
-          'users remote write timeout for $userId',
-        ),
-      );
+      await _usersCollection
+          .doc(userId)
+          .set(document)
+          .timeout(
+            sdkTimeout,
+            onTimeout: () => throw TimeoutException(
+              'users remote write timeout for $userId',
+            ),
+          );
       return;
     } catch (error) {
       if (!kIsWeb) {
@@ -1489,9 +1502,8 @@ class AuthRequest implements AuthRepository {
         )
         .timeout(
           const Duration(seconds: 4),
-          onTimeout: () => throw TimeoutException(
-            'users rest patch timeout for $userId',
-          ),
+          onTimeout: () =>
+              throw TimeoutException('users rest patch timeout for $userId'),
         );
     if (!patched) {
       throw Exception('users rest patch returned false for $userId');
@@ -1505,8 +1517,9 @@ class AuthRequest implements AuthRepository {
             .deleteDocument('users/$userId')
             .timeout(
               const Duration(seconds: 4),
-              onTimeout: () =>
-                  throw TimeoutException('users rest delete timeout for $userId'),
+              onTimeout: () => throw TimeoutException(
+                'users rest delete timeout for $userId',
+              ),
             );
         if (deleted) {
           return;
@@ -1518,11 +1531,15 @@ class AuthRequest implements AuthRepository {
       final sdkTimeout = kIsWeb
           ? const Duration(seconds: 8)
           : _remoteUserWriteTimeout;
-      await _usersCollection.doc(userId).delete().timeout(
-        sdkTimeout,
-        onTimeout: () =>
-            throw TimeoutException('users remote delete timeout for $userId'),
-      );
+      await _usersCollection
+          .doc(userId)
+          .delete()
+          .timeout(
+            sdkTimeout,
+            onTimeout: () => throw TimeoutException(
+              'users remote delete timeout for $userId',
+            ),
+          );
       return;
     } catch (error) {
       if (!kIsWeb) {
@@ -1551,9 +1568,7 @@ class AuthRequest implements AuthRepository {
     final document = _toFirestoreMap(normalizedUser);
     await _upsertUserCacheLocally(document);
     unawaited(
-      _persistUserDirect(normalizedUser).then((_) {
-      }).catchError((error) {
-      }),
+      _persistUserDirect(normalizedUser).then((_) {}).catchError((error) {}),
     );
     return normalizedUser;
   }
@@ -1665,17 +1680,15 @@ class AuthRequest implements AuthRepository {
 
   Future<void> _refreshLoginUserCacheInBackground(String userId) async {
     try {
-      final freshUser = await _getFreshUserById(userId).timeout(
-        _loginFallbackLookupTimeout,
-        onTimeout: () => null,
-      );
+      final freshUser = await _getFreshUserById(
+        userId,
+      ).timeout(_loginFallbackLookupTimeout, onTimeout: () => null);
       if (freshUser == null) {
         return;
       }
-      await _upsertUserCacheLocally(_toFirestoreMap(freshUser)).timeout(
-        _localWriteTimeout,
-        onTimeout: () {},
-      );
+      await _upsertUserCacheLocally(
+        _toFirestoreMap(freshUser),
+      ).timeout(_localWriteTimeout, onTimeout: () {});
     } catch (_) {
       // Login should stay instant even if the background refresh fails.
     }
@@ -1718,16 +1731,20 @@ class AuthRequest implements AuthRepository {
     required bool isPhoneLogin,
   }) async {
     try {
-      final snapshot = await (isPhoneLogin
-              ? _usersCollection
-                    .where('phone', isEqualTo: normalizedPhone)
-                    .limit(1)
-                    .get(const GetOptions(source: Source.cache))
-              : _usersCollection
-                    .where('email', isEqualTo: identifier.trim().toLowerCase())
-                    .limit(1)
-                    .get(const GetOptions(source: Source.cache)))
-          .timeout(const Duration(seconds: 1));
+      final snapshot =
+          await (isPhoneLogin
+                  ? _usersCollection
+                        .where('phone', isEqualTo: normalizedPhone)
+                        .limit(1)
+                        .get(const GetOptions(source: Source.cache))
+                  : _usersCollection
+                        .where(
+                          'email',
+                          isEqualTo: identifier.trim().toLowerCase(),
+                        )
+                        .limit(1)
+                        .get(const GetOptions(source: Source.cache)))
+              .timeout(const Duration(seconds: 1));
       if (snapshot.docs.isEmpty) {
         return null;
       }
@@ -1739,11 +1756,11 @@ class AuthRequest implements AuthRepository {
 
   Future<List<UserModel>> _getUsersCachedOnly() async {
     final documents =
-        await FirestoreCacheStore.instance.readDocumentMaps(_usersResourceKey) ??
+        await FirestoreCacheStore.instance.readDocumentMaps(
+          _usersResourceKey,
+        ) ??
         const <Map<String, dynamic>>[];
-    final users = documents
-        .map(UserModel.fromMap)
-        .toList();
+    final users = documents.map(UserModel.fromMap).toList();
     users.sort((a, b) {
       final aDate = a.updatedAt ?? a.createdAt;
       final bDate = b.updatedAt ?? b.createdAt;
@@ -1785,13 +1802,16 @@ class AuthRequest implements AuthRepository {
                 .where('email', isEqualTo: identifier.toLowerCase())
                 .limit(1)
                 .get();
-      final matches = await lookupFuture.timeout(_loginFallbackLookupTimeout, onTimeout: () {
-        throw TimeoutException(
-          isPhoneLogin
-              ? 'login firestore phone lookup timeout'
-              : 'login firestore email lookup timeout',
-        );
-      });
+      final matches = await lookupFuture.timeout(
+        _loginFallbackLookupTimeout,
+        onTimeout: () {
+          throw TimeoutException(
+            isPhoneLogin
+                ? 'login firestore phone lookup timeout'
+                : 'login firestore email lookup timeout',
+          );
+        },
+      );
       if (matches.docs.isEmpty) {
         return const _LoginLookupResult(definitiveMiss: true);
       }
@@ -1807,11 +1827,12 @@ class AuthRequest implements AuthRepository {
     required bool isPhoneLogin,
   }) async {
     try {
-      final snapshot = await _usersCollection
-          .get()
-          .timeout(_loginLookupTimeout, onTimeout: () {
-            throw TimeoutException('login users directory fetch timeout');
-          });
+      final snapshot = await _usersCollection.get().timeout(
+        _loginLookupTimeout,
+        onTimeout: () {
+          throw TimeoutException('login users directory fetch timeout');
+        },
+      );
       final documents = snapshot.docs.map(documentData).toList(growable: false);
       await _writeUsersCacheLocally(documents);
       final users = documents.map(UserModel.fromMap).toList(growable: false);
@@ -1843,9 +1864,12 @@ class AuthRequest implements AuthRepository {
     try {
       final documents = await _firestorePublicDocumentFetcher
           .fetchCollectionDocuments('users')
-          .timeout(_loginLookupTimeout, onTimeout: () {
-            throw TimeoutException('login public rest users fetch timeout');
-          });
+          .timeout(
+            _loginLookupTimeout,
+            onTimeout: () {
+              throw TimeoutException('login public rest users fetch timeout');
+            },
+          );
       if (documents.isEmpty) {
         return const _LoginLookupResult(definitiveMiss: true);
       }
@@ -1899,7 +1923,9 @@ class AuthRequest implements AuthRepository {
       return;
     }
     final currentDocuments =
-        await FirestoreCacheStore.instance.readDocumentMaps(_usersResourceKey) ??
+        await FirestoreCacheStore.instance.readDocumentMaps(
+          _usersResourceKey,
+        ) ??
         const <Map<String, dynamic>>[];
     final nextDocuments = currentDocuments
         .map((item) => Map<String, dynamic>.from(item))
@@ -1926,9 +1952,10 @@ class AuthRequest implements AuthRepository {
     if (normalizeRoleKey(data['role']?.toString()) != 'driver') {
       return UserModel.fromMap(data);
     }
-    final typeById = await _vehicleRequest
-        .getTypeByIdCachedFirst()
-        .timeout(_loginFallbackLookupTimeout, onTimeout: () => const {});
+    final typeById = await _vehicleRequest.getTypeByIdCachedFirst().timeout(
+      _loginFallbackLookupTimeout,
+      onTimeout: () => const {},
+    );
     return _userFromFirestoreMap(data, typeById);
   }
 
@@ -1941,9 +1968,7 @@ class AuthRequest implements AuthRepository {
     try {
       final decoded = jsonDecode(trimmed);
       if (decoded is Map) {
-        return decoded.map(
-          (key, value) => MapEntry(key.toString(), value),
-        );
+        return decoded.map((key, value) => MapEntry(key.toString(), value));
       }
     } catch (_) {}
     return null;
@@ -1958,9 +1983,7 @@ class AuthRequest implements AuthRepository {
     try {
       final decoded = jsonDecode(trimmed);
       if (decoded is Map) {
-        return decoded.map(
-          (key, value) => MapEntry(key.toString(), value),
-        );
+        return decoded.map((key, value) => MapEntry(key.toString(), value));
       }
     } catch (_) {}
     return null;
@@ -1978,7 +2001,9 @@ class AuthRequest implements AuthRepository {
       resourceKey: _usersResourceKey,
       document: _toFirestoreMap(user),
     );
-    final currentUserId = normalizeId(await _storage.readString(_currentUserIdKey));
+    final currentUserId = normalizeId(
+      await _storage.readString(_currentUserIdKey),
+    );
     if (currentUserId == normalizeId(user.id)) {
       await _writeCurrentSessionSnapshot(user);
     }
@@ -2006,7 +2031,8 @@ class AuthRequest implements AuthRepository {
       'role': (user.role ?? '').trim().toLowerCase(),
       'name': (user.name ?? '').trim(),
       'email': (user.email ?? '').trim().toLowerCase(),
-      'phone': normalizePhilippinePhone(user.phone) ?? (user.phone ?? '').trim(),
+      'phone':
+          normalizePhilippinePhone(user.phone) ?? (user.phone ?? '').trim(),
       'password': user.password ?? '',
       'photo': user.photo,
     };
@@ -2141,12 +2167,15 @@ class AuthRequest implements AuthRepository {
     }
 
     try {
-      await _clientMembersCollection.doc(documentId).delete().timeout(
-        const Duration(seconds: 8),
-        onTimeout: () => throw TimeoutException(
-          'client_members remote delete timeout for $documentId',
-        ),
-      );
+      await _clientMembersCollection
+          .doc(documentId)
+          .delete()
+          .timeout(
+            const Duration(seconds: 8),
+            onTimeout: () => throw TimeoutException(
+              'client_members remote delete timeout for $documentId',
+            ),
+          );
       return;
     } catch (error) {
       if (!kIsWeb) {
@@ -2163,7 +2192,9 @@ class AuthRequest implements AuthRepository {
           ),
         );
     if (!deleted) {
-      throw Exception('client_members rest delete returned false for $documentId');
+      throw Exception(
+        'client_members rest delete returned false for $documentId',
+      );
     }
   }
 

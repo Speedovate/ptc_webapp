@@ -43,10 +43,9 @@ class StatusRequest implements StatusFormRepository {
     required List<Map<String, dynamic>> documents,
   }) {
     unawaited(
-      _cache.writeDocuments(
-        resourceKey: resourceKey,
-        documents: documents,
-      ).catchError((error, stackTrace) {}),
+      _cache
+          .writeDocuments(resourceKey: resourceKey, documents: documents)
+          .catchError((error, stackTrace) {}),
     );
   }
 
@@ -93,8 +92,9 @@ class StatusRequest implements StatusFormRepository {
     if (fieldsDocuments.isNotEmpty) {
       final fields = fieldsDocuments.map(StatusField.fromMap).toList()
         ..sort(
-          (a, b) =>
-              (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+          (a, b) => (a.createdAt ?? DateTime(0)).compareTo(
+            b.createdAt ?? DateTime(0),
+          ),
         );
       _hydratedFieldsSnapshot = List<StatusField>.from(fields);
       _hasResolvedFields = true;
@@ -121,10 +121,9 @@ class StatusRequest implements StatusFormRepository {
     _didStartBackgroundOfflineQueueInitialization = true;
     _ensureRealtimeCacheSync();
     unawaited(
-      OfflineQueueCoordinatorService.instance.initialize().catchError((
-        error,
-        stackTrace,
-      ) {}),
+      OfflineQueueCoordinatorService.instance.initialize().catchError(
+        (error, stackTrace) {},
+      ),
     );
   }
 
@@ -205,8 +204,9 @@ class StatusRequest implements StatusFormRepository {
         );
         final fields = documents.map(StatusField.fromMap).toList();
         fields.sort(
-          (a, b) =>
-              (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+          (a, b) => (a.createdAt ?? DateTime(0)).compareTo(
+            b.createdAt ?? DateTime(0),
+          ),
         );
         _hasResolvedFields = true;
         _hydratedFieldsSnapshot = List<StatusField>.from(fields);
@@ -224,8 +224,9 @@ class StatusRequest implements StatusFormRepository {
         );
         final fields = documents.map(StatusField.fromMap).toList();
         fields.sort(
-          (a, b) =>
-              (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
+          (a, b) => (a.createdAt ?? DateTime(0)).compareTo(
+            b.createdAt ?? DateTime(0),
+          ),
         );
         _hasResolvedFields = true;
         _hydratedFieldsSnapshot = List<StatusField>.from(fields);
@@ -361,7 +362,13 @@ class StatusRequest implements StatusFormRepository {
   Future<void> saveStatusForm(StatusForm form) async {
     await _runRequest(() async {
       final now = DateTime.now();
-      final nextId = normalizeId(form.id) ?? await _nextId(_formsCollection);
+      final nextId = await _resolveSaveId(
+        requestedId: form.id,
+        collection: _formsCollection,
+        resourceKey: _statusFormsResourceKey,
+        submissionKey:
+            'form:${(form.currentStatusKey ?? '').trim().toLowerCase()}:${(form.nextStatusKey ?? '').trim().toLowerCase()}:${(form.role ?? '').trim().toLowerCase()}',
+      );
       final saved = form.copyWith(
         id: nextId,
         createdAt: form.createdAt ?? now,
@@ -437,7 +444,13 @@ class StatusRequest implements StatusFormRepository {
   Future<void> saveField(StatusField field) async {
     await _runRequest(() async {
       final now = DateTime.now();
-      final nextId = normalizeId(field.id) ?? await _nextId(_fieldsCollection);
+      final nextId = await _resolveSaveId(
+        requestedId: field.id,
+        collection: _fieldsCollection,
+        resourceKey: _statusFieldsResourceKey,
+        submissionKey:
+            'field:${(field.key ?? '').trim().toLowerCase()}:${(field.type ?? '').trim().toLowerCase()}',
+      );
       final saved = field.copyWith(
         id: nextId,
         createdAt: field.createdAt ?? now,
@@ -474,8 +487,12 @@ class StatusRequest implements StatusFormRepository {
   Future<void> saveStatus(Status status) async {
     await _runRequest(() async {
       final now = DateTime.now();
-      final nextId =
-          normalizeId(status.id) ?? await _nextId(_statusesCollection);
+      final nextId = await _resolveSaveId(
+        requestedId: status.id,
+        collection: _statusesCollection,
+        resourceKey: _statusesResourceKey,
+        submissionKey: 'status:${(status.key ?? '').trim().toLowerCase()}',
+      );
       final saved = status.copyWith(
         id: nextId,
         createdAt: status.createdAt ?? now,
@@ -784,12 +801,15 @@ class StatusRequest implements StatusFormRepository {
     }
 
     try {
-      await collection.doc(documentId).set(document).timeout(
-        const Duration(seconds: 8),
-        onTimeout: () => throw TimeoutException(
-          '$collectionPath remote write timeout for $documentId',
-        ),
-      );
+      await collection
+          .doc(documentId)
+          .set(document)
+          .timeout(
+            const Duration(seconds: 8),
+            onTimeout: () => throw TimeoutException(
+              '$collectionPath remote write timeout for $documentId',
+            ),
+          );
       return;
     } catch (error) {
       if (!kIsWeb) {
@@ -838,12 +858,15 @@ class StatusRequest implements StatusFormRepository {
     }
 
     try {
-      await collection.doc(documentId).delete().timeout(
-        const Duration(seconds: 8),
-        onTimeout: () => throw TimeoutException(
-          '$collectionPath remote delete timeout for $documentId',
-        ),
-      );
+      await collection
+          .doc(documentId)
+          .delete()
+          .timeout(
+            const Duration(seconds: 8),
+            onTimeout: () => throw TimeoutException(
+              '$collectionPath remote delete timeout for $documentId',
+            ),
+          );
       return;
     } catch (error) {
       if (!kIsWeb) {
@@ -883,9 +906,7 @@ class StatusRequest implements StatusFormRepository {
               onTimeout: () =>
                   throw TimeoutException('status forms fetch timeout'),
             );
-            return formsSnapshot.docs
-                .map(documentData)
-                .toList(growable: false);
+            return formsSnapshot.docs.map(documentData).toList(growable: false);
           },
         ),
         _cache.getDocuments(
@@ -980,9 +1001,12 @@ class StatusRequest implements StatusFormRepository {
   ) async {
     final documents = await _firestorePublicDocumentFetcher
         .fetchCollectionDocuments(collectionPath)
-        .timeout(_startupTimeout, onTimeout: () {
-          throw TimeoutException('public rest $collectionPath fetch timeout');
-        });
+        .timeout(
+          _startupTimeout,
+          onTimeout: () {
+            throw TimeoutException('public rest $collectionPath fetch timeout');
+          },
+        );
     return documents;
   }
 
@@ -1013,19 +1037,31 @@ class StatusRequest implements StatusFormRepository {
             .toList(growable: false),
       );
       final forms = _inflateForms(
-        formDocuments: formsSnapshot.docs.map(documentData).toList(growable: false),
-        fieldDocuments: fieldsSnapshot.docs.map(documentData).toList(growable: false),
+        formDocuments: formsSnapshot.docs
+            .map(documentData)
+            .toList(growable: false),
+        fieldDocuments: fieldsSnapshot.docs
+            .map(documentData)
+            .toList(growable: false),
       );
       _hydratedFormsSnapshot = List<StatusForm>.from(forms);
       _hasResolvedForms = true;
-      final fields = fieldsSnapshot.docs.map(documentData).map(StatusField.fromMap).toList(growable: false)
-        ..sort(
-          (a, b) =>
-              (a.createdAt ?? DateTime(0)).compareTo(b.createdAt ?? DateTime(0)),
-        );
+      final fields =
+          fieldsSnapshot.docs
+              .map(documentData)
+              .map(StatusField.fromMap)
+              .toList(growable: false)
+            ..sort(
+              (a, b) => (a.createdAt ?? DateTime(0)).compareTo(
+                b.createdAt ?? DateTime(0),
+              ),
+            );
       _hydratedFieldsSnapshot = List<StatusField>.from(fields);
       _hasResolvedFields = true;
-      _hydratedStatusesSnapshot = statusesSnapshot.docs.map(documentData).map(Status.fromMap).toList(growable: false);
+      _hydratedStatusesSnapshot = statusesSnapshot.docs
+          .map(documentData)
+          .map(Status.fromMap)
+          .toList(growable: false);
       _hasResolvedStatuses = true;
     } catch (_) {}
   }
@@ -1155,6 +1191,45 @@ class StatusRequest implements StatusFormRepository {
         .whereType<int>()
         .fold<int>(0, (max, value) => value > max ? value : max);
     return '${highest + 1}';
+  }
+
+  Future<String> _nextCreateId({
+    required CollectionReference<Map<String, dynamic>> collection,
+    required String resourceKey,
+    required String submissionKey,
+  }) async {
+    if (currentNetworkStatus()) {
+      return _offlineMutationQueueService.reserveNumericDocumentId(
+        collectionKey: resourceKey,
+        submissionKey: submissionKey,
+      );
+    }
+    return _nextId(collection);
+  }
+
+  Future<String> _resolveSaveId({
+    required String? requestedId,
+    required CollectionReference<Map<String, dynamic>> collection,
+    required String resourceKey,
+    required String submissionKey,
+  }) async {
+    final normalizedId = normalizeId(requestedId);
+    if (!currentNetworkStatus() || normalizedId == null) {
+      return _nextCreateId(
+        collection: collection,
+        resourceKey: resourceKey,
+        submissionKey: submissionKey,
+      );
+    }
+    final existing = await collection.doc(normalizedId).get();
+    if (existing.exists) {
+      return normalizedId;
+    }
+    return _nextCreateId(
+      collection: collection,
+      resourceKey: resourceKey,
+      submissionKey: submissionKey,
+    );
   }
 
   int _compareFormsForStatus(StatusForm a, StatusForm b) {

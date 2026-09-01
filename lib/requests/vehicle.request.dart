@@ -50,10 +50,9 @@ class VehicleRequest implements VehicleCatalogRepository {
     required List<Map<String, dynamic>> documents,
   }) {
     unawaited(
-      _cache.writeDocuments(
-        resourceKey: resourceKey,
-        documents: documents,
-      ).catchError((error, stackTrace) {}),
+      _cache
+          .writeDocuments(resourceKey: resourceKey, documents: documents)
+          .catchError((error, stackTrace) {}),
     );
   }
 
@@ -94,13 +93,10 @@ class VehicleRequest implements VehicleCatalogRepository {
     _ensureRealtimeCacheSync();
     if (currentNetworkStatus()) {
       unawaited(
-        _refreshVehicleCachesInBackground().catchError((error, stackTrace) {
-        }),
+        _refreshVehicleCachesInBackground().catchError((error, stackTrace) {}),
       );
     }
-    unawaited(
-      _offlineQueueInitializer().catchError((error, stackTrace) {}),
-    );
+    unawaited(_offlineQueueInitializer().catchError((error, stackTrace) {}));
   }
 
   void _ensureRealtimeCacheSync() {
@@ -168,9 +164,7 @@ class VehicleRequest implements VehicleCatalogRepository {
               onTimeout: () =>
                   throw TimeoutException('vehicle makes fetch timeout'),
             );
-            return makesSnapshot.docs
-                .map(documentData)
-                .toList(growable: false);
+            return makesSnapshot.docs.map(documentData).toList(growable: false);
           },
         );
         final typeDocuments = cachedTypes ?? const <Map<String, dynamic>>[];
@@ -184,7 +178,9 @@ class VehicleRequest implements VehicleCatalogRepository {
         _hydratedMakesSnapshot = List<VehicleMake>.from(inflated);
         return inflated;
       } catch (error) {
-        final lateCachedMakes = await _cache.readDocuments(_vehicleMakesResourceKey);
+        final lateCachedMakes = await _cache.readDocuments(
+          _vehicleMakesResourceKey,
+        );
         if (lateCachedMakes != null && lateCachedMakes.isNotEmpty) {
           final lateCachedTypes =
               await _cache.readDocuments(_vehicleTypesResourceKey) ??
@@ -260,7 +256,9 @@ class VehicleRequest implements VehicleCatalogRepository {
           _vehicleSizesResourceKey,
         );
         if (lateCachedDocuments != null && lateCachedDocuments.isNotEmpty) {
-          final items = lateCachedDocuments.map(VehicleCatalogItem.fromMap).toList();
+          final items = lateCachedDocuments
+              .map(VehicleCatalogItem.fromMap)
+              .toList();
           items.sort(_compareByNewestIdFirst);
           _cachedSizes = List<VehicleCatalogItem>.from(items);
           _hasResolvedSizes = true;
@@ -362,7 +360,9 @@ class VehicleRequest implements VehicleCatalogRepository {
           _vehicleTypesResourceKey,
         );
         if (lateCachedDocuments != null && lateCachedDocuments.isNotEmpty) {
-          final items = lateCachedDocuments.map(VehicleCatalogItem.fromMap).toList();
+          final items = lateCachedDocuments
+              .map(VehicleCatalogItem.fromMap)
+              .toList();
           items.sort(_compareByNewestIdFirst);
           _cachedTypes = List<VehicleCatalogItem>.from(items);
           _hasResolvedTypes = true;
@@ -395,7 +395,9 @@ class VehicleRequest implements VehicleCatalogRepository {
       };
     }
 
-    final cachedDocuments = await _cache.readDocuments(_vehicleTypesResourceKey);
+    final cachedDocuments = await _cache.readDocuments(
+      _vehicleTypesResourceKey,
+    );
     if (cachedDocuments != null && cachedDocuments.isNotEmpty) {
       final items = cachedDocuments.map(VehicleCatalogItem.fromMap).toList()
         ..sort(_compareByNewestIdFirst);
@@ -444,10 +446,18 @@ class VehicleRequest implements VehicleCatalogRepository {
 
   Future<void> _refreshVehicleCachesInBackground() async {
     try {
-      final makesSnapshot = await _makesCollection.get().timeout(_startupTimeout);
-      final typesSnapshot = await _typesCollection.get().timeout(_startupTimeout);
-      final sizesSnapshot = await _sizesCollection.get().timeout(_startupTimeout);
-      final usersSnapshot = await _usersCollection.get().timeout(_startupTimeout);
+      final makesSnapshot = await _makesCollection.get().timeout(
+        _startupTimeout,
+      );
+      final typesSnapshot = await _typesCollection.get().timeout(
+        _startupTimeout,
+      );
+      final sizesSnapshot = await _sizesCollection.get().timeout(
+        _startupTimeout,
+      );
+      final usersSnapshot = await _usersCollection.get().timeout(
+        _startupTimeout,
+      );
       await _cache.writeDocuments(
         resourceKey: _vehicleMakesResourceKey,
         documents: makesSnapshot.docs.map(documentData).toList(growable: false),
@@ -464,24 +474,32 @@ class VehicleRequest implements VehicleCatalogRepository {
         resourceKey: _usersResourceKey,
         documents: usersSnapshot.docs.map(documentData).toList(growable: false),
       );
-      final typeItems = typesSnapshot.docs
-          .map(documentData)
-          .map(VehicleCatalogItem.fromMap)
-          .toList(growable: false)
-        ..sort(_compareByNewestIdFirst);
+      final typeItems =
+          typesSnapshot.docs
+              .map(documentData)
+              .map(VehicleCatalogItem.fromMap)
+              .toList(growable: false)
+            ..sort(_compareByNewestIdFirst);
       _cachedTypes = List<VehicleCatalogItem>.from(typeItems);
       _hasResolvedTypes = true;
-      final sizeItems = sizesSnapshot.docs
-          .map(documentData)
-          .map(VehicleCatalogItem.fromMap)
-          .toList(growable: false)
-        ..sort(_compareByNewestIdFirst);
+      final sizeItems =
+          sizesSnapshot.docs
+              .map(documentData)
+              .map(VehicleCatalogItem.fromMap)
+              .toList(growable: false)
+            ..sort(_compareByNewestIdFirst);
       _cachedSizes = List<VehicleCatalogItem>.from(sizeItems);
       _hasResolvedSizes = true;
       final makeItems = _inflateMakes(
-        makeDocuments: makesSnapshot.docs.map(documentData).toList(growable: false),
-        typeDocuments: typesSnapshot.docs.map(documentData).toList(growable: false),
-        userDocuments: usersSnapshot.docs.map(documentData).toList(growable: false),
+        makeDocuments: makesSnapshot.docs
+            .map(documentData)
+            .toList(growable: false),
+        typeDocuments: typesSnapshot.docs
+            .map(documentData)
+            .toList(growable: false),
+        userDocuments: usersSnapshot.docs
+            .map(documentData)
+            .toList(growable: false),
       );
       _hydratedMakesSnapshot = List<VehicleMake>.from(makeItems);
       _hasResolvedMakes = true;
@@ -493,9 +511,12 @@ class VehicleRequest implements VehicleCatalogRepository {
   ) async {
     final documents = await _firestorePublicDocumentFetcher
         .fetchCollectionDocuments(collectionPath)
-        .timeout(_startupTimeout, onTimeout: () {
-          throw TimeoutException('public rest $collectionPath fetch timeout');
-        });
+        .timeout(
+          _startupTimeout,
+          onTimeout: () {
+            throw TimeoutException('public rest $collectionPath fetch timeout');
+          },
+        );
     return documents;
   }
 
@@ -527,11 +548,14 @@ class VehicleRequest implements VehicleCatalogRepository {
   @override
   Future<VehicleMake> saveMake(VehicleMake make) async {
     return _runRequest(() async {
+      final existingId = normalizeId(make.id);
       final nextId =
-          normalizeId(make.id) ??
-          await _nextId(
+          existingId ??
+          await _nextCreateId(
             collection: _makesCollection,
             resourceKey: _vehicleMakesResourceKey,
+            submissionKey:
+                'make:${(make.code ?? '').trim().toLowerCase()}:${normalizeId(make.type?.id) ?? '-'}:${normalizeId(make.driver?.id) ?? '-'}',
           );
       final now = DateTime.now();
       final saved = make.copyWith(
@@ -677,7 +701,12 @@ class VehicleRequest implements VehicleCatalogRepository {
     return _runRequest(() async {
       final nextId =
           normalizeId(item.id) ??
-          await _nextId(collection: collection, resourceKey: resourceKey);
+          await _nextCreateId(
+            collection: collection,
+            resourceKey: resourceKey,
+            submissionKey:
+                'catalog:${(item.slug ?? item.name ?? '').trim().toLowerCase()}',
+          );
       final now = DateTime.now();
       final saved = item.copyWith(
         id: nextId,
@@ -762,12 +791,15 @@ class VehicleRequest implements VehicleCatalogRepository {
     }
 
     try {
-      await collection.doc(documentId).set(document).timeout(
-        const Duration(seconds: 8),
-        onTimeout: () => throw TimeoutException(
-          '$collectionPath remote write timeout for $documentId',
-        ),
-      );
+      await collection
+          .doc(documentId)
+          .set(document)
+          .timeout(
+            const Duration(seconds: 8),
+            onTimeout: () => throw TimeoutException(
+              '$collectionPath remote write timeout for $documentId',
+            ),
+          );
       return;
     } catch (error) {
       if (!kIsWeb) {
@@ -816,12 +848,15 @@ class VehicleRequest implements VehicleCatalogRepository {
     }
 
     try {
-      await collection.doc(documentId).delete().timeout(
-        const Duration(seconds: 8),
-        onTimeout: () => throw TimeoutException(
-          '$collectionPath remote delete timeout for $documentId',
-        ),
-      );
+      await collection
+          .doc(documentId)
+          .delete()
+          .timeout(
+            const Duration(seconds: 8),
+            onTimeout: () => throw TimeoutException(
+              '$collectionPath remote delete timeout for $documentId',
+            ),
+          );
       return;
     } catch (error) {
       if (!kIsWeb) {
@@ -940,6 +975,22 @@ class VehicleRequest implements VehicleCatalogRepository {
     }
   }
 
+  Future<String> _nextCreateId({
+    required CollectionReference<Map<String, dynamic>> collection,
+    required String resourceKey,
+    required String submissionKey,
+  }) async {
+    if (currentNetworkStatus()) {
+      return _offlineMutationQueueService.reserveNumericDocumentId(
+        collectionKey: resourceKey,
+        submissionKey: submissionKey,
+      );
+    }
+    // The offline queue preserves this provisional document locally. The
+    // reconnect transaction remains the authority for the final numeric ID.
+    return _nextId(collection: collection, resourceKey: resourceKey);
+  }
+
   int _compareByNewestIdFirst(dynamic a, dynamic b) {
     final aDate = a.updatedAt ?? a.createdAt;
     final bDate = b.updatedAt ?? b.createdAt;
@@ -982,7 +1033,6 @@ class VehicleRequest implements VehicleCatalogRepository {
     }
     return null;
   }
-
 
   Future<T> _runRequest<T>(
     Future<T> Function() action, {
