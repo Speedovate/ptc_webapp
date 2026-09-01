@@ -56,6 +56,7 @@ class AdminDashboardViewModel extends BaseViewModel {
 
   List<Booking> get completedBookings => List.unmodifiable(_completedBookings);
   UserModel? get currentUser => _currentUser;
+  bool get hasResolvedInitialBookings => _hasLoadedOnce;
   String? errorMessage;
   String busyMessage = 'Loading, please wait ...';
   String _searchQuery = '';
@@ -224,10 +225,11 @@ class AdminDashboardViewModel extends BaseViewModel {
       if (_currentUser != null) {
         unawaited(_warmupService.warmUpForUser(_currentUser));
       }
+      if (hasSharedBookings) {
+        _markInitialBookingsResolved();
+      }
       _cachedCompletedBookings = List<Booking>.from(_completedBookings);
       _cachedErrorMessage = null;
-      _hasLoadedOnce = true;
-      _cachedHasLoadedOnce = true;
     } catch (error) {
       _log('load error error=$error');
       errorMessage = userFacingErrorMessage(
@@ -235,10 +237,9 @@ class AdminDashboardViewModel extends BaseViewModel {
         fallback: 'We could not load the completed bookings right now.',
       );
       _cachedErrorMessage = errorMessage;
-      _hasLoadedOnce = true;
-      _cachedHasLoadedOnce = true;
+      _markInitialBookingsResolved();
     } finally {
-      if (shouldShowLoadingState && !overlayHidden) {
+      if (shouldShowLoadingState && _hasLoadedOnce && !overlayHidden) {
         setBusy(false);
         _log('overlay hide section=dashboard reason=load-finish');
       }
@@ -327,13 +328,28 @@ class AdminDashboardViewModel extends BaseViewModel {
     _bookingsSubscription = _bookingRepository.watchBookings().listen((
       liveBookings,
     ) {
+      if (!BookingRequest.hasAuthoritativeBookings) {
+        // The shared stream can emit an empty provisional cache while the
+        // first server snapshot is still pending. Do not turn that into an
+        // empty-state UI.
+        return;
+      }
       _applyCompletedBookings(liveBookings);
       errorMessage = null;
+      _markInitialBookingsResolved();
       if (isBusy) {
         setBusy(false);
       }
       notifyListeners();
     });
+  }
+
+  void _markInitialBookingsResolved() {
+    if (_hasLoadedOnce) {
+      return;
+    }
+    _hasLoadedOnce = true;
+    _cachedHasLoadedOnce = true;
   }
 
   void _applyCompletedBookings(List<Booking> bookings) {

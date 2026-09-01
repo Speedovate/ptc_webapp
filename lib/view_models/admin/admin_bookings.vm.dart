@@ -109,6 +109,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   DateTime? get updatedStartDate => _updatedStartDate;
   DateTime? get updatedEndDate => _updatedEndDate;
   String get busyMessage => _busyMessage;
+  bool get hasResolvedInitialBookings => _hasLoadedOnce;
   List<String> get statusOptions => [
     'All',
     if (_bookings.any(
@@ -179,9 +180,10 @@ class AdminBookingsViewModel extends BaseViewModel {
       // Supporting catalogs populate silently and must not extend the booking
       // list's visible loading state.
       unawaited(_reloadSupportingData());
+      if (hasSharedBookings) {
+        _markInitialBookingsResolved();
+      }
       _cachedErrorMessage = null;
-      _hasLoadedOnce = true;
-      _cachedHasLoadedOnce = true;
     } catch (error) {
       _log('load error error=$error');
       errorMessage = userFacingErrorMessage(
@@ -189,10 +191,9 @@ class AdminBookingsViewModel extends BaseViewModel {
         fallback: 'We could not load the bookings right now.',
       );
       _cachedErrorMessage = errorMessage;
-      _hasLoadedOnce = true;
-      _cachedHasLoadedOnce = true;
+      _markInitialBookingsResolved();
     } finally {
-      if (shouldShowLoadingState) {
+      if (shouldShowLoadingState && _hasLoadedOnce) {
         setBusy(false);
         _log('overlay hide section=bookings reason=load-finish');
       }
@@ -272,13 +273,27 @@ class AdminBookingsViewModel extends BaseViewModel {
     _bookingsSubscription = _bookingRepository.watchBookings().listen((
       bookings,
     ) {
+      if (!BookingRequest.hasAuthoritativeBookings) {
+        // Wait for the first server-confirmed snapshot instead of briefly
+        // rendering an empty list from the provisional local cache.
+        return;
+      }
       _applyBookings(bookings);
       errorMessage = null;
+      _markInitialBookingsResolved();
       if (isBusy) {
         setBusy(false);
       }
       notifyListeners();
     });
+  }
+
+  void _markInitialBookingsResolved() {
+    if (_hasLoadedOnce) {
+      return;
+    }
+    _hasLoadedOnce = true;
+    _cachedHasLoadedOnce = true;
   }
 
   Future<List<UserModel>> _loadUsersSafe() async {

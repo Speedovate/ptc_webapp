@@ -332,7 +332,7 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
                   .firstOrNull;
         final filteredBookings = vm.filteredBookings();
         final showInitialLoading =
-            vm.isBusy &&
+            !vm.hasResolvedInitialBookings &&
             selectedBooking == null &&
             vm.errorMessage == null &&
             vm.bookings.isEmpty;

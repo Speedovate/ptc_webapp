@@ -100,7 +100,7 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                       .firstOrNull;
         final filteredBookings = vm.filteredCompletedBookings();
         final showInitialLoading =
-            vm.isBusy &&
+            !vm.hasResolvedInitialBookings &&
             selectedBooking == null &&
             vm.errorMessage == null &&
             vm.completedBookings.isEmpty;

@@ -61,6 +61,8 @@ class SupportRequest {
   final Set<String> _messageWarmThreadIds = <String>{};
   final StreamController<void> _threadCacheUpdates =
       StreamController<void>.broadcast();
+  final StreamController<String> _threadReadMarkerUpdates =
+      StreamController<String>.broadcast();
   final StreamController<String> _messageCacheUpdates =
       StreamController<String>.broadcast();
 
@@ -383,6 +385,9 @@ class SupportRequest {
       next.add(nextDocument);
     }
     await FirestoreCacheStore.instance.writeDocumentMaps(resourceKey, next);
+    if (!_threadReadMarkerUpdates.isClosed) {
+      _threadReadMarkerUpdates.add(normalizedUserId);
+    }
     final remoteWrite = _threadReadCollection(
       normalizedUserId,
     ).doc(normalizedThreadId).set(nextDocument, SetOptions(merge: true));
@@ -397,6 +402,16 @@ class SupportRequest {
     } else {
       unawaited(remoteWrite);
     }
+  }
+
+  Stream<void> watchThreadReadMarkerUpdates(String userId) {
+    final normalizedUserId = normalizeId(userId);
+    if (normalizedUserId == null) {
+      return const Stream<void>.empty();
+    }
+    return _threadReadMarkerUpdates.stream
+        .where((updatedUserId) => updatedUserId == normalizedUserId)
+        .map((_) {});
   }
 
   List<SupportMessage>? peekLastVisibleMessages(String threadId) {
@@ -435,6 +450,14 @@ class SupportRequest {
         snapshot,
       ) async {
         final documents = snapshot.docs.map(documentData).toList();
+        // A server snapshot confirms an optimistic draft thread. It no longer
+        // needs to be kept in the local overlay after this point.
+        for (final document in documents) {
+          final threadId = normalizeId(document['id']);
+          if (threadId != null) {
+            _volatileThreadDocumentsById.remove(threadId);
+          }
+        }
         final cachedDocuments =
             await _cache.readDocuments(_supportThreadsResourceKey) ??
             const <Map<String, dynamic>>[];
@@ -1492,9 +1515,15 @@ class SupportRequest {
         }
       }
     }
+    final nextDocument = <String, dynamic>{
+      ...?existingThread,
+      'id': threadId,
+      ...patch,
+    };
+    _storeVolatileThreadDocument(nextDocument);
     await _cache.upsertDocument(
       resourceKey: _supportThreadsResourceKey,
-      document: {...?existingThread, 'id': threadId, ...patch},
+      document: nextDocument,
     );
     _emitThreadCacheUpdate();
   }
@@ -1551,10 +1580,17 @@ class SupportRequest {
       final id = cachedDocument['id']?.toString() ?? '';
       if (id.isEmpty ||
           mergedById.containsKey(id) ||
-          !id.startsWith('local_thread_')) {
+          (!id.startsWith('local_thread_') &&
+              !_volatileThreadDocumentsById.containsKey(id))) {
         continue;
       }
       mergedById[id] = Map<String, dynamic>.from(cachedDocument);
+    }
+    for (final entry in _volatileThreadDocumentsById.entries) {
+      mergedById.putIfAbsent(
+        entry.key,
+        () => Map<String, dynamic>.from(entry.value),
+      );
     }
     return mergedById.values.toList();
   }

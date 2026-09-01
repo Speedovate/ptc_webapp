@@ -1,7 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
+import 'package:webapp/models/booking.dart';
+import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/support.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/view_models/admin/admin_home.vm.dart';
 import 'package:webapp/views/admin/admin_bookings.dart';
@@ -48,7 +54,14 @@ class _AdminHomeState extends State<AdminHome> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final AuthRepository _authRepository = AuthRequest.instance;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  final SupportRequest _supportRequest = SupportRequest.instance;
   late UserModel _shellUser;
+  StreamSubscription<List<Booking>>? _bookingsBadgeSubscription;
+  StreamSubscription<List<SupportThread>>? _supportBadgeSubscription;
+  StreamSubscription<void>? _supportReadBadgeSubscription;
+  List<Booking> _sidebarBookings = const <Booking>[];
+  List<SupportThread> _sidebarThreads = const <SupportThread>[];
+  Map<String, String> _sidebarThreadReadMarkers = const <String, String>{};
   bool _isUploadingProfilePhoto = false;
   String? _supportInitialTopicKey;
   String? _supportInitialBookingId;
@@ -63,6 +76,7 @@ class _AdminHomeState extends State<AdminHome> {
   void initState() {
     super.initState();
     _shellUser = widget.user;
+    _startSidebarBadgeSync();
   }
 
   @override
@@ -71,7 +85,122 @@ class _AdminHomeState extends State<AdminHome> {
     if (oldWidget.user.id != widget.user.id ||
         oldWidget.user.updatedAt != widget.user.updatedAt) {
       _shellUser = widget.user;
+      if (oldWidget.user.id != widget.user.id) {
+        _startSidebarBadgeSync();
+      }
     }
+  }
+
+  @override
+  void dispose() {
+    _bookingsBadgeSubscription?.cancel();
+    _supportBadgeSubscription?.cancel();
+    _supportReadBadgeSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _startSidebarBadgeSync() {
+    _bookingsBadgeSubscription?.cancel();
+    _supportBadgeSubscription?.cancel();
+    _supportReadBadgeSubscription?.cancel();
+
+    final userId = _shellUser.id?.trim();
+    _sidebarBookings = BookingRequest.hydratedBookingsSnapshot;
+    _sidebarThreads = SupportRequest.hydratedAllThreadsSnapshot;
+    _sidebarThreadReadMarkers = const <String, String>{};
+
+    unawaited(BookingRequest.instance.initialize());
+    _bookingsBadgeSubscription = BookingRequest.instance.watchBookings().listen(
+      (bookings) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _sidebarBookings = List<Booking>.from(bookings);
+        });
+      },
+    );
+    _supportBadgeSubscription = _supportRequest.watchAllThreads().listen((
+      threads,
+    ) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _sidebarThreads = List<SupportThread>.from(threads);
+      });
+    });
+    if (userId == null || userId.isEmpty) {
+      return;
+    }
+    _supportReadBadgeSubscription = _supportRequest
+        .watchThreadReadMarkerUpdates(userId)
+        .listen((_) => unawaited(_loadSidebarThreadReadMarkers(userId)));
+    unawaited(_loadSidebarThreadReadMarkers(userId));
+  }
+
+  Future<void> _loadSidebarThreadReadMarkers(String userId) async {
+    final markers = await _supportRequest.readThreadReadMarkers(userId);
+    if (!mounted || _shellUser.id?.trim() != userId) {
+      return;
+    }
+    setState(() {
+      _sidebarThreadReadMarkers = markers;
+    });
+  }
+
+  int get _pendingBookingsBadgeCount => _sidebarBookings.where((booking) {
+    return (booking.clientStatus ?? '').trim().toLowerCase() == 'pending';
+  }).length;
+
+  int get _unbilledBookingsBadgeCount => _sidebarBookings.where((booking) {
+    return (booking.billingStatus ?? '').trim().toLowerCase() == 'unbilled';
+  }).length;
+
+  int get _unreadSupportBadgeCount {
+    final currentUserId = _shellUser.id?.trim();
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return 0;
+    }
+    return _sidebarThreads.where((thread) {
+      final threadId = thread.id?.trim();
+      final senderId = thread.lastSenderUserId?.trim();
+      if (threadId == null ||
+          threadId.isEmpty ||
+          senderId == null ||
+          senderId.isEmpty ||
+          senderId == currentUserId ||
+          !thread.hasConversation) {
+        return false;
+      }
+      return _sidebarThreadReadMarkers[threadId] !=
+          _supportRequest.threadReadMarkerForThread(thread);
+    }).length;
+  }
+
+  Widget? _sidebarBadge(int count) {
+    if (count <= 0) {
+      return null;
+    }
+    final label = count > 99 ? '99+' : '$count';
+    return Container(
+      constraints: const BoxConstraints(minWidth: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE31E24),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+          height: 1,
+        ),
+      ),
+    );
   }
 
   Future<void> _saveProfileChanges(ProfilePendingProfileChanges changes) async {
@@ -318,6 +447,7 @@ class _AdminHomeState extends State<AdminHome> {
             label: AdminSection.dashboard.title,
             icon: _menuIcon(AdminSection.dashboard),
             isSelected: vm.selectedSection == AdminSection.dashboard,
+            trailing: _sidebarBadge(_unbilledBookingsBadgeCount),
             onTap: () {
               vm.selectSection(AdminSection.dashboard);
               if (isCompact) {
@@ -330,6 +460,7 @@ class _AdminHomeState extends State<AdminHome> {
             label: AdminSection.bookings.title,
             icon: _menuIcon(AdminSection.bookings),
             isSelected: vm.selectedSection == AdminSection.bookings,
+            trailing: _sidebarBadge(_pendingBookingsBadgeCount),
             onTap: () {
               vm.selectSection(AdminSection.bookings);
               if (isCompact) {
@@ -408,6 +539,7 @@ class _AdminHomeState extends State<AdminHome> {
             label: AdminSection.support.title,
             icon: _menuIcon(AdminSection.support),
             isSelected: vm.selectedSection == AdminSection.support,
+            trailing: _sidebarBadge(_unreadSupportBadgeCount),
             onTap: () {
               vm.selectSection(AdminSection.support);
               if (isCompact) {
