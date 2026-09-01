@@ -28,6 +28,31 @@
       window.navigator.standalone === true;
   }
 
+  async function checkIfInstalled() {
+    if (isStandalone()) {
+      setInstalled();
+      return true;
+    }
+
+    if (!navigator.getInstalledRelatedApps || !manifestLink) {
+      return false;
+    }
+
+    try {
+      var manifestUrl = new URL(manifestLink.getAttribute('href'), window.location.href).href;
+      var relatedApps = await navigator.getInstalledRelatedApps();
+      var isRelatedWebAppInstalled = relatedApps.some(function (app) {
+        return app.platform === 'webapp' && app.url === manifestUrl;
+      });
+      if (isRelatedWebAppInstalled) {
+        setInstalled();
+      }
+      return isRelatedWebAppInstalled;
+    } catch (_) {
+      return false;
+    }
+  }
+
   async function validateManifest() {
     if (!manifestLink) {
       return false;
@@ -90,8 +115,7 @@
     var workerReady = await prepareServiceWorker();
     installBtn.disabled = false;
 
-    if (isStandalone()) {
-      setInstalled();
+    if (await checkIfInstalled()) {
       return;
     }
     if (!manifestReady || !workerReady) {

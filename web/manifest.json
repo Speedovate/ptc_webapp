@@ -4,7 +4,7 @@
     "start_url": ".",
     "display": "standalone",
     "display_override": ["standalone", "minimal-ui", "browser"],
-    "background_color": "#FFFFFF",
+    "background_color": "#5B34D6",
     "theme_color": "#5B34D6",
     "description": "Transport at your fingertips.",
     "orientation": "portrait-primary",
