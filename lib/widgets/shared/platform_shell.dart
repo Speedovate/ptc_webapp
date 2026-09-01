@@ -47,9 +47,13 @@ class PlatformShell extends StatelessWidget {
     return Scaffold(
       key: scaffoldKey,
       backgroundColor: isCompact ? Colors.white : AppColors.primarySurface,
-      body: SafeArea(
-        child: Row(
-          children: [
+      body: Column(
+        children: [
+          Expanded(
+            child: SafeArea(
+              bottom: false,
+              child: Row(
+                children: [
             CollapsibleSidebar(
               isVisible: showRail,
               width: 280,
@@ -109,8 +113,20 @@ class PlatformShell extends StatelessWidget {
                 ),
               ),
             ),
-          ],
-        ),
+                ],
+              ),
+            ),
+          ),
+          const ColoredBox(
+            color: Colors.white,
+            child: SafeArea(
+              top: false,
+              left: false,
+              right: false,
+              child: SizedBox(width: double.infinity),
+            ),
+          ),
+        ],
       ),
       drawer: isCompact
           ? Drawer(

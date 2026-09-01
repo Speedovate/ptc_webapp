@@ -144,6 +144,8 @@ class AppShellViewModel extends BaseViewModel {
     _log(
       'goBackFromQuickLogin start loggedIn=${currentUser != null} user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"}',
     );
+    // Ignore any background auth work that belongs to the impersonated session.
+    _sessionEpoch++;
     final previousUser = currentUser;
     final previousQuickLoggedIn = isQuickLoggedIn;
     isLoading = true;

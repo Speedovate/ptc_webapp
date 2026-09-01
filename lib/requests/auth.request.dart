@@ -298,6 +298,12 @@ class AuthRequest implements AuthRepository {
         currentUserId,
         snapshot.exists ? await _inflateUser(snapshot) : null,
       );
+      final activeUserIdAfterValidation = normalizeId(
+        await _storage.readString(_currentUserIdKey),
+      );
+      if (activeUserIdAfterValidation != currentUserId) {
+        return;
+      }
       if (validatedUser == null) {
         yield null;
       }
@@ -1401,6 +1407,10 @@ class AuthRequest implements AuthRepository {
         return await _getCachedUserById(currentUserId) ??
             _userFromSessionSnapshot(await _readCurrentSessionSnapshot());
       }
+      if (normalizeId(await _storage.readString(_currentUserIdKey)) !=
+          currentUserId) {
+        return null;
+      }
       await _clearStoredSessionPreservingState();
       return null;
     }
@@ -1423,6 +1433,11 @@ class AuthRequest implements AuthRepository {
         return freshUser;
       }
       if (!allowSessionClear) {
+        _clearPendingSelfSessionSnapshot();
+        return freshUser;
+      }
+      if (normalizeId(await _storage.readString(_currentUserIdKey)) !=
+          currentUserId) {
         _clearPendingSelfSessionSnapshot();
         return freshUser;
       }

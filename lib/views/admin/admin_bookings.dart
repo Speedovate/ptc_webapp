@@ -1984,18 +1984,15 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
       ],
       child: SizedBox(
         width: 760,
-        child: SizedBox(
-          height: 700,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final formVisibleHeight = (constraints.maxHeight - 126)
-                  .clamp(280.0, 700.0)
-                  .toDouble();
-              return SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final formVisibleHeight = (MediaQuery.sizeOf(context).height * 0.6)
+                .clamp(280.0, 700.0)
+                .toDouble();
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
                     AdminModalFormBody(
                       children: [
                         AdminModalFieldsSection(
@@ -2060,11 +2057,9 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
                           unawaited(_handleBookingSubmitted(booking));
                         },
                       ),
-                  ],
-                ),
-              );
-            },
-          ),
+              ],
+            );
+          },
         ),
       ),
     );

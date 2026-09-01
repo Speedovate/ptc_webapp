@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/services/role_access_service.dart';
@@ -85,10 +86,18 @@ class AppShell extends StatelessWidget {
               );
 
         return SelectionArea(
-          child: InAppBrowserGuard(
-            child: AppSyncStatusBanner(
-              currentUser: vm.currentUser,
-              child: content,
+          child: AnnotatedRegion<SystemUiOverlayStyle>(
+            value: const SystemUiOverlayStyle(
+              systemNavigationBarColor: Colors.white,
+              systemNavigationBarIconBrightness: Brightness.dark,
+            ),
+            child: InAppBrowserGuard(
+              child: _AppPageBottomSafeArea(
+                child: AppSyncStatusBanner(
+                  currentUser: vm.currentUser,
+                  child: content,
+                ),
+              ),
             ),
           ),
         );
@@ -114,6 +123,33 @@ class AppShell extends StatelessWidget {
       user: user,
       onLogout: onLogout,
       isQuickLoggedIn: isQuickLoggedIn,
+    );
+  }
+}
+
+class _AppPageBottomSafeArea extends StatelessWidget {
+  const _AppPageBottomSafeArea({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    if (bottomInset == 0) {
+      return child;
+    }
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        child,
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: bottomInset,
+          child: const IgnorePointer(child: ColoredBox(color: Colors.white)),
+        ),
+      ],
     );
   }
 }

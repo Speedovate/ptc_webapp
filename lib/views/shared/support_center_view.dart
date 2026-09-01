@@ -1120,10 +1120,14 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                 );
                 return AdminListItemCard(
                   padding: EdgeInsets.zero,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(18),
+                    topRight: Radius.circular(18),
+                  ),
                   child: ClipRRect(
                     borderRadius: const BorderRadius.only(
-                      bottomLeft: Radius.circular(18),
-                      bottomRight: Radius.circular(18),
+                      topLeft: Radius.circular(18),
+                      topRight: Radius.circular(18),
                     ),
                     child: _isAdmin
                         ? () {
