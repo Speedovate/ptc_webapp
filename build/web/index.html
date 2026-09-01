@@ -178,9 +178,12 @@
 
     #social-browser-gate__logo {
       width: min(180px, 52vw);
-      height: auto;
+      aspect-ratio: 500 / 365;
       display: block;
       margin: 0 auto 24px;
+      background: #5c33cf;
+      -webkit-mask: url("assets/assets/icon.png") center / contain no-repeat;
+      mask: url("assets/assets/icon.png") center / contain no-repeat;
     }
 
     #social-browser-gate__title {
@@ -264,11 +267,11 @@
   </div>
   <div id="social-browser-gate" aria-modal="true" role="dialog" aria-labelledby="social-browser-gate__title">
     <div id="social-browser-gate__card">
-      <img
+      <div
         id="social-browser-gate__logo"
-        src="assets/assets/icon.png"
-        alt="Paltranco Digital Platform"
-      >
+        role="img"
+        aria-label="Paltranco Digital Platform"
+      ></div>
       <h1 id="social-browser-gate__title">Open In Chrome</h1>
       <p id="social-browser-gate__body">
         This website may not render correctly inside social media browsers.
