@@ -14,7 +14,7 @@ class RoleAccessRequest {
   RoleAccessRequest({
     FirebaseFirestore? firestore,
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
-  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+  }) : _providedFirestore = firestore,
        _firestorePublicDocumentFetcher =
            firestorePublicDocumentFetcher ??
            createFirestorePublicDocumentFetcher();
@@ -28,7 +28,9 @@ class RoleAccessRequest {
   static bool _didStartRealtimeCacheSync = false;
   static bool _isRefreshingFromVersionSignal = false;
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _providedFirestore;
+  FirebaseFirestore get _firestore =>
+      _providedFirestore ?? FirebaseFirestore.instance;
   final FirestorePublicDocumentFetcher _firestorePublicDocumentFetcher;
   final OfflineMutationQueueService _offlineMutationQueueService =
       OfflineMutationQueueService.instance;
@@ -46,11 +48,9 @@ class RoleAccessRequest {
     required List<Map<String, dynamic>> documents,
   }) {
     unawaited(
-      _cache.writeDocuments(
-        resourceKey: resourceKey,
-        documents: documents,
-      ).catchError((error, stackTrace) {
-      }),
+      _cache
+          .writeDocuments(resourceKey: resourceKey, documents: documents)
+          .catchError((error, stackTrace) {}),
     );
   }
 
@@ -61,9 +61,10 @@ class RoleAccessRequest {
     _didKickOffBackgroundQueueInitialization = true;
     _ensureRealtimeCacheSync();
     unawaited(
-      OfflineQueueCoordinatorService.instance.initialize().then((_) {
-      }).catchError((error, stackTrace) {
-      }),
+      OfflineQueueCoordinatorService.instance
+          .initialize()
+          .then((_) {})
+          .catchError((error, stackTrace) {}),
     );
   }
 
@@ -109,11 +110,12 @@ class RoleAccessRequest {
           if (sdkCachedDocuments.isNotEmpty && !currentNetworkStatus()) {
             return sdkCachedDocuments;
           }
-          final snapshot = await _roleAccessCollection
-              .get()
-              .timeout(_startupTimeout, onTimeout: () {
-                throw TimeoutException('role_access fetch timeout');
-              });
+          final snapshot = await _roleAccessCollection.get().timeout(
+            _startupTimeout,
+            onTimeout: () {
+              throw TimeoutException('role_access fetch timeout');
+            },
+          );
           return snapshot.docs
               .map((doc) => {'id': doc.id, ...doc.data()})
               .toList(growable: false);
@@ -149,10 +151,7 @@ class RoleAccessRequest {
           return const <Map<String, dynamic>>[];
         }
         return <Map<String, dynamic>>[
-          {
-            'id': snapshot.id,
-            ...?snapshot.data(),
-          },
+          {'id': snapshot.id, ...?snapshot.data()},
         ];
       },
     );
@@ -178,9 +177,12 @@ class RoleAccessRequest {
   ) async {
     final documents = await _firestorePublicDocumentFetcher
         .fetchCollectionDocuments(collectionPath)
-        .timeout(_startupTimeout, onTimeout: () {
-          throw TimeoutException('public rest $collectionPath fetch timeout');
-        });
+        .timeout(
+          _startupTimeout,
+          onTimeout: () {
+            throw TimeoutException('public rest $collectionPath fetch timeout');
+          },
+        );
     return documents;
   }
 
@@ -208,7 +210,9 @@ class RoleAccessRequest {
   Future<DispatcherAccessConfig> saveDispatcherAccess(
     DispatcherAccessConfig config,
   ) {
-    return saveRoleAccess(config.copyWith(id: 'dispatcher', role: 'dispatcher'));
+    return saveRoleAccess(
+      config.copyWith(id: 'dispatcher', role: 'dispatcher'),
+    );
   }
 
   Future<DispatcherAccessConfig> saveRoleAccess(
@@ -216,7 +220,10 @@ class RoleAccessRequest {
   ) async {
     await initialize();
     final nowIso = DateTime.now().toUtc().toIso8601String();
-    final normalizedRole = config.role.trim().toLowerCase().replaceAll('_', '-');
+    final normalizedRole = config.role.trim().toLowerCase().replaceAll(
+      '_',
+      '-',
+    );
     final next = config.copyWith(
       id: normalizedRole,
       role: normalizedRole,
@@ -244,11 +251,13 @@ class RoleAccessRequest {
     await _cache.writeDocuments(
       resourceKey: roleAccessResourceKey,
       documents: [
-        for (final item in [
-          ...(await _cache.readDocuments(roleAccessResourceKey) ??
-              const <Map<String, dynamic>>[]),
-        ]..removeWhere((item) => item['id']?.toString() == next.id)
-          ..add(document))
+        for (final item
+            in [
+                ...(await _cache.readDocuments(roleAccessResourceKey) ??
+                    const <Map<String, dynamic>>[]),
+              ]
+              ..removeWhere((item) => item['id']?.toString() == next.id)
+              ..add(document))
           item,
       ],
     );
@@ -286,10 +295,13 @@ class RoleAccessRequest {
     }
 
     try {
-      await _roleAccessCollection.doc(roleId).set(document).timeout(
-        _saveTimeout,
-        onTimeout: () => throw TimeoutException('role_access save timeout'),
-      );
+      await _roleAccessCollection
+          .doc(roleId)
+          .set(document)
+          .timeout(
+            _saveTimeout,
+            onTimeout: () => throw TimeoutException('role_access save timeout'),
+          );
       return;
     } catch (error) {
       if (!kIsWeb) {

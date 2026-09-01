@@ -32,8 +32,8 @@ class AuthRequest implements AuthRepository {
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
     Future<void> Function()? offlineQueueInitializer,
     Future<void> Function()? offlineQueueFlusher,
-  }) : _firestore = firestore ?? FirebaseFirestore.instance,
-       _vehicleRequest = vehicleRequest ?? VehicleRequest.instance,
+  }) : _providedFirestore = firestore,
+       _providedVehicleRequest = vehicleRequest,
        _storage = storageBackend ?? createAuthStorageBackend(),
        _photoStorageService =
            photoStorageService ?? PhotoStorageService.instance,
@@ -75,8 +75,12 @@ class AuthRequest implements AuthRepository {
   static bool _hasResolvedUsers = false;
   static List<UserModel> _hydratedUsersSnapshot = const <UserModel>[];
 
-  final FirebaseFirestore _firestore;
-  final VehicleRequest _vehicleRequest;
+  final FirebaseFirestore? _providedFirestore;
+  FirebaseFirestore get _firestore =>
+      _providedFirestore ?? FirebaseFirestore.instance;
+  final VehicleRequest? _providedVehicleRequest;
+  VehicleRequest get _vehicleRequest =>
+      _providedVehicleRequest ?? VehicleRequest.instance;
   final AuthStorageBackend _storage;
   final PhotoStorageService _photoStorageService;
   final FirebaseAuthBridgeService _firebaseAuthBridgeService;

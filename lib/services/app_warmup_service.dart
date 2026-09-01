@@ -16,19 +16,28 @@ class AppWarmupService {
     StatusRequest? statusRequest,
     VehicleRequest? vehicleRequest,
     SupportRequest? supportRequest,
-  }) : _authRequest = authRequest ?? AuthRequest.instance,
-       _bookingRequest = bookingRequest ?? BookingRequest.instance,
-       _statusRequest = statusRequest ?? StatusRequest.instance,
-       _vehicleRequest = vehicleRequest ?? VehicleRequest.instance,
-       _supportRequest = supportRequest ?? SupportRequest.instance;
+  }) : _providedAuthRequest = authRequest,
+       _providedBookingRequest = bookingRequest,
+       _providedStatusRequest = statusRequest,
+       _providedVehicleRequest = vehicleRequest,
+       _providedSupportRequest = supportRequest;
 
   static final AppWarmupService instance = AppWarmupService();
 
-  final AuthRequest _authRequest;
-  final BookingRequest _bookingRequest;
-  final StatusRequest _statusRequest;
-  final VehicleRequest _vehicleRequest;
-  final SupportRequest _supportRequest;
+  final AuthRequest? _providedAuthRequest;
+  AuthRequest get _authRequest => _providedAuthRequest ?? AuthRequest.instance;
+  final BookingRequest? _providedBookingRequest;
+  BookingRequest get _bookingRequest =>
+      _providedBookingRequest ?? BookingRequest.instance;
+  final StatusRequest? _providedStatusRequest;
+  StatusRequest get _statusRequest =>
+      _providedStatusRequest ?? StatusRequest.instance;
+  final VehicleRequest? _providedVehicleRequest;
+  VehicleRequest get _vehicleRequest =>
+      _providedVehicleRequest ?? VehicleRequest.instance;
+  final SupportRequest? _providedSupportRequest;
+  SupportRequest get _supportRequest =>
+      _providedSupportRequest ?? SupportRequest.instance;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   final Map<String, Future<void>> _inFlightTasks = <String, Future<void>>{};
   final Set<String> _completedTasks = <String>{};
