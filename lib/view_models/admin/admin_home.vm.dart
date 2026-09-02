@@ -29,7 +29,8 @@ enum AdminSettingsSection {
 enum AdminVehiclesSection {
   makes('Makes'),
   types('Types'),
-  sizes('Sizes');
+  sizes('Sizes'),
+  chassis('Chassis');
 
   const AdminVehiclesSection(this.title);
 

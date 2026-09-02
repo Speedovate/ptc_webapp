@@ -32,6 +32,7 @@ class AdminFlowViewModel extends BaseViewModel {
         (key, value) => MapEntry(key, List<StatusField>.from(value)),
       ),
     );
+    _log('view-model created');
   }
 
   final StatusFormRepository _repository;
@@ -97,6 +98,7 @@ class AdminFlowViewModel extends BaseViewModel {
     statusFieldOptionSourceVehicleMakes,
     statusFieldOptionSourceVehicleTypes,
     statusFieldOptionSourceVehicleSizes,
+    statusFieldOptionSourceChassis,
     statusFieldOptionSourceStatuses,
     statusFieldOptionSourceForms,
     statusFieldOptionSourceFields,
@@ -557,7 +559,7 @@ class AdminFlowViewModel extends BaseViewModel {
   }
 
   void _log(String message) {
-    // Temporary debug logging removed.
+    // Temporary flow diagnostics intentionally removed.
   }
 
   Future<void> selectForm(
@@ -575,6 +577,9 @@ class AdminFlowViewModel extends BaseViewModel {
     fields = cachedFields == null
         ? []
         : cachedFields.map((field) => field.copyWith()).toList();
+    _log(
+      'select form id=${selectedId.isEmpty ? "-" : selectedId} fields=${fields.length}',
+    );
     successMessage = null;
     errorMessage = null;
     if (notify) {

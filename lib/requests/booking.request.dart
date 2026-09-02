@@ -886,9 +886,14 @@ class BookingRequest implements BookingRepository {
       'fields=${document.keys.length}',
     );
     try {
-      await _bookingsCollection
-          .doc(bookingId)
-          .set(document)
+      await _firestore
+          .runTransaction<void>(
+            (transaction) => _writeBookingAndChassisTransaction(
+              transaction: transaction,
+              bookingId: bookingId,
+              document: document,
+            ),
+          )
           .timeout(
             _remoteSaveTimeout,
             onTimeout: () => throw TimeoutException(
@@ -904,6 +909,69 @@ class BookingRequest implements BookingRepository {
       );
       rethrow;
     }
+  }
+
+  Future<void> _writeBookingAndChassisTransaction({
+    required Transaction transaction,
+    required String bookingId,
+    required Map<String, dynamic> document,
+  }) async {
+    final bookingRef = _bookingsCollection.doc(bookingId);
+    final existingBooking = await transaction.get(bookingRef);
+    final previousChassisId = normalizeId(
+      existingBooking.data()?['chassis_id']?.toString(),
+    );
+    final nextChassisId = normalizeId(document['chassis_id']?.toString());
+
+    DocumentSnapshot<Map<String, dynamic>>? nextChassis;
+    DocumentSnapshot<Map<String, dynamic>>? displacedBooking;
+    if (nextChassisId != null) {
+      nextChassis = await transaction.get(
+        _firestore.collection('chassis').doc(nextChassisId),
+      );
+      if (!nextChassis.exists) {
+        throw StateError('The selected chassis no longer exists.');
+      }
+      final displacedBookingId = normalizeId(
+        nextChassis.data()?['current_booking_id']?.toString(),
+      );
+      if (displacedBookingId != null && displacedBookingId != bookingId) {
+        displacedBooking = await transaction.get(
+          _bookingsCollection.doc(displacedBookingId),
+        );
+      }
+    }
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    if (previousChassisId != null && previousChassisId != nextChassisId) {
+      transaction.set(
+        _firestore.collection('chassis').doc(previousChassisId),
+        {
+          'current_booking_id': FieldValue.delete(),
+          'current_driver_id': FieldValue.delete(),
+          'current_status': 'ready',
+          'updated_at': now,
+        },
+        SetOptions(merge: true),
+      );
+    }
+    if (displacedBooking?.exists == true) {
+      transaction.set(displacedBooking!.reference, {
+        'chassis_id': FieldValue.delete(),
+        'updated_at': now,
+      }, SetOptions(merge: true));
+    }
+    if (nextChassis != null) {
+      final driverId = normalizeId(document['driver_id']?.toString());
+      transaction.set(nextChassis.reference, {
+        'current_booking_id': int.tryParse(bookingId) ?? bookingId,
+        'current_driver_id': driverId == null
+            ? FieldValue.delete()
+            : (int.tryParse(driverId) ?? driverId),
+        'updated_at': now,
+      }, SetOptions(merge: true));
+    }
+    transaction.set(bookingRef, document);
   }
 
   bool _isQueueableBookingWriteError(Object error) {
@@ -1449,6 +1517,7 @@ class BookingRequest implements BookingRepository {
       'vehicle_make_id': booking.vehicleMake?.id,
       'driver_id': booking.driver?.id,
       'helper_id': booking.helper?.id,
+      'chassis_id': booking.chassisId,
       'status_outputs': booking.statusOutputs,
       'created_at': booking.createdAt?.toIso8601String(),
       'updated_at': booking.updatedAt?.toIso8601String(),
@@ -1481,6 +1550,7 @@ class BookingRequest implements BookingRepository {
       vehicleMake: makeById[map['vehicle_make_id']?.toString()],
       driver: userById[map['driver_id']?.toString()],
       helper: userById[map['helper_id']?.toString()],
+      chassisId: map['chassis_id']?.toString(),
       statusOutputs: map['status_outputs'] is Map
           ? Map<String, dynamic>.from(map['status_outputs'] as Map)
           : null,

@@ -457,10 +457,21 @@ class _ProfileViewState extends State<ProfileView> {
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                child: Text(
-                  _isSavingProfileChanges ? 'Saving ...' : 'Save',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
+                child: _isSavingProfileChanges
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
+                      )
+                    : const Text(
+                        'Save',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
               ),
             ),
           ],

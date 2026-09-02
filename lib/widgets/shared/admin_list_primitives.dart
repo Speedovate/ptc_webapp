@@ -27,6 +27,7 @@ class AdminListToolbar extends StatelessWidget {
     required this.onNewPressed,
     this.buttonLabel = 'New',
     this.buttonIcon = Icons.add_rounded,
+    this.buttonBusy = false,
   });
 
   final double controlHeight;
@@ -36,6 +37,7 @@ class AdminListToolbar extends StatelessWidget {
   final VoidCallback? onNewPressed;
   final String buttonLabel;
   final IconData buttonIcon;
+  final bool buttonBusy;
 
   @override
   Widget build(BuildContext context) {
@@ -50,9 +52,7 @@ class AdminListToolbar extends StatelessWidget {
             : 12.0;
         final searchFlex = availableWidth >= 1000 ? 4 : 1;
         final iconOnlySquareSize = controlHeight - 4;
-        final buttonWidth = iconOnly
-            ? iconOnlySquareSize
-            : (availableWidth >= 1000 ? 108.0 : 96.0);
+        final buttonWidth = iconOnly ? iconOnlySquareSize : 108.0;
         final filterWidth = adminListFiltersButtonWidth(iconOnly);
         return Row(
           crossAxisAlignment: CrossAxisAlignment.center,
@@ -76,6 +76,7 @@ class AdminListToolbar extends StatelessWidget {
                 onTap: onNewPressed,
                 label: buttonLabel,
                 icon: buttonIcon,
+                isBusy: buttonBusy,
               ),
             ),
           ],
@@ -240,6 +241,7 @@ class AdminListNewButton extends StatelessWidget {
     required this.onTap,
     this.label = 'New',
     this.icon = Icons.add_rounded,
+    this.isBusy = false,
   });
 
   final double controlHeight;
@@ -248,6 +250,7 @@ class AdminListNewButton extends StatelessWidget {
   final VoidCallback? onTap;
   final String label;
   final IconData icon;
+  final bool isBusy;
 
   @override
   Widget build(BuildContext context) {
@@ -278,7 +281,16 @@ class AdminListNewButton extends StatelessWidget {
                   borderRadius: BorderRadius.circular(surfaceRadius),
                 ),
               ),
-              child: useIconOnlyLayout
+              child: isBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : useIconOnlyLayout
                   ? Icon(icon)
                   : Row(
                       mainAxisSize: MainAxisSize.min,
@@ -315,6 +327,7 @@ class AdminListFiltersButton extends StatefulWidget {
     this.topGap = 4,
     this.rightGap = 44,
     this.alignMenuToButtonRight = false,
+    this.menuWidth,
   });
 
   final double controlHeight;
@@ -326,6 +339,7 @@ class AdminListFiltersButton extends StatefulWidget {
   final double topGap;
   final double rightGap;
   final bool alignMenuToButtonRight;
+  final double? menuWidth;
 
   @override
   State<AdminListFiltersButton> createState() => _AdminListFiltersButtonState();
@@ -343,8 +357,44 @@ class AdminDateFilterConfig {
   final ValueChanged<DateTime?> onSelected;
 }
 
-class AdminListDateFiltersPanel extends StatelessWidget {
-  const AdminListDateFiltersPanel({
+sealed class AdminListFilterConfig {
+  const AdminListFilterConfig({required this.label});
+
+  final String label;
+}
+
+class AdminListDropdownFilterConfig extends AdminListFilterConfig {
+  const AdminListDropdownFilterConfig({
+    required super.label,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+    this.displayValue,
+    this.itemBuilder,
+  });
+
+  final String value;
+  final List<String> items;
+  final ValueChanged<String> onChanged;
+  final String Function(String value)? displayValue;
+  final Widget Function(String value)? itemBuilder;
+}
+
+class AdminListDateFilterConfig extends AdminListFilterConfig {
+  const AdminListDateFilterConfig({
+    required super.label,
+    required this.value,
+    required this.onSelected,
+    this.formatter,
+  });
+
+  final DateTime? value;
+  final ValueChanged<DateTime?> onSelected;
+  final String Function(DateTime? value)? formatter;
+}
+
+class AdminListDynamicFiltersPanel extends StatelessWidget {
+  const AdminListDynamicFiltersPanel({
     super.key,
     required this.iconOnly,
     required this.filters,
@@ -352,22 +402,23 @@ class AdminListDateFiltersPanel extends StatelessWidget {
     this.alignMenuToButtonRight = false,
     this.controlHeight = adminFilterFieldMinHeight,
     this.surfaceRadius = 16,
+    this.filterItemWidth = 216,
   });
 
   final bool iconOnly;
-  final List<AdminDateFilterConfig> filters;
+  final List<AdminListFilterConfig> filters;
   final VoidCallback onClear;
   final bool alignMenuToButtonRight;
   final double controlHeight;
   final double surfaceRadius;
+  final double filterItemWidth;
 
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     const overlayRightPadding = 24.0;
-    const filterItemWidth = 220.0;
     const overlayPadding = 14.0;
-    const desiredOverlayWidth = filterItemWidth + (overlayPadding * 2);
+    final desiredOverlayWidth = filterItemWidth + (overlayPadding * 2);
     final overlayWidth = (screenWidth - 32 - overlayRightPadding).clamp(
       1.0,
       desiredOverlayWidth,
@@ -382,6 +433,7 @@ class AdminListDateFiltersPanel extends StatelessWidget {
       surfaceRadius: surfaceRadius,
       iconOnly: iconOnly,
       alignMenuToButtonRight: alignMenuToButtonRight,
+      menuWidth: desiredOverlayWidth,
       menuChildren: [
         SizedBox(
           width: overlayWidth,
@@ -396,11 +448,10 @@ class AdminListDateFiltersPanel extends StatelessWidget {
                   for (final filter in filters) ...[
                     SizedBox(
                       width: contentWidth,
-                      child: _AdminListDateFilter(
-                        label: filter.label,
-                        value: filter.value,
-                        onSelected: filter.onSelected,
+                      child: _AdminListDynamicFilterField(
+                        filter: filter,
                         controlHeight: controlHeight,
+                        surfaceRadius: surfaceRadius,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -436,18 +487,165 @@ class AdminListDateFiltersPanel extends StatelessWidget {
   }
 }
 
+class _AdminListDynamicFilterField extends StatelessWidget {
+  const _AdminListDynamicFilterField({
+    required this.filter,
+    required this.controlHeight,
+    required this.surfaceRadius,
+  });
+
+  final AdminListFilterConfig filter;
+  final double controlHeight;
+  final double surfaceRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    return switch (filter) {
+      AdminListDropdownFilterConfig() => _AdminListDropdownFilter(
+        key: ValueKey('dropdown:${filter.label}'),
+        filter: filter as AdminListDropdownFilterConfig,
+        controlHeight: controlHeight,
+        surfaceRadius: surfaceRadius,
+      ),
+      AdminListDateFilterConfig(
+        :final value,
+        :final onSelected,
+        :final formatter,
+      ) =>
+        _AdminListDateFilter(
+          key: ValueKey('date:${filter.label}'),
+          label: filter.label,
+          value: value,
+          onSelected: onSelected,
+          formatter: formatter,
+          controlHeight: controlHeight,
+          surfaceRadius: surfaceRadius,
+        ),
+    };
+  }
+}
+
+class _AdminListDropdownFilter extends StatefulWidget {
+  const _AdminListDropdownFilter({
+    super.key,
+    required this.filter,
+    required this.controlHeight,
+    required this.surfaceRadius,
+  });
+
+  final AdminListDropdownFilterConfig filter;
+  final double controlHeight;
+  final double surfaceRadius;
+
+  @override
+  State<_AdminListDropdownFilter> createState() =>
+      _AdminListDropdownFilterState();
+}
+
+class _AdminListDropdownFilterState extends State<_AdminListDropdownFilter> {
+  final FocusNode _focusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filter = widget.filter;
+    return SizedBox(
+      height: widget.controlHeight,
+      child: AdminDropdownFormField<String>(
+        initialValue: filter.value.trim().toLowerCase() == 'all'
+            ? null
+            : filter.value,
+        focusNode: _focusNode,
+        iconEnabledColor: AppColors.primaryColor,
+        style: adminDropdownDisplayTextStyle,
+        decoration: adminFormInputDecoration(
+          filter.label,
+          radius: widget.surfaceRadius,
+          minHeight: widget.controlHeight,
+        ),
+        items: filter.items
+            .map(
+              (item) => DropdownMenuItem<String>(
+                value: item,
+                child:
+                    filter.itemBuilder?.call(item) ??
+                    Text(
+                      filter.displayValue?.call(item) ?? item,
+                      overflow: TextOverflow.ellipsis,
+                      style: adminDropdownDisplayTextStyle,
+                    ),
+              ),
+            )
+            .toList(),
+        onChanged: (value) {
+          if (value != null) {
+            filter.onChanged(value);
+          }
+          _focusNode.unfocus();
+        },
+      ),
+    );
+  }
+}
+
+class AdminListDateFiltersPanel extends StatelessWidget {
+  const AdminListDateFiltersPanel({
+    super.key,
+    required this.iconOnly,
+    required this.filters,
+    required this.onClear,
+    this.alignMenuToButtonRight = false,
+    this.controlHeight = adminFilterFieldMinHeight,
+    this.surfaceRadius = 16,
+  });
+
+  final bool iconOnly;
+  final List<AdminDateFilterConfig> filters;
+  final VoidCallback onClear;
+  final bool alignMenuToButtonRight;
+  final double controlHeight;
+  final double surfaceRadius;
+
+  @override
+  Widget build(BuildContext context) => AdminListDynamicFiltersPanel(
+    iconOnly: iconOnly,
+    filters: [
+      for (final filter in filters)
+        AdminListDateFilterConfig(
+          label: filter.label,
+          value: filter.value,
+          onSelected: filter.onSelected,
+        ),
+    ],
+    onClear: onClear,
+    alignMenuToButtonRight: alignMenuToButtonRight,
+    controlHeight: controlHeight,
+    surfaceRadius: surfaceRadius,
+  );
+}
+
 class _AdminListDateFilter extends StatefulWidget {
   const _AdminListDateFilter({
+    super.key,
     required this.label,
     required this.value,
     required this.onSelected,
+    this.formatter,
     required this.controlHeight,
+    required this.surfaceRadius,
   });
 
   final String label;
   final DateTime? value;
   final ValueChanged<DateTime?> onSelected;
+  final String Function(DateTime? value)? formatter;
   final double controlHeight;
+  final double surfaceRadius;
 
   @override
   State<_AdminListDateFilter> createState() => _AdminListDateFilterState();
@@ -498,7 +696,8 @@ class _AdminListDateFilterState extends State<_AdminListDateFilter> {
   String get _displayValue {
     final value = widget.value;
     if (value == null) return '';
-    return MaterialLocalizations.of(context).formatMediumDate(value);
+    return widget.formatter?.call(value) ??
+        MaterialLocalizations.of(context).formatMediumDate(value);
   }
 
   Future<void> _pickDate() async {
@@ -541,7 +740,7 @@ class _AdminListDateFilterState extends State<_AdminListDateFilter> {
                 decoration:
                     adminFormInputDecoration(
                       widget.label,
-                      radius: 16,
+                      radius: widget.surfaceRadius,
                       minHeight: widget.controlHeight,
                     ).copyWith(
                       fillColor: _isHovered || _isPressed
@@ -571,11 +770,29 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
   final GlobalKey _buttonKey = GlobalKey();
   final Object _tapRegionGroupId = Object();
 
+  void _toggleMenu() {
+    if (_controller.isShowing) {
+      _controller.hide();
+      return;
+    }
+
+    // Rebuild after the trigger has been laid out so the desktop-left anchor
+    // always uses the filter button's current global position.
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_controller.isShowing) {
+        _controller.show();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final layoutScope = AdminShellLayoutScope.maybeOf(context);
     final effectiveRightGap = layoutScope?.filtersRightGap ?? widget.rightGap;
+    final alignToToolbarAction =
+        layoutScope?.alignFiltersToToolbarAction ?? false;
     final buttonBox =
         _buttonKey.currentContext?.findRenderObject() as RenderBox?;
     final buttonOrigin = buttonBox?.localToGlobal(Offset.zero) ?? Offset.zero;
@@ -589,27 +806,30 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
         widget.alignmentOffset.dy +
         widget.topGap -
         2;
+    final canFitDesktopLeftAnchor =
+        buttonBox != null &&
+        (widget.menuWidth == null ||
+            buttonLeft + widget.menuWidth! <= screenWidth - 12);
     final useDesktopLeftAnchor =
         !widget.iconOnly &&
         screenWidth >= 520 &&
-        !widget.alignMenuToButtonRight;
+        !widget.alignMenuToButtonRight &&
+        !alignToToolbarAction &&
+        canFitDesktopLeftAnchor;
     final popupContentMaxWidth = useDesktopLeftAnchor
         ? (screenWidth - buttonLeft - 12).clamp(0.0, screenWidth)
         : (screenWidth - 24).clamp(0.0, screenWidth);
-    final popupRight = widget.alignMenuToButtonRight
-        ? (buttonBox == null
-              ? effectiveRightGap
-              : (screenWidth - buttonRight - widget.alignmentOffset.dx).clamp(
-                  12.0,
-                  screenWidth - 12.0,
-                ))
-        : useDesktopLeftAnchor
-        ? (buttonBox == null
-              ? effectiveRightGap
-              : (screenWidth - buttonRight - widget.alignmentOffset.dx).clamp(
-                  12.0,
-                  screenWidth - 12.0,
-                ))
+    final shouldAlignToButtonRight =
+        !alignToToolbarAction &&
+        (widget.alignMenuToButtonRight ||
+            (!widget.iconOnly && screenWidth >= 520 && !useDesktopLeftAnchor));
+    final popupRight = alignToToolbarAction
+        ? effectiveRightGap
+        : shouldAlignToButtonRight && buttonBox != null
+        ? (screenWidth - buttonRight - widget.alignmentOffset.dx).clamp(
+            12.0,
+            screenWidth - 12.0,
+          )
         : effectiveRightGap;
 
     return OverlayPortal(
@@ -682,11 +902,7 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
             padding: const EdgeInsets.symmetric(vertical: 2),
             child: FilledButton(
               onPressed: () {
-                if (_controller.isShowing) {
-                  _controller.hide();
-                } else {
-                  _controller.show();
-                }
+                _toggleMenu();
               },
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primaryColor,

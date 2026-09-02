@@ -211,9 +211,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
         fieldLibrary.isNotEmpty &&
         (mainForms.isNotEmpty || secondaryForms.isNotEmpty || form != null);
     if (alreadyHydratedForTarget) {
-      _log(
-        'load skipped booking=${booking.id ?? "-"} reason=already-hydrated',
-      );
+      _log('load skipped booking=${booking.id ?? "-"} reason=already-hydrated');
       return;
     }
     _log(
@@ -371,9 +369,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
           .where((item) => !item.resolvedIsMainForm)
           .firstOrNull;
       if (loadedForm == null && loadedCancelForm == null) {
-        _log(
-          'load end booking=${booking.id ?? "-"} reason=no-matching-forms',
-        );
+        _log('load end booking=${booking.id ?? "-"} reason=no-matching-forms');
         form = null;
         cancelForm = null;
         mainForms = const [];
@@ -424,15 +420,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
         ..addAll(nextFieldsByFormId);
       final initialAnswers = !hydrateInitialAnswers || loadedForm == null
           ? <String, dynamic>{}
-          : _initialAnswersForBooking(
-              booking,
-              fieldLibrary: fieldLibrary,
-            );
+          : _initialAnswersForBooking(booking, fieldLibrary: fieldLibrary);
       answers = sameWorkflowSnapshot
-          ? {
-              ...initialAnswers,
-              ...?preservedAnswers,
-            }
+          ? {...initialAnswers, ...?preservedAnswers}
           : initialAnswers;
       fields = loadedForm == null
           ? const []
@@ -546,16 +536,15 @@ class BookingWorkflowViewModel extends BaseViewModel {
     _rebuildResolvedSharedFormFields();
     answers = !hydrateInitialAnswers || form == null
         ? {}
-        : _initialAnswersForBooking(
-            booking,
-            fieldLibrary: fieldLibrary,
-          );
+        : _initialAnswersForBooking(booking, fieldLibrary: fieldLibrary);
     fields = form == null ? const [] : fieldsForForm(form!, answers: answers);
     cancelAnswers = {};
     cancelFields = cancelForm == null
         ? const []
         : fieldsForForm(cancelForm!, answers: cancelAnswers);
-    blockedMessage = form == null ? null : _engine.getBlockedMessage(booking, form!);
+    blockedMessage = form == null
+        ? null
+        : _engine.getBlockedMessage(booking, form!);
     additionalFields = const [];
     errors = {};
     cancelErrors = {};
@@ -606,7 +595,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
       if (type != 'dropdown' && type != 'search_dropdown') {
         continue;
       }
-      final sourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(field);
+      final sourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
+        field,
+      );
       if (sourceKey == null || sourceKey.isEmpty) {
         continue;
       }
@@ -618,7 +609,10 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   void _rebuildResolvedSharedFormFields() {
-    if (mainForms.isEmpty && secondaryForms.isEmpty && form == null && cancelForm == null) {
+    if (mainForms.isEmpty &&
+        secondaryForms.isEmpty &&
+        form == null &&
+        cancelForm == null) {
       return;
     }
     final resolvedFieldByIdentity = <String, StatusField>{};
@@ -634,13 +628,15 @@ class BookingWorkflowViewModel extends BaseViewModel {
     }
 
     List<StatusField> resolveFieldsForForm(StatusForm activeForm) {
-      return activeForm.fields.map((field) {
-        final resolved =
-            resolvedFieldByIdentity['id:${normalizeId(field.id) ?? ""}'] ??
-            resolvedFieldByIdentity['key:${normalizeId(field.key) ?? ""}'] ??
-            field;
-        return resolved.copyWith(statusForm: activeForm.toReferenceForm());
-      }).toList(growable: false);
+      return activeForm.fields
+          .map((field) {
+            final resolved =
+                resolvedFieldByIdentity['id:${normalizeId(field.id) ?? ""}'] ??
+                resolvedFieldByIdentity['key:${normalizeId(field.key) ?? ""}'] ??
+                field;
+            return resolved.copyWith(statusForm: activeForm.toReferenceForm());
+          })
+          .toList(growable: false);
     }
 
     final sharedForms = [...mainForms, ...secondaryForms];
@@ -822,7 +818,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
 
   String? roleGuidanceMessage() {
     final key = currentStatusKey?.trim();
-    final resolvedRoles = _roleAccessService.workflowResolutionRoles(user?.role);
+    final resolvedRoles = _roleAccessService.workflowResolutionRoles(
+      user?.role,
+    );
     if (key == null || key.isEmpty || resolvedRoles.isEmpty) {
       return null;
     }
@@ -923,7 +921,10 @@ class BookingWorkflowViewModel extends BaseViewModel {
         placeholder: override.placeholder ?? field.placeholder,
       );
     }).toList();
-    return StatusFormEngine.visibleFields(resolvedFields, answers ?? this.answers);
+    return StatusFormEngine.visibleFields(
+      resolvedFields,
+      answers ?? this.answers,
+    );
   }
 
   String? blockedMessageForForm(StatusForm activeForm) {
@@ -1101,7 +1102,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
     );
 
     form = updatedForm;
-    _fieldsByFormId[formId] = nextBaseFields.map((item) => item.copyWith()).toList();
+    _fieldsByFormId[formId] = nextBaseFields
+        .map((item) => item.copyWith())
+        .toList();
     fields = fieldsForForm(updatedForm, answers: answers);
     additionalFields = additionalFields
         .where((item) => !_sameField(item, fieldId, fieldKey))
@@ -1165,19 +1168,20 @@ class BookingWorkflowViewModel extends BaseViewModel {
           !visibleAssignedKeys.contains(fieldKey);
     }).toList();
 
-    final orderedBaseFields = [
-      for (final visibleField in visibleAssignedFields)
-        ...baseFields.where(
-          (field) => _sameField(
-            field,
-            visibleField.id ?? '',
-            visibleField.key ?? '',
-          ),
-        ),
-      ...remainingBaseFields,
-    ].asMap().entries.map((entry) {
-      return entry.value.copyWith(sortOrder: entry.key + 1);
-    }).toList();
+    final orderedBaseFields =
+        [
+          for (final visibleField in visibleAssignedFields)
+            ...baseFields.where(
+              (field) => _sameField(
+                field,
+                visibleField.id ?? '',
+                visibleField.key ?? '',
+              ),
+            ),
+          ...remainingBaseFields,
+        ].asMap().entries.map((entry) {
+          return entry.value.copyWith(sortOrder: entry.key + 1);
+        }).toList();
 
     final updatedForm = activeForm.copyWith(
       fields: orderedBaseFields.map((field) => field.copyWith()).toList(),
@@ -1458,8 +1462,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
         .where(
           (item) =>
               (item.role ?? '').trim().toLowerCase() == normalizedRole &&
-              (item.isActive ?? false) &&
-              (item.isOnline ?? false),
+              (item.isActive ?? false),
         )
         .toList()
       ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));

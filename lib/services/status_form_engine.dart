@@ -191,6 +191,7 @@ class StatusFormEngine {
   ) {
     final nextStatus = statusForm.nextStatusKey;
     final vehicleMakeId = _stringAnswer(answers['vehicle_make_id']);
+    final chassisId = _stringAnswer(answers['chassis_id']);
     final normalizedAnswers = _normalizeAnswersForStorage(answers, fields);
     final changedAnswers = _changedAnswersForStorage(
       booking.statusOutputs,
@@ -208,7 +209,6 @@ class StatusFormEngine {
       submittedBy: userId,
       fields: changedAnswers,
     );
-
     return booking.copyWith(
       clientStatus: nextStatus ?? booking.clientStatus,
       driverStatus: nextStatus ?? booking.driverStatus,
@@ -216,6 +216,7 @@ class StatusFormEngine {
       vehicleMake: vehicleMakeId == null
           ? booking.vehicleMake
           : VehicleMake(id: vehicleMakeId),
+      chassisId: chassisId ?? booking.chassisId,
       statusOutputs: nextOutputs,
       updatedAt: DateTime.now(),
     );
@@ -276,10 +277,7 @@ class StatusFormEngine {
     return false;
   }
 
-  static bool isFieldVisible(
-    StatusField field,
-    Map<String, dynamic> answers,
-  ) {
+  static bool isFieldVisible(StatusField field, Map<String, dynamic> answers) {
     final controllerKey = field.visibilityControllerKey?.trim();
     final allowedValues = field.visibilityOptionValues
         .map((item) => item.trim())
@@ -302,7 +300,8 @@ class StatusFormEngine {
     }
     if (answer is List) {
       return answer.any(
-        (item) => normalizedAllowed.contains(item.toString().trim().toLowerCase()),
+        (item) =>
+            normalizedAllowed.contains(item.toString().trim().toLowerCase()),
       );
     }
     return normalizedAllowed.contains(answer.toString().trim().toLowerCase());
@@ -437,19 +436,18 @@ class StatusFormEngine {
       return const <String, dynamic>{};
     }
 
-    final sections = outputs.entries
-        .where((entry) => entry.value is Map)
-        .map((entry) {
-          final raw = Map<String, dynamic>.from(entry.value as Map);
-          return (
-            entryKey: entry.key,
-            submittedAt: _toDateTime(raw['submitted_at']),
-            fields: raw['fields'] is Map
-                ? Map<String, dynamic>.from(raw['fields'] as Map)
-                : const <String, dynamic>{},
-          );
-        })
-        .toList();
+    final sections = outputs.entries.where((entry) => entry.value is Map).map((
+      entry,
+    ) {
+      final raw = Map<String, dynamic>.from(entry.value as Map);
+      return (
+        entryKey: entry.key,
+        submittedAt: _toDateTime(raw['submitted_at']),
+        fields: raw['fields'] is Map
+            ? Map<String, dynamic>.from(raw['fields'] as Map)
+            : const <String, dynamic>{},
+      );
+    }).toList();
 
     sections.sort((a, b) {
       final aSubmittedAt = a.submittedAt;

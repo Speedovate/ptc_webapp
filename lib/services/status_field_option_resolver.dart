@@ -1,8 +1,10 @@
 import 'package:webapp/constants/puerto_princesa_barangays.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
+import 'package:webapp/models/chassis.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/chassis.request.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
@@ -47,6 +49,9 @@ class StatusFieldOptionResolver {
       sizes: VehicleRequest.hasResolvedSizes
           ? VehicleRequest.hydratedSizesSnapshot
           : const [],
+      chassis: ChassisRequest.instance.hasResolvedChassis
+          ? ChassisRequest.instance.hydratedChassisSnapshot
+          : const [],
       statuses: StatusRequest.hasResolvedStatuses
           ? StatusRequest.hydratedStatusesSnapshot
           : const [],
@@ -72,6 +77,7 @@ class StatusFieldOptionResolver {
     List<dynamic> makes = const [];
     List<dynamic> types = const [];
     List<dynamic> sizes = const [];
+    List<Chassis> chassis = const [];
     List<dynamic> statuses = const [];
     List<StatusForm> forms = const [];
     List<StatusField> fieldLibrary = const [];
@@ -114,6 +120,16 @@ class StatusFieldOptionResolver {
       tasks.add(
         _vehicleCatalogRepository.getSizes().then((value) {
           sizes = value;
+        }),
+      );
+    }
+    if (sourceKeys.contains(statusFieldOptionSourceChassis) &&
+        ChassisRequest.instance.hasResolvedChassis) {
+      chassis = ChassisRequest.instance.hydratedChassisSnapshot;
+    } else if (sourceKeys.contains(statusFieldOptionSourceChassis)) {
+      tasks.add(
+        ChassisRequest.instance.getChassis().then((value) {
+          chassis = value;
         }),
       );
     }
@@ -169,6 +185,7 @@ class StatusFieldOptionResolver {
       makes: makes,
       types: types,
       sizes: sizes,
+      chassis: chassis,
       statuses: statuses,
       forms: forms,
       fieldLibrary: fieldLibrary,
@@ -182,6 +199,7 @@ class StatusFieldOptionResolver {
     required List<dynamic> makes,
     required List<dynamic> types,
     required List<dynamic> sizes,
+    required List<Chassis> chassis,
     required List<dynamic> statuses,
     required List<StatusForm> forms,
     required List<StatusField> fieldLibrary,
@@ -251,6 +269,9 @@ class StatusFieldOptionResolver {
           .map((item) => item.id?.trim())
           .whereType<String>(),
     );
+    final chassisOptions = _uniqueOptions(
+      chassis.where((item) => item.isActive).map((item) => '${item.id}'),
+    );
     final statusOptions = _uniqueSortedOptions(
       statuses
           .where((item) => item.isActive != false)
@@ -288,6 +309,7 @@ class StatusFieldOptionResolver {
         statusFieldOptionSourceVehicleMakes => makeOptions,
         statusFieldOptionSourceVehicleTypes => typeOptions,
         statusFieldOptionSourceVehicleSizes => sizeOptions,
+        statusFieldOptionSourceChassis => chassisOptions,
         statusFieldOptionSourceStatuses => statusOptions,
         statusFieldOptionSourceForms => formOptions,
         statusFieldOptionSourceFields => fieldOptions,
@@ -328,6 +350,7 @@ class StatusFieldOptionResolver {
       'vehicle_make_id' => statusFieldOptionSourceVehicleMakes,
       'vehicle_type_id' => statusFieldOptionSourceVehicleTypes,
       'van_size' => statusFieldOptionSourceVehicleSizes,
+      'chassis_id' => statusFieldOptionSourceChassis,
       'status_id' => statusFieldOptionSourceStatuses,
       'form_id' => statusFieldOptionSourceForms,
       'field_id' => statusFieldOptionSourceFields,

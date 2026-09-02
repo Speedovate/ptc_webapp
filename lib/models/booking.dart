@@ -16,6 +16,7 @@ class Booking {
     this.vehicleMake,
     this.driver,
     this.helper,
+    this.chassisId,
     this.statusOutputs,
     this.createdAt,
     this.updatedAt,
@@ -32,6 +33,7 @@ class Booking {
   final VehicleMake? vehicleMake;
   final UserModel? driver;
   final UserModel? helper;
+  final String? chassisId;
   final Map<String, dynamic>? statusOutputs;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -48,6 +50,7 @@ class Booking {
     Object? vehicleMake = _bookingUndefined,
     Object? driver = _bookingUndefined,
     Object? helper = _bookingUndefined,
+    Object? chassisId = _bookingUndefined,
     Object? statusOutputs = _bookingUndefined,
     Object? createdAt = _bookingUndefined,
     Object? updatedAt = _bookingUndefined,
@@ -80,6 +83,9 @@ class Booking {
       helper: identical(helper, _bookingUndefined)
           ? this.helper
           : helper as UserModel?,
+      chassisId: identical(chassisId, _bookingUndefined)
+          ? this.chassisId
+          : chassisId as String?,
       statusOutputs: identical(statusOutputs, _bookingUndefined)
           ? this.statusOutputs
           : statusOutputs as Map<String, dynamic>?,
@@ -109,6 +115,7 @@ class Booking {
       'vehicle_make': vehicleMake?.toMap(),
       'driver': driver?.toMap(),
       'helper': helper?.toMap(),
+      'chassis_id': chassisId,
       'status_outputs': statusOutputs,
       'created_at': createdAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
@@ -128,6 +135,7 @@ class Booking {
       vehicleMake: _toVehicleMake(map['vehicle_make']),
       driver: _toUserModel(map['driver']),
       helper: _toUserModel(map['helper']),
+      chassisId: map['chassis_id']?.toString(),
       statusOutputs: map['status_outputs'] is Map
           ? Map<String, dynamic>.from(map['status_outputs'] as Map)
           : null,

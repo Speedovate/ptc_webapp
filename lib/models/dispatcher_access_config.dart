@@ -28,6 +28,11 @@ class DispatcherAccessCapability {
   static const vehicleSizesUpdate = 'vehicle_sizes.update';
   static const vehicleSizesDelete = 'vehicle_sizes.delete';
 
+  static const chassisCreate = 'chassis.create';
+  static const chassisRead = 'chassis.read';
+  static const chassisUpdate = 'chassis.update';
+  static const chassisDelete = 'chassis.delete';
+
   static const statusesCreate = 'statuses.create';
   static const statusesRead = 'statuses.read';
   static const statusesUpdate = 'statuses.update';
@@ -80,6 +85,10 @@ class DispatcherAccessCapability {
     vehicleSizesRead,
     vehicleSizesUpdate,
     vehicleSizesDelete,
+    chassisCreate,
+    chassisRead,
+    chassisUpdate,
+    chassisDelete,
     statusesCreate,
     statusesRead,
     statusesUpdate,
@@ -141,6 +150,10 @@ const Map<String, bool> defaultDispatcherAccessCapabilities = {
   DispatcherAccessCapability.vehicleSizesRead: false,
   DispatcherAccessCapability.vehicleSizesUpdate: false,
   DispatcherAccessCapability.vehicleSizesDelete: false,
+  DispatcherAccessCapability.chassisCreate: false,
+  DispatcherAccessCapability.chassisRead: false,
+  DispatcherAccessCapability.chassisUpdate: false,
+  DispatcherAccessCapability.chassisDelete: false,
   DispatcherAccessCapability.statusesCreate: false,
   DispatcherAccessCapability.statusesRead: false,
   DispatcherAccessCapability.statusesUpdate: false,
@@ -239,9 +252,7 @@ class DispatcherAccessConfig {
   final String? createdAtIso;
   final String? updatedAtIso;
 
-  factory DispatcherAccessConfig.defaults({
-    String roleKey = 'dispatcher',
-  }) {
+  factory DispatcherAccessConfig.defaults({String roleKey = 'dispatcher'}) {
     final normalizedRole = _normalizeRoleKey(roleKey) ?? 'dispatcher';
     final baseCapabilities = defaultAccessCapabilitiesForRole(normalizedRole);
     return DispatcherAccessConfig(

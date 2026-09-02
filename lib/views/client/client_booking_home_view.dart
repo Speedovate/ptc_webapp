@@ -67,6 +67,7 @@ class ClientBookingHomeView extends StatefulWidget {
     this.loadingOverlayVisibleHeight,
     this.loadingOverlayAlignmentY = 0,
     this.onRepresentativeTapWithoutClient,
+    this.additionalFormAnswers = const <String, dynamic>{},
   });
 
   final UserModel user;
@@ -80,6 +81,7 @@ class ClientBookingHomeView extends StatefulWidget {
   final double? loadingOverlayVisibleHeight;
   final double loadingOverlayAlignmentY;
   final VoidCallback? onRepresentativeTapWithoutClient;
+  final Map<String, dynamic> additionalFormAnswers;
 
   @override
   State<ClientBookingHomeView> createState() => _ClientBookingHomeViewState();
@@ -239,6 +241,7 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
                   submittedByUserId: _effectiveSubmittedByUserId,
                   submittedByUserRole: _effectiveSubmittedByUserRole,
                   submitBlockMessage: widget.submitBlockMessage,
+                  additionalFormAnswers: widget.additionalFormAnswers,
                   onRepresentativeTapWithoutClient:
                       widget.onRepresentativeTapWithoutClient,
                   onBookingSubmitted: widget.onBookingSubmitted,
@@ -278,6 +281,7 @@ class _ClientBookingFormSection extends StatefulWidget {
     this.submitBlockMessage,
     this.onBookingSubmitted,
     this.onRepresentativeTapWithoutClient,
+    this.additionalFormAnswers = const <String, dynamic>{},
   });
 
   final ClientBookingHomeViewModel vm;
@@ -289,6 +293,7 @@ class _ClientBookingFormSection extends StatefulWidget {
   final String? Function()? submitBlockMessage;
   final ValueChanged<Booking>? onBookingSubmitted;
   final VoidCallback? onRepresentativeTapWithoutClient;
+  final Map<String, dynamic> additionalFormAnswers;
 
   @override
   State<_ClientBookingFormSection> createState() =>
@@ -306,6 +311,11 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
   final FocusNode _submitFocusNode = FocusNode(
     debugLabel: 'booking_field(__cta__)',
   );
+
+  Map<String, dynamic> get _submittedAnswers => <String, dynamic>{
+    ..._answers,
+    ...widget.additionalFormAnswers,
+  };
 
   String _focusKeyForField(StatusField field, int index) {
     final key = (field.key ?? '').trim();
@@ -610,7 +620,10 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
           submitLabel: vm.submitLabelForForm(form),
           onSubmit: () async {
             final externalBlockMessage = widget.submitBlockMessage?.call();
-            final validationErrors = vm.validateAnswersForForm(form, _answers);
+            final validationErrors = vm.validateAnswersForForm(
+              form,
+              _submittedAnswers,
+            );
             _logBookingSubmit(
               'cta pressed form=${form.id ?? "-"} errors=${validationErrors.length} blocked=${blockedMessage != null || externalBlockMessage != null}',
             );
@@ -650,7 +663,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                 try {
                   final booking = await vm.submitForm(
                     activeForm: form,
-                    formAnswers: Map<String, dynamic>.from(_answers),
+                    formAnswers: Map<String, dynamic>.from(_submittedAnswers),
                     clientUser: widget.clientUser,
                     submittedByUserId: widget.submittedByUserId,
                     submittedByUserRole: widget.submittedByUserRole,

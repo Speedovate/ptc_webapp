@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/constants/palawan_locations.dart';
 import 'package:webapp/models/status_field.dart';
+import 'package:webapp/requests/chassis.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/booking_form_primitives.dart';
+import 'package:webapp/widgets/shared/chassis_status_presentation.dart';
 
 String? _runtimeFieldPlaceholder(StatusField field) {
   final placeholder = field.placeholder?.trim();
@@ -788,14 +790,26 @@ class _DropdownFieldInput extends StatelessWidget {
             optionLabels[option] ??
             (optionSourceKey == statusFieldOptionSourceVehicleSizes
                 ? VehicleRequest.instance.displayVehicleSizeLabel(option)
+                : optionSourceKey == statusFieldOptionSourceChassis
+                ? ChassisRequest.instance.displayChassisLabel(option)
                 : option);
         return DropdownMenuItem<String>(
           value: option,
-          child: Text(
-            label,
-            overflow: TextOverflow.ellipsis,
-            style: adminDropdownDisplayTextStyle,
-          ),
+          child: optionSourceKey == statusFieldOptionSourceChassis
+              ? ChassisStatusOptionLabel(
+                  label: label,
+                  status:
+                      ChassisRequest.instance.hydratedChassisSnapshot
+                          .where((chassis) => chassis.id.toString() == option)
+                          .firstOrNull
+                          ?.currentStatus ??
+                      '',
+                )
+              : Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: adminDropdownDisplayTextStyle,
+                ),
         );
       }).toList(),
       onChanged: (value) => closeSelectionFlow(value),

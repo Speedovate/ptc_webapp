@@ -157,7 +157,9 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
                 children: [
                   AppRefreshStrip(isVisible: vm.isLoading),
                   Text(
-                    vm.isLoading ? 'Preparing bookings ...' : 'No bookings yet.',
+                    vm.isLoading
+                        ? 'Preparing bookings ...'
+                        : 'No bookings yet.',
                     style: TextStyle(
                       color: AppColors.primaryColor.withValues(alpha: 0.72),
                       fontWeight: FontWeight.w600,
@@ -196,10 +198,9 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
                         .map(
                           (entry) => Padding(
                             padding: EdgeInsets.only(
-                              bottom:
-                                  entry.key == filteredBookings.length - 1
-                                      ? 0
-                                      : 12,
+                              bottom: entry.key == filteredBookings.length - 1
+                                  ? 0
+                                  : 12,
                             ),
                             child: _BookingHistoryCard(
                               userRole: widget.user.role,
@@ -282,8 +283,42 @@ class _HistoryToolbar extends StatelessWidget {
         initialValue: vm.searchQuery,
         onChanged: vm.setSearchQuery,
       ),
-      filtersBuilder: (context, iconOnly) =>
-          _HistoryFiltersPanel(vm: vm, iconOnly: iconOnly),
+      filtersBuilder: (context, iconOnly) => AdminListDynamicFiltersPanel(
+        iconOnly: iconOnly,
+        filters: [
+          AdminListDropdownFilterConfig(
+            label: 'Status',
+            value: vm.statusFilter,
+            items: vm.statusOptions,
+            onChanged: vm.setStatusFilter,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Created Start',
+            value: vm.startDate,
+            onSelected: vm.updateStartDate,
+            formatter: vm.formatDate,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Created End',
+            value: vm.endDate,
+            onSelected: vm.updateEndDate,
+            formatter: vm.formatDate,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Updated Start',
+            value: vm.updatedStartDate,
+            onSelected: vm.updateUpdatedStartDate,
+            formatter: vm.formatDate,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Updated End',
+            value: vm.updatedEndDate,
+            onSelected: vm.updateUpdatedEndDate,
+            formatter: vm.formatDate,
+          ),
+        ],
+        onClear: vm.clearFilters,
+      ),
       onNewPressed: onNewPressed,
     );
   }

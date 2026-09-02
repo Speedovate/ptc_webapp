@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
@@ -85,11 +84,6 @@ class AppShellViewModel extends BaseViewModel {
     final authEpoch = ++_sessionEpoch;
     _log(
       'completeAuthentication start loggedIn=true user=${user.id ?? "-"} role=${user.role ?? "-"}',
-    );
-    debugPrint(
-      '[${DateTime.now().toIso8601String()}][RegisterProfilePhoto] '
-      'app shell received user=${user.id ?? "-"} '
-      'hasPhoto=${user.photo?.trim().isNotEmpty == true}',
     );
     isLoading = true;
     currentUser = user;
@@ -211,11 +205,6 @@ class AppShellViewModel extends BaseViewModel {
         fallbackUser,
       );
       _roleAccessService.setCurrentUser(currentUser);
-      debugPrint(
-        '[${DateTime.now().toIso8601String()}][RegisterProfilePhoto] '
-        'app shell refresh user=${currentUser?.id ?? "-"} '
-        'hasPhoto=${currentUser?.photo?.trim().isNotEmpty == true}',
-      );
       isQuickLoggedIn = await _repository.hasQuickLoginSource();
       if (authEpoch != _sessionEpoch) {
         return;

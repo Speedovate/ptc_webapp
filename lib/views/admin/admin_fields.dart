@@ -436,20 +436,51 @@ class _FieldsToolbar extends StatelessWidget {
         initialValue: searchQuery,
         onChanged: onSearchChanged,
       ),
-      filtersBuilder: (context, iconOnly) => _FieldsFiltersPanel(
-        typeFilter: typeFilter,
-        activeFilter: activeFilter,
-        createdStartDate: createdStartDate,
-        createdEndDate: createdEndDate,
-        updatedStartDate: updatedStartDate,
-        updatedEndDate: updatedEndDate,
+      filtersBuilder: (context, iconOnly) => AdminListDynamicFiltersPanel(
         iconOnly: iconOnly,
-        onTypeChanged: onTypeChanged,
-        onActiveChanged: onActiveChanged,
-        onCreatedStartDateChanged: onCreatedStartDateChanged,
-        onCreatedEndDateChanged: onCreatedEndDateChanged,
-        onUpdatedStartDateChanged: onUpdatedStartDateChanged,
-        onUpdatedEndDateChanged: onUpdatedEndDateChanged,
+        filters: [
+          AdminListDropdownFilterConfig(
+            label: 'Type',
+            value: typeFilter,
+            items: const ['All', ...AdminFlowViewModel.fieldTypeOptions],
+            onChanged: onTypeChanged,
+            displayValue: humanizeDropdownValue,
+          ),
+          AdminListDropdownFilterConfig(
+            label: 'Is Active',
+            value: activeFilter,
+            items: const ['All', 'Active', 'Inactive'],
+            onChanged: onActiveChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Created Start',
+            value: createdStartDate,
+            onSelected: onCreatedStartDateChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Created End',
+            value: createdEndDate,
+            onSelected: onCreatedEndDateChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Updated Start',
+            value: updatedStartDate,
+            onSelected: onUpdatedStartDateChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Updated End',
+            value: updatedEndDate,
+            onSelected: onUpdatedEndDateChanged,
+          ),
+        ],
+        onClear: () {
+          onTypeChanged('All');
+          onActiveChanged('All');
+          onCreatedStartDateChanged(null);
+          onCreatedEndDateChanged(null);
+          onUpdatedStartDateChanged(null);
+          onUpdatedEndDateChanged(null);
+        },
       ),
       onNewPressed: onNewPressed,
     );

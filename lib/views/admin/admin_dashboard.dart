@@ -30,10 +30,7 @@ import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
 class AdminDashboardView extends StatefulWidget {
-  const AdminDashboardView({
-    super.key,
-    required this.user,
-  });
+  const AdminDashboardView({super.key, required this.user});
 
   final UserModel user;
 
@@ -96,8 +93,8 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
         final selectedBooking = _selectedBooking == null
             ? null
             : vm.completedBookings
-                      .where((booking) => booking.id == _selectedBooking!.id)
-                      .firstOrNull;
+                  .where((booking) => booking.id == _selectedBooking!.id)
+                  .firstOrNull;
         final filteredBookings = vm.filteredCompletedBookings();
         final showInitialLoading =
             !vm.hasResolvedInitialBookings &&
@@ -175,14 +172,13 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                   _AdminDashboardToolbar(
                     vm: vm,
                     onExportPressed: _canExport(vm.currentUser)
-                        ? () =>
-                        _exportBookings(
-                          context,
-                          vm,
-                          excludedBookingIds: _excludedExportBookingIds,
-                          onToggleExcludedSession:
-                              _toggleExportExcludedBookingId,
-                        )
+                        ? () => _exportBookings(
+                            context,
+                            vm,
+                            excludedBookingIds: _excludedExportBookingIds,
+                            onToggleExcludedSession:
+                                _toggleExportExcludedBookingId,
+                          )
                         : null,
                   ),
                   const SizedBox(height: _toolbarSectionGap),
@@ -209,14 +205,13 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                   _AdminDashboardToolbar(
                     vm: vm,
                     onExportPressed: _canExport(vm.currentUser)
-                        ? () =>
-                        _exportBookings(
-                          context,
-                          vm,
-                          excludedBookingIds: _excludedExportBookingIds,
-                          onToggleExcludedSession:
-                              _toggleExportExcludedBookingId,
-                        )
+                        ? () => _exportBookings(
+                            context,
+                            vm,
+                            excludedBookingIds: _excludedExportBookingIds,
+                            onToggleExcludedSession:
+                                _toggleExportExcludedBookingId,
+                          )
                         : null,
                   ),
                   const SizedBox(height: _toolbarSectionGap),
@@ -244,14 +239,13 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                 _AdminDashboardToolbar(
                   vm: vm,
                   onExportPressed: _canExport(vm.currentUser)
-                      ? () =>
-                      _exportBookings(
-                        context,
-                        vm,
-                        excludedBookingIds: _excludedExportBookingIds,
-                        onToggleExcludedSession:
-                            _toggleExportExcludedBookingId,
-                      )
+                      ? () => _exportBookings(
+                          context,
+                          vm,
+                          excludedBookingIds: _excludedExportBookingIds,
+                          onToggleExcludedSession:
+                              _toggleExportExcludedBookingId,
+                        )
                       : null,
                 ),
                 const SizedBox(height: _toolbarSectionGap),
@@ -268,7 +262,8 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                     bookings: filteredBookings,
                     vm: vm,
                     onToggleBillingStatus: _canUpdateBilling(vm.currentUser)
-                        ? (booking) => _toggleBillingStatus(context, vm, booking)
+                        ? (booking) =>
+                              _toggleBillingStatus(context, vm, booking)
                         : (_) {},
                     onView: (booking) {
                       setState(() {
@@ -327,8 +322,7 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
       message: nextStatus == AdminDashboardViewModel.billingStatusBilled
           ? 'Are you sure you want to mark DR No. $deliveryNumber as billed?'
           : 'Are you sure you want to mark DR No. $deliveryNumber as unbilled?',
-      confirmLabel:
-          nextStatus == AdminDashboardViewModel.billingStatusBilled
+      confirmLabel: nextStatus == AdminDashboardViewModel.billingStatusBilled
           ? 'Mark as Billed'
           : 'Mark as Unbilled',
       isDanger: nextStatus != AdminDashboardViewModel.billingStatusBilled,
@@ -338,10 +332,7 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
           return true;
         } catch (error) {
           if (context.mounted) {
-            AppSnackbar.showError(
-              context,
-              error.toString(),
-            );
+            AppSnackbar.showError(context, error.toString());
           }
           return false;
         }
@@ -370,10 +361,7 @@ Future<bool> _runDashboardExport(
   final selectedBookings = exportConfig.selectedBookings(availableBookings);
   final excludedCandidateIds = exportConfig.excludedCandidateBookingIds;
   if (selectedBookings.isEmpty) {
-    AppSnackbar.showError(
-      context,
-      'No bookings selected for export.',
-    );
+    AppSnackbar.showError(context, 'No bookings selected for export.');
     return false;
   }
 
@@ -517,18 +505,82 @@ class _AdminDashboardToolbar extends StatelessWidget {
         initialValue: vm.searchQuery,
         onChanged: vm.setSearchQuery,
       ),
-      filtersBuilder: (context, iconOnly) =>
-          _DashboardFiltersPanel(vm: vm, iconOnly: iconOnly),
+      filtersBuilder: (context, iconOnly) => AdminListDynamicFiltersPanel(
+        iconOnly: iconOnly,
+        filters: [
+          AdminListDropdownFilterConfig(
+            label: 'Is Billed',
+            value: vm.billingStatusFilter,
+            items: const [
+              AdminDashboardViewModel.billingStatusAll,
+              AdminDashboardViewModel.billingStatusBilled,
+              AdminDashboardViewModel.billingStatusUnbilled,
+            ],
+            displayValue: (value) => switch (value) {
+              AdminDashboardViewModel.billingStatusAll => 'All',
+              AdminDashboardViewModel.billingStatusBilled => 'Billed',
+              AdminDashboardViewModel.billingStatusUnbilled => 'Unbilled',
+              _ => value,
+            },
+            onChanged: (value) => vm.updateBillingStatusFilter(
+              value == AdminDashboardViewModel.billingStatusAll ? null : value,
+            ),
+          ),
+          AdminListDateFilterConfig(
+            label: 'Date Start',
+            value: vm.startDate,
+            onSelected: vm.updateStartDate,
+            formatter: vm.formatDate,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Date End',
+            value: vm.endDate,
+            onSelected: vm.updateEndDate,
+            formatter: vm.formatDate,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Created Start',
+            value: vm.createdStartDate,
+            onSelected: vm.updateCreatedStartDate,
+            formatter: vm.formatDate,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Created End',
+            value: vm.createdEndDate,
+            onSelected: vm.updateCreatedEndDate,
+            formatter: vm.formatDate,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Updated Start',
+            value: vm.updatedStartDate,
+            onSelected: vm.updateUpdatedStartDate,
+            formatter: vm.formatDate,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Updated End',
+            value: vm.updatedEndDate,
+            onSelected: vm.updateUpdatedEndDate,
+            formatter: vm.formatDate,
+          ),
+        ],
+        onClear: vm.clearFilters,
+      ),
       onNewPressed: vm.isExporting ? null : onExportPressed,
-      buttonLabel: vm.exportProgressLabel,
+      buttonLabel: 'Export',
       buttonIcon: Icons.download_rounded,
+      buttonBusy: vm.isExporting,
     );
   }
 }
 
 typedef _DashboardExportType = DashboardExportDocumentType;
 typedef _DashboardExportConfig = DashboardExportConfig;
-enum _DashboardExportSourceMode { currentRange, pastUnbilled, rangeAndPastUnbilled }
+
+enum _DashboardExportSourceMode {
+  currentRange,
+  pastUnbilled,
+  rangeAndPastUnbilled,
+}
 
 class _DashboardBatchExportConfig {
   const _DashboardBatchExportConfig({
@@ -755,28 +807,30 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
   }
 
   List<Booking> _currentRangeBookingsForCoveredDates() {
-    return widget.bookings.where((booking) {
-      final deliveredDate = _bookingSortDate(booking);
-      if (deliveredDate == null) {
-        return false;
-      }
-      final dateOnly = DateTime(
-        deliveredDate.year,
-        deliveredDate.month,
-        deliveredDate.day,
-      );
-      final startOnly = DateTime(
-        _coveredStartDate.year,
-        _coveredStartDate.month,
-        _coveredStartDate.day,
-      );
-      final endOnly = DateTime(
-        _coveredEndDate.year,
-        _coveredEndDate.month,
-        _coveredEndDate.day,
-      );
-      return !dateOnly.isBefore(startOnly) && !dateOnly.isAfter(endOnly);
-    }).toList(growable: false);
+    return widget.bookings
+        .where((booking) {
+          final deliveredDate = _bookingSortDate(booking);
+          if (deliveredDate == null) {
+            return false;
+          }
+          final dateOnly = DateTime(
+            deliveredDate.year,
+            deliveredDate.month,
+            deliveredDate.day,
+          );
+          final startOnly = DateTime(
+            _coveredStartDate.year,
+            _coveredStartDate.month,
+            _coveredStartDate.day,
+          );
+          final endOnly = DateTime(
+            _coveredEndDate.year,
+            _coveredEndDate.month,
+            _coveredEndDate.day,
+          );
+          return !dateOnly.isBefore(startOnly) && !dateOnly.isAfter(endOnly);
+        })
+        .toList(growable: false);
   }
 
   List<Booking> _pastUnbilledBookingsForCoveredDates() {
@@ -785,22 +839,24 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
       _coveredStartDate.month,
       _coveredStartDate.day,
     );
-    return widget.bookings.where((booking) {
-      if (widget.vm.billingStatusValue(booking) !=
-          AdminDashboardViewModel.billingStatusUnbilled) {
-        return false;
-      }
-      final deliveredDate = _bookingSortDate(booking);
-      if (deliveredDate == null) {
-        return false;
-      }
-      final dateOnly = DateTime(
-        deliveredDate.year,
-        deliveredDate.month,
-        deliveredDate.day,
-      );
-      return dateOnly.isBefore(startOnly);
-    }).toList(growable: false);
+    return widget.bookings
+        .where((booking) {
+          if (widget.vm.billingStatusValue(booking) !=
+              AdminDashboardViewModel.billingStatusUnbilled) {
+            return false;
+          }
+          final deliveredDate = _bookingSortDate(booking);
+          if (deliveredDate == null) {
+            return false;
+          }
+          final dateOnly = DateTime(
+            deliveredDate.year,
+            deliveredDate.month,
+            deliveredDate.day,
+          );
+          return dateOnly.isBefore(startOnly);
+        })
+        .toList(growable: false);
   }
 
   List<Booking> _mergedBookingsForCoveredDates() {
@@ -1175,27 +1231,27 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
       return;
     }
     final exportConfig = _DashboardBatchExportConfig(
-        types: _selectedTypes.toList(),
-        sourceMode: _sourceMode,
-        setAsBilledWhenExported: _setAsBilledWhenExported,
-        candidateBookingIds: _candidateBookingIds,
-        selectedBookingIds: _selectedBookingIds,
-        documentDate: _documentDate,
-        coveredStartDate: _coveredStartDate,
-        coveredEndDate: _coveredEndDate,
-        regularStatementNumber: regularStatementNumber,
-        hustlingStatementNumber: hustlingStatementNumber,
-        companyName: companyName,
-        representativeName: representativeName,
-        greetingLine: greetingLine,
-        preparedBy: preparedBy,
-        preparedByTitle: preparedByTitle,
-        approvedBy: approvedBy,
-        approvedByTitle: approvedByTitle,
-        bankName: bankName,
-        accountName: accountName,
-        accountNumber: accountNumber,
-      );
+      types: _selectedTypes.toList(),
+      sourceMode: _sourceMode,
+      setAsBilledWhenExported: _setAsBilledWhenExported,
+      candidateBookingIds: _candidateBookingIds,
+      selectedBookingIds: _selectedBookingIds,
+      documentDate: _documentDate,
+      coveredStartDate: _coveredStartDate,
+      coveredEndDate: _coveredEndDate,
+      regularStatementNumber: regularStatementNumber,
+      hustlingStatementNumber: hustlingStatementNumber,
+      companyName: companyName,
+      representativeName: representativeName,
+      greetingLine: greetingLine,
+      preparedBy: preparedBy,
+      preparedByTitle: preparedByTitle,
+      approvedBy: approvedBy,
+      approvedByTitle: approvedByTitle,
+      bankName: bankName,
+      accountName: accountName,
+      accountNumber: accountNumber,
+    );
     final wasSuccessful = await widget.onSubmit(exportConfig);
     if (!mounted) {
       return;
@@ -1368,15 +1424,13 @@ class _DashboardExportSourceSection extends StatelessWidget {
               label: 'Current Range',
               count: currentRangeCount,
               selected: sourceMode == _DashboardExportSourceMode.currentRange,
-              onTap: () =>
-                  onChanged(_DashboardExportSourceMode.currentRange),
+              onTap: () => onChanged(_DashboardExportSourceMode.currentRange),
             ),
             _DashboardExportSourceChip(
               label: 'Past Unbilled',
               count: pastUnbilledCount,
               selected: sourceMode == _DashboardExportSourceMode.pastUnbilled,
-              onTap: () =>
-                  onChanged(_DashboardExportSourceMode.pastUnbilled),
+              onTap: () => onChanged(_DashboardExportSourceMode.pastUnbilled),
             ),
             _DashboardExportSourceChip(
               label: 'Range + Past Unbilled',
@@ -1419,9 +1473,7 @@ class _DashboardExportSourceChip extends StatelessWidget {
         ? AppColors.primaryColor
         : AppColors.primaryBorder;
     final backgroundColor = selected ? AppColors.primarySurface : Colors.white;
-    final textColor = selected
-        ? AppColors.primaryColor
-        : AppColors.textPrimary;
+    final textColor = selected ? AppColors.primaryColor : AppColors.textPrimary;
     return AppMousePressable(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
@@ -1538,10 +1590,7 @@ class _DashboardExportCandidateRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _DashboardExcludeCheckbox(
-            value: isExcluded,
-            onTap: onToggleExcluded,
-          ),
+          _DashboardExcludeCheckbox(value: isExcluded, onTap: onToggleExcluded),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -1593,10 +1642,7 @@ class _DashboardExportCandidateRow extends StatelessWidget {
 }
 
 class _DashboardExcludeCheckbox extends StatelessWidget {
-  const _DashboardExcludeCheckbox({
-    required this.value,
-    required this.onTap,
-  });
+  const _DashboardExcludeCheckbox({required this.value, required this.onTap});
 
   final bool value;
   final VoidCallback? onTap;
@@ -1622,17 +1668,10 @@ class _DashboardExcludeCheckbox extends StatelessWidget {
                       : AppColors.primarySurfaceAlt.withValues(alpha: 0.4))
                 : fillColor,
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: borderColor,
-              width: value ? 1.5 : 1.25,
-            ),
+            border: Border.all(color: borderColor, width: value ? 1.5 : 1.25),
           ),
           child: value
-              ? const Icon(
-                  Icons.check_rounded,
-                  size: 11,
-                  color: Colors.white,
-                )
+              ? const Icon(Icons.check_rounded, size: 11, color: Colors.white)
               : null,
         ),
       ),
@@ -1653,8 +1692,7 @@ class _DashboardBillingStatusAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isUnbilled =
-        value == AdminDashboardViewModel.billingStatusUnbilled;
+    final isUnbilled = value == AdminDashboardViewModel.billingStatusUnbilled;
     return AdminListActionButton(
       icon: isUnbilled ? Icons.check_rounded : Icons.close_rounded,
       backgroundColor: isUnbilled ? _unbilledColor : AppColors.dangerStrong,
@@ -2352,10 +2390,9 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                       booking: entry.value,
                       vm: vm,
                       clientName: vm.client(entry.value),
-                      dateValue:
-                          AdminDashboardViewModel.dropOffDateDisplay(
-                            entry.value,
-                          ),
+                      dateValue: AdminDashboardViewModel.dropOffDateDisplay(
+                        entry.value,
+                      ),
                       onToggleBillingStatus: () =>
                           onToggleBillingStatus(entry.value),
                       onViewPressed: () => onView(entry.value),
@@ -2438,8 +2475,9 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
                       booking: entry.value,
                       vm: vm,
                       clientName: vm.client(entry.value),
-                      dateValue:
-                          AdminDashboardViewModel.dropOffDateDisplay(entry.value),
+                      dateValue: AdminDashboardViewModel.dropOffDateDisplay(
+                        entry.value,
+                      ),
                       resolvedDeliveryNumberWidth: resolvedDeliveryNumberWidth,
                       resolvedDateWidth: resolvedDateWidth,
                       resolvedWaybillWidth: resolvedWaybillWidth,
@@ -2530,7 +2568,6 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
       _valueStyle,
     );
   }
-
 }
 
 class _AdminDashboardBookingDetailHeader extends StatelessWidget {

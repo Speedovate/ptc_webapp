@@ -326,21 +326,19 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
       builder: (dialogContext) => _BookingFieldEditorDialog(
         title: initialField.id == vm.nextFieldId ? 'New Field' : 'Edit Field',
         initialField: initialField,
+        onSaveAsync: (field) async {
+          final persistedField = await vm.saveLibraryField(field);
+          if (addAfterSave) {
+            final persistedId = persistedField.id ?? '';
+            if (persistedId.isNotEmpty) {
+              await vm.addExistingField(persistedId);
+            }
+          }
+        },
       ),
     );
 
     if (savedField == null || !context.mounted) {
-      return;
-    }
-
-    final persistedField = await vm.saveLibraryField(savedField);
-    if (addAfterSave) {
-      final persistedId = persistedField.id ?? '';
-      if (persistedId.isNotEmpty) {
-        await vm.addExistingField(persistedId);
-      }
-    }
-    if (!context.mounted) {
       return;
     }
     AppSnackbar.showSuccess(
@@ -1810,21 +1808,19 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
       builder: (dialogContext) => _BookingFieldEditorDialog(
         title: initialField.id == vm.nextFieldId ? 'New Field' : 'Edit Field',
         initialField: initialField,
+        onSaveAsync: (field) async {
+          final persistedField = await vm.saveLibraryField(field);
+          if (addAfterSave) {
+            final persistedId = persistedField.id ?? '';
+            if (persistedId.isNotEmpty) {
+              await vm.addExistingField(persistedId);
+            }
+          }
+        },
       ),
     );
 
     if (savedField == null || !context.mounted) {
-      return;
-    }
-
-    final persistedField = await vm.saveLibraryField(savedField);
-    if (addAfterSave) {
-      final persistedId = persistedField.id ?? '';
-      if (persistedId.isNotEmpty) {
-        await vm.addExistingField(persistedId);
-      }
-    }
-    if (!context.mounted) {
       return;
     }
     AppSnackbar.showSuccess(
@@ -2569,7 +2565,7 @@ class _WorkflowFieldCard extends StatelessWidget {
     final items = <DropdownMenuItem<String>>[];
     final seenValues = <String>{};
 
-    void addUserItem(String value, String label) {
+    void addUserItem(String value, String label, {UserModel? user}) {
       final normalizedValue = value.trim();
       if (normalizedValue.isEmpty || !seenValues.add(normalizedValue)) {
         return;
@@ -2577,10 +2573,27 @@ class _WorkflowFieldCard extends StatelessWidget {
       items.add(
         DropdownMenuItem<String>(
           value: normalizedValue,
-          child: Text(
-            label,
-            overflow: TextOverflow.ellipsis,
-            style: adminDropdownDisplayTextStyle,
+          child: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: adminDropdownDisplayTextStyle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                user?.isOnline == true ? 'Online' : 'Offline',
+                style: TextStyle(
+                  color: user?.isOnline == true
+                      ? const Color(0xFF218A4B)
+                      : AppColors.danger,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -2590,6 +2603,7 @@ class _WorkflowFieldCard extends StatelessWidget {
       addUserItem(
         selectedUserId,
         vm.roleUserLabel(selectedUserId, fallbackRole: role),
+        user: vm.userById(selectedUserId),
       );
     }
 
@@ -2598,7 +2612,11 @@ class _WorkflowFieldCard extends StatelessWidget {
       if (userId == null || userId.isEmpty) {
         continue;
       }
-      addUserItem(userId, vm.roleUserLabel(userId, fallbackRole: role));
+      addUserItem(
+        userId,
+        vm.roleUserLabel(userId, fallbackRole: role),
+        user: user,
+      );
     }
 
     return AdminDropdownFormField<String>(
@@ -2614,8 +2632,8 @@ class _WorkflowFieldCard extends StatelessWidget {
       style: adminDropdownDisplayTextStyle,
       items: items,
       disabledTapMessage: role == 'driver'
-          ? 'No online drivers available.'
-          : 'No online helpers available.',
+          ? 'No active drivers available.'
+          : 'No active helpers available.',
       onChanged: (value) {
         onChanged(value);
         final handleAdvance = onAdvanceAfterSelection;
@@ -2680,10 +2698,12 @@ class _BookingFieldEditorDialog extends StatefulWidget {
   const _BookingFieldEditorDialog({
     required this.title,
     required this.initialField,
+    required this.onSaveAsync,
   });
 
   final String title;
   final StatusField initialField;
+  final Future<void> Function(StatusField field) onSaveAsync;
 
   @override
   State<_BookingFieldEditorDialog> createState() =>
@@ -2692,6 +2712,7 @@ class _BookingFieldEditorDialog extends StatefulWidget {
 
 class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
   late StatusField _field;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -2743,13 +2764,29 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
     return null;
   }
 
-  void _submitForm() {
+  Future<void> _submitForm() async {
+    if (_isSaving) {
+      return;
+    }
     final validationMessage = _validationMessage();
     if (validationMessage != null) {
       AppSnackbar.showError(context, validationMessage);
       return;
     }
-    Navigator.of(context).pop(_normalizeFieldPlaceholder(_field));
+    final field = _normalizeFieldPlaceholder(_field);
+    setState(() => _isSaving = true);
+    try {
+      await widget.onSaveAsync(field);
+      if (mounted) {
+        Navigator.of(context).pop(field);
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _isSaving = false);
+      AppSnackbar.showError(context, 'We could not save this field right now.');
+    }
   }
 
   StatusField _normalizeFieldPlaceholder(StatusField field) {
@@ -2795,10 +2832,22 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
       contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        FilledButton(onPressed: _submitForm, child: const Text('Save')),
+        FilledButton(
+          onPressed: _isSaving ? null : _submitForm,
+          child: _isSaving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text('Save'),
+        ),
       ],
       child: AdminModalFormBody(
         children: [
@@ -2813,7 +2862,9 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
               headerBottomGap: 12,
               toggleTopGap: 0,
               toggleGap: 0,
-              onSubmit: _submitForm,
+              onSubmit: () {
+                _submitForm();
+              },
               onUpdate: (property, value) {
                 setState(() {
                   final updatedField = switch (property) {

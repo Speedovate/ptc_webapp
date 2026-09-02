@@ -13,6 +13,7 @@ const statusFieldOptionSourceClientMembers = 'client_members';
 const statusFieldOptionSourceVehicleMakes = 'vehicle_makes';
 const statusFieldOptionSourceVehicleTypes = 'vehicle_types';
 const statusFieldOptionSourceVehicleSizes = 'vehicle_sizes';
+const statusFieldOptionSourceChassis = 'chassis';
 const statusFieldOptionSourceStatuses = 'statuses';
 const statusFieldOptionSourceForms = 'forms';
 const statusFieldOptionSourceFields = 'fields';
@@ -29,6 +30,7 @@ const statusFieldDynamicOptionSources = <String>[
   statusFieldOptionSourceVehicleMakes,
   statusFieldOptionSourceVehicleTypes,
   statusFieldOptionSourceVehicleSizes,
+  statusFieldOptionSourceChassis,
   statusFieldOptionSourceStatuses,
   statusFieldOptionSourceForms,
   statusFieldOptionSourceFields,
@@ -46,12 +48,12 @@ const statusFieldOptionSourceLabels = <String, String>{
   statusFieldOptionSourceVehicleMakes: 'Vehicle Makes',
   statusFieldOptionSourceVehicleTypes: 'Vehicle Types',
   statusFieldOptionSourceVehicleSizes: 'Vehicle Sizes',
+  statusFieldOptionSourceChassis: 'Chassis',
   statusFieldOptionSourceStatuses: 'Statuses',
   statusFieldOptionSourceForms: 'Forms',
   statusFieldOptionSourceFields: 'Fields',
   statusFieldOptionSourceBookings: 'Bookings',
-  statusFieldOptionSourcePuertoPrincesaBarangays:
-      'Puerto Princesa Barangays',
+  statusFieldOptionSourcePuertoPrincesaBarangays: 'Puerto Princesa Barangays',
 };
 
 class StatusField {
@@ -154,10 +156,8 @@ class StatusField {
       optionSourceKey: identical(optionSourceKey, _statusFieldUndefined)
           ? this.optionSourceKey
           : optionSourceKey as String?,
-      visibilityControllerKey: identical(
-        visibilityControllerKey,
-        _statusFieldUndefined,
-      )
+      visibilityControllerKey:
+          identical(visibilityControllerKey, _statusFieldUndefined)
           ? this.visibilityControllerKey
           : visibilityControllerKey as String?,
       visibilityOptionValues:

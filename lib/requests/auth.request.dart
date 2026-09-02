@@ -1791,9 +1791,7 @@ class AuthRequest implements AuthRepository {
   }
 
   void _logProfilePhoto(String message) {
-    debugPrint(
-      '[${DateTime.now().toIso8601String()}][AuthProfilePhoto] $message',
-    );
+    // Temporary debug logging removed.
   }
 
   Future<UserModel?> _findFirestoreSdkCachedUserByIdentifier({

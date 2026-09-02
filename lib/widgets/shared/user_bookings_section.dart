@@ -12,7 +12,6 @@ import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
-import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
@@ -119,7 +118,9 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
           onTimeout: () => const <Booking>[],
         ),
       );
-      _bookingsSubscription = _bookingRepository.watchBookings().listen((items) {
+      _bookingsSubscription = _bookingRepository.watchBookings().listen((
+        items,
+      ) {
         _applyBookings(items);
       });
     } catch (error) {
@@ -245,12 +246,13 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
   }
 
   List<String> get _statusOptions {
-    final labels = _bookings
-        .map(_headlineStatusLabel)
-        .where((label) => label.trim().isNotEmpty && label.trim() != '-')
-        .toSet()
-        .toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final labels =
+        _bookings
+            .map(_headlineStatusLabel)
+            .where((label) => label.trim().isNotEmpty && label.trim() != '-')
+            .toSet()
+            .toList()
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     return ['All', ...labels];
   }
 
@@ -310,7 +312,8 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
     return '$month/$day/${value.year}';
   }
 
-  DateTime _dateOnly(DateTime value) => DateTime(value.year, value.month, value.day);
+  DateTime _dateOnly(DateTime value) =>
+      DateTime(value.year, value.month, value.day);
 
   String _buildEmptyMessage() {
     if (_bookings.isEmpty) {
@@ -350,11 +353,15 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
         'van_number',
       );
 
-  String _vanSize(Booking booking) =>
-      BookingRecordCard.outputFieldDisplayValue(booking.statusOutputs, 'van_size');
+  String _vanSize(Booking booking) => BookingRecordCard.outputFieldDisplayValue(
+    booking.statusOutputs,
+    'van_size',
+  );
 
-  String _amount(Booking booking) =>
-      BookingRecordCard.outputFieldDisplayValue(booking.statusOutputs, 'amount');
+  String _amount(Booking booking) => BookingRecordCard.outputFieldDisplayValue(
+    booking.statusOutputs,
+    'amount',
+  );
 
   String _formatBookingDateTime(DateTime? value) {
     if (value == null) {
@@ -442,13 +449,17 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
         final createdWidth = maxTextWidth(
           'Created',
           longestText(
-            bookings.map((booking) => _formatBookingDateTime(booking.createdAt)),
+            bookings.map(
+              (booking) => _formatBookingDateTime(booking.createdAt),
+            ),
           ),
         );
         final updatedWidth = maxTextWidth(
           'Updated',
           longestText(
-            bookings.map((booking) => _formatBookingDateTime(booking.updatedAt)),
+            bookings.map(
+              (booking) => _formatBookingDateTime(booking.updatedAt),
+            ),
           ),
         );
         final waybillWidth = maxTextWidth(
@@ -580,31 +591,62 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
                   bottom: entry.key == bookings.length - 1 ? 0 : 12,
                 ),
                 child: AdminListItemCard(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 18,
+                  ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       fixedSlot(
                         resolvedIdWidth,
                         bodyCell(
-                          Text(booking.id ?? '-', style: valueStyle, softWrap: true),
+                          Text(
+                            booking.id ?? '-',
+                            style: valueStyle,
+                            softWrap: true,
+                          ),
                         ),
                       ),
                       fixedSlot(
                         resolvedWaybillWidth,
-                        bodyCell(Text(_waybillNumber(booking), style: valueStyle, softWrap: true)),
+                        bodyCell(
+                          Text(
+                            _waybillNumber(booking),
+                            style: valueStyle,
+                            softWrap: true,
+                          ),
+                        ),
                       ),
                       fixedSlot(
                         resolvedVanNumberWidth,
-                        bodyCell(Text(_vanNumber(booking), style: valueStyle, softWrap: true)),
+                        bodyCell(
+                          Text(
+                            _vanNumber(booking),
+                            style: valueStyle,
+                            softWrap: true,
+                          ),
+                        ),
                       ),
                       fixedSlot(
                         resolvedVanSizeWidth,
-                        bodyCell(Text(_vanSize(booking), style: valueStyle, softWrap: true)),
+                        bodyCell(
+                          Text(
+                            _vanSize(booking),
+                            style: valueStyle,
+                            softWrap: true,
+                          ),
+                        ),
                       ),
                       fixedSlot(
                         resolvedAmountWidth,
-                        bodyCell(Text(_amount(booking), style: valueStyle, softWrap: true)),
+                        bodyCell(
+                          Text(
+                            _amount(booking),
+                            style: valueStyle,
+                            softWrap: true,
+                          ),
+                        ),
                       ),
                       fixedSlot(
                         resolvedStatusWidth,
@@ -678,13 +720,11 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
           );
         }
 
-        if (allowHorizontalScroll && totalMeasuredWidth > constraints.maxWidth) {
+        if (allowHorizontalScroll &&
+            totalMeasuredWidth > constraints.maxWidth) {
           return SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            child: SizedBox(
-              width: totalMeasuredWidth,
-              child: table,
-            ),
+            child: SizedBox(width: totalMeasuredWidth, child: table),
           );
         }
 
@@ -729,7 +769,8 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
                         widget.onViewBooking!.call(booking);
                       },
                     ),
-                  if (widget.onViewBooking != null && widget.onEditBooking != null)
+                  if (widget.onViewBooking != null &&
+                      widget.onEditBooking != null)
                     const SizedBox(width: 8),
                   if (widget.onEditBooking != null)
                     AdminListActionButton(
@@ -851,7 +892,9 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
                       : () {
                           widget.onViewBooking!.call(filteredBookings[index]);
                         },
-                  headlineStatusLabel: _headlineStatusLabel(filteredBookings[index]),
+                  headlineStatusLabel: _headlineStatusLabel(
+                    filteredBookings[index],
+                  ),
                   statusLabelForKey: _statusLabelForKey,
                   showStatusSubmissions: false,
                   clientName: _userName(filteredBookings[index].client),
@@ -881,7 +924,8 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
                         )
                       : null,
                 ),
-                if (index != filteredBookings.length - 1) const SizedBox(height: 12),
+                if (index != filteredBookings.length - 1)
+                  const SizedBox(height: 12),
               ],
             ],
           ),
@@ -893,7 +937,6 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
     }
     return Padding(padding: widget.padding, child: content);
   }
-
 }
 
 class _UserBookingsCacheState {
@@ -950,280 +993,32 @@ class _UserBookingsToolbar extends StatelessWidget {
           initialValue: searchQuery,
           onChanged: onSearchChanged,
         ),
-        filtersBuilder: (context, iconOnly) => _UserBookingsFiltersPanel(
-          statusOptions: statusOptions,
-          statusFilter: statusFilter,
-          startDate: startDate,
-          endDate: endDate,
-          dateFormatter: dateFormatter,
+        filtersBuilder: (context, iconOnly) => AdminListDynamicFiltersPanel(
           iconOnly: iconOnly,
-          onStatusChanged: onStatusChanged,
-          onStartDateChanged: onStartDateChanged,
-          onEndDateChanged: onEndDateChanged,
-          onClearFilters: onClearFilters,
+          filters: [
+            AdminListDropdownFilterConfig(
+              label: 'Status',
+              value: statusFilter,
+              items: statusOptions,
+              onChanged: (value) => onStatusChanged(value),
+            ),
+            AdminListDateFilterConfig(
+              label: 'Start',
+              value: startDate,
+              onSelected: onStartDateChanged,
+              formatter: dateFormatter,
+            ),
+            AdminListDateFilterConfig(
+              label: 'End',
+              value: endDate,
+              onSelected: onEndDateChanged,
+              formatter: dateFormatter,
+            ),
+          ],
+          onClear: onClearFilters,
         ),
         onNewPressed: onNewPressed,
       ),
-    );
-  }
-}
-
-class _UserBookingsFiltersPanel extends StatefulWidget {
-  const _UserBookingsFiltersPanel({
-    required this.statusOptions,
-    required this.statusFilter,
-    required this.startDate,
-    required this.endDate,
-    required this.dateFormatter,
-    required this.iconOnly,
-    required this.onStatusChanged,
-    required this.onStartDateChanged,
-    required this.onEndDateChanged,
-    required this.onClearFilters,
-  });
-
-  final List<String> statusOptions;
-  final String statusFilter;
-  final DateTime? startDate;
-  final DateTime? endDate;
-  final String Function(DateTime?) dateFormatter;
-  final bool iconOnly;
-  final ValueChanged<String?> onStatusChanged;
-  final ValueChanged<DateTime?> onStartDateChanged;
-  final ValueChanged<DateTime?> onEndDateChanged;
-  final VoidCallback onClearFilters;
-
-  @override
-  State<_UserBookingsFiltersPanel> createState() =>
-      _UserBookingsFiltersPanelState();
-}
-
-class _UserBookingsFiltersPanelState extends State<_UserBookingsFiltersPanel> {
-  final FocusNode _statusFocusNode = FocusNode();
-
-  void _unfocusFilterFields() {
-    _statusFocusNode.unfocus();
-    FocusScope.of(context).unfocus();
-  }
-
-  @override
-  void dispose() {
-    _statusFocusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    const overlayRightPadding = 24.0;
-    const filterItemWidth = 180.0;
-    const overlayPadding = 14.0;
-    const desiredOverlayWidth = filterItemWidth + (overlayPadding * 2);
-    final overlayWidth = (screenWidth - 32 - overlayRightPadding).clamp(
-      1.0,
-      desiredOverlayWidth,
-    );
-    final contentWidth = (overlayWidth - (overlayPadding * 2)).clamp(
-      1.0,
-      desiredOverlayWidth,
-    );
-    final itemWidth = contentWidth;
-
-    return AdminListFiltersButton(
-      controlHeight: adminFilterFieldMinHeight,
-      surfaceRadius: 16,
-      iconOnly: widget.iconOnly,
-      menuChildren: [
-        SizedBox(
-          width: overlayWidth,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: _unfocusFilterFields,
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: itemWidth,
-                    height: adminFilterFieldMinHeight,
-                    child: _UserBookingsFilterDropdown(
-                      label: 'Status',
-                      value: widget.statusFilter,
-                      focusNode: _statusFocusNode,
-                      items: widget.statusOptions,
-                      onChanged: widget.onStatusChanged,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: itemWidth,
-                    height: adminFilterFieldMinHeight,
-                    child: _UserBookingsDateFilter(
-                      label: 'Start',
-                      value: widget.startDate,
-                      formatter: widget.dateFormatter,
-                      onSelected: widget.onStartDateChanged,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: itemWidth,
-                    height: adminFilterFieldMinHeight,
-                    child: _UserBookingsDateFilter(
-                      label: 'End',
-                      value: widget.endDate,
-                      formatter: widget.dateFormatter,
-                      onSelected: widget.onEndDateChanged,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: itemWidth,
-                    height: adminFilterClearButtonHeight,
-                    child: FilledButton(
-                      onPressed: () {
-                        _unfocusFilterFields();
-                        widget.onClearFilters();
-                      },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.danger,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      child: const Text(
-                        'Clear',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _UserBookingsDateFilter extends StatefulWidget {
-  const _UserBookingsDateFilter({
-    required this.label,
-    required this.value,
-    required this.formatter,
-    required this.onSelected,
-  });
-
-  final String label;
-  final DateTime? value;
-  final String Function(DateTime?) formatter;
-  final ValueChanged<DateTime?> onSelected;
-
-  @override
-  State<_UserBookingsDateFilter> createState() => _UserBookingsDateFilterState();
-}
-
-class _UserBookingsDateFilterState extends State<_UserBookingsDateFilter> {
-  late final TextEditingController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.formatter(widget.value));
-  }
-
-  @override
-  void didUpdateWidget(covariant _UserBookingsDateFilter oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final nextText = widget.formatter(widget.value);
-    if (_controller.text != nextText) {
-      _controller.value = TextEditingValue(
-        text: nextText,
-        selection: TextSelection.collapsed(offset: nextText.length),
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  Future<void> _pickDate() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: widget.value ?? now,
-      firstDate: DateTime(now.year - 10),
-      lastDate: DateTime(now.year + 10),
-    );
-    if (picked == null) {
-      return;
-    }
-    widget.onSelected(picked);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: _pickDate,
-      child: AbsorbPointer(
-        child: AdminModalTextField(
-          controller: _controller,
-          label: widget.label,
-          hintText: widget.label,
-          readOnly: true,
-          suffixIcon: IconButton(
-            onPressed: _pickDate,
-            icon: const Icon(Icons.calendar_month_rounded),
-          ),
-          bottomPadding: 0,
-        ),
-      ),
-    );
-  }
-}
-
-class _UserBookingsFilterDropdown extends StatelessWidget {
-  const _UserBookingsFilterDropdown({
-    required this.label,
-    required this.value,
-    required this.focusNode,
-    required this.items,
-    required this.onChanged,
-  });
-
-  final String label;
-  final String value;
-  final FocusNode focusNode;
-  final List<String> items;
-  final ValueChanged<String?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return AdminModalDropdownField<String>(
-      label: label,
-      focusNode: focusNode,
-      initialValue: items.contains(value) ? value : items.firstOrNull,
-      bottomPadding: 0,
-      isExpanded: true,
-      items: items
-          .map(
-            (item) => DropdownMenuItem<String>(
-              value: item,
-              child: Text(
-                item,
-                overflow: TextOverflow.ellipsis,
-                style: adminDropdownDisplayTextStyle,
-              ),
-            ),
-          )
-          .toList(),
-      onChanged: onChanged,
     );
   }
 }

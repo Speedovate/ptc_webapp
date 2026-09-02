@@ -92,27 +92,27 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
           final matchesCreatedStart =
               _createdStartDate == null ||
               (item.createdAt != null &&
-                  !DateUtils.dateOnly(item.createdAt!).isBefore(
-                    DateUtils.dateOnly(_createdStartDate!),
-                  ));
+                  !DateUtils.dateOnly(
+                    item.createdAt!,
+                  ).isBefore(DateUtils.dateOnly(_createdStartDate!)));
           final matchesCreatedEnd =
               _createdEndDate == null ||
               (item.createdAt != null &&
-                  !DateUtils.dateOnly(item.createdAt!).isAfter(
-                    DateUtils.dateOnly(_createdEndDate!),
-                  ));
+                  !DateUtils.dateOnly(
+                    item.createdAt!,
+                  ).isAfter(DateUtils.dateOnly(_createdEndDate!)));
           final matchesUpdatedStart =
               _updatedStartDate == null ||
               (item.updatedAt != null &&
-                  !DateUtils.dateOnly(item.updatedAt!).isBefore(
-                    DateUtils.dateOnly(_updatedStartDate!),
-                  ));
+                  !DateUtils.dateOnly(
+                    item.updatedAt!,
+                  ).isBefore(DateUtils.dateOnly(_updatedStartDate!)));
           final matchesUpdatedEnd =
               _updatedEndDate == null ||
               (item.updatedAt != null &&
-                  !DateUtils.dateOnly(item.updatedAt!).isAfter(
-                    DateUtils.dateOnly(_updatedEndDate!),
-                  ));
+                  !DateUtils.dateOnly(
+                    item.updatedAt!,
+                  ).isAfter(DateUtils.dateOnly(_updatedEndDate!)));
           return matchesSearch &&
               matchesActive &&
               matchesCreatedStart &&
@@ -493,10 +493,7 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
           if (!mounted) {
             return false;
           }
-          AppSnackbar.showSuccess(
-            context,
-            'Vehicle type deleted.',
-          );
+          AppSnackbar.showSuccess(context, 'Vehicle type deleted.');
           return true;
         } catch (error) {
           if (!mounted) {
@@ -832,9 +829,11 @@ List<Widget> _vehicleTypeActions(
           ?._handlePreview(item);
     },
   ),
-  if ((context.findAncestorStateOfType<_AdminVehicleTypesViewState>()?._vm
-              ?.canUpdateTypes ??
-          false))
+  if ((context
+          .findAncestorStateOfType<_AdminVehicleTypesViewState>()
+          ?._vm
+          ?.canUpdateTypes ??
+      false))
     AdminListActionButton(
       icon: Icons.edit_rounded,
       onTap: () {
@@ -846,11 +845,15 @@ List<Widget> _vehicleTypeActions(
         }
       },
     ),
-  if ((context.findAncestorStateOfType<_AdminVehicleTypesViewState>()?._vm
-              ?.canUpdateTypes ??
-          false))
+  if ((context
+          .findAncestorStateOfType<_AdminVehicleTypesViewState>()
+          ?._vm
+          ?.canUpdateTypes ??
+      false))
     AdminListActionButton(
-      icon: (item.isActive ?? false) ? Icons.close_rounded : Icons.check_rounded,
+      icon: (item.isActive ?? false)
+          ? Icons.close_rounded
+          : Icons.check_rounded,
       backgroundColor: (item.isActive ?? false)
           ? AppColors.dangerStrong
           : const Color(0xFF2EAD62),
@@ -863,9 +866,11 @@ List<Widget> _vehicleTypeActions(
         }
       },
     ),
-  if ((context.findAncestorStateOfType<_AdminVehicleTypesViewState>()?._vm
-              ?.canDeleteTypes ??
-          false))
+  if ((context
+          .findAncestorStateOfType<_AdminVehicleTypesViewState>()
+          ?._vm
+          ?.canDeleteTypes ??
+      false))
     AdminListActionButton(
       icon: Icons.delete_rounded,
       isDanger: true,
@@ -946,7 +951,52 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AdminListDynamicFiltersPanel(
+    iconOnly: widget.iconOnly,
+    filters: [
+      AdminListDropdownFilterConfig(
+        label: 'Is Active',
+        value: widget.activeFilter,
+        items: const ['All', 'Active', 'Inactive'],
+        onChanged: widget.onActiveChanged,
+      ),
+      AdminListDateFilterConfig(
+        label: 'Created Start',
+        value: widget.createdStartDate,
+        onSelected: widget.onCreatedStartDateChanged,
+        formatter: _formatCatalogFilterDateValue,
+      ),
+      AdminListDateFilterConfig(
+        label: 'Created End',
+        value: widget.createdEndDate,
+        onSelected: widget.onCreatedEndDateChanged,
+        formatter: _formatCatalogFilterDateValue,
+      ),
+      AdminListDateFilterConfig(
+        label: 'Updated Start',
+        value: widget.updatedStartDate,
+        onSelected: widget.onUpdatedStartDateChanged,
+        formatter: _formatCatalogFilterDateValue,
+      ),
+      AdminListDateFilterConfig(
+        label: 'Updated End',
+        value: widget.updatedEndDate,
+        onSelected: widget.onUpdatedEndDateChanged,
+        formatter: _formatCatalogFilterDateValue,
+      ),
+    ],
+    onClear: () {
+      widget.onActiveChanged('All');
+      widget.onCreatedStartDateChanged(null);
+      widget.onCreatedEndDateChanged(null);
+      widget.onUpdatedStartDateChanged(null);
+      widget.onUpdatedEndDateChanged(null);
+    },
+  );
+
+  // Retained during the catalog filter rollout for quick source comparison.
+  // ignore: unused_element
+  Widget _buildLegacy(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     const overlayRightPadding = 24.0;
     const filterItemWidth = 220.0;
@@ -1204,24 +1254,25 @@ class _CatalogDateFilterState extends State<_CatalogDateFilter> {
                 showCursor: false,
                 enableInteractiveSelection: false,
                 style: adminDropdownDisplayTextStyle,
-                decoration: adminFormInputDecoration(
-                  widget.label,
-                  radius: 16,
-                  minHeight: adminFilterFieldMinHeight,
-                ).copyWith(
-                  suffixIcon: IconButton(
-                    onPressed: null,
-                    icon: Icon(
-                      Icons.calendar_today_outlined,
-                      size: 18,
-                      color: AppColors.primaryColor,
+                decoration:
+                    adminFormInputDecoration(
+                      widget.label,
+                      radius: 16,
+                      minHeight: adminFilterFieldMinHeight,
+                    ).copyWith(
+                      suffixIcon: IconButton(
+                        onPressed: null,
+                        icon: Icon(
+                          Icons.calendar_today_outlined,
+                          size: 18,
+                          color: AppColors.primaryColor,
+                        ),
+                      ),
+                      filled: true,
+                      fillColor: _isPressed
+                          ? activeFillColor.withValues(alpha: 0.92)
+                          : (_isHovered ? activeFillColor : Colors.white),
                     ),
-                  ),
-                  filled: true,
-                  fillColor: _isPressed
-                      ? activeFillColor.withValues(alpha: 0.92)
-                      : (_isHovered ? activeFillColor : Colors.white),
-                ),
               ),
             ),
           ),
@@ -1305,76 +1356,76 @@ Future<VehicleCatalogItem?> _showCatalogItemDialog(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AdminModalShell(
-          title: title,
-          contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
-          actions: readOnly
-              ? [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Close'),
-                  ),
-                ]
-              : [
-                  TextButton(
-                    onPressed: isSubmitting
-                        ? null
-                        : () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  FilledButton(
-                    onPressed: isSubmitting ? null : submit,
-                    child: isSubmitting
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2.2),
-                          )
-                        : const Text('Save'),
-                  ),
-                ],
-          child: AdminModalFormBody(
-            readOnly: readOnly,
-            children: [
-              Builder(
-                builder: (context) {
-                  dialogSetState = setState;
-                  return const SizedBox.shrink();
-                },
-              ),
-              AdminModalFieldsSection(
-                children: [
-                  AdminModalTextField(
-                    controller: nameController,
-                    focusNode: nameFocusNode,
-                    label: 'Name',
-                    bottomPadding: 4,
-                    textInputAction: isEditing
-                        ? TextInputAction.done
-                        : TextInputAction.next,
-                    onSubmitted: (_) => isEditing
-                        ? submit()
-                        : FocusScope.of(context).requestFocus(slugFocusNode),
-                  ),
-                  AdminModalTextField(
-                    controller: slugController,
-                    focusNode: slugFocusNode,
-                    label: 'Slug',
-                    bottomPadding: 4,
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: (_) {
-                      FocusScope.of(context).unfocus();
-                      submit();
-                    },
-                  ),
-                ],
-              ),
-              AdminModalToggleRow(
-                title: 'Active',
-                value: isActive,
-                onChanged: (value) => setState(() => isActive = value),
-              ),
-            ],
-          ),
+        title: title,
+        contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
+        actions: readOnly
+            ? [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Close'),
+                ),
+              ]
+            : [
+                TextButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: isSubmitting ? null : submit,
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2.2),
+                        )
+                      : const Text('Save'),
+                ),
+              ],
+        child: AdminModalFormBody(
+          readOnly: readOnly,
+          children: [
+            Builder(
+              builder: (context) {
+                dialogSetState = setState;
+                return const SizedBox.shrink();
+              },
+            ),
+            AdminModalFieldsSection(
+              children: [
+                AdminModalTextField(
+                  controller: nameController,
+                  focusNode: nameFocusNode,
+                  label: 'Name',
+                  bottomPadding: 4,
+                  textInputAction: isEditing
+                      ? TextInputAction.done
+                      : TextInputAction.next,
+                  onSubmitted: (_) => isEditing
+                      ? submit()
+                      : FocusScope.of(context).requestFocus(slugFocusNode),
+                ),
+                AdminModalTextField(
+                  controller: slugController,
+                  focusNode: slugFocusNode,
+                  label: 'Slug',
+                  bottomPadding: 4,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) {
+                    FocusScope.of(context).unfocus();
+                    submit();
+                  },
+                ),
+              ],
+            ),
+            AdminModalToggleRow(
+              title: 'Active',
+              value: isActive,
+              onChanged: (value) => setState(() => isActive = value),
+            ),
+          ],
+        ),
       ),
     ),
   );

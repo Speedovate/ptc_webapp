@@ -1786,9 +1786,7 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
   }
 
   void _logRegisterPhoto(String message) {
-    debugPrint(
-      '[${DateTime.now().toIso8601String()}][RegisterProfilePhoto] $message',
-    );
+    // Temporary debug logging removed.
   }
 
   Future<String?> _rollbackFailedRegisteredUser(String? userId) async {

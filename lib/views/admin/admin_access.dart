@@ -262,7 +262,9 @@ class _AdminAccessViewState extends State<AdminAccessView> {
             label: role.label,
             permissionCount: role.permissionCount,
             createdAt: role.createdAt,
-            updatedAt: role.updatedAt,
+            // Roles without a subsequent edit should display their creation
+            // time in the Updated column rather than an empty placeholder.
+            updatedAt: role.updatedAt ?? role.createdAt,
           );
         })
         .toList(growable: false);
@@ -324,7 +326,12 @@ class _AdminAccessViewState extends State<AdminAccessView> {
     }
     final createdRoleKey = await showAppDialog<String>(
       context: context,
-      builder: (dialogContext) => const _NewRoleDialog(),
+      builder: (dialogContext) => _NewRoleDialog(
+        existingRoleKeys: _roles.map((role) => role.roleKey).toSet(),
+        onCreate: (roleKey) => _service.saveRoleAccess(
+          DispatcherAccessConfig.defaults(roleKey: roleKey),
+        ),
+      ),
     );
     final normalizedRoleKey = _normalizeRoleKey(createdRoleKey);
     if (!mounted || normalizedRoleKey == null) {
@@ -337,9 +344,6 @@ class _AdminAccessViewState extends State<AdminAccessView> {
       await _openRoleEditor(existingRole);
       return;
     }
-    await _service.saveRoleAccess(
-      DispatcherAccessConfig.defaults(roleKey: normalizedRoleKey),
-    );
     await _load();
     if (!mounted) {
       return;
@@ -504,110 +508,43 @@ class _RolesToolbar extends StatelessWidget {
   final VoidCallback? onNewPressed;
 
   @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isCompact = constraints.maxWidth < 520;
-        return Row(
-          children: [
-            Expanded(
-              child: AdminListSearchField(
-                controlHeight: _AdminAccessViewState._toolbarControlHeight,
-                surfaceRadius: _AdminAccessViewState._toolbarSurfaceRadius,
-                initialValue: searchQuery,
-                onChanged: onSearchChanged,
-              ),
-            ),
-            const SizedBox(width: 12),
-            SizedBox(
-              width: adminListFiltersButtonWidth(isCompact),
-              child: _RolesFilters(
-                iconOnly: isCompact,
-                createdStartDate: createdStartDate,
-                createdEndDate: createdEndDate,
-                updatedStartDate: updatedStartDate,
-                updatedEndDate: updatedEndDate,
-                onCreatedStartChanged: onCreatedStartChanged,
-                onCreatedEndChanged: onCreatedEndChanged,
-                onUpdatedStartChanged: onUpdatedStartChanged,
-                onUpdatedEndChanged: onUpdatedEndChanged,
-                onClearFilters: onClearFilters,
-              ),
-            ),
-            const SizedBox(width: 12),
-            SizedBox(
-              width: isCompact ? 52 : 116,
-              child: AdminListNewButton(
-                controlHeight: _AdminAccessViewState._toolbarControlHeight,
-                surfaceRadius: _AdminAccessViewState._toolbarSurfaceRadius,
-                iconOnly: isCompact,
-                onTap: onNewPressed,
-                label: 'New',
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _RolesFilters extends StatelessWidget {
-  const _RolesFilters({
-    required this.iconOnly,
-    required this.createdStartDate,
-    required this.createdEndDate,
-    required this.updatedStartDate,
-    required this.updatedEndDate,
-    required this.onCreatedStartChanged,
-    required this.onCreatedEndChanged,
-    required this.onUpdatedStartChanged,
-    required this.onUpdatedEndChanged,
-    required this.onClearFilters,
-  });
-
-  final bool iconOnly;
-  final DateTime? createdStartDate;
-  final DateTime? createdEndDate;
-  final DateTime? updatedStartDate;
-  final DateTime? updatedEndDate;
-  final ValueChanged<DateTime?> onCreatedStartChanged;
-  final ValueChanged<DateTime?> onCreatedEndChanged;
-  final ValueChanged<DateTime?> onUpdatedStartChanged;
-  final ValueChanged<DateTime?> onUpdatedEndChanged;
-  final VoidCallback onClearFilters;
-
-  @override
-  Widget build(BuildContext context) {
-    return AdminListDateFiltersPanel(
-      iconOnly: iconOnly,
+  Widget build(BuildContext context) => AdminListToolbar(
+    controlHeight: _AdminAccessViewState._toolbarControlHeight,
+    surfaceRadius: _AdminAccessViewState._toolbarSurfaceRadius,
+    search: AdminListSearchField(
       controlHeight: _AdminAccessViewState._toolbarControlHeight,
       surfaceRadius: _AdminAccessViewState._toolbarSurfaceRadius,
+      initialValue: searchQuery,
+      onChanged: onSearchChanged,
+    ),
+    filtersBuilder: (context, iconOnly) => AdminListDynamicFiltersPanel(
+      iconOnly: iconOnly,
       filters: [
-        AdminDateFilterConfig(
+        AdminListDateFilterConfig(
           label: 'Created Start',
           value: createdStartDate,
           onSelected: onCreatedStartChanged,
         ),
-        AdminDateFilterConfig(
+        AdminListDateFilterConfig(
           label: 'Created End',
           value: createdEndDate,
           onSelected: onCreatedEndChanged,
         ),
-        AdminDateFilterConfig(
+        AdminListDateFilterConfig(
           label: 'Updated Start',
           value: updatedStartDate,
           onSelected: onUpdatedStartChanged,
         ),
-        AdminDateFilterConfig(
+        AdminListDateFilterConfig(
           label: 'Updated End',
           value: updatedEndDate,
           onSelected: onUpdatedEndChanged,
         ),
       ],
       onClear: onClearFilters,
-    );
-  }
+    ),
+    onNewPressed: onNewPressed,
+  );
 }
 
 class _AccessRoleEntry {
@@ -1022,7 +959,13 @@ class _AccessResponsiveCard extends StatelessWidget {
 }
 
 class _NewRoleDialog extends StatefulWidget {
-  const _NewRoleDialog();
+  const _NewRoleDialog({
+    required this.existingRoleKeys,
+    required this.onCreate,
+  });
+
+  final Set<String> existingRoleKeys;
+  final Future<void> Function(String roleKey) onCreate;
 
   @override
   State<_NewRoleDialog> createState() => _NewRoleDialogState();
@@ -1031,6 +974,7 @@ class _NewRoleDialog extends StatefulWidget {
 class _NewRoleDialogState extends State<_NewRoleDialog> {
   final TextEditingController _controller = TextEditingController();
   String? _errorText;
+  bool _isCreating = false;
 
   @override
   void dispose() {
@@ -1038,7 +982,10 @@ class _NewRoleDialogState extends State<_NewRoleDialog> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    if (_isCreating) {
+      return;
+    }
     final normalizedRoleKey = _normalizeRoleKey(_controller.text);
     if (normalizedRoleKey == null) {
       setState(() {
@@ -1046,7 +993,26 @@ class _NewRoleDialogState extends State<_NewRoleDialog> {
       });
       return;
     }
-    Navigator.of(context).pop(normalizedRoleKey);
+    if (widget.existingRoleKeys.contains(normalizedRoleKey)) {
+      Navigator.of(context).pop(normalizedRoleKey);
+      return;
+    }
+    setState(() => _isCreating = true);
+    try {
+      await widget.onCreate(normalizedRoleKey);
+      if (mounted) {
+        Navigator.of(context).pop(normalizedRoleKey);
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _isCreating = false);
+      AppSnackbar.showError(
+        context,
+        'We could not create this role right now.',
+      );
+    }
   }
 
   @override
@@ -1055,10 +1021,22 @@ class _NewRoleDialogState extends State<_NewRoleDialog> {
       title: 'New Role',
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _isCreating ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Create')),
+        FilledButton(
+          onPressed: _isCreating ? null : _submit,
+          child: _isCreating
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text('Create'),
+        ),
       ],
       child: AdminModalFormBody(
         children: [
@@ -1359,6 +1337,10 @@ const Map<String, String> _permissionDisplayLabels = {
   DispatcherAccessCapability.vehicleSizesRead: 'view-vehicle-sizes',
   DispatcherAccessCapability.vehicleSizesUpdate: 'update-vehicle-sizes',
   DispatcherAccessCapability.vehicleSizesDelete: 'delete-vehicle-sizes',
+  DispatcherAccessCapability.chassisCreate: 'manage-chassis',
+  DispatcherAccessCapability.chassisRead: 'view-chassis',
+  DispatcherAccessCapability.chassisUpdate: 'update-chassis',
+  DispatcherAccessCapability.chassisDelete: 'delete-chassis',
   DispatcherAccessCapability.statusesCreate: 'manage-statuses',
   DispatcherAccessCapability.statusesRead: 'view-statuses',
   DispatcherAccessCapability.statusesUpdate: 'update-statuses',
@@ -1486,6 +1468,19 @@ final List<_AccessOption> _allAccessOptions = [
   const _AccessOption(
     DispatcherAccessCapability.vehicleSizesDelete,
     'delete-vehicle-sizes',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.chassisCreate,
+    'manage-chassis',
+  ),
+  const _AccessOption(DispatcherAccessCapability.chassisRead, 'view-chassis'),
+  const _AccessOption(
+    DispatcherAccessCapability.chassisUpdate,
+    'update-chassis',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.chassisDelete,
+    'delete-chassis',
   ),
   const _AccessOption(
     DispatcherAccessCapability.statusesCreate,

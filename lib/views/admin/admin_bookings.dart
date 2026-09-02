@@ -7,6 +7,7 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/constants/palawan_locations.dart';
 import 'package:webapp/constants/puerto_princesa_barangays.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/models/chassis.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/status.dart';
@@ -15,6 +16,7 @@ import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/status.request.dart';
+import 'package:webapp/requests/chassis.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/local_form_draft_service.dart';
 import 'package:webapp/services/role_access_service.dart';
@@ -35,24 +37,19 @@ import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
+import 'package:webapp/widgets/shared/chassis_status_presentation.dart';
 
 class AdminBookingsView extends StatefulWidget {
-  const AdminBookingsView({super.key, required this.user});
+  const AdminBookingsView({
+    super.key,
+    required this.user,
+    this.initialBooking,
+    this.onInitialBookingHandled,
+  });
 
   final UserModel user;
-
-  static Future<void> showBookingDetailDialog(
-    BuildContext context, {
-    required UserModel user,
-    required Booking booking,
-  }) async {
-    await showAppDialog<void>(
-      context: context,
-      modalKey: 'booking-detail:${booking.id ?? "-"}',
-      builder: (dialogContext) =>
-          _AdminBookingWorkflowDialog(user: user, booking: booking),
-    );
-  }
+  final Booking? initialBooking;
+  final VoidCallback? onInitialBookingHandled;
 
   static Future<Booking?> showEditBookingDialog(
     BuildContext context, {
@@ -76,6 +73,7 @@ class AdminBookingsView extends StatefulWidget {
       return null;
     }
     final requirements = await _resolveEditBookingRequirements();
+    final chassis = await _resolveActiveChassis(booking.chassisId);
     if (!context.mounted) {
       return null;
     }
@@ -92,6 +90,7 @@ class AdminBookingsView extends StatefulWidget {
         drivers: vm.roleUsers('driver'),
         helpers: vm.roleUsers('helper'),
         vehicleSizes: vm.activeVehicleSizes(),
+        chassis: chassis,
         originBarangayRequired: requirements.originBarangayRequired,
         destinationBarangayRequired: requirements.destinationBarangayRequired,
       ),
@@ -120,12 +119,17 @@ class AdminBookingsView extends StatefulWidget {
     if (!context.mounted) {
       return null;
     }
+    final chassis = await _resolveActiveChassis(null);
+    if (!context.mounted) {
+      return null;
+    }
     return showAppDialog<Booking>(
       context: context,
       modalKey: 'booking-new',
       builder: (dialogContext) => _NewAdminBookingDialog(
         currentUser: currentUser,
         clientUsers: vm.clientUsers(),
+        chassis: chassis,
         onBookingSubmitted: (booking) {
           Navigator.of(dialogContext).pop(booking);
         },
@@ -133,94 +137,32 @@ class AdminBookingsView extends StatefulWidget {
     );
   }
 
+  static Future<List<Chassis>> _resolveActiveChassis(
+    String? selectedChassisId,
+  ) async {
+    try {
+      final all = await ChassisRequest.instance.getChassis();
+      return all
+          .where(
+            (item) => item.isActive || item.id.toString() == selectedChassisId,
+          )
+          .toList(growable: false);
+    } catch (_) {
+      return ChassisRequest.instance.hydratedChassisSnapshot
+          .where(
+            (item) => item.isActive || item.id.toString() == selectedChassisId,
+          )
+          .toList(growable: false);
+    }
+  }
+
   @override
   State<AdminBookingsView> createState() => _AdminBookingsViewState();
 }
 
-class _AdminBookingWorkflowDialog extends StatefulWidget {
-  const _AdminBookingWorkflowDialog({
-    required this.user,
-    required this.booking,
-  });
-
-  final UserModel user;
-  final Booking booking;
-
-  @override
-  State<_AdminBookingWorkflowDialog> createState() =>
-      _AdminBookingWorkflowDialogState();
-}
-
-class _AdminBookingWorkflowDialogState
-    extends State<_AdminBookingWorkflowDialog> {
-  late Booking _booking;
-
-  bool get _canUpdateBookings => RoleAccessService.instance.canAccess(
-    DispatcherAccessCapability.bookingsUpdate,
-    role: RoleAccessService.instance.effectiveRoleKey(widget.user.role),
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    _booking = widget.booking;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final dialogWidth = size.width > 1200 ? 1100.0 : size.width - 48;
-    final dialogHeight = size.height > 920 ? 860.0 : size.height - 48;
-    return Dialog(
-      insetPadding: const EdgeInsets.all(24),
-      clipBehavior: Clip.antiAlias,
-      child: SizedBox(
-        width: dialogWidth,
-        height: dialogHeight,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _AdminBookingDetailHeader(
-                booking: _booking,
-                user: widget.user,
-                onBack: () => Navigator.of(context).pop(),
-                onEdit: !_canUpdateBookings
-                    ? null
-                    : () async {
-                        final updatedBooking =
-                            await AdminBookingsView.showEditBookingDialog(
-                              context,
-                              booking: _booking,
-                              currentUser: widget.user,
-                            );
-                        if (updatedBooking == null || !mounted) {
-                          return;
-                        }
-                        setState(() {
-                          _booking = updatedBooking;
-                        });
-                      },
-              ),
-              const SizedBox(height: 16),
-              BookingWorkflowView(
-                key: ValueKey('admin-booking-dialog-${_booking.id ?? ''}'),
-                user: widget.user,
-                booking: _booking,
-                embedded: true,
-                onBookingUpdated: (updatedBooking) {
-                  setState(() {
-                    _booking = updatedBooking;
-                  });
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+String _chassisLabel(Chassis chassis) {
+  final name = chassis.name.trim();
+  return name.isEmpty ? 'Chassis ${chassis.id}' : name;
 }
 
 class _AdminBookingsViewState extends State<AdminBookingsView> {
@@ -247,11 +189,28 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
   void initState() {
     super.initState();
     _detailScrollController = ScrollController();
+    _selectedBooking = widget.initialBooking;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
       }
+      widget.onInitialBookingHandled?.call();
       _viewModel.load();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminBookingsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final initialBooking = widget.initialBooking;
+    if (initialBooking == null || initialBooking.id == _selectedBooking?.id) {
+      return;
+    }
+    setState(() {
+      _selectedBooking = initialBooking;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onInitialBookingHandled?.call();
     });
   }
 
@@ -262,11 +221,16 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
   }
 
   Future<void> _openNewBookingDialog(AdminBookingsViewModel vm) async {
+    final chassis = await AdminBookingsView._resolveActiveChassis(null);
+    if (!mounted) {
+      return;
+    }
     await showAppDialog<void>(
       context: context,
       builder: (dialogContext) => _NewAdminBookingDialog(
         currentUser: widget.user,
         clientUsers: vm.clientUsers(),
+        chassis: chassis,
         onBookingSubmitted: (booking) async {
           if (!mounted) {
             return;
@@ -286,6 +250,9 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
     Booking booking,
   ) async {
     final requirements = await _resolveEditBookingRequirements();
+    final chassis = await AdminBookingsView._resolveActiveChassis(
+      booking.chassisId,
+    );
     if (!mounted) {
       return;
     }
@@ -302,6 +269,7 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
         drivers: vm.roleUsers('driver'),
         helpers: vm.roleUsers('helper'),
         vehicleSizes: vm.activeVehicleSizes(),
+        chassis: chassis,
         originBarangayRequired: requirements.originBarangayRequired,
         destinationBarangayRequired: requirements.destinationBarangayRequired,
       ),
@@ -328,8 +296,9 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
         final selectedBooking = _selectedBooking == null
             ? null
             : vm.bookings
-                  .where((booking) => booking.id == _selectedBooking!.id)
-                  .firstOrNull;
+                      .where((booking) => booking.id == _selectedBooking!.id)
+                      .firstOrNull ??
+                  _selectedBooking;
         final filteredBookings = vm.filteredBookings();
         final showInitialLoading =
             !vm.hasResolvedInitialBookings &&
@@ -415,7 +384,42 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
                     onChanged: vm.setSearchQuery,
                   ),
                   filtersBuilder: (context, iconOnly) =>
-                      _BookingsFiltersPanel(vm: vm, iconOnly: iconOnly),
+                      AdminListDynamicFiltersPanel(
+                        iconOnly: iconOnly,
+                        filters: [
+                          AdminListDropdownFilterConfig(
+                            label: 'Status',
+                            value: vm.statusFilter,
+                            items: vm.statusOptions,
+                            onChanged: vm.setStatusFilter,
+                          ),
+                          AdminListDateFilterConfig(
+                            label: 'Created Start',
+                            value: vm.startDate,
+                            onSelected: vm.updateStartDate,
+                            formatter: vm.formatDate,
+                          ),
+                          AdminListDateFilterConfig(
+                            label: 'Created End',
+                            value: vm.endDate,
+                            onSelected: vm.updateEndDate,
+                            formatter: vm.formatDate,
+                          ),
+                          AdminListDateFilterConfig(
+                            label: 'Updated Start',
+                            value: vm.updatedStartDate,
+                            onSelected: vm.updateUpdatedStartDate,
+                            formatter: vm.formatDate,
+                          ),
+                          AdminListDateFilterConfig(
+                            label: 'Updated End',
+                            value: vm.updatedEndDate,
+                            onSelected: vm.updateUpdatedEndDate,
+                            formatter: vm.formatDate,
+                          ),
+                        ],
+                        onClear: vm.clearFilters,
+                      ),
                   onNewPressed: _canCreateBookings
                       ? () => _openNewBookingDialog(vm)
                       : null,
@@ -542,6 +546,7 @@ class _EditAdminBookingDialog extends StatefulWidget {
     required this.drivers,
     required this.helpers,
     required this.vehicleSizes,
+    required this.chassis,
     required this.originBarangayRequired,
     required this.destinationBarangayRequired,
   });
@@ -555,6 +560,7 @@ class _EditAdminBookingDialog extends StatefulWidget {
   final List<UserModel> drivers;
   final List<UserModel> helpers;
   final List<VehicleCatalogItem> vehicleSizes;
+  final List<Chassis> chassis;
   final bool originBarangayRequired;
   final bool destinationBarangayRequired;
 
@@ -598,10 +604,12 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
   final FocusNode _statusFocusNode = FocusNode();
   final FocusNode _driverFocusNode = FocusNode();
   final FocusNode _helperFocusNode = FocusNode();
+  final FocusNode _chassisFocusNode = FocusNode();
   late String _selectedBookerId;
   late String _statusKey;
   String? _driverId;
   String? _helperId;
+  String? _chassisId;
   String? _vanSize;
   dynamic _waybillPhotoValue;
   dynamic _deliveryFormPhotoValue;
@@ -678,6 +686,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     _statusKey = widget.booking.clientStatus ?? '';
     _driverId = widget.booking.driver?.id;
     _helperId = widget.booking.helper?.id;
+    _chassisId = widget.booking.chassisId;
     final rawVanSize = _existingFieldValue('van_size');
     _vanSize = _normalizeVehicleSizeId(rawVanSize?.toString());
     _waybillPhotoValue = BookingRecordCard.outputFieldValue(
@@ -743,6 +752,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     _statusFocusNode.dispose();
     _driverFocusNode.dispose();
     _helperFocusNode.dispose();
+    _chassisFocusNode.dispose();
     super.dispose();
   }
 
@@ -968,7 +978,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     final items = <DropdownMenuItem<String>>[];
     final seenValues = <String>{};
 
-    void addUserItem(String value, String label) {
+    void addUserItem(String value, String label, {UserModel? user}) {
       final normalizedValue = value.trim();
       if (normalizedValue.isEmpty || !seenValues.add(normalizedValue)) {
         return;
@@ -976,10 +986,27 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
       items.add(
         DropdownMenuItem<String>(
           value: normalizedValue,
-          child: Text(
-            label,
-            overflow: TextOverflow.ellipsis,
-            style: adminDropdownDisplayTextStyle,
+          child: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: adminDropdownDisplayTextStyle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                user?.isOnline == true ? 'Online' : 'Offline',
+                style: TextStyle(
+                  color: user?.isOnline == true
+                      ? const Color(0xFF218A4B)
+                      : AppColors.danger,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -989,17 +1016,62 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
       addUserItem(
         selectedUserId!,
         _fallbackUserLabel(selectedUserId, fallbackRole),
+        user: _userForId(selectedUserId),
       );
     }
 
     for (final user in activeUsers) {
       final value = user.id?.trim();
       if (value != null && value.isNotEmpty) {
-        addUserItem(value, _userLabel(user));
+        addUserItem(value, _userLabel(user), user: user);
       }
     }
 
     return items;
+  }
+
+  List<DropdownMenuItem<String>> _buildChassisItems() {
+    final items = <DropdownMenuItem<String>>[];
+    final seenIds = <String>{};
+
+    void addItem(String? id, String label) {
+      final normalizedId = id?.trim() ?? '';
+      if (normalizedId.isEmpty || !seenIds.add(normalizedId)) {
+        return;
+      }
+      items.add(
+        DropdownMenuItem<String>(
+          value: normalizedId,
+          child: ChassisStatusOptionLabel(
+            label: label,
+            status:
+                widget.chassis
+                    .where((chassis) => chassis.id.toString() == normalizedId)
+                    .firstOrNull
+                    ?.currentStatus ??
+                '',
+          ),
+        ),
+      );
+    }
+
+    for (final chassis in widget.chassis) {
+      addItem(chassis.id.toString(), _chassisLabel(chassis));
+    }
+    return items;
+  }
+
+  UserModel? _userForId(String? userId) {
+    final normalizedUserId = userId?.trim();
+    if (normalizedUserId == null || normalizedUserId.isEmpty) {
+      return null;
+    }
+    for (final user in [...widget.drivers, ...widget.helpers]) {
+      if (user.id?.trim() == normalizedUserId) {
+        return user;
+      }
+    }
+    return null;
   }
 
   String _fallbackUserLabel(String userId, String fallbackRole) {
@@ -1399,7 +1471,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     initialValue: _driverId,
                     isExpanded: true,
                     bottomPadding: 8,
-                    disabledTapMessage: 'No online drivers available.',
+                    disabledTapMessage: 'No active drivers available.',
                     items: _buildRoleUserItems(
                       selectedUserId: _driverId,
                       activeUsers: widget.drivers,
@@ -1418,7 +1490,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     initialValue: _helperId,
                     isExpanded: true,
                     bottomPadding: 0,
-                    disabledTapMessage: 'No online helpers available.',
+                    disabledTapMessage: 'No active helpers available.',
                     items: _buildRoleUserItems(
                       selectedUserId: _helperId,
                       activeUsers: widget.helpers,
@@ -1427,6 +1499,22 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     onChanged: (value) {
                       setState(() {
                         _helperId = value;
+                      });
+                      _unfocusCurrentField();
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  AdminModalDropdownField<String>(
+                    focusNode: _chassisFocusNode,
+                    label: 'Chassis',
+                    initialValue: _chassisId,
+                    isExpanded: true,
+                    bottomPadding: 0,
+                    disabledTapMessage: 'No active chassis available.',
+                    items: _buildChassisItems(),
+                    onChanged: (value) {
+                      setState(() {
+                        _chassisId = value;
                       });
                       _unfocusCurrentField();
                     },
@@ -1594,6 +1682,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
       'delivery_form_number',
       _deliveryFormNumberController.text.trim(),
     );
+    _setOrRemoveField(editedFields, 'chassis_id', _chassisId?.trim() ?? '');
 
     final previousStatusKey = (widget.booking.clientStatus ?? '').trim();
     final nextStatusKey = _statusKey.trim();
@@ -1637,6 +1726,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
           : _statusKey,
       driver: _resolveSelectedUser(_driverId, widget.drivers),
       helper: _resolveSelectedUser(_helperId, widget.helpers),
+      chassisId: _chassisId?.trim().isEmpty == true ? null : _chassisId?.trim(),
       statusOutputs: currentOutputs,
     );
   }
@@ -1836,11 +1926,13 @@ class _NewAdminBookingDialog extends StatefulWidget {
   const _NewAdminBookingDialog({
     required this.currentUser,
     required this.clientUsers,
+    required this.chassis,
     required this.onBookingSubmitted,
   });
 
   final UserModel currentUser;
   final List<UserModel> clientUsers;
+  final List<Chassis> chassis;
   final ValueChanged<Booking> onBookingSubmitted;
 
   @override
@@ -1851,9 +1943,11 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
   static const String _draftStorageKeyPrefix = 'admin_new_booking_draft_v1';
   static const UserModel _placeholderClientUser = UserModel(role: 'client');
   late String _selectedBookerId;
+  String? _selectedChassisId;
   String? _bookerErrorText;
   bool _isRestoringDraft = true;
   late final FocusNode _bookedByFocusNode;
+  late final FocusNode _chassisFocusNode;
   final LocalFormDraftService _draftService = LocalFormDraftService.instance;
 
   @override
@@ -1861,6 +1955,7 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
     super.initState();
     _selectedBookerId = '';
     _bookedByFocusNode = FocusNode();
+    _chassisFocusNode = FocusNode();
     _log(
       'init currentUser=${widget.currentUser.id ?? "-"} role=${widget.currentUser.role ?? "-"} clients=${widget.clientUsers.length}',
     );
@@ -1870,6 +1965,7 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
   @override
   void dispose() {
     _bookedByFocusNode.dispose();
+    _chassisFocusNode.dispose();
     super.dispose();
   }
 
@@ -1906,8 +2002,12 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
         return;
       }
       final restoredId = draft['selected_booker_id']?.toString() ?? '';
+      final restoredChassisId = draft['selected_chassis_id']?.toString();
       setState(() {
         _selectedBookerId = restoredId;
+        _selectedChassisId = restoredChassisId?.trim().isEmpty == true
+            ? null
+            : restoredChassisId?.trim();
       });
       _log(
         'restore draft key=$_draftStorageKey found=true selected=$restoredId',
@@ -1924,6 +2024,7 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
   Future<void> _persistDraft() async {
     await _draftService.writeMap(_draftStorageKey, <String, dynamic>{
       'selected_booker_id': _selectedBookerId,
+      'selected_chassis_id': _selectedChassisId,
     });
     _log('persist draft key=$_draftStorageKey selected=$_selectedBookerId');
   }
@@ -1942,6 +2043,7 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
     }
     setState(() {
       _selectedBookerId = '';
+      _selectedChassisId = null;
       _bookerErrorText = null;
     });
     widget.onBookingSubmitted(booking);
@@ -1993,70 +2095,91 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                    AdminModalFormBody(
+                AdminModalFormBody(
+                  children: [
+                    AdminModalFieldsSection(
                       children: [
-                        AdminModalFieldsSection(
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: AdminModalDropdownField<String>(
-                                label: 'Booked By',
-                                hintText: 'Select Client',
-                                errorText: _bookerErrorText,
-                                focusNode: _bookedByFocusNode,
-                                initialValue: _selectedBookerId.isEmpty
-                                    ? null
-                                    : _selectedBookerId,
-                                bottomPadding: 0,
-                                isExpanded: true,
-                                disabledTapMessage:
-                                    'No client accounts available yet.',
-                                items: widget.clientUsers
-                                    .map(
-                                      (user) => DropdownMenuItem<String>(
-                                        value: user.id,
-                                        child: Text(
-                                          _bookerLabel(user),
-                                          overflow: TextOverflow.ellipsis,
-                                          style: adminDropdownDisplayTextStyle,
-                                        ),
-                                      ),
-                                    )
-                                    .toList(),
-                                onChanged: (value) {
-                                  setState(() {
-                                    _selectedBookerId = value ?? '';
-                                    _bookerErrorText = null;
-                                  });
-                                  _log('client changed next=${value ?? "-"}');
-                                  unawaited(_persistDraft());
-                                },
-                              ),
-                            ),
-                          ],
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: AdminModalDropdownField<String>(
+                            label: 'Booked By',
+                            hintText: 'Select Client',
+                            errorText: _bookerErrorText,
+                            focusNode: _bookedByFocusNode,
+                            initialValue: _selectedBookerId.isEmpty
+                                ? null
+                                : _selectedBookerId,
+                            bottomPadding: 0,
+                            isExpanded: true,
+                            disabledTapMessage:
+                                'No client accounts available yet.',
+                            items: widget.clientUsers
+                                .map(
+                                  (user) => DropdownMenuItem<String>(
+                                    value: user.id,
+                                    child: Text(
+                                      _bookerLabel(user),
+                                      overflow: TextOverflow.ellipsis,
+                                      style: adminDropdownDisplayTextStyle,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (value) {
+                              setState(() {
+                                _selectedBookerId = value ?? '';
+                                _bookerErrorText = null;
+                              });
+                              _log('client changed next=${value ?? "-"}');
+                              unawaited(_persistDraft());
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        AdminModalDropdownField<String>(
+                          label: 'Chassis',
+                          hintText: 'Select Chassis',
+                          focusNode: _chassisFocusNode,
+                          initialValue: _selectedChassisId,
+                          bottomPadding: 0,
+                          isExpanded: true,
+                          disabledTapMessage: 'No active chassis available.',
+                          items: _buildChassisItems(),
+                          onChanged: (value) {
+                            setState(() {
+                              _selectedChassisId = value;
+                            });
+                            unawaited(_persistDraft());
+                          },
                         ),
                       ],
                     ),
-                    const SizedBox(height: 6),
-                    if (_isRestoringDraft)
-                      SizedBox(
-                        height: formVisibleHeight,
-                        child: const SizedBox.shrink(),
-                      )
-                    else
-                      ClientBookingHomeView(
-                        user: selectedUser ?? _placeholderClientUser,
-                        bookingClientUser: selectedUser,
-                        submittedByUserId: widget.currentUser.id,
-                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
-                        scrollable: false,
-                        loadingPlaceholderMinHeight: formVisibleHeight,
-                        submitBlockMessage: _resolveSubmitBlockMessage,
-                        onRepresentativeTapWithoutClient: _openBookedByOptions,
-                        onBookingSubmitted: (booking) {
-                          unawaited(_handleBookingSubmitted(booking));
-                        },
-                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                if (_isRestoringDraft)
+                  SizedBox(
+                    height: formVisibleHeight,
+                    child: const SizedBox.shrink(),
+                  )
+                else
+                  ClientBookingHomeView(
+                    user: selectedUser ?? _placeholderClientUser,
+                    bookingClientUser: selectedUser,
+                    submittedByUserId: widget.currentUser.id,
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
+                    scrollable: false,
+                    loadingPlaceholderMinHeight: formVisibleHeight,
+                    submitBlockMessage: _resolveSubmitBlockMessage,
+                    additionalFormAnswers: <String, dynamic>{
+                      if (_selectedChassisId?.trim().isNotEmpty == true)
+                        'chassis_id': _selectedChassisId!.trim(),
+                    },
+                    onRepresentativeTapWithoutClient: _openBookedByOptions,
+                    onBookingSubmitted: (booking) {
+                      unawaited(_handleBookingSubmitted(booking));
+                    },
+                  ),
               ],
             );
           },
@@ -2073,6 +2196,20 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
       (user) => user?.id == _selectedBookerId,
       orElse: () => null,
     );
+  }
+
+  List<DropdownMenuItem<String>> _buildChassisItems() {
+    return widget.chassis
+        .map(
+          (chassis) => DropdownMenuItem<String>(
+            value: chassis.id.toString(),
+            child: ChassisStatusOptionLabel(
+              label: _chassisLabel(chassis),
+              status: chassis.currentStatus,
+            ),
+          ),
+        )
+        .toList(growable: false);
   }
 
   String _bookerLabel(UserModel user) {
@@ -2826,321 +2963,5 @@ class _AdminBookingsStateCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AdminListItemCard(padding: const EdgeInsets.all(24), child: child);
-  }
-}
-
-class _BookingsFiltersPanel extends StatefulWidget {
-  const _BookingsFiltersPanel({required this.vm, required this.iconOnly});
-
-  final AdminBookingsViewModel vm;
-  final bool iconOnly;
-
-  @override
-  State<_BookingsFiltersPanel> createState() => _BookingsFiltersPanelState();
-}
-
-class _BookingsFiltersPanelState extends State<_BookingsFiltersPanel> {
-  final FocusNode _statusFocusNode = FocusNode();
-
-  void _unfocusFilterFields() {
-    _statusFocusNode.unfocus();
-    FocusScope.of(context).unfocus();
-  }
-
-  @override
-  void dispose() {
-    _statusFocusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    const overlayRightPadding = 24.0;
-    const filterItemWidth = 180.0;
-    const overlayPadding = 14.0;
-    const desiredOverlayWidth = filterItemWidth + (overlayPadding * 2);
-    final overlayWidth = (screenWidth - 32 - overlayRightPadding).clamp(
-      1.0,
-      desiredOverlayWidth,
-    );
-    final contentWidth = (overlayWidth - (overlayPadding * 2)).clamp(
-      1.0,
-      desiredOverlayWidth,
-    );
-    final itemWidth = contentWidth;
-
-    return AdminListFiltersButton(
-      controlHeight: adminFilterFieldMinHeight,
-      surfaceRadius: 16,
-      iconOnly: widget.iconOnly,
-      menuChildren: [
-        SizedBox(
-          width: overlayWidth,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: _unfocusFilterFields,
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: itemWidth,
-                    height: adminFilterFieldMinHeight,
-                    child: _BookingsFilterDropdown(
-                      label: 'Status',
-                      value: widget.vm.statusFilter,
-                      focusNode: _statusFocusNode,
-                      items: widget.vm.statusOptions,
-                      onChanged: widget.vm.setStatusFilter,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: itemWidth,
-                    height: adminFilterFieldMinHeight,
-                    child: _BookingsDateFilter(
-                      label: 'Created Start',
-                      value: widget.vm.startDate,
-                      formatter: widget.vm.formatDate,
-                      onSelected: widget.vm.updateStartDate,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: itemWidth,
-                    height: adminFilterFieldMinHeight,
-                    child: _BookingsDateFilter(
-                      label: 'Created End',
-                      value: widget.vm.endDate,
-                      formatter: widget.vm.formatDate,
-                      onSelected: widget.vm.updateEndDate,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: itemWidth,
-                    height: adminFilterFieldMinHeight,
-                    child: _BookingsDateFilter(
-                      label: 'Updated Start',
-                      value: widget.vm.updatedStartDate,
-                      formatter: widget.vm.formatDate,
-                      onSelected: widget.vm.updateUpdatedStartDate,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: itemWidth,
-                    height: adminFilterFieldMinHeight,
-                    child: _BookingsDateFilter(
-                      label: 'Updated End',
-                      value: widget.vm.updatedEndDate,
-                      formatter: widget.vm.formatDate,
-                      onSelected: widget.vm.updateUpdatedEndDate,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: itemWidth,
-                    height: adminFilterClearButtonHeight,
-                    child: FilledButton(
-                      onPressed: () {
-                        _unfocusFilterFields();
-                        widget.vm.clearFilters();
-                      },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.danger,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      child: const Text(
-                        'Clear',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _BookingsDateFilter extends StatefulWidget {
-  const _BookingsDateFilter({
-    required this.label,
-    required this.value,
-    required this.formatter,
-    required this.onSelected,
-  });
-
-  final String label;
-  final DateTime? value;
-  final String Function(DateTime?) formatter;
-  final ValueChanged<DateTime?> onSelected;
-
-  @override
-  State<_BookingsDateFilter> createState() => _BookingsDateFilterState();
-}
-
-class _BookingsDateFilterState extends State<_BookingsDateFilter> {
-  late final TextEditingController _controller;
-  late final FocusNode _focusNode;
-  bool _isHovered = false;
-  bool _isPressed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: _displayValue);
-    _focusNode = FocusNode()..canRequestFocus = false;
-  }
-
-  @override
-  void didUpdateWidget(covariant _BookingsDateFilter oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (_controller.text != _displayValue) {
-      _controller.value = _controller.value.copyWith(
-        text: _displayValue,
-        selection: TextSelection.collapsed(offset: _displayValue.length),
-        composing: TextRange.empty,
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  String get _displayValue =>
-      widget.value == null ? '' : widget.formatter(widget.value);
-
-  Future<void> _pickDate() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: widget.value ?? now,
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
-    );
-    if (context.mounted) {
-      widget.onSelected(picked);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final activeFillColor = appFieldInteractiveFillColor(context);
-    return SizedBox(
-      height: adminFilterFieldMinHeight,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _isHovered = true),
-        onExit: (_) => setState(() {
-          _isHovered = false;
-          _isPressed = false;
-        }),
-        child: Listener(
-          onPointerDown: (_) => setState(() => _isPressed = true),
-          onPointerUp: (_) => setState(() => _isPressed = false),
-          onPointerCancel: (_) => setState(() => _isPressed = false),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _pickDate,
-            child: IgnorePointer(
-              child: TextFormField(
-                controller: _controller,
-                focusNode: _focusNode,
-                readOnly: true,
-                showCursor: false,
-                enableInteractiveSelection: false,
-                style: adminDropdownDisplayTextStyle,
-                decoration:
-                    adminFormInputDecoration(
-                      widget.label,
-                      radius: 16,
-                      minHeight: adminFilterFieldMinHeight,
-                    ).copyWith(
-                      fillColor: _isHovered || _isPressed
-                          ? activeFillColor
-                          : Colors.white,
-                      suffixIcon: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _pickDate,
-                        child: Icon(
-                          Icons.calendar_today_rounded,
-                          size: 18,
-                          color: AppColors.primaryColor,
-                        ),
-                      ),
-                      suffixIconConstraints: const BoxConstraints(
-                        minWidth: 42,
-                        minHeight: 42,
-                      ),
-                    ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BookingsFilterDropdown extends StatelessWidget {
-  const _BookingsFilterDropdown({
-    required this.label,
-    required this.value,
-    required this.focusNode,
-    required this.items,
-    required this.onChanged,
-  });
-
-  final String label;
-  final String value;
-  final FocusNode focusNode;
-  final List<String> items;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return AdminDropdownFormField<String>(
-      initialValue: value == 'All' ? null : value,
-      focusNode: focusNode,
-      iconEnabledColor: AppColors.primaryColor,
-      style: adminDropdownDisplayTextStyle,
-      decoration: adminFormInputDecoration(
-        label,
-        radius: 16,
-        minHeight: adminFilterFieldMinHeight,
-      ),
-      items: items
-          .map(
-            (item) => DropdownMenuItem<String>(
-              value: item,
-              child: Text(
-                item,
-                overflow: TextOverflow.ellipsis,
-                style: adminDropdownDisplayTextStyle,
-              ),
-            ),
-          )
-          .toList(),
-      onChanged: (value) {
-        if (value != null) {
-          onChanged(value);
-        }
-        focusNode.unfocus();
-      },
-    );
   }
 }

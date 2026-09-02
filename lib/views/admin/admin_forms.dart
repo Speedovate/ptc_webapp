@@ -151,27 +151,27 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
       final matchesCreatedStart =
           _createdStartDate == null ||
           (form.createdAt != null &&
-              !DateUtils.dateOnly(form.createdAt!).isBefore(
-                DateUtils.dateOnly(_createdStartDate!),
-              ));
+              !DateUtils.dateOnly(
+                form.createdAt!,
+              ).isBefore(DateUtils.dateOnly(_createdStartDate!)));
       final matchesCreatedEnd =
           _createdEndDate == null ||
           (form.createdAt != null &&
-              !DateUtils.dateOnly(form.createdAt!).isAfter(
-                DateUtils.dateOnly(_createdEndDate!),
-              ));
+              !DateUtils.dateOnly(
+                form.createdAt!,
+              ).isAfter(DateUtils.dateOnly(_createdEndDate!)));
       final matchesUpdatedStart =
           _updatedStartDate == null ||
           (form.updatedAt != null &&
-              !DateUtils.dateOnly(form.updatedAt!).isBefore(
-                DateUtils.dateOnly(_updatedStartDate!),
-              ));
+              !DateUtils.dateOnly(
+                form.updatedAt!,
+              ).isBefore(DateUtils.dateOnly(_updatedStartDate!)));
       final matchesUpdatedEnd =
           _updatedEndDate == null ||
           (form.updatedAt != null &&
-              !DateUtils.dateOnly(form.updatedAt!).isAfter(
-                DateUtils.dateOnly(_updatedEndDate!),
-              ));
+              !DateUtils.dateOnly(
+                form.updatedAt!,
+              ).isAfter(DateUtils.dateOnly(_updatedEndDate!)));
 
       return matchesSearch &&
           matchesRole &&
@@ -679,20 +679,51 @@ class _StatusFormsToolbar extends StatelessWidget {
         initialValue: searchQuery,
         onChanged: onSearchChanged,
       ),
-      filtersBuilder: (context, iconOnly) => _StatusFormsFiltersPanel(
-        roleFilter: roleFilter,
-        activeFilter: activeFilter,
-        createdStartDate: createdStartDate,
-        createdEndDate: createdEndDate,
-        updatedStartDate: updatedStartDate,
-        updatedEndDate: updatedEndDate,
+      filtersBuilder: (context, iconOnly) => AdminListDynamicFiltersPanel(
         iconOnly: iconOnly,
-        onRoleChanged: onRoleChanged,
-        onActiveChanged: onActiveChanged,
-        onCreatedStartDateChanged: onCreatedStartDateChanged,
-        onCreatedEndDateChanged: onCreatedEndDateChanged,
-        onUpdatedStartDateChanged: onUpdatedStartDateChanged,
-        onUpdatedEndDateChanged: onUpdatedEndDateChanged,
+        filters: [
+          AdminListDropdownFilterConfig(
+            label: 'Role',
+            value: roleFilter,
+            items: const ['All', 'Client', 'Driver', 'Admin', 'Helper'],
+            onChanged: onRoleChanged,
+            displayValue: humanizeDropdownValue,
+          ),
+          AdminListDropdownFilterConfig(
+            label: 'Is Active',
+            value: activeFilter,
+            items: const ['All', 'Active', 'Inactive'],
+            onChanged: onActiveChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Created Start',
+            value: createdStartDate,
+            onSelected: onCreatedStartDateChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Created End',
+            value: createdEndDate,
+            onSelected: onCreatedEndDateChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Updated Start',
+            value: updatedStartDate,
+            onSelected: onUpdatedStartDateChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Updated End',
+            value: updatedEndDate,
+            onSelected: onUpdatedEndDateChanged,
+          ),
+        ],
+        onClear: () {
+          onRoleChanged('All');
+          onActiveChanged('All');
+          onCreatedStartDateChanged(null);
+          onCreatedEndDateChanged(null);
+          onUpdatedStartDateChanged(null);
+          onUpdatedEndDateChanged(null);
+        },
       ),
       onNewPressed: onNewPressed,
     );
@@ -1086,24 +1117,25 @@ class _StatusFormsDateFilterState extends State<_StatusFormsDateFilter> {
                 showCursor: false,
                 enableInteractiveSelection: false,
                 style: adminDropdownDisplayTextStyle,
-                decoration: adminFormInputDecoration(
-                  widget.label,
-                  radius: AdminFormsView.surfaceRadius,
-                  minHeight: AdminFormsView.controlHeight,
-                ).copyWith(
-                  suffixIcon: IconButton(
-                    onPressed: null,
-                    icon: Icon(
-                      Icons.calendar_today_outlined,
-                      size: 18,
-                      color: AppColors.primaryColor,
+                decoration:
+                    adminFormInputDecoration(
+                      widget.label,
+                      radius: AdminFormsView.surfaceRadius,
+                      minHeight: AdminFormsView.controlHeight,
+                    ).copyWith(
+                      suffixIcon: IconButton(
+                        onPressed: null,
+                        icon: Icon(
+                          Icons.calendar_today_outlined,
+                          size: 18,
+                          color: AppColors.primaryColor,
+                        ),
+                      ),
+                      filled: true,
+                      fillColor: _isPressed
+                          ? activeFillColor.withValues(alpha: 0.92)
+                          : (_isHovered ? activeFillColor : Colors.white),
                     ),
-                  ),
-                  filled: true,
-                  fillColor: _isPressed
-                      ? activeFillColor.withValues(alpha: 0.92)
-                      : (_isHovered ? activeFillColor : Colors.white),
-                ),
               ),
             ),
           ),
@@ -1865,11 +1897,7 @@ class _InlineEditorContent extends StatelessWidget {
         const SizedBox(height: 6),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: _fullWidthRolesField(
-            context: context,
-            vm: vm,
-            form: form,
-          ),
+          child: _fullWidthRolesField(context: context, vm: vm, form: form),
         ),
         const SizedBox(height: 16),
         Padding(

@@ -601,8 +601,7 @@ class AdminBookingsViewModel extends BaseViewModel {
         .where(
           (user) =>
               (user.role ?? '').trim().toLowerCase() == normalizedRole &&
-              (user.isActive ?? false) &&
-              (user.isOnline ?? false),
+              (user.isActive ?? false),
         )
         .toList()
       ..sort((left, right) => (left.name ?? '').compareTo(right.name ?? ''));

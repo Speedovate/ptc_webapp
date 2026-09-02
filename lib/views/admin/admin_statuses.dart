@@ -170,13 +170,14 @@ class AdminStatusesView extends StatelessWidget {
     bool readOnly = false,
   }) async {
     if (!readOnly &&
-        !(initialStatus == null ? vm.canCreateStatuses : vm.canUpdateStatuses)) {
+        !(initialStatus == null
+            ? vm.canCreateStatuses
+            : vm.canUpdateStatuses)) {
       return;
     }
     final savedStatus = await showAppDialog<Status>(
       context: context,
-      modalKey:
-          initialStatus == null
+      modalKey: initialStatus == null
           ? 'status-new'
           : 'status-${readOnly ? "view" : "edit"}:${initialStatus.id ?? "-"}',
       builder: (dialogContext) => _StatusEditorDialog(
@@ -260,27 +261,27 @@ class _StatusesContentState extends State<_StatusesContent> {
       final matchesCreatedStart =
           _createdStartDate == null ||
           (status.createdAt != null &&
-              !_dateOnly(status.createdAt!).isBefore(
-                _dateOnly(_createdStartDate!),
-              ));
+              !_dateOnly(
+                status.createdAt!,
+              ).isBefore(_dateOnly(_createdStartDate!)));
       final matchesCreatedEnd =
           _createdEndDate == null ||
           (status.createdAt != null &&
-              !_dateOnly(status.createdAt!).isAfter(
-                _dateOnly(_createdEndDate!),
-              ));
+              !_dateOnly(
+                status.createdAt!,
+              ).isAfter(_dateOnly(_createdEndDate!)));
       final matchesUpdatedStart =
           _updatedStartDate == null ||
           (status.updatedAt != null &&
-              !_dateOnly(status.updatedAt!).isBefore(
-                _dateOnly(_updatedStartDate!),
-              ));
+              !_dateOnly(
+                status.updatedAt!,
+              ).isBefore(_dateOnly(_updatedStartDate!)));
       final matchesUpdatedEnd =
           _updatedEndDate == null ||
           (status.updatedAt != null &&
-              !_dateOnly(status.updatedAt!).isAfter(
-                _dateOnly(_updatedEndDate!),
-              ));
+              !_dateOnly(
+                status.updatedAt!,
+              ).isAfter(_dateOnly(_updatedEndDate!)));
 
       return matchesSearch &&
           matchesRole &&
@@ -457,20 +458,51 @@ class _StatusesToolbar extends StatelessWidget {
         initialValue: searchQuery,
         onChanged: onSearchChanged,
       ),
-      filtersBuilder: (context, iconOnly) => _StatusesFiltersPanel(
-        roleFilter: roleFilter,
-        activeFilter: activeFilter,
-        createdStartDate: createdStartDate,
-        createdEndDate: createdEndDate,
-        updatedStartDate: updatedStartDate,
-        updatedEndDate: updatedEndDate,
+      filtersBuilder: (context, iconOnly) => AdminListDynamicFiltersPanel(
         iconOnly: iconOnly,
-        onRoleChanged: onRoleChanged,
-        onActiveChanged: onActiveChanged,
-        onCreatedStartDateChanged: onCreatedStartDateChanged,
-        onCreatedEndDateChanged: onCreatedEndDateChanged,
-        onUpdatedStartDateChanged: onUpdatedStartDateChanged,
-        onUpdatedEndDateChanged: onUpdatedEndDateChanged,
+        filters: [
+          AdminListDropdownFilterConfig(
+            label: 'Role',
+            value: roleFilter,
+            items: const ['All', 'Client', 'Driver', 'Helper'],
+            onChanged: onRoleChanged,
+            displayValue: humanizeDropdownValue,
+          ),
+          AdminListDropdownFilterConfig(
+            label: 'Is Active',
+            value: activeFilter,
+            items: const ['All', 'Active', 'Inactive'],
+            onChanged: onActiveChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Created Start',
+            value: createdStartDate,
+            onSelected: onCreatedStartDateChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Created End',
+            value: createdEndDate,
+            onSelected: onCreatedEndDateChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Updated Start',
+            value: updatedStartDate,
+            onSelected: onUpdatedStartDateChanged,
+          ),
+          AdminListDateFilterConfig(
+            label: 'Updated End',
+            value: updatedEndDate,
+            onSelected: onUpdatedEndDateChanged,
+          ),
+        ],
+        onClear: () {
+          onRoleChanged('All');
+          onActiveChanged('All');
+          onCreatedStartDateChanged(null);
+          onCreatedEndDateChanged(null);
+          onUpdatedStartDateChanged(null);
+          onUpdatedEndDateChanged(null);
+        },
       ),
       onNewPressed: onNewPressed,
     );
@@ -856,24 +888,25 @@ class _StatusesDateFilterState extends State<_StatusesDateFilter> {
                 showCursor: false,
                 enableInteractiveSelection: false,
                 style: adminDropdownDisplayTextStyle,
-                decoration: adminFormInputDecoration(
-                  widget.label,
-                  radius: AdminStatusesView.surfaceRadius,
-                  minHeight: AdminStatusesView.controlHeight,
-                ).copyWith(
-                  suffixIcon: IconButton(
-                    onPressed: null,
-                    icon: Icon(
-                      Icons.calendar_today_outlined,
-                      size: 18,
-                      color: AppColors.primaryColor,
+                decoration:
+                    adminFormInputDecoration(
+                      widget.label,
+                      radius: AdminStatusesView.surfaceRadius,
+                      minHeight: AdminStatusesView.controlHeight,
+                    ).copyWith(
+                      suffixIcon: IconButton(
+                        onPressed: null,
+                        icon: Icon(
+                          Icons.calendar_today_outlined,
+                          size: 18,
+                          color: AppColors.primaryColor,
+                        ),
+                      ),
+                      filled: true,
+                      fillColor: _isPressed
+                          ? activeFillColor.withValues(alpha: 0.92)
+                          : (_isHovered ? activeFillColor : Colors.white),
                     ),
-                  ),
-                  filled: true,
-                  fillColor: _isPressed
-                      ? activeFillColor.withValues(alpha: 0.92)
-                      : (_isHovered ? activeFillColor : Colors.white),
-                ),
               ),
             ),
           ),
@@ -1532,14 +1565,16 @@ class _StatusEditorDialogState extends State<_StatusEditorDialog> {
       ...?widget.initialStatus?.applicableRoles,
     ];
     final seen = <String>{};
-    return roles.where((role) {
-      final normalized = role.trim().toLowerCase();
-      if (normalized.isEmpty || seen.contains(normalized)) {
-        return false;
-      }
-      seen.add(normalized);
-      return true;
-    }).toList(growable: false);
+    return roles
+        .where((role) {
+          final normalized = role.trim().toLowerCase();
+          if (normalized.isEmpty || seen.contains(normalized)) {
+            return false;
+          }
+          seen.add(normalized);
+          return true;
+        })
+        .toList(growable: false);
   }
 
   @override

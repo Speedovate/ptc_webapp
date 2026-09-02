@@ -23,6 +23,7 @@ import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_modal_guard.dart';
+import 'package:webapp/widgets/shared/booking_section_navigation_scope.dart';
 import 'package:webapp/widgets/shared/user_bookings_section.dart';
 
 class _PendingImageUpload {
@@ -369,11 +370,9 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                     useAdminListStyle: true,
                     forceWideLayout: false,
                     onViewBooking: (booking) async {
-                      await AdminBookingsView.showBookingDetailDialog(
+                      BookingSectionNavigationScope.maybeOf(
                         context,
-                        user: widget.user,
-                        booking: booking,
-                      );
+                      )?.openBooking(booking);
                     },
                     onEditBooking:
                         !RoleAccessService.instance.canAccess(
@@ -765,22 +764,28 @@ class _AdminUsersViewState extends State<AdminUsersView> {
       return;
     }
 
-    final confirmed = await _showUserActionConfirmation(
+    await showAdminActionConfirmation(
       context,
       title: _userDialogTitle('Delete', user),
       message: 'Are you sure you want to delete ${user.name ?? 'this user'}?',
       confirmLabel: 'Delete',
       isDanger: true,
+      onConfirmAsync: () async {
+        try {
+          await vm.deleteUser(user);
+          if (!context.mounted) {
+            return false;
+          }
+          AppSnackbar.showSuccess(context, 'User deleted.');
+          return true;
+        } catch (_) {
+          if (context.mounted) {
+            AppSnackbar.showError(context, 'We could not delete this user.');
+          }
+          return false;
+        }
+      },
     );
-    if (!confirmed || !context.mounted) {
-      return;
-    }
-
-    await vm.deleteUser(user);
-    if (!context.mounted) {
-      return;
-    }
-    AppSnackbar.showSuccess(context, 'User deleted.');
   }
 
   static void handleToggleUserActive(
@@ -798,7 +803,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
     final subjectTitle = user.id?.isNotEmpty == true
         ? '$subjectLabel ${user.id}'
         : subjectLabel;
-    final confirmed = await _showUserActionConfirmation(
+    await showAdminActionConfirmation(
       context,
       title: willBeActive
           ? 'Activate $subjectTitle'
@@ -806,18 +811,27 @@ class _AdminUsersViewState extends State<AdminUsersView> {
       message:
           'Are you sure you want to ${willBeActive ? 'activate' : 'deactivate'} ${user.name ?? 'this user'}?',
       confirmLabel: willBeActive ? 'Activate' : 'Deactivate',
-    );
-    if (!confirmed || !context.mounted) {
-      return;
-    }
-
-    await vm.setUserActive(user, willBeActive);
-    if (!context.mounted) {
-      return;
-    }
-    AppSnackbar.showSuccess(
-      context,
-      willBeActive ? 'User activated.' : 'User deactivated.',
+      onConfirmAsync: () async {
+        try {
+          await vm.setUserActive(user, willBeActive);
+          if (!context.mounted) {
+            return false;
+          }
+          AppSnackbar.showSuccess(
+            context,
+            willBeActive ? 'User activated.' : 'User deactivated.',
+          );
+          return true;
+        } catch (_) {
+          if (context.mounted) {
+            AppSnackbar.showError(
+              context,
+              'We could not update this user right now.',
+            );
+          }
+          return false;
+        }
+      },
     );
   }
 
@@ -830,40 +844,6 @@ class _AdminUsersViewState extends State<AdminUsersView> {
       return '$action $subjectLabel $idLabel';
     }
     return '$action $subjectLabel';
-  }
-
-  static Future<bool> _showUserActionConfirmation(
-    BuildContext context, {
-    required String title,
-    required String message,
-    required String confirmLabel,
-    bool isDanger = false,
-  }) async {
-    final confirmed = await showAppDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: isDanger
-                  ? AppColors.danger
-                  : AppColors.primaryColor,
-              foregroundColor: Colors.white,
-            ),
-            child: Text(confirmLabel),
-          ),
-        ],
-      ),
-    );
-
-    return confirmed ?? false;
   }
 }
 
@@ -885,10 +865,55 @@ class _UsersToolbar extends StatelessWidget {
           initialValue: vm.searchQuery,
           onChanged: vm.updateSearchQuery,
         ),
-        filtersBuilder: (context, iconOnly) => _UsersFiltersPanel(
-          vm: vm,
-          roleOptions: roleOptions,
+        filtersBuilder: (context, iconOnly) => AdminListDynamicFiltersPanel(
           iconOnly: iconOnly,
+          controlHeight: AdminUsersView.usersFilterControlHeight,
+          surfaceRadius: AdminUsersView.usersSurfaceRadius,
+          filters: [
+            AdminListDropdownFilterConfig(
+              label: 'Role',
+              value: vm.roleFilter,
+              items: roleOptions,
+              onChanged: vm.updateRoleFilter,
+            ),
+            AdminListDropdownFilterConfig(
+              label: 'Is Active',
+              value: vm.activeFilter,
+              items: const ['All', 'Active', 'Inactive'],
+              onChanged: vm.updateActiveFilter,
+            ),
+            AdminListDropdownFilterConfig(
+              label: 'Is Online',
+              value: vm.onlineFilter,
+              items: const ['All', 'Online', 'Offline'],
+              onChanged: vm.updateOnlineFilter,
+            ),
+            AdminListDateFilterConfig(
+              label: 'Created Start',
+              value: vm.startDate,
+              onSelected: vm.updateStartDate,
+              formatter: vm.formatDate,
+            ),
+            AdminListDateFilterConfig(
+              label: 'Created End',
+              value: vm.endDate,
+              onSelected: vm.updateEndDate,
+              formatter: vm.formatDate,
+            ),
+            AdminListDateFilterConfig(
+              label: 'Updated Start',
+              value: vm.updatedStartDate,
+              onSelected: vm.updateUpdatedStartDate,
+              formatter: vm.formatDate,
+            ),
+            AdminListDateFilterConfig(
+              label: 'Updated End',
+              value: vm.updatedEndDate,
+              onSelected: vm.updateUpdatedEndDate,
+              formatter: vm.formatDate,
+            ),
+          ],
+          onClear: vm.clearFilters,
         ),
         onNewPressed: vm.canCreateUsers
             ? () => AdminUsersView.showNewUserDialog(context, vm)
@@ -2391,11 +2416,9 @@ class _AdminUserDetailDialogBodyState
                   useAdminListStyle: true,
                   forceWideLayout: false,
                   onViewBooking: (booking) async {
-                    await AdminBookingsView.showBookingDetailDialog(
+                    BookingSectionNavigationScope.maybeOf(
                       context,
-                      user: widget.currentUser,
-                      booking: booking,
-                    );
+                    )?.openBooking(booking);
                   },
                   onEditBooking:
                       !RoleAccessService.instance.canAccess(

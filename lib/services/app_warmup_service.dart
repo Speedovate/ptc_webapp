@@ -3,6 +3,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/chassis.request.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/requests/support.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
@@ -15,11 +16,13 @@ class AppWarmupService {
     BookingRequest? bookingRequest,
     StatusRequest? statusRequest,
     VehicleRequest? vehicleRequest,
+    ChassisRequest? chassisRequest,
     SupportRequest? supportRequest,
   }) : _providedAuthRequest = authRequest,
        _providedBookingRequest = bookingRequest,
        _providedStatusRequest = statusRequest,
        _providedVehicleRequest = vehicleRequest,
+       _providedChassisRequest = chassisRequest,
        _providedSupportRequest = supportRequest;
 
   static final AppWarmupService instance = AppWarmupService();
@@ -35,6 +38,9 @@ class AppWarmupService {
   final VehicleRequest? _providedVehicleRequest;
   VehicleRequest get _vehicleRequest =>
       _providedVehicleRequest ?? VehicleRequest.instance;
+  final ChassisRequest? _providedChassisRequest;
+  ChassisRequest get _chassisRequest =>
+      _providedChassisRequest ?? ChassisRequest.instance;
   final SupportRequest? _providedSupportRequest;
   SupportRequest get _supportRequest =>
       _providedSupportRequest ?? SupportRequest.instance;
@@ -47,6 +53,7 @@ class AppWarmupService {
   static const String _taskVehicleMakes = 'vehicle_makes';
   static const String _taskVehicleTypes = 'vehicle_types';
   static const String _taskVehicleSizes = 'vehicle_sizes';
+  static const String _taskChassis = 'chassis';
   static const String _taskStatuses = 'statuses';
   static const String _taskStatusFields = 'status_fields';
   static const String _taskStatusForms = 'status_forms';
@@ -144,6 +151,13 @@ class AppWarmupService {
     );
   }
 
+  Future<void> warmChassis() {
+    return _runSharedTask<void>(
+      _taskChassis,
+      () => _chassisRequest.getChassis(),
+    );
+  }
+
   Future<void> warmStatuses() {
     return _runSharedTask<void>(
       _taskStatuses,
@@ -176,6 +190,7 @@ class AppWarmupService {
     await warmVehicleMakes();
     await warmVehicleTypes();
     await warmVehicleSizes();
+    await warmChassis();
   }
 
   Future<void> _warmFlowData() async {

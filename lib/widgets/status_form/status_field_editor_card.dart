@@ -388,10 +388,8 @@ class StatusFieldEditorCard extends StatelessWidget {
                         onSubmitted: onSubmit == null
                             ? null
                             : (_) => onSubmit!(),
-                        onChanged: (value) => onUpdate(
-                          'visibilityControllerKey',
-                          value.trim(),
-                        ),
+                        onChanged: (value) =>
+                            onUpdate('visibilityControllerKey', value.trim()),
                       ),
                     ),
                     const SizedBox(width: 14),
@@ -571,6 +569,7 @@ class StatusFieldEditorCard extends StatelessWidget {
       statusFieldOptionSourceVehicleMakes,
       statusFieldOptionSourceVehicleTypes,
       statusFieldOptionSourceVehicleSizes,
+      statusFieldOptionSourceChassis,
       statusFieldOptionSourceStatuses,
       statusFieldOptionSourceForms,
       statusFieldOptionSourceFields,
