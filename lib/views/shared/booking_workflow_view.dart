@@ -67,6 +67,14 @@ String? _bookingFieldPlaceholder(StatusField field) {
   return placeholder;
 }
 
+const _chassisDeliveredInstruction = 'Please empty the chassis within 4 hours.';
+
+bool _isChassisDeliveredTerminalForm(StatusForm? form, Booking? booking) {
+  return form?.currentStatusKey?.trim().toLowerCase() == 'delivered' &&
+      form?.nextStatusKey == null &&
+      booking?.chassisId?.trim().isNotEmpty == true;
+}
+
 String? _supportTargetUserIdForBooking(UserModel currentUser, Booking booking) {
   final effectiveRole = RoleAccessService.instance.effectiveRoleKey(
     currentUser.role,
@@ -117,7 +125,7 @@ BookingFormPalette _workflowResolvedPalette({
   if (bookingFormUsesDangerTheme(title: title, buttonText: buttonText)) {
     return bookingFormDangerPalette;
   }
-  if (currentStatusKey?.trim() == 'delivered') {
+  if (Booking.isDeliveredWorkflowStatus(currentStatusKey)) {
     return _workflowDeliveredPalette;
   }
   return bookingFormResolvedPalette(title: title, buttonText: buttonText);
@@ -136,24 +144,23 @@ Color _workflowResolvedActionColor({
 }
 
 _WorkflowHeaderPalette? _terminalHeaderPaletteForStatus(String? statusKey) {
-  switch (statusKey?.trim()) {
-    case 'delivered':
-      return const _WorkflowHeaderPalette(
-        backgroundColor: Color(0xFF2EAD62),
-        borderColor: Color(0xFF2EAD62),
-        titleColor: AppColors.textPrimary,
-        subtitleColor: AppColors.textPrimary,
-      );
-    case 'cancelled':
-      return const _WorkflowHeaderPalette(
-        backgroundColor: AppColors.dangerStrong,
-        borderColor: AppColors.dangerStrong,
-        titleColor: AppColors.textPrimary,
-        subtitleColor: AppColors.textPrimary,
-      );
-    default:
-      return null;
+  if (Booking.isDeliveredWorkflowStatus(statusKey)) {
+    return const _WorkflowHeaderPalette(
+      backgroundColor: Color(0xFF2EAD62),
+      borderColor: Color(0xFF2EAD62),
+      titleColor: AppColors.textPrimary,
+      subtitleColor: AppColors.textPrimary,
+    );
   }
+  if (statusKey?.trim() == 'cancelled') {
+    return const _WorkflowHeaderPalette(
+      backgroundColor: AppColors.dangerStrong,
+      borderColor: AppColors.dangerStrong,
+      titleColor: AppColors.textPrimary,
+      subtitleColor: AppColors.textPrimary,
+    );
+  }
+  return null;
 }
 
 class _WorkflowScrollSnapshot {
@@ -551,13 +558,23 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
     final primaryActionLabel = vm.form?.buttonText?.trim().isNotEmpty == true
         ? vm.form!.buttonText!.trim()
         : 'Save';
+    final terminalFormSubtext =
+        _isChassisDeliveredTerminalForm(vm.form, currentBooking)
+        ? _chassisDeliveredInstruction
+        : (vm.form?.nextStatusKey == null
+              ? vm.form?.statusSubtext?.trim()
+              : null);
+    final headerSubtitle = terminalFormSubtext?.isNotEmpty == true
+        ? terminalFormSubtext
+        : statusDescription;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         BookingFormHeaderCard(
           title: currentStatusLabel,
-          subtitle: statusDescription,
-          paletteOverride: currentBooking.clientStatus?.trim() == 'delivered'
+          subtitle: headerSubtitle,
+          paletteOverride:
+              Booking.isDeliveredWorkflowStatus(currentBooking.clientStatus)
               ? _workflowDeliveredPalette
               : null,
           backgroundColor: terminalPalette?.backgroundColor,
@@ -1275,9 +1292,11 @@ class _WorkflowInteractiveFormSectionState
     final resolvedTitle = form.statusText?.trim().isNotEmpty == true
         ? form.statusText!.trim()
         : vm.statusLabelForKey(form.currentStatusKey);
-    final resolvedSubtitle = form.statusSubtext?.trim().isNotEmpty == true
-        ? form.statusSubtext!.trim()
-        : vm.currentStatusDescription();
+    final resolvedSubtitle = _isChassisDeliveredTerminalForm(form, vm.booking)
+        ? _chassisDeliveredInstruction
+        : (form.statusSubtext?.trim().isNotEmpty == true
+              ? form.statusSubtext!.trim()
+              : vm.currentStatusDescription());
     final palette = _workflowResolvedPalette(
       title: resolvedTitle,
       buttonText: form.buttonText,
@@ -2163,6 +2182,7 @@ class _WorkflowFieldCard extends StatelessWidget {
     final isNormalDropdownCard = type == 'dropdown' || usesRoleDropdown;
     final usesCompactDropdownCard =
         isNormalDropdownCard || isSearchDropdownCard;
+    final hasValidationError = errorText?.trim().isNotEmpty == true;
     final editColor = _workflowResolvedActionColor(
       title: formTitle,
       buttonText: formButtonText,
@@ -2174,14 +2194,14 @@ class _WorkflowFieldCard extends StatelessWidget {
       buttonText: formButtonText,
       paletteOverride: palette,
       required: field.required ?? false,
-      hasError: errorText?.trim().isNotEmpty == true,
+      hasError: hasValidationError,
       subtitle: subtitle,
       instructions: instructions,
       inputTopSpacing: usesCompactDropdownCard ? 10 : 14,
       containerPadding: isSearchDropdownCard
-          ? const EdgeInsets.fromLTRB(18, 8, 18, 4)
+          ? EdgeInsets.fromLTRB(18, 8, 18, hasValidationError ? 18 : 4)
           : (isNormalDropdownCard
-                ? const EdgeInsets.fromLTRB(18, 8, 18, 8)
+                ? EdgeInsets.fromLTRB(18, 8, 18, hasValidationError ? 18 : 8)
                 : const EdgeInsets.fromLTRB(18, 8, 18, 18)),
       headerTrailing:
           headerTrailing ??

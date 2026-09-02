@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/models/booking.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/app_cached_network_image.dart';
@@ -79,7 +80,7 @@ BookingFormPalette bookingFormResolvedStatusPalette({
   if (bookingFormUsesDangerTheme(title: title, buttonText: buttonText)) {
     return bookingFormDangerPalette;
   }
-  if (currentStatusKey?.trim() == 'delivered') {
+  if (Booking.isDeliveredWorkflowStatus(currentStatusKey)) {
     return bookingFormDeliveredPalette;
   }
   return bookingFormPrimaryPalette;

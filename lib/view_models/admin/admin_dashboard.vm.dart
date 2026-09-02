@@ -357,8 +357,7 @@ class AdminDashboardViewModel extends BaseViewModel {
       ..clear()
       ..addAll(
         bookings.where(
-          (booking) =>
-              (booking.clientStatus ?? '').trim().toLowerCase() == 'delivered',
+          (booking) => Booking.isDeliveredWorkflowStatus(booking.clientStatus),
         ),
       );
 
@@ -751,6 +750,9 @@ class AdminDashboardViewModel extends BaseViewModel {
   );
 
   DateTime? deliveredAt(Booking booking) {
+    if (booking.deliveredAt != null) {
+      return booking.deliveredAt;
+    }
     final section = booking.statusOutputs?['delivered'];
     if (section is! Map) {
       return null;

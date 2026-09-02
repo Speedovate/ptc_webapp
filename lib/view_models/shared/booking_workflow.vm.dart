@@ -9,6 +9,7 @@ import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/chassis.request.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
@@ -1256,6 +1257,13 @@ class BookingWorkflowViewModel extends BaseViewModel {
     if (!validateForSubmit()) {
       return null;
     }
+    if (!await _canSubmitLifecycleForm(
+      activeForm,
+      currentBooking,
+      currentUser,
+    )) {
+      return null;
+    }
 
     isSubmitting = true;
     notifyListeners();
@@ -1303,6 +1311,13 @@ class BookingWorkflowViewModel extends BaseViewModel {
       return null;
     }
     if (!canUpdateBooking) {
+      return null;
+    }
+    if (!await _canSubmitLifecycleForm(
+      activeForm,
+      currentBooking,
+      currentUser,
+    )) {
       return null;
     }
 
@@ -1372,6 +1387,33 @@ class BookingWorkflowViewModel extends BaseViewModel {
     );
     notifyListeners();
     return validationErrors.isEmpty;
+  }
+
+  Future<bool> _canSubmitLifecycleForm(
+    StatusForm activeForm,
+    Booking currentBooking,
+    UserModel currentUser,
+  ) async {
+    if ((activeForm.currentStatusKey ?? '').trim().toLowerCase() != 'return') {
+      return true;
+    }
+    final chassisId = currentBooking.chassisId?.trim();
+    if (chassisId == null || chassisId.isEmpty) {
+      errors = {'return_driver_id': 'This booking has no assigned chassis.'};
+      notifyListeners();
+      return false;
+    }
+    final chassis = (await ChassisRequest.instance.getChassis())
+        .where((item) => item.id.toString() == chassisId)
+        .firstOrNull;
+    if (chassis?.currentDriverId?.toString() == currentUser.id?.trim()) {
+      return true;
+    }
+    errors = {
+      'return_driver_id': 'Only the assigned return driver can confirm return.',
+    };
+    notifyListeners();
+    return false;
   }
 
   Future<Booking?> submitCancel() async {

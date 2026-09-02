@@ -62,6 +62,7 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
         fieldType == 'search_dropdown' || isPalawanLocationFieldKey(fieldKey);
     final isNormalDropdownCard = fieldType == 'dropdown';
     final usesDropdownCard = isNormalDropdownCard || isSearchDropdownCard;
+    final hasValidationError = errorText?.trim().isNotEmpty == true;
     final palette = bookingFormResolvedStatusPalette(
       title: formTitle,
       buttonText: formButtonText,
@@ -73,14 +74,14 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
       buttonText: formButtonText,
       paletteOverride: palette,
       required: field.required == true,
-      hasError: errorText?.trim().isNotEmpty == true,
+      hasError: hasValidationError,
       subtitle: subtitle,
       instructions: instructions,
       inputTopSpacing: usesDropdownCard ? 10 : 14,
       containerPadding: isSearchDropdownCard
-          ? const EdgeInsets.fromLTRB(18, 18, 18, 4)
+          ? EdgeInsets.fromLTRB(18, 18, 18, hasValidationError ? 18 : 4)
           : (isNormalDropdownCard
-                ? const EdgeInsets.fromLTRB(18, 18, 18, 8)
+                ? EdgeInsets.fromLTRB(18, 18, 18, hasValidationError ? 18 : 8)
                 : const EdgeInsets.all(18)),
       input: StatusFormRuntimeFieldInput(
         field: field,

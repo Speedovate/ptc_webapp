@@ -74,6 +74,10 @@ class AdminFlowViewModel extends BaseViewModel {
     'assigned',
     'ongoing',
     'delivered',
+    'check',
+    'empty',
+    'return',
+    'confirm',
     'cancelled',
   ];
   static const fieldTypeOptions = [

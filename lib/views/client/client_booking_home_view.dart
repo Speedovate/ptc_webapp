@@ -31,24 +31,23 @@ class _ClientFormHeaderPalette {
 }
 
 _ClientFormHeaderPalette? _terminalClientHeaderPalette(String? statusKey) {
-  switch (statusKey?.trim()) {
-    case 'delivered':
-      return const _ClientFormHeaderPalette(
-        backgroundColor: Color(0xFF2EAD62),
-        borderColor: Color(0xFF2EAD62),
-        titleColor: AppColors.textPrimary,
-        subtitleColor: AppColors.textPrimary,
-      );
-    case 'cancelled':
-      return const _ClientFormHeaderPalette(
-        backgroundColor: AppColors.dangerStrong,
-        borderColor: AppColors.dangerStrong,
-        titleColor: AppColors.textPrimary,
-        subtitleColor: AppColors.textPrimary,
-      );
-    default:
-      return null;
+  if (Booking.isDeliveredWorkflowStatus(statusKey)) {
+    return const _ClientFormHeaderPalette(
+      backgroundColor: Color(0xFF2EAD62),
+      borderColor: Color(0xFF2EAD62),
+      titleColor: AppColors.textPrimary,
+      subtitleColor: AppColors.textPrimary,
+    );
   }
+  if (statusKey?.trim() == 'cancelled') {
+    return const _ClientFormHeaderPalette(
+      backgroundColor: AppColors.dangerStrong,
+      borderColor: AppColors.dangerStrong,
+      titleColor: AppColors.textPrimary,
+      subtitleColor: AppColors.textPrimary,
+    );
+  }
+  return null;
 }
 
 void _logBookingSubmit(String _) {}

@@ -589,7 +589,7 @@ DateTime _dateOnly(DateTime value) =>
     DateTime(value.year, value.month, value.day);
 
 bool _isDelivered(Booking booking) {
-  return (booking.clientStatus ?? '').trim().toLowerCase() == 'delivered';
+  return Booking.isDeliveredWorkflowStatus(booking.clientStatus);
 }
 
 double _amount(Booking booking) {

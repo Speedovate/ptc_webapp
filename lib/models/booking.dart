@@ -6,6 +6,17 @@ import 'package:webapp/models/vehicle_make.dart';
 const _bookingUndefined = Object();
 
 class Booking {
+  static const deliveredWorkflowStatuses = <String>{
+    'delivered',
+    'check',
+    'empty',
+    'return',
+    'confirm',
+  };
+
+  static bool isDeliveredWorkflowStatus(String? status) =>
+      deliveredWorkflowStatuses.contains(status?.trim().toLowerCase());
+
   const Booking({
     this.id,
     this.client,
@@ -18,6 +29,7 @@ class Booking {
     this.helper,
     this.chassisId,
     this.statusOutputs,
+    this.deliveredAt,
     this.createdAt,
     this.updatedAt,
     this.localSyncStatus,
@@ -35,6 +47,7 @@ class Booking {
   final UserModel? helper;
   final String? chassisId;
   final Map<String, dynamic>? statusOutputs;
+  final DateTime? deliveredAt;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final String? localSyncStatus;
@@ -52,6 +65,7 @@ class Booking {
     Object? helper = _bookingUndefined,
     Object? chassisId = _bookingUndefined,
     Object? statusOutputs = _bookingUndefined,
+    Object? deliveredAt = _bookingUndefined,
     Object? createdAt = _bookingUndefined,
     Object? updatedAt = _bookingUndefined,
     Object? localSyncStatus = _bookingUndefined,
@@ -89,6 +103,9 @@ class Booking {
       statusOutputs: identical(statusOutputs, _bookingUndefined)
           ? this.statusOutputs
           : statusOutputs as Map<String, dynamic>?,
+      deliveredAt: identical(deliveredAt, _bookingUndefined)
+          ? this.deliveredAt
+          : deliveredAt as DateTime?,
       createdAt: identical(createdAt, _bookingUndefined)
           ? this.createdAt
           : createdAt as DateTime?,
@@ -117,6 +134,7 @@ class Booking {
       'helper': helper?.toMap(),
       'chassis_id': chassisId,
       'status_outputs': statusOutputs,
+      'delivered_at': deliveredAt?.toIso8601String(),
       'created_at': createdAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
       'local_sync_status': localSyncStatus,
@@ -139,6 +157,7 @@ class Booking {
       statusOutputs: map['status_outputs'] is Map
           ? Map<String, dynamic>.from(map['status_outputs'] as Map)
           : null,
+      deliveredAt: _toDateTime(map['delivered_at']),
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),
       localSyncStatus: map['local_sync_status']?.toString(),

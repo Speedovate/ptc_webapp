@@ -53,6 +53,83 @@ InputDecoration _normalizeCollapsedSelectionDecoration(
   );
 }
 
+// InputDecoration.copyWith cannot clear a non-null errorText, so make a clean
+// decoration before supplying the shared, left-aligned dropdown error widget.
+InputDecoration _withoutInlineFieldFeedback(InputDecoration decoration) {
+  return InputDecoration(
+    icon: decoration.icon,
+    iconColor: decoration.iconColor,
+    label: decoration.label,
+    labelText: decoration.labelText,
+    labelStyle: decoration.labelStyle,
+    floatingLabelStyle: decoration.floatingLabelStyle,
+    hint: decoration.hint,
+    hintText: decoration.hintText,
+    hintStyle: decoration.hintStyle,
+    hintTextDirection: decoration.hintTextDirection,
+    hintFadeDuration: decoration.hintFadeDuration,
+    hintMaxLines: decoration.hintMaxLines,
+    maintainHintSize: decoration.maintainHintSize,
+    maintainLabelSize: decoration.maintainLabelSize,
+    floatingLabelBehavior: decoration.floatingLabelBehavior,
+    floatingLabelAlignment: decoration.floatingLabelAlignment,
+    isCollapsed: decoration.isCollapsed,
+    isDense: decoration.isDense,
+    contentPadding: decoration.contentPadding,
+    prefixIcon: decoration.prefixIcon,
+    prefix: decoration.prefix,
+    prefixText: decoration.prefixText,
+    prefixIconConstraints: decoration.prefixIconConstraints,
+    prefixStyle: decoration.prefixStyle,
+    prefixIconColor: decoration.prefixIconColor,
+    suffixIcon: decoration.suffixIcon,
+    suffix: decoration.suffix,
+    suffixText: decoration.suffixText,
+    suffixStyle: decoration.suffixStyle,
+    suffixIconColor: decoration.suffixIconColor,
+    suffixIconConstraints: decoration.suffixIconConstraints,
+    counter: decoration.counter,
+    counterText: decoration.counterText,
+    counterStyle: decoration.counterStyle,
+    filled: decoration.filled,
+    fillColor: decoration.fillColor,
+    focusColor: decoration.focusColor,
+    hoverColor: decoration.hoverColor,
+    errorBorder: decoration.errorBorder,
+    focusedBorder: decoration.focusedBorder,
+    focusedErrorBorder: decoration.focusedErrorBorder,
+    disabledBorder: decoration.disabledBorder,
+    enabledBorder: decoration.enabledBorder,
+    border: decoration.border,
+    enabled: decoration.enabled,
+    semanticCounterText: decoration.semanticCounterText,
+    alignLabelWithHint: decoration.alignLabelWithHint,
+    constraints: decoration.constraints,
+    visualDensity: decoration.visualDensity,
+  );
+}
+
+InputDecoration _dropdownFeedbackDecoration(
+  InputDecoration decoration,
+  String? errorText,
+) {
+  final baseDecoration = _withoutInlineFieldFeedback(decoration);
+  if (errorText?.isNotEmpty != true) {
+    return baseDecoration;
+  }
+  return baseDecoration.copyWith(
+    error: Transform.translate(
+      // Native error placement keeps the compact field-to-error spacing.
+      // Shift only its visual label back to the field-card content edge.
+      offset: const Offset(-14, 0),
+      child: Text(
+        errorText!,
+        style: const TextStyle(color: AppColors.danger, fontSize: 12),
+      ),
+    ),
+  );
+}
+
 Color appFieldInteractiveFillColor(BuildContext context) {
   return Colors.white;
 }
@@ -296,12 +373,10 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
     final helperText = decoration.helperText?.trim();
     final neutralBorder = decoration.enabledBorder ?? decoration.border;
     final activeFillColor = appDropdownInteractiveFillColor(context);
-    final fieldDecoration = decoration.copyWith(
-      errorText: null,
-      helperText: null,
-      errorStyle: const TextStyle(fontSize: 0, height: 0),
-      helperStyle: const TextStyle(fontSize: 0, height: 0),
-    );
+    final fieldDecoration = _dropdownFeedbackDecoration(
+      decoration,
+      errorText,
+    ).copyWith(helperStyle: const TextStyle(fontSize: 0, height: 0));
     final minHeight =
         decoration.constraints?.minHeight ?? adminModalFieldMinHeight;
     final verticalPadding = minHeight <= adminFilterFieldMinHeight
@@ -470,15 +545,7 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
       mainAxisSize: MainAxisSize.min,
       children: [
         decoratedField,
-        if (errorText?.isNotEmpty == true)
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Text(
-              errorText!,
-              style: const TextStyle(color: AppColors.danger, fontSize: 12),
-            ),
-          )
-        else if (helperText?.isNotEmpty == true)
+        if (errorText?.isNotEmpty != true && helperText?.isNotEmpty == true)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(helperText!, style: adminFieldHelperTextStyle),
@@ -674,12 +741,10 @@ class _AdminSearchSelectFormFieldState
     final errorText = decoration.errorText?.trim();
     final helperText = decoration.helperText?.trim();
     final activeFillColor = appDropdownInteractiveFillColor(context);
-    final fieldDecoration = decoration.copyWith(
-      errorText: null,
-      helperText: null,
-      errorStyle: const TextStyle(fontSize: 0, height: 0),
-      helperStyle: const TextStyle(fontSize: 0, height: 0),
-    );
+    final fieldDecoration = _dropdownFeedbackDecoration(
+      decoration,
+      errorText,
+    ).copyWith(helperStyle: const TextStyle(fontSize: 0, height: 0));
     final hasSelection = (_selectedValue?.trim().isNotEmpty ?? false);
     final displayText = hasSelection
         ? _selectedValue!.trim()
@@ -739,15 +804,7 @@ class _AdminSearchSelectFormFieldState
             ),
           ),
         ),
-        if (errorText?.isNotEmpty == true)
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Text(
-              errorText!,
-              style: const TextStyle(color: AppColors.danger, fontSize: 12),
-            ),
-          )
-        else if (helperText?.isNotEmpty == true)
+        if (errorText?.isNotEmpty != true && helperText?.isNotEmpty == true)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(helperText!, style: adminFieldHelperTextStyle),

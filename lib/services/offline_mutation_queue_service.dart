@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
 import 'package:webapp/services/network_status_events.dart';
+import 'package:webapp/services/booking_chassis_lifecycle.dart';
 import 'package:webapp/services/offline_sync_status_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -780,6 +781,13 @@ class OfflineMutationQueueService {
             existingBooking.data()?['chassis_id']?.toString(),
           );
           final nextChassisId = normalizeId(document['chassis_id']?.toString());
+          final lifecycle = chassisLifecycleInstruction(
+            previousBookingStatus: existingBooking
+                .data()?['client_status']
+                ?.toString(),
+            nextBookingStatus: document['client_status']?.toString(),
+            bookingDocument: document,
+          );
 
           DocumentSnapshot<Map<String, dynamic>>? nextChassis;
           DocumentSnapshot<Map<String, dynamic>>? displacedBooking;
@@ -821,15 +829,22 @@ class OfflineMutationQueueService {
             }, SetOptions(merge: true));
           }
           if (nextChassis != null) {
-            final driverId = normalizeId(document['driver_id']?.toString());
-            transaction.set(nextChassis.reference, {
-              'current_booking_id':
-                  int.tryParse(entry.targetId) ?? entry.targetId,
-              'current_driver_id': driverId == null
-                  ? FieldValue.delete()
-                  : (int.tryParse(driverId) ?? driverId),
-              'updated_at': now,
-            }, SetOptions(merge: true));
+            transaction.set(
+              nextChassis.reference,
+              lifecycle == null
+                  ? _defaultChassisAssignmentPatch(
+                      bookingId: entry.targetId,
+                      bookingDocument: document,
+                      now: now,
+                    )
+                  : _lifecycleChassisPatch(
+                      instruction: lifecycle,
+                      bookingId: entry.targetId,
+                      bookingDocument: document,
+                      now: now,
+                    ),
+              SetOptions(merge: true),
+            );
           }
           transaction.set(bookingRef, document);
         })
@@ -1074,6 +1089,55 @@ class OfflineMutationQueueService {
       'statuses' => _firestore.collection('statuses'),
       _ => null,
     };
+  }
+
+  Map<String, dynamic> _defaultChassisAssignmentPatch({
+    required String bookingId,
+    required Map<String, dynamic> bookingDocument,
+    required String now,
+  }) {
+    final driverId = normalizeId(bookingDocument['driver_id']?.toString());
+    return {
+      'current_booking_id': int.tryParse(bookingId) ?? bookingId,
+      'current_driver_id': driverId == null
+          ? FieldValue.delete()
+          : (int.tryParse(driverId) ?? driverId),
+      'updated_at': now,
+    };
+  }
+
+  Map<String, dynamic> _lifecycleChassisPatch({
+    required ChassisLifecycleInstruction instruction,
+    required String bookingId,
+    required Map<String, dynamic> bookingDocument,
+    required String now,
+  }) {
+    final patch = <String, dynamic>{
+      'current_status': instruction.status,
+      'updated_at': now,
+      'current_booking_id': instruction.keepBookingLink
+          ? (int.tryParse(bookingId) ?? bookingId)
+          : FieldValue.delete(),
+    };
+    final driverId = switch (instruction.driverLink) {
+      ChassisDriverLink.deliveryDriver => normalizeId(
+        bookingDocument['driver_id']?.toString(),
+      ),
+      ChassisDriverLink.returnDriver => chassisReturnDriverId(bookingDocument),
+      ChassisDriverLink.clear || ChassisDriverLink.preserve => null,
+    };
+    if (instruction.driverLink == ChassisDriverLink.clear) {
+      patch['current_driver_id'] = FieldValue.delete();
+    } else if (instruction.driverLink != ChassisDriverLink.preserve) {
+      patch['current_driver_id'] = driverId == null
+          ? FieldValue.delete()
+          : (int.tryParse(driverId) ?? driverId);
+    }
+    final location = instruction.location?.trim();
+    if (location?.isNotEmpty == true) {
+      patch['location'] = location;
+    }
+    return patch;
   }
 
   Future<List<_OfflineMutationEntry>> _readEntries() async {

@@ -582,10 +582,9 @@ class _AdminChassisViewState extends State<AdminChassisView> {
                           .map(
                             (status) => DropdownMenuItem<String>(
                               value: status,
-                              child: ChassisStatusOptionLabel(
-                                label: chassisStatusLabel(status),
-                                status: status,
-                                showStatusSuffix: false,
+                              child: Text(
+                                chassisStatusLabel(status),
+                                style: adminDropdownDisplayTextStyle,
                               ),
                             ),
                           )

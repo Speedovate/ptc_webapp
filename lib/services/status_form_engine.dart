@@ -190,6 +190,7 @@ class StatusFormEngine {
     String? userRole,
   ) {
     final nextStatus = statusForm.nextStatusKey;
+    final normalizedNextStatus = nextStatus?.trim().toLowerCase();
     final vehicleMakeId = _stringAnswer(answers['vehicle_make_id']);
     final chassisId = _stringAnswer(answers['chassis_id']);
     final normalizedAnswers = _normalizeAnswersForStorage(answers, fields);
@@ -218,6 +219,9 @@ class StatusFormEngine {
           : VehicleMake(id: vehicleMakeId),
       chassisId: chassisId ?? booking.chassisId,
       statusOutputs: nextOutputs,
+      deliveredAt: normalizedNextStatus == 'delivered'
+          ? DateTime.now()
+          : booking.deliveredAt,
       updatedAt: DateTime.now(),
     );
   }

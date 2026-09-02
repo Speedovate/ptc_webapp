@@ -1,0 +1,14 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "bookings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "client_status", "order": "ASCENDING" },
+        { "fieldPath": "chassis_id", "order": "ASCENDING" },
+        { "fieldPath": "delivered_at", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

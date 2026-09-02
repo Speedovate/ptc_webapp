@@ -12,6 +12,7 @@ import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/services/booking_offline_upload_queue_service.dart';
+import 'package:webapp/services/booking_chassis_lifecycle.dart';
 import 'package:webapp/services/firestore_public_document_fetcher.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
@@ -922,6 +923,13 @@ class BookingRequest implements BookingRepository {
       existingBooking.data()?['chassis_id']?.toString(),
     );
     final nextChassisId = normalizeId(document['chassis_id']?.toString());
+    final lifecycle = chassisLifecycleInstruction(
+      previousBookingStatus: existingBooking
+          .data()?['client_status']
+          ?.toString(),
+      nextBookingStatus: document['client_status']?.toString(),
+      bookingDocument: document,
+    );
 
     DocumentSnapshot<Map<String, dynamic>>? nextChassis;
     DocumentSnapshot<Map<String, dynamic>>? displacedBooking;
@@ -962,16 +970,73 @@ class BookingRequest implements BookingRepository {
       }, SetOptions(merge: true));
     }
     if (nextChassis != null) {
-      final driverId = normalizeId(document['driver_id']?.toString());
-      transaction.set(nextChassis.reference, {
-        'current_booking_id': int.tryParse(bookingId) ?? bookingId,
-        'current_driver_id': driverId == null
-            ? FieldValue.delete()
-            : (int.tryParse(driverId) ?? driverId),
-        'updated_at': now,
-      }, SetOptions(merge: true));
+      transaction.set(
+        nextChassis.reference,
+        lifecycle == null
+            ? _defaultChassisAssignmentPatch(
+                bookingId: bookingId,
+                bookingDocument: document,
+                now: now,
+              )
+            : _lifecycleChassisPatch(
+                instruction: lifecycle,
+                bookingId: bookingId,
+                bookingDocument: document,
+                now: now,
+              ),
+        SetOptions(merge: true),
+      );
     }
     transaction.set(bookingRef, document);
+  }
+
+  Map<String, dynamic> _defaultChassisAssignmentPatch({
+    required String bookingId,
+    required Map<String, dynamic> bookingDocument,
+    required String now,
+  }) {
+    final driverId = normalizeId(bookingDocument['driver_id']?.toString());
+    return {
+      'current_booking_id': int.tryParse(bookingId) ?? bookingId,
+      'current_driver_id': driverId == null
+          ? FieldValue.delete()
+          : (int.tryParse(driverId) ?? driverId),
+      'updated_at': now,
+    };
+  }
+
+  Map<String, dynamic> _lifecycleChassisPatch({
+    required ChassisLifecycleInstruction instruction,
+    required String bookingId,
+    required Map<String, dynamic> bookingDocument,
+    required String now,
+  }) {
+    final patch = <String, dynamic>{
+      'current_status': instruction.status,
+      'updated_at': now,
+      'current_booking_id': instruction.keepBookingLink
+          ? (int.tryParse(bookingId) ?? bookingId)
+          : FieldValue.delete(),
+    };
+    final driverId = switch (instruction.driverLink) {
+      ChassisDriverLink.deliveryDriver => normalizeId(
+        bookingDocument['driver_id']?.toString(),
+      ),
+      ChassisDriverLink.returnDriver => chassisReturnDriverId(bookingDocument),
+      ChassisDriverLink.clear || ChassisDriverLink.preserve => null,
+    };
+    if (instruction.driverLink == ChassisDriverLink.clear) {
+      patch['current_driver_id'] = FieldValue.delete();
+    } else if (instruction.driverLink != ChassisDriverLink.preserve) {
+      patch['current_driver_id'] = driverId == null
+          ? FieldValue.delete()
+          : (int.tryParse(driverId) ?? driverId);
+    }
+    final location = instruction.location?.trim();
+    if (location?.isNotEmpty == true) {
+      patch['location'] = location;
+    }
+    return patch;
   }
 
   bool _isQueueableBookingWriteError(Object error) {
@@ -1519,6 +1584,7 @@ class BookingRequest implements BookingRepository {
       'helper_id': booking.helper?.id,
       'chassis_id': booking.chassisId,
       'status_outputs': booking.statusOutputs,
+      'delivered_at': booking.deliveredAt?.toUtc().toIso8601String(),
       'created_at': booking.createdAt?.toIso8601String(),
       'updated_at': booking.updatedAt?.toIso8601String(),
       'submission_key': booking.submissionKey,
@@ -1554,6 +1620,7 @@ class BookingRequest implements BookingRepository {
       statusOutputs: map['status_outputs'] is Map
           ? Map<String, dynamic>.from(map['status_outputs'] as Map)
           : null,
+      deliveredAt: _toDateTime(map['delivered_at']),
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),
       localSyncStatus: map['local_sync_status']?.toString(),

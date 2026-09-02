@@ -119,17 +119,12 @@ class AdminBookingsView extends StatefulWidget {
     if (!context.mounted) {
       return null;
     }
-    final chassis = await _resolveActiveChassis(null);
-    if (!context.mounted) {
-      return null;
-    }
     return showAppDialog<Booking>(
       context: context,
       modalKey: 'booking-new',
       builder: (dialogContext) => _NewAdminBookingDialog(
         currentUser: currentUser,
         clientUsers: vm.clientUsers(),
-        chassis: chassis,
         onBookingSubmitted: (booking) {
           Navigator.of(dialogContext).pop(booking);
         },
@@ -221,16 +216,11 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
   }
 
   Future<void> _openNewBookingDialog(AdminBookingsViewModel vm) async {
-    final chassis = await AdminBookingsView._resolveActiveChassis(null);
-    if (!mounted) {
-      return;
-    }
     await showAppDialog<void>(
       context: context,
       builder: (dialogContext) => _NewAdminBookingDialog(
         currentUser: widget.user,
         clientUsers: vm.clientUsers(),
-        chassis: chassis,
         onBookingSubmitted: (booking) async {
           if (!mounted) {
             return;
@@ -1926,13 +1916,11 @@ class _NewAdminBookingDialog extends StatefulWidget {
   const _NewAdminBookingDialog({
     required this.currentUser,
     required this.clientUsers,
-    required this.chassis,
     required this.onBookingSubmitted,
   });
 
   final UserModel currentUser;
   final List<UserModel> clientUsers;
-  final List<Chassis> chassis;
   final ValueChanged<Booking> onBookingSubmitted;
 
   @override
@@ -1943,11 +1931,9 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
   static const String _draftStorageKeyPrefix = 'admin_new_booking_draft_v1';
   static const UserModel _placeholderClientUser = UserModel(role: 'client');
   late String _selectedBookerId;
-  String? _selectedChassisId;
   String? _bookerErrorText;
   bool _isRestoringDraft = true;
   late final FocusNode _bookedByFocusNode;
-  late final FocusNode _chassisFocusNode;
   final LocalFormDraftService _draftService = LocalFormDraftService.instance;
 
   @override
@@ -1955,7 +1941,6 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
     super.initState();
     _selectedBookerId = '';
     _bookedByFocusNode = FocusNode();
-    _chassisFocusNode = FocusNode();
     _log(
       'init currentUser=${widget.currentUser.id ?? "-"} role=${widget.currentUser.role ?? "-"} clients=${widget.clientUsers.length}',
     );
@@ -1965,7 +1950,6 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
   @override
   void dispose() {
     _bookedByFocusNode.dispose();
-    _chassisFocusNode.dispose();
     super.dispose();
   }
 
@@ -2002,12 +1986,8 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
         return;
       }
       final restoredId = draft['selected_booker_id']?.toString() ?? '';
-      final restoredChassisId = draft['selected_chassis_id']?.toString();
       setState(() {
         _selectedBookerId = restoredId;
-        _selectedChassisId = restoredChassisId?.trim().isEmpty == true
-            ? null
-            : restoredChassisId?.trim();
       });
       _log(
         'restore draft key=$_draftStorageKey found=true selected=$restoredId',
@@ -2024,7 +2004,6 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
   Future<void> _persistDraft() async {
     await _draftService.writeMap(_draftStorageKey, <String, dynamic>{
       'selected_booker_id': _selectedBookerId,
-      'selected_chassis_id': _selectedChassisId,
     });
     _log('persist draft key=$_draftStorageKey selected=$_selectedBookerId');
   }
@@ -2043,7 +2022,6 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
     }
     setState(() {
       _selectedBookerId = '';
-      _selectedChassisId = null;
       _bookerErrorText = null;
     });
     widget.onBookingSubmitted(booking);
@@ -2135,23 +2113,6 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
                             },
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        AdminModalDropdownField<String>(
-                          label: 'Chassis',
-                          hintText: 'Select Chassis',
-                          focusNode: _chassisFocusNode,
-                          initialValue: _selectedChassisId,
-                          bottomPadding: 0,
-                          isExpanded: true,
-                          disabledTapMessage: 'No active chassis available.',
-                          items: _buildChassisItems(),
-                          onChanged: (value) {
-                            setState(() {
-                              _selectedChassisId = value;
-                            });
-                            unawaited(_persistDraft());
-                          },
-                        ),
                       ],
                     ),
                   ],
@@ -2171,10 +2132,6 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
                     scrollable: false,
                     loadingPlaceholderMinHeight: formVisibleHeight,
                     submitBlockMessage: _resolveSubmitBlockMessage,
-                    additionalFormAnswers: <String, dynamic>{
-                      if (_selectedChassisId?.trim().isNotEmpty == true)
-                        'chassis_id': _selectedChassisId!.trim(),
-                    },
                     onRepresentativeTapWithoutClient: _openBookedByOptions,
                     onBookingSubmitted: (booking) {
                       unawaited(_handleBookingSubmitted(booking));
@@ -2196,20 +2153,6 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
       (user) => user?.id == _selectedBookerId,
       orElse: () => null,
     );
-  }
-
-  List<DropdownMenuItem<String>> _buildChassisItems() {
-    return widget.chassis
-        .map(
-          (chassis) => DropdownMenuItem<String>(
-            value: chassis.id.toString(),
-            child: ChassisStatusOptionLabel(
-              label: _chassisLabel(chassis),
-              status: chassis.currentStatus,
-            ),
-          ),
-        )
-        .toList(growable: false);
   }
 
   String _bookerLabel(UserModel user) {
