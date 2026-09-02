@@ -445,6 +445,21 @@ class BookingRequest implements BookingRepository {
             baseUpdatedAt: baseUpdatedAtIso,
           );
         }
+        // The durable queue is the offline source of truth. Update the UI as
+        // soon as it is stored instead of making the modal wait for a second
+        // local cache write or its best-effort cache-version notification.
+        _upsertMemoryBooking(saved);
+        _bookingCacheUpdates.add(null);
+        unawaited(
+          _cache
+              .upsertDocument(
+                resourceKey: _bookingsResourceKey,
+                document: cacheDocument,
+              )
+              .catchError((_) {}),
+        );
+        _log('save finish id=$nextId sync=queued');
+        return saved;
       }
       await _cache.upsertDocument(
         resourceKey: _bookingsResourceKey,

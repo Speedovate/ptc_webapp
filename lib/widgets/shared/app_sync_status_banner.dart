@@ -6,17 +6,18 @@ import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/offline_sync_status_service.dart';
 
 class AppSyncStatusBanner extends StatelessWidget {
-  const AppSyncStatusBanner({
-    super.key,
-    required this.child,
-    this.currentUser,
-  });
+  const AppSyncStatusBanner({super.key, required this.child, this.currentUser});
 
   final Widget child;
   final UserModel? currentUser;
 
   @override
   Widget build(BuildContext context) {
+    // Authenticated platform shells render sync state in their sidebar footer,
+    // replacing Install instead of overlaying another bottom control.
+    if (currentUser != null) {
+      return child;
+    }
     final service = OfflineSyncStatusService.instance;
     final canReadSync = currentUser == null
         ? true
@@ -43,10 +44,14 @@ class AppSyncStatusBanner extends StatelessWidget {
                 _shouldShowBannerFor(fallbackSnapshot)
             ? fallbackSnapshot
             : primarySnapshot;
-        final showBanner =
-            _shouldShowBannerFor(snapshot);
+        final showBanner = _shouldShowBannerFor(snapshot);
         final anchorToSidebarBottom = usesAdminShell;
         final safePadding = MediaQuery.paddingOf(context);
+        // Match the login/register card: 24px gutters and a 460px max width.
+        final authCardWidth = (MediaQuery.sizeOf(context).width - 48).clamp(
+          0.0,
+          460.0,
+        );
         return Stack(
           children: [
             child,
@@ -68,23 +73,18 @@ class AppSyncStatusBanner extends StatelessWidget {
                       duration: const Duration(milliseconds: 180),
                       opacity: showBanner ? 1 : 0,
                       child: Padding(
-                        padding: anchorToSidebarBottom
-                            ? EdgeInsets.fromLTRB(
-                                16,
-                                12,
-                                16,
-                                16 + safePadding.bottom,
-                              )
-                            : EdgeInsets.fromLTRB(
-                                16,
-                                12,
-                                16,
-                                16 + safePadding.bottom,
-                              ),
-                        child: _SyncStatusPill(
-                          snapshot: snapshot,
-                          currentUser: currentUser,
-                          maxWidth: anchorToSidebarBottom ? 248 : 720,
+                        padding: EdgeInsets.only(
+                          bottom: 16 + safePadding.bottom,
+                        ),
+                        child: SizedBox(
+                          width: anchorToSidebarBottom ? 248 : authCardWidth,
+                          child: _SyncStatusPill(
+                            snapshot: snapshot,
+                            currentUser: currentUser,
+                            maxWidth: anchorToSidebarBottom
+                                ? 248
+                                : authCardWidth,
+                          ),
                         ),
                       ),
                     ),
@@ -223,13 +223,14 @@ class _SyncStatusPill extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: (compactSidebarBanner
-                              ? theme.textTheme.bodyMedium
-                              : theme.textTheme.bodyLarge)
-                          ?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: textColor,
-                      ),
+                      style:
+                          (compactSidebarBanner
+                                  ? theme.textTheme.bodyMedium
+                                  : theme.textTheme.bodyLarge)
+                              ?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: textColor,
+                              ),
                     ),
                     if (!compactSidebarBanner) ...[
                       const SizedBox(height: 2),
@@ -273,14 +274,18 @@ class _SyncStatusPill extends StatelessWidget {
     );
   }
 
-  Future<void> _showConflictReviewSheet(BuildContext context) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => const _ConflictReviewSheet(),
-    );
-  }
+  Future<void> _showConflictReviewSheet(BuildContext context) =>
+      showOfflineConflictReviewSheet(context);
+}
+
+Future<void> showOfflineConflictReviewSheet(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    useRootNavigator: true,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => const _ConflictReviewSheet(),
+  );
 }
 
 class _ConflictReviewSheet extends StatefulWidget {
@@ -293,6 +298,7 @@ class _ConflictReviewSheet extends StatefulWidget {
 class _ConflictReviewSheetState extends State<_ConflictReviewSheet> {
   late Future<List<OfflineMutationConflictRecord>> _future;
   bool _isApplying = false;
+  String? _actionError;
 
   @override
   void initState() {
@@ -304,21 +310,31 @@ class _ConflictReviewSheetState extends State<_ConflictReviewSheet> {
     return OfflineMutationQueueService.instance.getBlockedConflicts();
   }
 
-  Future<void> _refresh() async {
+  Future<List<OfflineMutationConflictRecord>> _refresh() async {
     final next = _load();
     setState(() {
       _future = next;
     });
-    await next;
+    return next;
   }
 
   Future<void> _retry(String id) async {
     setState(() {
       _isApplying = true;
+      _actionError = null;
     });
     try {
       await OfflineMutationQueueService.instance.retryBlockedConflict(id);
-      await _refresh();
+      final remaining = await _refresh();
+      if (mounted && remaining.isEmpty) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _actionError = 'We could not update this offline action. Try again.';
+        });
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -331,10 +347,20 @@ class _ConflictReviewSheetState extends State<_ConflictReviewSheet> {
   Future<void> _dismiss(String id) async {
     setState(() {
       _isApplying = true;
+      _actionError = null;
     });
     try {
       await OfflineMutationQueueService.instance.dismissBlockedConflict(id);
-      await _refresh();
+      final remaining = await _refresh();
+      if (mounted && remaining.isEmpty) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _actionError = 'We could not discard this offline action. Try again.';
+        });
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -347,92 +373,104 @@ class _ConflictReviewSheetState extends State<_ConflictReviewSheet> {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 40, 16, 16),
-        child: Material(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 40, 24, 16),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: Material(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Expanded(
-                      child: Text(
-                        'Sync Review',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.textPrimary,
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Sync Review',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: _isApplying
+                              ? null
+                              : () => Navigator.of(
+                                  context,
+                                  rootNavigator: true,
+                                ).pop(),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    if (_actionError != null) ...[
+                      Text(
+                        _actionError!,
+                        style: const TextStyle(
+                          color: AppColors.dangerStrong,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ),
-                    IconButton(
-                      onPressed: _isApplying
-                          ? null
-                          : () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded),
+                      const SizedBox(height: 12),
+                    ],
+                    Flexible(
+                      child: FutureBuilder<List<OfflineMutationConflictRecord>>(
+                        future: _future,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState !=
+                              ConnectionState.done) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 28),
+                              child: Center(child: CircularProgressIndicator()),
+                            );
+                          }
+                          final conflicts =
+                              snapshot.data ??
+                              const <OfflineMutationConflictRecord>[];
+                          if (conflicts.isEmpty) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 28),
+                              child: Center(
+                                child: Text(
+                                  'No blocked sync issues right now.',
+                                  style: TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+                          return ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: conflicts.length,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(height: 10),
+                            itemBuilder: (context, index) {
+                              final conflict = conflicts[index];
+                              return _ConflictCard(
+                                conflict: conflict,
+                                isBusy: _isApplying,
+                                onRetry: () => _retry(conflict.id),
+                                onDismiss: () => _dismiss(conflict.id),
+                              );
+                            },
+                          );
+                        },
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                const Text(
-                  'These offline changes were paused because newer remote data was detected.',
-                  style: TextStyle(
-                    color: AppColors.textSecondary,
-                    fontWeight: FontWeight.w600,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Flexible(
-                  child: FutureBuilder<List<OfflineMutationConflictRecord>>(
-                    future: _future,
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState != ConnectionState.done) {
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 28),
-                          child: Center(child: CircularProgressIndicator()),
-                        );
-                      }
-                      final conflicts =
-                          snapshot.data ??
-                          const <OfflineMutationConflictRecord>[];
-                      if (conflicts.isEmpty) {
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 28),
-                          child: Center(
-                            child: Text(
-                              'No blocked sync issues right now.',
-                              style: TextStyle(
-                                color: AppColors.textSecondary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        );
-                      }
-                      return ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: conflicts.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 10),
-                        itemBuilder: (context, index) {
-                          final conflict = conflicts[index];
-                          return _ConflictCard(
-                            conflict: conflict,
-                            isBusy: _isApplying,
-                            onRetry: () => _retry(conflict.id),
-                            onDismiss: () => _dismiss(conflict.id),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -456,10 +494,7 @@ class _ConflictCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = [
-      if (conflict.collectionKey?.isNotEmpty == true) conflict.collectionKey,
-      conflict.targetId,
-    ].whereType<String>().join(' • ');
+    final presentation = _syncActionPresentation(conflict);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -470,52 +505,206 @@ class _ConflictCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            conflict.kind,
-            style: const TextStyle(
-              color: AppColors.textPrimary,
-              fontWeight: FontWeight.w800,
-            ),
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.78),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  presentation.icon,
+                  color: AppColors.dangerStrong,
+                  size: 21,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      presentation.title,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      presentation.recordLabel,
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: const TextStyle(
+          const SizedBox(height: 10),
+          const Text(
+            'A newer version was found online. Choose which change to keep.',
+            style: TextStyle(
               color: AppColors.textSecondary,
               fontWeight: FontWeight.w600,
+              height: 1.3,
             ),
           ),
-          if (conflict.lastError?.isNotEmpty == true) ...[
-            const SizedBox(height: 8),
-            Text(
-              conflict.lastError!,
-              style: const TextStyle(
-                color: AppColors.dangerStrong,
-                fontWeight: FontWeight.w600,
-                height: 1.3,
-              ),
-            ),
-          ],
           const SizedBox(height: 12),
           Row(
             children: [
-              FilledButton(
-                onPressed: isBusy ? null : onRetry,
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.primaryColor,
-                  foregroundColor: Colors.white,
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: isBusy ? null : onDismiss,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.dangerStrong,
+                    side: const BorderSide(color: AppColors.dangerBorderAlt),
+                  ),
+                  child: isBusy
+                      ? const _SyncActionProgress()
+                      : const Text('Discard local change'),
                 ),
-                child: const Text('Retry'),
               ),
               const SizedBox(width: 10),
-              TextButton(
-                onPressed: isBusy ? null : onDismiss,
-                child: const Text('Dismiss'),
+              Expanded(
+                child: FilledButton(
+                  onPressed: isBusy ? null : onRetry,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.primaryColor,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: isBusy
+                      ? const _SyncActionProgress()
+                      : const Text('Keep local change'),
+                ),
               ),
             ],
           ),
         ],
       ),
     );
+  }
+}
+
+class _SyncActionProgress extends StatelessWidget {
+  const _SyncActionProgress();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      width: 18,
+      height: 18,
+      child: CircularProgressIndicator(strokeWidth: 2.2),
+    );
+  }
+}
+
+class _SyncActionPresentation {
+  const _SyncActionPresentation({
+    required this.title,
+    required this.recordLabel,
+    required this.icon,
+  });
+
+  final String title;
+  final String recordLabel;
+  final IconData icon;
+}
+
+_SyncActionPresentation _syncActionPresentation(
+  OfflineMutationConflictRecord conflict,
+) {
+  final collection = _syncCollectionLabel(conflict.collectionKey);
+  final recordLabel = conflict.targetId.trim().isEmpty
+      ? '$collection record'
+      : '$collection #${conflict.targetId}';
+
+  switch (conflict.kind) {
+    case 'userUpsert':
+      return _SyncActionPresentation(
+        title: 'Update user profile',
+        recordLabel: recordLabel,
+        icon: Icons.person_outline_rounded,
+      );
+    case 'userDelete':
+      return _SyncActionPresentation(
+        title: 'Remove user',
+        recordLabel: recordLabel,
+        icon: Icons.person_remove_outlined,
+      );
+    case 'bookingBillingStatusUpdate':
+      return _SyncActionPresentation(
+        title: 'Update booking billing',
+        recordLabel: recordLabel,
+        icon: Icons.receipt_long_outlined,
+      );
+    case 'bookingCreate':
+      return _SyncActionPresentation(
+        title: 'Create booking',
+        recordLabel: recordLabel,
+        icon: Icons.add_task_outlined,
+      );
+    case 'chassisAssignment':
+      return _SyncActionPresentation(
+        title: 'Update chassis assignment',
+        recordLabel: recordLabel,
+        icon: Icons.rv_hookup_outlined,
+      );
+    case 'chassisDelete':
+      return _SyncActionPresentation(
+        title: 'Remove chassis',
+        recordLabel: recordLabel,
+        icon: Icons.delete_outline_rounded,
+      );
+    case 'collectionDocumentCreate':
+      return _SyncActionPresentation(
+        title: 'Create $collection',
+        recordLabel: recordLabel,
+        icon: Icons.add_circle_outline_rounded,
+      );
+    case 'collectionDocumentDelete':
+      return _SyncActionPresentation(
+        title: 'Remove $collection',
+        recordLabel: recordLabel,
+        icon: Icons.delete_outline_rounded,
+      );
+    case 'collectionDocumentUpsert':
+    default:
+      return _SyncActionPresentation(
+        title: 'Update $collection',
+        recordLabel: recordLabel,
+        icon: Icons.edit_outlined,
+      );
+  }
+}
+
+String _syncCollectionLabel(String? collectionKey) {
+  switch (collectionKey?.trim()) {
+    case 'users':
+      return 'User';
+    case 'bookings':
+      return 'Booking';
+    case 'chassis':
+      return 'Chassis';
+    case 'vehicle_makes':
+      return 'Vehicle make';
+    case 'vehicle_types':
+      return 'Vehicle type';
+    case 'vehicle_sizes':
+      return 'Vehicle size';
+    case 'statuses':
+      return 'Status';
+    case 'status_forms':
+      return 'Flow form';
+    case 'status_fields':
+      return 'Flow field';
+    case 'role_access':
+      return 'Role permission';
+    default:
+      return 'Record';
   }
 }

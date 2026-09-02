@@ -195,6 +195,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
     required bool isCompact,
   }) {
     return PlatformSidebarContainer(
+      currentUser: _shellUser,
       onBrandTap: () {
         setState(() {
           _selectedHistoryBooking = null;

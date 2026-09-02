@@ -3,7 +3,10 @@
 const version = new URL(self.location.href).searchParams.get('v') || 'v1';
 const SHELL_CACHE = `paltranco-shell-${version}`;
 const RUNTIME_CACHE = `paltranco-runtime-${version}`;
-const IMAGE_CACHE = `paltranco-images-${version}`;
+// Images are user content, not versioned app shell assets. Keep them across
+// deployments so already displayed photos remain available offline.
+const IMAGE_CACHE = 'paltranco-images';
+const IMAGE_CACHE_PREFIX = 'paltranco-images';
 const NETWORK_FIRST_PATHS = new Set([
   '/',
   '/index.html',
@@ -47,7 +50,8 @@ self.addEventListener('activate', (event) => {
           if (
             key !== SHELL_CACHE &&
             key !== RUNTIME_CACHE &&
-            key !== IMAGE_CACHE
+            key !== IMAGE_CACHE &&
+            !key.startsWith(IMAGE_CACHE_PREFIX)
           ) {
             return caches.delete(key);
           }
@@ -155,9 +159,7 @@ async function handleCriticalAssetRequest(request) {
 
 async function handleImageRequest(request) {
   const imageCache = await caches.open(IMAGE_CACHE);
-  const cached =
-      (await imageCache.match(request, { ignoreSearch: false })) ||
-      (await imageCache.match(request, { ignoreSearch: true }));
+  const cached = await matchPersistedImage(request, imageCache);
   if (cached) {
     return cached;
   }
@@ -167,6 +169,33 @@ async function handleImageRequest(request) {
     await imageCache.put(request, response.clone());
   }
   return response;
+}
+
+async function matchPersistedImage(request, imageCache) {
+  const fromActiveCache =
+      (await imageCache.match(request, { ignoreSearch: false })) ||
+      (await imageCache.match(request, { ignoreSearch: true }));
+  if (fromActiveCache) {
+    return fromActiveCache;
+  }
+
+  // Migrate seamlessly from the former versioned image caches without a
+  // network request or forcing users to view every image again.
+  const cacheKeys = await caches.keys();
+  for (const cacheKey of cacheKeys) {
+    if (cacheKey === IMAGE_CACHE || !cacheKey.startsWith(IMAGE_CACHE_PREFIX)) {
+      continue;
+    }
+    const previousCache = await caches.open(cacheKey);
+    const cached =
+        (await previousCache.match(request, { ignoreSearch: false })) ||
+        (await previousCache.match(request, { ignoreSearch: true }));
+    if (cached) {
+      await imageCache.put(request, cached.clone());
+      return cached;
+    }
+  }
+  return null;
 }
 
 function isTrustedCrossOriginImageRequest(request, url) {

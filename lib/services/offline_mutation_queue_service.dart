@@ -1341,12 +1341,32 @@ class OfflineMutationQueueService {
     if (remoteUpdatedAt == null || remoteUpdatedAt.isEmpty) {
       return;
     }
-    if (remoteUpdatedAt.compareTo(normalizedBase) > 0 &&
-        remoteUpdatedAt != (nextUpdatedAt?.trim() ?? '')) {
+    final remoteTimestamp = _parseSyncTimestamp(remoteUpdatedAt);
+    final baseTimestamp = _parseSyncTimestamp(normalizedBase);
+    final nextTimestamp = _parseSyncTimestamp(nextUpdatedAt);
+
+    // Legacy documents may omit a timezone while current writes may use UTC.
+    // Compare the actual instant, not the raw ISO text, to prevent a false
+    // conflict caused solely by a different timestamp representation.
+    if (remoteTimestamp == null || baseTimestamp == null) {
+      return;
+    }
+    final isSameAsQueuedWrite =
+        nextTimestamp != null &&
+        remoteTimestamp.isAtSameMomentAs(nextTimestamp);
+    if (remoteTimestamp.isAfter(baseTimestamp) && !isSameAsQueuedWrite) {
       throw Exception(
         'Sync conflict detected. This record changed remotely and needs review.',
       );
     }
+  }
+
+  DateTime? _parseSyncTimestamp(String? value) {
+    final normalized = value?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    return DateTime.tryParse(normalized)?.toUtc();
   }
 
   OfflineQueueStatusSnapshot _snapshotForEntries(

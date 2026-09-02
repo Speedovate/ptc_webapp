@@ -552,6 +552,7 @@ class _AdminHomeState extends State<AdminHome> {
 
   Widget _buildSidebar(AdminHomeViewModel vm, {required bool isCompact}) {
     return PlatformSidebarContainer(
+      currentUser: _shellUser,
       onBrandTap: () {
         vm.selectSection(AdminSection.dashboard);
         if (isCompact && Navigator.of(context).canPop()) {

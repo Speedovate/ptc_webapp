@@ -3,11 +3,14 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/services/app_version_service.dart';
+import 'package:webapp/services/offline_sync_status_service.dart';
+import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/web_app_install_service.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/collapsible_sidebar.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
+import 'package:webapp/widgets/shared/app_sync_status_banner.dart';
 
 class PlatformShell extends StatelessWidget {
   const PlatformShell({
@@ -216,10 +219,12 @@ class PlatformSidebarContainer extends StatelessWidget {
     super.key,
     required this.onBrandTap,
     required this.children,
+    required this.currentUser,
   });
 
   final VoidCallback onBrandTap;
   final List<Widget> children;
+  final UserModel currentUser;
 
   @override
   Widget build(BuildContext context) {
@@ -240,15 +245,138 @@ class PlatformSidebarContainer extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          const _PlatformInstallAppButton(),
+          _PlatformSidebarFooter(currentUser: currentUser),
         ],
       ),
     );
   }
 }
 
+class _PlatformSidebarFooter extends StatelessWidget {
+  const _PlatformSidebarFooter({required this.currentUser});
+
+  final UserModel currentUser;
+
+  @override
+  Widget build(BuildContext context) {
+    final service = OfflineSyncStatusService.instance;
+    return AnimatedBuilder(
+      animation: service,
+      builder: (context, _) {
+        // The sidebar belongs to the active account. Do not surface a stale
+        // conflict from a previously signed-out account in this session.
+        final snapshot = service.snapshot;
+        final canReviewSync = RoleAccessService.instance.canAccess(
+          'sync.read',
+          role: currentUser.role,
+        );
+
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 180),
+          child: _showsSyncStatus(snapshot)
+              ? _PlatformSyncStatusButton(
+                  key: const ValueKey('sidebar-sync-status'),
+                  snapshot: snapshot,
+                  canReviewSync: canReviewSync,
+                )
+              : const _PlatformInstallAppButton(
+                  key: ValueKey('sidebar-install'),
+                ),
+        );
+      },
+    );
+  }
+
+  bool _showsSyncStatus(OfflineSyncStatusSnapshot snapshot) {
+    return !snapshot.isOnline ||
+        snapshot.hasFailedActions ||
+        snapshot.hasPendingActions ||
+        snapshot.isSyncing;
+  }
+}
+
+class _PlatformSyncStatusButton extends StatelessWidget {
+  const _PlatformSyncStatusButton({
+    super.key,
+    required this.snapshot,
+    required this.canReviewSync,
+  });
+
+  final OfflineSyncStatusSnapshot snapshot;
+  final bool canReviewSync;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isOffline = !snapshot.isOnline;
+    final bool hasIssue = snapshot.hasFailedActions;
+    final bool isSyncing = snapshot.isSyncing;
+    final bool hasPendingActions = snapshot.hasPendingActions;
+    final IconData icon = hasIssue
+        ? Icons.error_outline_rounded
+        : isSyncing
+        ? Icons.sync_rounded
+        : hasPendingActions
+        ? Icons.cloud_upload_outlined
+        : isOffline
+        ? Icons.portable_wifi_off_rounded
+        : Icons.cloud_done_outlined;
+    final String label = hasIssue
+        ? 'Sync issue - Review'
+        : isSyncing
+        ? 'Syncing'
+        : hasPendingActions
+        ? '${snapshot.pendingActions} unsynced action${snapshot.pendingActions == 1 ? '' : 's'}'
+        : 'Offline mode';
+    final Color borderColor = hasIssue || isOffline
+        ? const Color(0xFFFFB4B4)
+        : isSyncing
+        ? const Color(0xFFC7A9FF)
+        : Colors.white.withValues(alpha: 0.32);
+    final Color backgroundColor = hasIssue || isOffline
+        ? const Color(0xFF8E3040)
+        : isSyncing
+        ? const Color(0xFF5A329D)
+        : Colors.white.withValues(alpha: 0.16);
+
+    return AppMousePressable(
+      // Keep the side-panel action consistent with the auth sync banner.
+      // A review is useful only for a blocked conflict, not normal queued work.
+      onTap: canReviewSync && hasIssue
+          ? () => showOfflineConflictReviewSheet(context)
+          : null,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        key: key,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _PlatformInstallAppButton extends StatelessWidget {
-  const _PlatformInstallAppButton();
+  const _PlatformInstallAppButton({super.key});
 
   void _handleInstall() {
     webAppInstallService.openInstallPage();

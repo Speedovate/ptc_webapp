@@ -186,6 +186,9 @@ class StatusRequest implements StatusFormRepository {
   Future<List<StatusField>> getAllFields() async {
     return _runRequest(() async {
       initialize();
+      if (!currentNetworkStatus() && _hasResolvedFields) {
+        return List<StatusField>.from(_hydratedFieldsSnapshot);
+      }
       try {
         final documents = await _cache.getDocuments(
           resourceKey: _statusFieldsResourceKey,
@@ -241,6 +244,9 @@ class StatusRequest implements StatusFormRepository {
   Future<List<Status>> getStatuses() async {
     return _runRequest(() async {
       initialize();
+      if (!currentNetworkStatus() && _hasResolvedStatuses) {
+        return List<Status>.from(_hydratedStatusesSnapshot);
+      }
       try {
         final documents = await _cache.getDocuments(
           resourceKey: _statusesResourceKey,
@@ -892,6 +898,9 @@ class StatusRequest implements StatusFormRepository {
   }
 
   Future<List<StatusForm>> _getHydratedForms() async {
+    if (!currentNetworkStatus() && _hasResolvedForms && _hasResolvedFields) {
+      return List<StatusForm>.from(_hydratedFormsSnapshot);
+    }
     try {
       final results = await Future.wait([
         _cache.getDocuments(

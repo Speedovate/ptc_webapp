@@ -605,7 +605,9 @@ class OfflineMediaSyncService {
     _OfflineMediaQueueEntry entry,
   ) {
     return SupportMessage(
-      id: 'queued_${entry.id}',
+      // Reuse the optimistic local message ID so a restart cannot create a
+      // duplicate bubble beside the queued message.
+      id: _pendingSupportMessageId(entry),
       localOrderKey: entry.localOrderKey,
       threadId: entry.threadId,
       senderUserId: entry.senderUserId,
@@ -617,6 +619,13 @@ class OfflineMediaSyncService {
           .map(
             (attachment) => SupportAttachment(
               name: attachment.fileName,
+              // The bytes are already persisted in the offline queue. Expose
+              // them as a local data URL so queued image chats remain visible
+              // after a browser restart and while offline.
+              downloadUrl: _dataUrlForBytes(
+                bytes: base64Decode(attachment.bytesBase64),
+                mimeType: attachment.mimeType,
+              ),
               mimeType: attachment.mimeType,
               size: attachment.size,
             ),
@@ -625,6 +634,18 @@ class OfflineMediaSyncService {
       createdAt: DateTime.tryParse(entry.createdAtIso)?.toUtc(),
       updatedAt: DateTime.tryParse(entry.createdAtIso)?.toUtc(),
     ).toMap();
+  }
+
+  String _pendingSupportMessageId(_OfflineMediaQueueEntry entry) {
+    final localOrderKey = entry.localOrderKey?.trim() ?? '';
+    final separatorIndex = localOrderKey.indexOf('|');
+    final candidate = separatorIndex >= 0
+        ? localOrderKey.substring(0, separatorIndex).trim()
+        : localOrderKey;
+    if (candidate.startsWith('local_') || candidate.startsWith('queued_')) {
+      return candidate;
+    }
+    return 'queued_${entry.id}';
   }
 }
 

@@ -2,7 +2,7 @@
 {{flutter_build_config}}
 
 (function () {
-  const deployVersion = '2026-09-01-dropdown-refresh-1';
+  const deployVersion = '2026-09-03-persistent-images-1';
   const flutterServiceWorkerVersion =
     {{flutter_service_worker_version}} || String(Date.now());
   const serviceWorkerVersion =

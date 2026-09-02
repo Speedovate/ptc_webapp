@@ -43,7 +43,7 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   @override
   void initState() {
     super.initState();
-    if (kIsWeb && !_usesDirectWebImage) {
+    if (kIsWeb) {
       unawaited(_refreshWebImageSource());
       _onlineSubscription = onlineEvents().listen((_) {
         if (!mounted) {
@@ -68,7 +68,7 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
       _isRecoveringCachedImage = false;
       _reloadToken = 0;
       _cachedImageDataUrl = null;
-      if (kIsWeb && !_usesDirectWebImage) {
+      if (kIsWeb) {
         unawaited(_refreshWebImageSource());
       }
     }
@@ -123,19 +123,8 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     return '${widget.imageUrl}${separator}img_retry=$_reloadToken';
   }
 
-  // Firebase Storage download URLs can be rendered by an image element, but
-  // fetching their bytes with XHR requires bucket CORS configuration.
-  bool get _usesDirectWebImage {
-    if (!kIsWeb) {
-      return false;
-    }
-    final host = Uri.tryParse(widget.imageUrl.trim())?.host.toLowerCase();
-    return host == 'firebasestorage.googleapis.com' ||
-        host == 'storage.googleapis.com';
-  }
-
   Future<void> _recoverCachedImageAfterError() async {
-    if (!kIsWeb || _usesDirectWebImage || _isRecoveringCachedImage) {
+    if (!kIsWeb || _isRecoveringCachedImage) {
       return;
     }
     if (mounted) {
@@ -160,7 +149,7 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   }
 
   Future<void> _refreshWebImageSource({bool forceRefresh = false}) async {
-    if (!kIsWeb || _usesDirectWebImage) {
+    if (!kIsWeb) {
       return;
     }
     final normalizedUrl = widget.imageUrl.trim();

@@ -29,7 +29,13 @@ class SupportMessage {
 
   bool get hasText => text?.trim().isNotEmpty == true;
   bool get hasAttachments => attachments.isNotEmpty;
-  bool get isPendingUpload => (id?.trim().startsWith('local_') ?? false);
+  // Both prefixes are local-only records. `queued_` is retained for queues
+  // written by older app versions, while new queue entries reuse `local_`.
+  bool get isPendingUpload {
+    final normalizedId = id?.trim() ?? '';
+    return normalizedId.startsWith('local_') ||
+        normalizedId.startsWith('queued_');
+  }
 
   Map<String, dynamic> toMap() {
     return {

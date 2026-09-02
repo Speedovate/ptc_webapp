@@ -1762,7 +1762,7 @@ class SupportRequest {
     final visibleMessages = merged.map(SupportMessage.fromMap).toList();
     for (final queuedDocument in queuedDocuments) {
       final queuedMessage = SupportMessage.fromMap(queuedDocument);
-      final alreadyVisible = visibleMessages.any(
+      final matchingIndex = visibleMessages.indexWhere(
         (message) =>
             _matchesPendingSupportMessage(
               pendingMessage: queuedMessage,
@@ -1773,7 +1773,13 @@ class SupportRequest {
               remoteMessage: queuedMessage,
             ),
       );
-      if (alreadyVisible) {
+      if (matchingIndex >= 0) {
+        // The persisted queue has the attachment bytes. Prefer it over the
+        // lightweight local placeholder, but never replace a synced message.
+        if (visibleMessages[matchingIndex].isPendingUpload) {
+          merged[matchingIndex] = Map<String, dynamic>.from(queuedDocument);
+          visibleMessages[matchingIndex] = queuedMessage;
+        }
         continue;
       }
       merged.add(Map<String, dynamic>.from(queuedDocument));

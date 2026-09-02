@@ -138,8 +138,10 @@ class AppShellViewModel extends BaseViewModel {
     _sessionInvalidationSubscription = null;
     currentUser = null;
     _roleAccessService.setCurrentUser(null);
-    await _chassisCheckAlertService.stop();
-    await _chassisPushNotificationService.stop();
+    // Logout is local-first. Optional audio/push cleanup must never make an
+    // offline user wait before the signed-out screen is shown.
+    unawaited(_chassisCheckAlertService.stop());
+    unawaited(_chassisPushNotificationService.stop());
     isQuickLoggedIn = false;
     notifyListeners();
     try {

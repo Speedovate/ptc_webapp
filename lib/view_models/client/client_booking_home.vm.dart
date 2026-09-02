@@ -12,6 +12,7 @@ import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
+import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
@@ -132,6 +133,12 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     );
     loadError = null;
     blockedMessage = null;
+    if (!currentNetworkStatus()) {
+      // A new modal has no in-memory flow graph after a reload. Restore the
+      // previously loaded Firestore form library before resolving the booking
+      // form, so offline creation remains available.
+      await StatusRequest.instance.primeResolvedSnapshotsFromLocalCache();
+    }
     _primeSharedBookFormData(clientUser);
     notifyListeners();
 
