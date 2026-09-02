@@ -17,6 +17,7 @@ import 'package:webapp/views/admin/admin_bookings.dart';
 import 'package:webapp/views/shared/booking_workflow_view.dart';
 import 'package:webapp/views/shared/support_center_view.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
@@ -64,6 +65,10 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
   @override
   void initState() {
     super.initState();
+    PerformanceTrace.event(
+      'admin-dashboard-view',
+      'init user=${widget.user.id ?? '-'}',
+    );
     _detailScrollController = ScrollController();
     _viewModel.primeCurrentUser(widget.user);
     unawaited(_viewModel.load());
@@ -81,12 +86,14 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
 
   @override
   void dispose() {
+    PerformanceTrace.event('admin-dashboard-view', 'dispose');
     _detailScrollController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    PerformanceTrace.build('admin-dashboard-view');
     return ViewModelBuilder<AdminDashboardViewModel>.reactive(
       viewModelBuilder: () => _viewModel,
       builder: (context, vm, child) {

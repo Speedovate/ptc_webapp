@@ -41,7 +41,11 @@ String _formatFormsFilterDateValue(DateTime? value) {
 }
 
 class AdminFormsView extends StatelessWidget {
-  const AdminFormsView({super.key});
+  const AdminFormsView({super.key, this.viewModel});
+
+  /// AdminHome supplies one model for all Flow tabs so tab changes do not
+  /// create extra realtime subscriptions or reload the same graph.
+  final AdminFlowViewModel? viewModel;
 
   static const toolbarSectionGap = 12.0;
   static const tableSectionGap = 14.0;
@@ -51,7 +55,8 @@ class AdminFormsView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ViewModelBuilder<AdminFlowViewModel>.reactive(
-      viewModelBuilder: AdminFlowViewModel.new,
+      viewModelBuilder: () => viewModel ?? AdminFlowViewModel(),
+      disposeViewModel: viewModel == null,
       onViewModelReady: (vm) => vm.loadFormsPage(),
       builder: (context, vm, _) {
         return AppPageLoadingOverlay(

@@ -10,13 +10,18 @@ import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class AdminUsersViewModel extends BaseViewModel {
-  AdminUsersViewModel({AuthRepository? repository})
-    : _repository = repository ?? AuthRequest.instance {
+  AdminUsersViewModel({
+    AuthRepository? repository,
+    UserModel? fallbackCurrentUser,
+  }) : _repository = repository ?? AuthRequest.instance {
     _users.addAll(_cachedUsers);
-    _currentUser = _cachedCurrentUser;
+    _currentUser = fallbackCurrentUser ?? _cachedCurrentUser;
     _viewedUser = _cachedViewedUser;
     _viewedUserStack.addAll(_cachedViewedUserStack);
     _hasLoadedOnce = _cachedHasLoadedOnce;
+    if (fallbackCurrentUser != null) {
+      _cachedCurrentUser = fallbackCurrentUser;
+    }
   }
 
   final AuthRepository _repository;
@@ -181,9 +186,7 @@ class AdminUsersViewModel extends BaseViewModel {
       }
       if (_viewedUserStack.isNotEmpty) {
         final refreshedStack = _viewedUserStack
-            .map(
-              (item) => _findUserById(item.id),
-            )
+            .map((item) => _findUserById(item.id))
             .whereType<UserModel>()
             .toList(growable: false);
         _viewedUserStack
@@ -327,14 +330,17 @@ class AdminUsersViewModel extends BaseViewModel {
 
   Future<void> loginAsUser(UserModel user) async {
     if (!canSignInAsOtherUsers) {
-      throw const AuthFailure('You do not have access to sign in as other users.');
+      throw const AuthFailure(
+        'You do not have access to sign in as other users.',
+      );
     }
     final userId = user.id ?? '';
     if (userId.isEmpty) {
       throw const AuthFailure('User ID is required.');
     }
     final roleLabel = humanizeDropdownValue(user.role).trim();
-    _busyMessage = 'Signing in as ${roleLabel.isEmpty ? 'user' : roleLabel} ...';
+    _busyMessage =
+        'Signing in as ${roleLabel.isEmpty ? 'user' : roleLabel} ...';
     setBusy(true);
     try {
       await _repository.loginAsUser(userId);

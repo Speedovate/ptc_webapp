@@ -16,6 +16,7 @@ import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
 import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 
 class AdminBookingsViewModel extends BaseViewModel {
   static const Duration _loadStepTimeout = Duration(seconds: 8);
@@ -29,6 +30,7 @@ class AdminBookingsViewModel extends BaseViewModel {
        _statusRepository = statusRepository ?? StatusRequest.instance,
        _vehicleCatalogRepository =
            vehicleCatalogRepository ?? VehicleRequest.instance {
+    PerformanceTrace.event('admin-bookings-vm', 'created');
     _bookings.addAll(_cachedBookings);
     _usersById.addAll(_cachedUsersById);
     _statusesByKey.addAll(_cachedStatusesByKey);
@@ -101,6 +103,11 @@ class AdminBookingsViewModel extends BaseViewModel {
   String _busyMessage = 'Loading, please wait ...';
   bool _hasLoadedOnce = false;
 
+  bool get _hasSupportingData =>
+      _usersById.isNotEmpty &&
+      _statusesByKey.isNotEmpty &&
+      _vehicleSizes.isNotEmpty;
+
   List<Booking> get bookings => List.unmodifiable(_bookings);
   String get searchQuery => _searchQuery;
   String get statusFilter => _statusFilter;
@@ -143,6 +150,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   }
 
   Future<void> _loadInternal() async {
+    final stopwatch = Stopwatch()..start();
     _ensureSupportingSubscriptions();
     _busyMessage = 'Loading bookings ...';
     var hasSharedBookings = BookingRequest.hasAuthoritativeBookings;
@@ -155,6 +163,10 @@ class AdminBookingsViewModel extends BaseViewModel {
     }
     _log(
       'load start visibleBookings=${!shouldShowLoadingState} cachedBookings=${_cachedBookings.length} localBookings=${_bookings.length} sharedBookings=$hasSharedBookings',
+    );
+    PerformanceTrace.event(
+      'admin-bookings-vm',
+      'load start cached=${_cachedBookings.length} local=${_bookings.length} authoritative=$hasSharedBookings',
     );
     if (!shouldShowLoadingState) {
       _log('silent load only section=bookings');
@@ -177,9 +189,16 @@ class AdminBookingsViewModel extends BaseViewModel {
         );
       }
 
-      // Supporting catalogs populate silently and must not extend the booking
-      // list's visible loading state.
-      unawaited(_reloadSupportingData());
+      // Reuse the page cache after a menu revisit. Realtime subscriptions
+      // still refresh these values only when their source actually changes.
+      if (!_hasSupportingData) {
+        unawaited(_reloadSupportingData());
+      } else {
+        PerformanceTrace.event(
+          'admin-bookings-vm',
+          'supporting data reused from cache',
+        );
+      }
       if (hasSharedBookings) {
         _markInitialBookingsResolved();
       }
@@ -200,6 +219,10 @@ class AdminBookingsViewModel extends BaseViewModel {
       _log(
         'load finish busy=$isBusy bookings=${_bookings.length} users=${_usersById.length} statuses=${_statusesByKey.length} sizes=${_vehicleSizes.length} error=${errorMessage ?? "-"}',
       );
+      PerformanceTrace.event(
+        'admin-bookings-vm',
+        'load finish elapsedMs=${stopwatch.elapsedMilliseconds} bookings=${_bookings.length} busy=$isBusy error=${errorMessage ?? "-"}',
+      );
       notifyListeners();
     }
   }
@@ -208,16 +231,19 @@ class AdminBookingsViewModel extends BaseViewModel {
     _usersCacheUpdatesSubscription ??= AuthRequest.instance
         .watchUsersCacheUpdates()
         .listen((_) {
+          PerformanceTrace.event('admin-bookings-vm', 'users cache signal');
           unawaited(_reloadSupportingData());
         });
     _statusCacheUpdatesSubscription ??= StatusRequest.instance
         .watchStatusCacheUpdates()
         .listen((_) {
+          PerformanceTrace.event('admin-bookings-vm', 'statuses cache signal');
           unawaited(_reloadSupportingData());
         });
     _catalogCacheUpdatesSubscription ??= VehicleRequest.instance
         .watchCatalogCacheUpdates()
         .listen((_) {
+          PerformanceTrace.event('admin-bookings-vm', 'catalog cache signal');
           unawaited(_reloadSupportingData());
         });
   }
@@ -225,8 +251,14 @@ class AdminBookingsViewModel extends BaseViewModel {
   Future<void> _reloadSupportingData() async {
     if (_isRealtimeRefreshing) {
       _log('supporting reload skipped already-running');
+      PerformanceTrace.event(
+        'admin-bookings-vm',
+        'supporting reload skipped in-flight',
+      );
       return;
     }
+    final stopwatch = Stopwatch()..start();
+    PerformanceTrace.event('admin-bookings-vm', 'supporting reload start');
     _isRealtimeRefreshing = true;
     _log('supporting reload start');
     try {
@@ -263,6 +295,10 @@ class AdminBookingsViewModel extends BaseViewModel {
       // Keep current visible state if live support data refresh fails.
     } finally {
       _isRealtimeRefreshing = false;
+      PerformanceTrace.event(
+        'admin-bookings-vm',
+        'supporting reload finish elapsedMs=${stopwatch.elapsedMilliseconds} users=${_usersById.length} statuses=${_statusesByKey.length} sizes=${_vehicleSizes.length}',
+      );
     }
   }
 
@@ -273,6 +309,10 @@ class AdminBookingsViewModel extends BaseViewModel {
     _bookingsSubscription = _bookingRepository.watchBookings().listen((
       bookings,
     ) {
+      PerformanceTrace.event(
+        'admin-bookings-vm',
+        'booking stream event count=${bookings.length} authoritative=${BookingRequest.hasAuthoritativeBookings}',
+      );
       if (!BookingRequest.hasAuthoritativeBookings) {
         // Wait for the first server-confirmed snapshot instead of briefly
         // rendering an empty list from the provisional local cache.
@@ -378,6 +418,7 @@ class AdminBookingsViewModel extends BaseViewModel {
 
   @override
   void dispose() {
+    PerformanceTrace.event('admin-bookings-vm', 'dispose');
     _usersCacheUpdatesSubscription?.cancel();
     _statusCacheUpdatesSubscription?.cancel();
     _catalogCacheUpdatesSubscription?.cancel();

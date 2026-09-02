@@ -3,13 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/models/chassis.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/requests/chassis.request.dart';
 import 'package:webapp/requests/support.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/view_models/admin/admin_home.vm.dart';
+import 'package:webapp/view_models/admin/admin_flow.vm.dart';
+import 'package:webapp/view_models/admin/admin_users.vm.dart';
 import 'package:webapp/views/admin/admin_bookings.dart';
 import 'package:webapp/views/admin/admin_chassis.dart';
 import 'package:webapp/views/admin/admin_access.dart';
@@ -33,6 +37,7 @@ import 'package:webapp/widgets/shared/user_bookings_section.dart';
 import 'package:webapp/widgets/sidebar_menu_item.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/services/role_access_service.dart';
+import 'package:webapp/utils/performance_trace.dart';
 
 class AdminHome extends StatefulWidget {
   const AdminHome({
@@ -54,15 +59,19 @@ class AdminHome extends StatefulWidget {
 
 class _AdminHomeState extends State<AdminHome> {
   final AdminHomeViewModel _viewModel = AdminHomeViewModel();
+  final AdminFlowViewModel _flowViewModel = AdminFlowViewModel();
+  late final AdminUsersViewModel _profileUsersViewModel;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final AuthRepository _authRepository = AuthRequest.instance;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   final SupportRequest _supportRequest = SupportRequest.instance;
   late UserModel _shellUser;
   StreamSubscription<List<Booking>>? _bookingsBadgeSubscription;
+  StreamSubscription<List<Chassis>>? _chassisBadgeSubscription;
   StreamSubscription<List<SupportThread>>? _supportBadgeSubscription;
   StreamSubscription<void>? _supportReadBadgeSubscription;
   List<Booking> _sidebarBookings = const <Booking>[];
+  List<Chassis> _sidebarChassis = const <Chassis>[];
   List<SupportThread> _sidebarThreads = const <SupportThread>[];
   Map<String, String> _sidebarThreadReadMarkers = const <String, String>{};
   bool _hasResolvedSidebarThreadReadMarkers = false;
@@ -80,7 +89,17 @@ class _AdminHomeState extends State<AdminHome> {
   @override
   void initState() {
     super.initState();
+    PerformanceTrace.event(
+      'admin-home',
+      'init user=${widget.user.id ?? '-'} role=${widget.user.role ?? '-'}',
+    );
     _shellUser = widget.user;
+    _profileUsersViewModel = AdminUsersViewModel(
+      fallbackCurrentUser: _shellUser,
+    );
+    unawaited(
+      _profileUsersViewModel.loadUsers(fallbackCurrentUser: _shellUser),
+    );
     _startSidebarBadgeSync();
   }
 
@@ -98,19 +117,25 @@ class _AdminHomeState extends State<AdminHome> {
 
   @override
   void dispose() {
+    PerformanceTrace.event('admin-home', 'dispose');
     _bookingsBadgeSubscription?.cancel();
+    _chassisBadgeSubscription?.cancel();
     _supportBadgeSubscription?.cancel();
     _supportReadBadgeSubscription?.cancel();
+    _flowViewModel.dispose();
+    _profileUsersViewModel.dispose();
     super.dispose();
   }
 
   void _startSidebarBadgeSync() {
     _bookingsBadgeSubscription?.cancel();
+    _chassisBadgeSubscription?.cancel();
     _supportBadgeSubscription?.cancel();
     _supportReadBadgeSubscription?.cancel();
 
     final userId = _shellUser.id?.trim();
     _sidebarBookings = BookingRequest.hydratedBookingsSnapshot;
+    _sidebarChassis = ChassisRequest.instance.hydratedChassisSnapshot;
     _sidebarThreads = SupportRequest.hydratedAllThreadsSnapshot;
     _sidebarThreadReadMarkers = const <String, String>{};
     _hasResolvedSidebarThreadReadMarkers = false;
@@ -124,8 +149,22 @@ class _AdminHomeState extends State<AdminHome> {
         setState(() {
           _sidebarBookings = List<Booking>.from(bookings);
         });
+        PerformanceTrace.event(
+          'admin-home',
+          'sidebar bookings update count=${bookings.length}',
+        );
       },
     );
+    _chassisBadgeSubscription = ChassisRequest.instance.watchChassis().listen((
+      chassis,
+    ) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _sidebarChassis = List<Chassis>.from(chassis);
+      });
+    });
     _supportBadgeSubscription = _supportRequest.watchAllThreads().listen((
       threads,
     ) {
@@ -135,6 +174,10 @@ class _AdminHomeState extends State<AdminHome> {
       setState(() {
         _sidebarThreads = List<SupportThread>.from(threads);
       });
+      PerformanceTrace.event(
+        'admin-home',
+        'sidebar support update count=${threads.length}',
+      );
     });
     if (userId == null || userId.isEmpty) {
       return;
@@ -154,6 +197,10 @@ class _AdminHomeState extends State<AdminHome> {
       _sidebarThreadReadMarkers = markers;
       _hasResolvedSidebarThreadReadMarkers = true;
     });
+    PerformanceTrace.event(
+      'admin-home',
+      'sidebar read markers resolved count=${markers.length}',
+    );
   }
 
   int get _pendingBookingsBadgeCount => _sidebarBookings.where((booking) {
@@ -163,6 +210,29 @@ class _AdminHomeState extends State<AdminHome> {
   int get _unbilledBookingsBadgeCount => _sidebarBookings.where((booking) {
     return (booking.billingStatus ?? '').trim().toLowerCase() == 'unbilled';
   }).length;
+
+  int get _emptyChassisBadgeCount => _sidebarChassis.where((chassis) {
+    return chassis.isActive && chassis.currentStatus == Chassis.empty;
+  }).length;
+
+  Widget _vehiclesTrailing(AdminHomeViewModel vm) {
+    final badge = vm.isVehiclesExpanded
+        ? null
+        : _sidebarBadge(_emptyChassisBadgeCount);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (badge != null) ...[badge, const SizedBox(width: 6)],
+        Icon(
+          vm.isVehiclesExpanded
+              ? Icons.keyboard_arrow_down_rounded
+              : Icons.chevron_right_rounded,
+          color: Colors.white,
+          size: 18,
+        ),
+      ],
+    );
+  }
 
   int get _unreadSupportBadgeCount {
     // Threads can arrive from cache/realtime before the current user's read
@@ -255,8 +325,27 @@ class _AdminHomeState extends State<AdminHome> {
     }
   }
 
+  Future<void> _openProfileEditDialog() async {
+    await AdminUsersView.showEditUserDialog(
+      context,
+      _profileUsersViewModel,
+      _shellUser,
+      () async {
+        await widget.onUserUpdated();
+        final refreshedUser = await _authRepository.getCurrentUser();
+        if (!mounted || refreshedUser == null) {
+          return;
+        }
+        setState(() {
+          _shellUser = refreshedUser;
+        });
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    PerformanceTrace.build('admin-home');
     return AnimatedBuilder(
       animation: _roleAccessService,
       builder: (context, _) {
@@ -501,13 +590,7 @@ class _AdminHomeState extends State<AdminHome> {
             label: AdminSection.vehicles.title,
             icon: _menuIcon(AdminSection.vehicles),
             isSelected: false,
-            trailing: Icon(
-              vm.isVehiclesExpanded
-                  ? Icons.keyboard_arrow_down_rounded
-                  : Icons.chevron_right_rounded,
-              color: Colors.white,
-              size: 18,
-            ),
+            trailing: _vehiclesTrailing(vm),
             onTap: vm.toggleVehiclesExpanded,
             children: vm.isVehiclesExpanded
                 ? [
@@ -520,6 +603,7 @@ class _AdminHomeState extends State<AdminHome> {
                             vm.selectedSection == AdminSection.vehicles &&
                             vm.selectedVehiclesSection ==
                                 AdminVehiclesSection.chassis,
+                        trailing: _sidebarBadge(_emptyChassisBadgeCount),
                         onTap: () {
                           vm.selectVehiclesSection(
                             AdminVehiclesSection.chassis,
@@ -732,9 +816,13 @@ class _AdminHomeState extends State<AdminHome> {
         AdminVehiclesSection.chassis => const AdminChassisView(),
       },
       AdminSection.settings => switch (_resolvedSettingsSection()) {
-        AdminSettingsSection.forms => const AdminFormsView(),
-        AdminSettingsSection.fields => const AdminFieldsView(),
-        AdminSettingsSection.statuses => const AdminStatusesView(),
+        AdminSettingsSection.forms => AdminFormsView(viewModel: _flowViewModel),
+        AdminSettingsSection.fields => AdminFieldsView(
+          viewModel: _flowViewModel,
+        ),
+        AdminSettingsSection.statuses => AdminStatusesView(
+          viewModel: _flowViewModel,
+        ),
       },
       AdminSection.users => AdminUsersView(
         user: _shellUser,
@@ -771,9 +859,7 @@ class _AdminHomeState extends State<AdminHome> {
               onSaveProfileChanges: _canUpdateProfile
                   ? _saveProfileChanges
                   : null,
-              onEditPressed: () {
-                _viewModel.openUsersForEdit(_shellUser.id);
-              },
+              onEditPressed: () => unawaited(_openProfileEditDialog()),
             ),
             const SizedBox(height: 12),
             UserBookingsSection(user: _shellUser),

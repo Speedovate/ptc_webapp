@@ -1,4 +1,5 @@
 import 'package:stacked/stacked.dart';
+import 'package:webapp/utils/performance_trace.dart';
 
 enum AdminSection {
   dashboard('Dashboard'),
@@ -53,9 +54,16 @@ class AdminHomeViewModel extends BaseViewModel {
 
   void selectSection(AdminSection section) {
     if (selectedSection == section) {
+      PerformanceTrace.event(
+        'admin-nav',
+        'select ignored section=${section.name}',
+      );
       return;
     }
-
+    PerformanceTrace.event(
+      'admin-nav',
+      'select from=${selectedSection.name} to=${section.name}',
+    );
     selectedSection = section;
     notifyListeners();
   }
@@ -85,6 +93,7 @@ class AdminHomeViewModel extends BaseViewModel {
   }
 
   void selectSettingsSection(AdminSettingsSection section) {
+    PerformanceTrace.event('admin-nav', 'select flow section=${section.name}');
     selectedSection = AdminSection.settings;
     selectedSettingsSection = section;
     isSettingsExpanded = true;
@@ -92,6 +101,10 @@ class AdminHomeViewModel extends BaseViewModel {
   }
 
   void selectVehiclesSection(AdminVehiclesSection section) {
+    PerformanceTrace.event(
+      'admin-nav',
+      'select vehicle section=${section.name}',
+    );
     selectedSection = AdminSection.vehicles;
     selectedVehiclesSection = section;
     isVehiclesExpanded = true;

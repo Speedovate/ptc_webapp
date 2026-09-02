@@ -7,6 +7,7 @@ import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 import 'package:webapp/views/client/client_booking_history_view.dart';
 import 'package:webapp/views/client/client_booking_home_view.dart';
 import 'package:webapp/view_models/shared/role_assigned_home.vm.dart';
@@ -131,6 +132,11 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
     return ViewModelBuilder<RolePlatformHomeViewModel>.reactive(
       viewModelBuilder: () => _viewModel,
       builder: (context, vm, _) {
+        PerformanceTrace.build(
+          'role-platform-home',
+          details:
+              'role=${_shellUser.role ?? "-"} section=${vm.selectedSection.name}',
+        );
         final width = MediaQuery.of(context).size.width;
         final isCompact = width < 1100;
         final showRail = !isCompact && vm.showDrawer;
@@ -152,20 +158,21 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
           logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
           sidebar: _buildSidebar(vm, isCompact: isCompact),
           body: SupportSectionNavigationScope(
-            onOpenSupport: ({
-              String? initialTopicKey,
-              String? initialBookingId,
-              String? initialUserId,
-            }) {
-              setState(() {
-                _supportInitialTopicKey = initialTopicKey;
-                _supportInitialBookingId = initialBookingId;
-                _supportInitialUserId = initialUserId;
-                _supportViewTick++;
-                _selectedHistoryBooking = null;
-              });
-              _viewModel.selectSection(RolePlatformSection.support);
-            },
+            onOpenSupport:
+                ({
+                  String? initialTopicKey,
+                  String? initialBookingId,
+                  String? initialUserId,
+                }) {
+                  setState(() {
+                    _supportInitialTopicKey = initialTopicKey;
+                    _supportInitialBookingId = initialBookingId;
+                    _supportInitialUserId = initialUserId;
+                    _supportViewTick++;
+                    _selectedHistoryBooking = null;
+                  });
+                  _viewModel.selectSection(RolePlatformSection.support);
+                },
             child: AppPageLoadingOverlay(
               isVisible: overlayVisible,
               message: overlayMessage,
@@ -180,10 +187,8 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
     );
   }
 
-  bool get _canUpdateProfile => _roleAccessService.canAccess(
-    'profile.update',
-    role: _shellUser.role,
-  );
+  bool get _canUpdateProfile =>
+      _roleAccessService.canAccess('profile.update', role: _shellUser.role);
 
   Widget _buildSidebar(
     RolePlatformHomeViewModel vm, {
@@ -256,7 +261,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
   }
 
   void _log(String message) {
-    // Temporary debug logging removed.
+    PerformanceTrace.event('role-platform-home', message);
   }
 
   Widget _buildSelectedSection(RolePlatformSection section) {
@@ -433,6 +438,18 @@ class _RoleAssignedHomeSection extends StatelessWidget {
                                     AppSnackbar.showError(
                                       context,
                                       error.message,
+                                    );
+                                  } catch (error) {
+                                    if (!context.mounted) {
+                                      return;
+                                    }
+                                    AppSnackbar.showError(
+                                      context,
+                                      userFacingErrorMessage(
+                                        error,
+                                        fallback:
+                                            'We could not update your availability. Please try again.',
+                                      ),
                                     );
                                   }
                                 },

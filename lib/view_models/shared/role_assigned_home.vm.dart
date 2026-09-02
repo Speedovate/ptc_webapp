@@ -15,6 +15,7 @@ import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 
 class RoleAssignedHomeViewModel extends BaseViewModel {
   RoleAssignedHomeViewModel({
@@ -68,8 +69,12 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   String busyMessage = 'Loading, please wait ...';
   bool _isRealtimeRefreshing = false;
   bool _hasLoadedOnce = false;
+  int _loadEpoch = 0;
+  bool _isDisposed = false;
 
   Future<void> load(UserModel user) async {
+    final loadEpoch = ++_loadEpoch;
+    final loadStopwatch = Stopwatch()..start();
     _log(
       'load start loggedIn=${user.id != null} user=${user.id ?? "-"} role=${user.role ?? "-"} visiblePrimary=${assignedBookings.isNotEmpty || _cachedAssignedBookings.isNotEmpty || currentUser != null || _cachedCurrentUser != null || _usersById.isNotEmpty || _cachedUsersById.isNotEmpty || _statusesByKey.isNotEmpty || _cachedStatusesByKey.isNotEmpty}',
     );
@@ -109,6 +114,12 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
           _bookingRepository.getBookings(),
         ChassisRequest.instance.getChassis(),
       ]);
+      if (_isDisposed || loadEpoch != _loadEpoch) {
+        _log(
+          'load abandoned user=${user.id ?? "-"} elapsedMs=${loadStopwatch.elapsedMilliseconds}',
+        );
+        return;
+      }
       final users = results[0] as List<UserModel>;
       final statuses = results[1] as List<Status>;
       final bookings = results[2] as List<Booking>;
@@ -138,6 +149,9 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       _bookingsSubscription = _bookingRepository.watchBookings().listen((
         liveBookings,
       ) {
+        if (_isDisposed || loadEpoch != _loadEpoch) {
+          return;
+        }
         _latestBookings = List<Booking>.from(liveBookings);
         _applyAssignedBookings(liveBookings);
         notifyListeners();
@@ -145,6 +159,9 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       _chassisSubscription = ChassisRequest.instance.watchChassis().listen((
         liveChassis,
       ) {
+        if (_isDisposed || loadEpoch != _loadEpoch) {
+          return;
+        }
         _returnBookingIds = _returnBookingIdsFor(liveChassis, currentUser?.id);
         _applyAssignedBookings(_latestBookings);
         notifyListeners();
@@ -156,10 +173,16 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
       _log(
-        'load success user=${currentUser?.id ?? user.id ?? "-"} role=${currentUser?.role ?? user.role ?? "-"} bookings=${assignedBookings.length} users=${_usersById.length} statuses=${_statusesByKey.length}',
+        'load success user=${currentUser?.id ?? user.id ?? "-"} role=${currentUser?.role ?? user.role ?? "-"} bookings=${assignedBookings.length} users=${_usersById.length} statuses=${_statusesByKey.length} elapsedMs=${loadStopwatch.elapsedMilliseconds}',
       );
       unawaited(_warmupService.warmUpForUser(currentUser));
     } catch (error) {
+      if (_isDisposed || loadEpoch != _loadEpoch) {
+        _log(
+          'load error ignored user=${user.id ?? "-"} elapsedMs=${loadStopwatch.elapsedMilliseconds}',
+        );
+        return;
+      }
       _log(
         'load error user=${user.id ?? "-"} role=${user.role ?? "-"} error=$error',
       );
@@ -171,14 +194,16 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
     } finally {
-      if (shouldShowLoadingState) {
-        setBusy(false);
-        _log('overlay hide section=assigned-home reason=load-finish');
+      if (!_isDisposed && loadEpoch == _loadEpoch) {
+        if (shouldShowLoadingState) {
+          setBusy(false);
+          _log('overlay hide section=assigned-home reason=load-finish');
+        }
+        _log(
+          'load finish user=${currentUser?.id ?? user.id ?? "-"} role=${currentUser?.role ?? user.role ?? "-"} busy=$isBusy bookings=${assignedBookings.length} error=${errorMessage ?? "-"} elapsedMs=${loadStopwatch.elapsedMilliseconds}',
+        );
+        notifyListeners();
       }
-      _log(
-        'load finish user=${currentUser?.id ?? user.id ?? "-"} role=${currentUser?.role ?? user.role ?? "-"} busy=$isBusy bookings=${assignedBookings.length} error=${errorMessage ?? "-"}',
-      );
-      notifyListeners();
     }
   }
 
@@ -283,6 +308,7 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   Future<UserModel?> setOnline(bool isOnline) async {
     final user = currentUser;
     if (user == null) {
+      _log('availability skipped reason=no-current-user');
       return null;
     }
     if (!_roleAccessService.isOnlineEligibleRole(user.role)) {
@@ -290,6 +316,14 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
         'Online availability is only available for Driver and Helper roles.',
       );
     }
+    if (user.isActive != true) {
+      throw const AuthFailure(
+        'Your account must be active before you can change availability.',
+      );
+    }
+    _log(
+      'availability save start user=${user.id ?? "-"} role=${user.role ?? "-"} from=${user.isOnline ?? false} to=$isOnline',
+    );
     busyMessage = isOnline
         ? 'Turning availability on ...'
         : 'Turning availability off ...';
@@ -300,9 +334,16 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       );
       currentUser = savedUser;
       notifyListeners();
+      _log(
+        'availability save success user=${savedUser.id ?? "-"} persisted=${savedUser.isOnline ?? false}',
+      );
       return savedUser;
+    } catch (error) {
+      _log('availability save error user=${user.id ?? "-"} error=$error');
+      rethrow;
     } finally {
       setBusy(false);
+      _log('availability save finish user=${user.id ?? "-"} busy=$isBusy');
     }
   }
 
@@ -347,6 +388,8 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
 
   @override
   void dispose() {
+    _isDisposed = true;
+    _loadEpoch++;
     _usersCacheUpdatesSubscription?.cancel();
     _statusCacheUpdatesSubscription?.cancel();
     _bookingsSubscription?.cancel();
@@ -390,6 +433,6 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   }
 
   void _log(String message) {
-    // Temporary debug logging removed.
+    PerformanceTrace.event('assigned-home-vm', message);
   }
 }

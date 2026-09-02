@@ -19,6 +19,7 @@ import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 
 class _BookingWorkflowCacheSnapshot {
   const _BookingWorkflowCacheSnapshot({
@@ -219,19 +220,30 @@ class BookingWorkflowViewModel extends BaseViewModel {
       'load start booking=${booking.id ?? "-"} status=${booking.clientStatus ?? "-"} role=${user.role ?? "-"} cached=${_cacheByBookingId.containsKey(booking.id ?? "")} visibleForms=${mainForms.length} visibleSecondary=${secondaryForms.length} visibleFields=${fields.length}',
     );
     final cachedSnapshot = _cacheByBookingId[booking.id ?? ''];
-    if (cachedSnapshot != null) {
+    final cachedFingerprint = cachedSnapshot == null
+        ? null
+        : _workflowSnapshotFingerprint(
+            cachedSnapshot.user ?? user,
+            cachedSnapshot.booking ?? booking,
+          );
+    if (cachedSnapshot != null && cachedFingerprint == requestedFingerprint) {
       this.user = cachedSnapshot.user ?? user;
       this.booking = cachedSnapshot.booking ?? booking;
       _restoreCachedState();
+      this.user = user;
+      this.booking = booking;
       if (!hydrateInitialAnswers) {
         answers = {};
         errors = {};
         additionalFields = const [];
         resetTick += 1;
       }
+      _lastHydratedWorkflowFingerprint = requestedFingerprint;
       _log(
-        'cache restore booking=${booking.id ?? "-"} forms=${mainForms.length} secondary=${secondaryForms.length} fields=${fields.length}',
+        'cache hit booking=${booking.id ?? "-"} forms=${mainForms.length} secondary=${secondaryForms.length} fields=${fields.length}',
       );
+      notifyListeners();
+      return;
     }
     final previousStatusKey = previousBooking?.clientStatus?.trim();
     final requestedStatusKey = booking.clientStatus?.trim();
@@ -706,7 +718,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   void _log(String message) {
-    // Temporary diagnostics removed.
+    PerformanceTrace.event('booking-workflow-vm', message);
   }
 
   void _cacheCurrentState() {

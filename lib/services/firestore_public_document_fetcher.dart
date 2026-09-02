@@ -1,6 +1,4 @@
-import 'firestore_public_document_fetcher_stub.dart'
-    if (dart.library.html) 'firestore_public_document_fetcher_web.dart'
-    as impl;
+import 'firestore_public_document_fetcher_stub.dart' as impl;
 
 abstract class FirestorePublicDocumentFetcher {
   Future<List<Map<String, dynamic>>> fetchCollectionDocuments(
@@ -19,5 +17,7 @@ abstract class FirestorePublicDocumentFetcher {
   });
 }
 
+/// Firestore SDK is the only online transport. The noop implementation keeps
+/// legacy fallback call sites from issuing direct REST/XHR browser requests.
 FirestorePublicDocumentFetcher createFirestorePublicDocumentFetcher() =>
     impl.createFirestorePublicDocumentFetcher();

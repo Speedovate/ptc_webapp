@@ -22,6 +22,7 @@ import 'package:webapp/services/local_form_draft_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 import 'package:webapp/view_models/admin/admin_bookings.vm.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/views/client/client_booking_home_view.dart';
@@ -63,42 +64,42 @@ class AdminBookingsView extends StatefulWidget {
       throw Exception('You do not have access to edit bookings.');
     }
     final vm = AdminBookingsViewModel();
-    if (!_hasReadyEditDialogSeedData(vm)) {
-      await vm.load();
-      if (vm.errorMessage != null) {
-        throw Exception(vm.errorMessage!);
+    try {
+      if (!_hasReadyEditDialogSeedData(vm)) {
+        await vm.load();
+        if (vm.errorMessage != null) {
+          throw Exception(vm.errorMessage!);
+        }
       }
+      if (!context.mounted) {
+        return null;
+      }
+      final requirements = await _resolveEditBookingRequirements();
+      final chassis = await _resolveActiveChassis(booking.chassisId);
+      if (!context.mounted) {
+        return null;
+      }
+      return showAppDialog<Booking>(
+        context: context,
+        modalKey: 'booking-edit:${booking.id ?? "-"}',
+        builder: (dialogContext) => _EditAdminBookingDialog(
+          booking: booking,
+          currentUser: currentUser,
+          onSave: vm.saveEditedBooking,
+          currentStatusLabel: vm.clientStatusLabel(booking),
+          clientUsers: vm.clientUsers(),
+          statuses: vm.activeStatuses(),
+          drivers: vm.roleUsers('driver'),
+          helpers: vm.roleUsers('helper'),
+          vehicleSizes: vm.activeVehicleSizes(),
+          chassis: chassis,
+          originBarangayRequired: requirements.originBarangayRequired,
+          destinationBarangayRequired: requirements.destinationBarangayRequired,
+        ),
+      );
+    } finally {
+      vm.dispose();
     }
-    if (!context.mounted) {
-      return null;
-    }
-    final requirements = await _resolveEditBookingRequirements();
-    final chassis = await _resolveActiveChassis(booking.chassisId);
-    if (!context.mounted) {
-      return null;
-    }
-    final updatedBooking = await showAppDialog<Booking>(
-      context: context,
-      modalKey: 'booking-edit:${booking.id ?? "-"}',
-      builder: (dialogContext) => _EditAdminBookingDialog(
-        booking: booking,
-        currentUser: currentUser,
-        onSave: vm.saveEditedBooking,
-        currentStatusLabel: vm.clientStatusLabel(booking),
-        clientUsers: vm.clientUsers(),
-        statuses: vm.activeStatuses(),
-        drivers: vm.roleUsers('driver'),
-        helpers: vm.roleUsers('helper'),
-        vehicleSizes: vm.activeVehicleSizes(),
-        chassis: chassis,
-        originBarangayRequired: requirements.originBarangayRequired,
-        destinationBarangayRequired: requirements.destinationBarangayRequired,
-      ),
-    );
-    if (updatedBooking == null) {
-      return null;
-    }
-    return updatedBooking;
   }
 
   static Future<Booking?> showNewBookingDialog(
@@ -112,43 +113,60 @@ class AdminBookingsView extends StatefulWidget {
       throw Exception('You do not have access to create bookings.');
     }
     final vm = AdminBookingsViewModel();
-    await vm.load();
-    if (vm.errorMessage != null) {
-      throw Exception(vm.errorMessage!);
+    try {
+      await vm.load();
+      if (vm.errorMessage != null) {
+        throw Exception(vm.errorMessage!);
+      }
+      if (!context.mounted) {
+        return null;
+      }
+      return showAppDialog<Booking>(
+        context: context,
+        modalKey: 'booking-new',
+        builder: (dialogContext) => _NewAdminBookingDialog(
+          currentUser: currentUser,
+          clientUsers: vm.clientUsers(),
+          onBookingSubmitted: (booking) {
+            Navigator.of(dialogContext).pop(booking);
+          },
+        ),
+      );
+    } finally {
+      vm.dispose();
     }
-    if (!context.mounted) {
-      return null;
-    }
-    return showAppDialog<Booking>(
-      context: context,
-      modalKey: 'booking-new',
-      builder: (dialogContext) => _NewAdminBookingDialog(
-        currentUser: currentUser,
-        clientUsers: vm.clientUsers(),
-        onBookingSubmitted: (booking) {
-          Navigator.of(dialogContext).pop(booking);
-        },
-      ),
-    );
   }
 
   static Future<List<Chassis>> _resolveActiveChassis(
     String? selectedChassisId,
   ) async {
+    const lookupTimeout = Duration(seconds: 2);
+    final request = ChassisRequest.instance;
     try {
-      final all = await ChassisRequest.instance.getChassis();
+      final all = await request.getChassis().timeout(lookupTimeout);
       return all
           .where(
             (item) => item.isActive || item.id.toString() == selectedChassisId,
           )
           .toList(growable: false);
     } catch (_) {
-      return ChassisRequest.instance.hydratedChassisSnapshot
+      // Opening the edit modal must not wait for a slow catalog request.
+      // The realtime/cache refresh can fill the catalog for the next open.
+      unawaited(request.getChassis().catchError((_) => <Chassis>[]));
+      return request.hydratedChassisSnapshot
           .where(
             (item) => item.isActive || item.id.toString() == selectedChassisId,
           )
           .toList(growable: false);
     }
+  }
+
+  static List<Chassis> hydratedActiveChassis(String? selectedChassisId) {
+    return ChassisRequest.instance.hydratedChassisSnapshot
+        .where(
+          (item) => item.isActive || item.id.toString() == selectedChassisId,
+        )
+        .toList(growable: false);
   }
 
   @override
@@ -239,47 +257,75 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
     AdminBookingsViewModel vm,
     Booking booking,
   ) async {
-    final requirements = await _resolveEditBookingRequirements();
-    final chassis = await AdminBookingsView._resolveActiveChassis(
-      booking.chassisId,
+    final stopwatch = Stopwatch()..start();
+    PerformanceTrace.event(
+      'admin-bookings-view',
+      'edit open start booking=${booking.id ?? '-'}',
     );
-    if (!mounted) {
-      return;
-    }
-    final updatedBooking = await showAppDialog<Booking>(
-      context: context,
-      modalKey: 'booking-edit:${booking.id ?? "-"}',
-      builder: (dialogContext) => _EditAdminBookingDialog(
-        booking: booking,
-        currentUser: widget.user,
-        onSave: vm.saveEditedBooking,
-        currentStatusLabel: vm.clientStatusLabel(booking),
-        clientUsers: vm.clientUsers(),
-        statuses: vm.activeStatuses(),
-        drivers: vm.roleUsers('driver'),
-        helpers: vm.roleUsers('helper'),
-        vehicleSizes: vm.activeVehicleSizes(),
-        chassis: chassis,
-        originBarangayRequired: requirements.originBarangayRequired,
-        destinationBarangayRequired: requirements.destinationBarangayRequired,
-      ),
-    );
-    if (updatedBooking == null) {
-      return;
-    }
-    vm.ingestSubmittedBooking(updatedBooking);
-    if (!mounted) {
-      return;
-    }
-    if (_selectedBooking?.id == updatedBooking.id) {
-      setState(() {
-        _selectedBooking = updatedBooking;
-      });
+    try {
+      // The editor must open from the hydrated app state. Catalog refreshes
+      // stay in the background rather than blocking the user's tap.
+      final requirements =
+          _resolveEditBookingRequirementsFromForms(
+            StatusRequest.hasResolvedForms
+                ? StatusRequest.hydratedFormsSnapshot
+                : const [],
+          ) ??
+          const _EditBookingRequirements();
+      final chassis = AdminBookingsView.hydratedActiveChassis(
+        booking.chassisId,
+      );
+      unawaited(
+        ChassisRequest.instance.getChassis().catchError((_) => <Chassis>[]),
+      );
+      final updatedBooking = await showAppDialog<Booking>(
+        context: context,
+        modalKey: 'booking-edit:${booking.id ?? "-"}',
+        builder: (dialogContext) => _EditAdminBookingDialog(
+          booking: booking,
+          currentUser: widget.user,
+          onSave: vm.saveEditedBooking,
+          currentStatusLabel: vm.clientStatusLabel(booking),
+          clientUsers: vm.clientUsers(),
+          statuses: vm.activeStatuses(),
+          drivers: vm.roleUsers('driver'),
+          helpers: vm.roleUsers('helper'),
+          vehicleSizes: vm.activeVehicleSizes(),
+          chassis: chassis,
+          originBarangayRequired: requirements.originBarangayRequired,
+          destinationBarangayRequired: requirements.destinationBarangayRequired,
+        ),
+      );
+      if (updatedBooking == null) {
+        return;
+      }
+      vm.ingestSubmittedBooking(updatedBooking);
+      if (_selectedBooking?.id == updatedBooking.id) {
+        setState(() {
+          _selectedBooking = updatedBooking;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'We could not open the booking editor.',
+          ),
+        );
+      }
+    } finally {
+      PerformanceTrace.event(
+        'admin-bookings-view',
+        'edit open finish booking=${booking.id ?? '-'} elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    PerformanceTrace.build('admin-bookings-view');
     return ViewModelBuilder<AdminBookingsViewModel>.reactive(
       viewModelBuilder: () => _viewModel,
       builder: (context, vm, child) {
@@ -319,20 +365,9 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
                     },
                     onEdit: !_canUpdateBookings
                         ? null
-                        : () async {
-                            final updatedBooking =
-                                await AdminBookingsView.showEditBookingDialog(
-                                  context,
-                                  booking: selectedBooking,
-                                  currentUser: widget.user,
-                                );
-                            if (updatedBooking == null || !mounted) {
-                              return;
-                            }
-                            setState(() {
-                              _selectedBooking = updatedBooking;
-                            });
-                          },
+                        : () => unawaited(
+                            _openEditBookingDialog(vm, selectedBooking),
+                          ),
                   ),
                   const SizedBox(height: 16),
                   BookingWorkflowView(
@@ -442,7 +477,7 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
                     },
                     onEdit: _canUpdateBookings
                         ? (booking) {
-                            _openEditBookingDialog(vm, booking);
+                            unawaited(_openEditBookingDialog(vm, booking));
                           }
                         : null,
                   ),

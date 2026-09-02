@@ -10,6 +10,7 @@ import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/services/app_warmup_service.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
 class AdminDashboardViewModel extends BaseViewModel {
@@ -20,6 +21,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   AdminDashboardViewModel({AuthRepository? authRepository})
     : _authRepository = authRepository ?? AuthRequest.instance,
       _bookingRepository = BookingRequest.instance {
+    PerformanceTrace.event('admin-dashboard-vm', 'created');
     _completedBookings.addAll(_cachedCompletedBookings);
     _usersById.addAll(_cachedUsersById);
     _currentUser = _cachedCurrentUser;
@@ -177,6 +179,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   }
 
   Future<void> _loadInternal() async {
+    final stopwatch = Stopwatch()..start();
     _ensureSupportingSubscriptions();
     busyMessage = 'Loading dashboard ...';
     var overlayHidden = false;
@@ -192,6 +195,10 @@ class AdminDashboardViewModel extends BaseViewModel {
     }
     _log(
       'load start loggedIn=${_currentUser != null} user=${_currentUser?.id ?? "-"} role=${_currentUser?.role ?? "-"} visibleBookings=${!shouldShowLoadingState} cachedCompleted=${_cachedCompletedBookings.length} localCompleted=${_completedBookings.length} sharedBookings=$hasSharedBookings',
+    );
+    PerformanceTrace.event(
+      'admin-dashboard-vm',
+      'load start cached=${_cachedCompletedBookings.length} local=${_completedBookings.length} authoritative=$hasSharedBookings',
     );
     if (!shouldShowLoadingState) {
       _log('silent load only section=dashboard');
@@ -246,6 +253,10 @@ class AdminDashboardViewModel extends BaseViewModel {
       _log(
         'load finish busy=$isBusy completed=${_completedBookings.length} users=${_usersById.length} error=${errorMessage ?? "-"}',
       );
+      PerformanceTrace.event(
+        'admin-dashboard-vm',
+        'load finish elapsedMs=${stopwatch.elapsedMilliseconds} completed=${_completedBookings.length} busy=$isBusy error=${errorMessage ?? "-"}',
+      );
       notifyListeners();
     }
   }
@@ -254,6 +265,7 @@ class AdminDashboardViewModel extends BaseViewModel {
     _usersCacheUpdatesSubscription ??= AuthRequest.instance
         .watchUsersCacheUpdates()
         .listen((_) {
+          PerformanceTrace.event('admin-dashboard-vm', 'users cache signal');
           unawaited(_reloadSupportingData());
         });
   }
@@ -261,8 +273,14 @@ class AdminDashboardViewModel extends BaseViewModel {
   Future<void> _reloadSupportingData() async {
     if (_isRealtimeRefreshing) {
       _log('supporting reload skipped already-running');
+      PerformanceTrace.event(
+        'admin-dashboard-vm',
+        'supporting reload skipped in-flight',
+      );
       return;
     }
+    final stopwatch = Stopwatch()..start();
+    PerformanceTrace.event('admin-dashboard-vm', 'supporting reload start');
     _isRealtimeRefreshing = true;
     _log('supporting reload start');
     try {
@@ -289,6 +307,10 @@ class AdminDashboardViewModel extends BaseViewModel {
       // Keep current visible state if live support data refresh fails.
     } finally {
       _isRealtimeRefreshing = false;
+      PerformanceTrace.event(
+        'admin-dashboard-vm',
+        'supporting reload finish elapsedMs=${stopwatch.elapsedMilliseconds} users=${_usersById.length}',
+      );
     }
   }
 
@@ -328,6 +350,10 @@ class AdminDashboardViewModel extends BaseViewModel {
     _bookingsSubscription = _bookingRepository.watchBookings().listen((
       liveBookings,
     ) {
+      PerformanceTrace.event(
+        'admin-dashboard-vm',
+        'booking stream event count=${liveBookings.length} authoritative=${BookingRequest.hasAuthoritativeBookings}',
+      );
       if (!BookingRequest.hasAuthoritativeBookings) {
         // The shared stream can emit an empty provisional cache while the
         // first server snapshot is still pending. Do not turn that into an
@@ -383,6 +409,7 @@ class AdminDashboardViewModel extends BaseViewModel {
 
   @override
   void dispose() {
+    PerformanceTrace.event('admin-dashboard-vm', 'dispose');
     _usersCacheUpdatesSubscription?.cancel();
     _bookingsSubscription?.cancel();
     super.dispose();

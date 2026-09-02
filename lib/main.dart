@@ -10,6 +10,7 @@ import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/services/firestore_offline_service.dart';
 import 'package:webapp/services/offline_queue_coordinator_service.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 
 const Duration _firebaseBootstrapTimeout = Duration(seconds: 6);
 const Duration _firestoreBootstrapTimeout = Duration(seconds: 4);
@@ -21,6 +22,8 @@ void _bootstrapLog(String message) {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  PerformanceTrace.installFrameTracing();
+  PerformanceTrace.event('bootstrap', 'main start');
   _bootstrapLog('main start');
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
@@ -73,31 +76,27 @@ Future<void> _bootstrapApplication() async {
       } catch (error) {
         _bootstrapLog('firestore offline init error error=$error');
       }
-      unawaited(
-        () async {
-          try {
-            _bootstrapLog('offline queue init start');
-            await OfflineQueueCoordinatorService.instance.initialize();
-            _bootstrapLog('offline queue init done');
-          } catch (error) {
-            _bootstrapLog('offline queue init error error=$error');
-          }
-        }(),
-      );
+      unawaited(() async {
+        try {
+          _bootstrapLog('offline queue init start');
+          await OfflineQueueCoordinatorService.instance.initialize();
+          _bootstrapLog('offline queue init done');
+        } catch (error) {
+          _bootstrapLog('offline queue init error error=$error');
+        }
+      }());
       if (Firebase.apps.isNotEmpty) {
-        unawaited(
-          () async {
-            try {
-              _bootstrapLog('analytics init start');
-              await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(
-                true,
-              );
-              _bootstrapLog('analytics init done');
-            } catch (error) {
-              _bootstrapLog('analytics init error error=$error');
-            }
-          }(),
-        );
+        unawaited(() async {
+          try {
+            _bootstrapLog('analytics init start');
+            await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(
+              true,
+            );
+            _bootstrapLog('analytics init done');
+          } catch (error) {
+            _bootstrapLog('analytics init error error=$error');
+          }
+        }());
       }
     }().timeout(
       _applicationBootstrapTimeout,
@@ -272,9 +271,7 @@ class MyApp extends StatelessWidget {
             color: AppColors.textPrimary,
             fontWeight: FontWeight.w700,
           ),
-          dayPeriodTextStyle: const TextStyle(
-            fontWeight: FontWeight.w700,
-          ),
+          dayPeriodTextStyle: const TextStyle(fontWeight: FontWeight.w700),
           inputDecorationTheme: const InputDecorationTheme(
             filled: true,
             fillColor: Colors.white,

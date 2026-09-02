@@ -18,7 +18,9 @@ class ChassisRequest {
 
   static final ChassisRequest instance = ChassisRequest();
   static const resourceKey = 'chassis';
-  static const _readTimeout = Duration(seconds: 30);
+  // Catalog reads must never hold the UI warmup for the write timeout.
+  static const _readTimeout = Duration(seconds: 8);
+  static const _writeTimeout = Duration(seconds: 30);
 
   final FirebaseFirestore? _providedFirestore;
   FirebaseFirestore get _firestore =>
@@ -98,13 +100,16 @@ class ChassisRequest {
 
   Future<List<Chassis>> getChassis() async {
     await initialize();
-    final documents = await _cache.getDocumentsVerifiedOnlineFirst(
+    // Match the other vehicle catalogs: render persisted data immediately and
+    // let the realtime listener keep it current in the background.
+    final documents = await _cache.getDocuments(
       resourceKey: resourceKey,
       fetchDocuments: () async {
-        final source = currentNetworkStatus() ? Source.server : Source.cache;
-        final snapshot = await _collection
-            .get(GetOptions(source: source))
-            .timeout(_readTimeout);
+        final snapshot = currentNetworkStatus()
+            ? await _collection.get().timeout(_readTimeout)
+            : await _collection
+                  .get(const GetOptions(source: Source.cache))
+                  .timeout(_readTimeout);
         return snapshot.docs.map(documentData).toList(growable: false);
       },
     );
@@ -244,7 +249,7 @@ class ChassisRequest {
           }
           transaction.set(_collection.doc('${chassis.id}'), document);
         })
-        .timeout(_readTimeout);
+        .timeout(_writeTimeout);
   }
 
   Future<List<Chassis>> _applyRemoteDocuments(

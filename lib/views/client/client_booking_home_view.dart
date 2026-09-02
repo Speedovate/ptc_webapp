@@ -8,6 +8,7 @@ import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/view_models/client/client_booking_home.vm.dart';
+import 'package:webapp/utils/performance_trace.dart';
 import 'package:webapp/services/local_form_draft_service.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
@@ -50,7 +51,9 @@ _ClientFormHeaderPalette? _terminalClientHeaderPalette(String? statusKey) {
   return null;
 }
 
-void _logBookingSubmit(String _) {}
+void _logBookingSubmit(String message) {
+  PerformanceTrace.event('client-booking-submit', message);
+}
 
 class ClientBookingHomeView extends StatefulWidget {
   const ClientBookingHomeView({
@@ -265,7 +268,9 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
     );
   }
 
-  void _log(String _) {}
+  void _log(String message) {
+    PerformanceTrace.event('client-booking-form-view', message);
+  }
 }
 
 class _ClientBookingFormSection extends StatefulWidget {

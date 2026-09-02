@@ -120,6 +120,9 @@ class AdminFlowViewModel extends BaseViewModel {
   final Map<String, List<StatusField>> _fieldsByFormId = {};
   bool isLoading = false;
   bool _hasLoadedOnce = false;
+  bool _hasLoadedFormsPage = false;
+  bool _hasLoadedFieldsPage = false;
+  bool _hasLoadedStatusesPage = false;
   String? errorMessage;
   String? successMessage;
   bool isPreviewVisible = true;
@@ -169,6 +172,10 @@ class AdminFlowViewModel extends BaseViewModel {
       notifyListeners();
       return;
     }
+    if (_hasLoadedFormsPage) {
+      _log('load forms-page reused in-memory data');
+      return;
+    }
     busyMessage = 'Loading forms ...';
     final hasSharedPrimaryData = StatusRequest.hasResolvedForms;
     final hasVisiblePrimaryData =
@@ -207,6 +214,7 @@ class AdminFlowViewModel extends BaseViewModel {
       errorMessage = null;
       _cachedForms = List<StatusForm>.from(forms);
       _hasLoadedOnce = true;
+      _hasLoadedFormsPage = true;
       _cachedHasLoadedOnce = true;
       _log('load resolved section=forms count=${forms.length}');
       if (shouldShowLoadingState) {
@@ -244,6 +252,10 @@ class AdminFlowViewModel extends BaseViewModel {
       notifyListeners();
       return;
     }
+    if (_hasLoadedFieldsPage) {
+      _log('load fields-page reused in-memory data');
+      return;
+    }
     busyMessage = 'Loading fields ...';
     final hasVisiblePrimaryData =
         fieldLibrary.isNotEmpty ||
@@ -275,6 +287,7 @@ class AdminFlowViewModel extends BaseViewModel {
       errorMessage = null;
       _cachedFieldLibrary = List<StatusField>.from(fieldLibrary);
       _hasLoadedOnce = true;
+      _hasLoadedFieldsPage = true;
       _cachedHasLoadedOnce = true;
       _log('load resolved section=fields count=${fieldLibrary.length}');
     } catch (error) {
@@ -308,6 +321,10 @@ class AdminFlowViewModel extends BaseViewModel {
       notifyListeners();
       return;
     }
+    if (_hasLoadedStatusesPage) {
+      _log('load statuses-page reused in-memory data');
+      return;
+    }
     busyMessage = 'Loading statuses ...';
     final hasVisiblePrimaryData =
         statuses.isNotEmpty ||
@@ -337,6 +354,7 @@ class AdminFlowViewModel extends BaseViewModel {
       errorMessage = null;
       _cachedStatuses = List<Status>.from(statuses);
       _hasLoadedOnce = true;
+      _hasLoadedStatusesPage = true;
       _cachedHasLoadedOnce = true;
       _log('load resolved section=statuses count=${statuses.length}');
     } catch (error) {

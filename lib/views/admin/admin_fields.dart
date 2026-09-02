@@ -38,7 +38,11 @@ String _formatFieldsFilterDateValue(DateTime? value) {
 }
 
 class AdminFieldsView extends StatelessWidget {
-  const AdminFieldsView({super.key});
+  const AdminFieldsView({super.key, this.viewModel});
+
+  /// AdminHome supplies one model for all Flow tabs so tab changes do not
+  /// create extra realtime subscriptions or reload the same graph.
+  final AdminFlowViewModel? viewModel;
 
   static Future<void> confirmToggleFieldActive(
     BuildContext context,
@@ -130,7 +134,8 @@ class AdminFieldsView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ViewModelBuilder<AdminFlowViewModel>.reactive(
-      viewModelBuilder: AdminFlowViewModel.new,
+      viewModelBuilder: () => viewModel ?? AdminFlowViewModel(),
+      disposeViewModel: viewModel == null,
       onViewModelReady: (vm) => vm.loadFieldsPage(),
       builder: (context, vm, child) {
         return AppPageLoadingOverlay(

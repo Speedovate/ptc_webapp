@@ -5,6 +5,7 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/view_models/client/client_booking_history.vm.dart';
+import 'package:webapp/utils/performance_trace.dart';
 import 'package:webapp/views/shared/booking_workflow_view.dart';
 import 'package:webapp/views/shared/support_center_view.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
@@ -62,6 +63,10 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
 
   @override
   Widget build(BuildContext context) {
+    PerformanceTrace.build(
+      'booking-history-view',
+      details: 'selected=${_selectedBooking?.id ?? "-"}',
+    );
     return ViewModelBuilder<ClientBookingHistoryViewModel>.reactive(
       viewModelBuilder: ClientBookingHistoryViewModel.new,
       onViewModelReady: (vm) => vm.load(widget.user),

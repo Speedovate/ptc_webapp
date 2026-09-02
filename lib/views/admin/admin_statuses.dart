@@ -38,7 +38,11 @@ String _formatStatusesFilterDateValue(DateTime? value) {
 }
 
 class AdminStatusesView extends StatelessWidget {
-  const AdminStatusesView({super.key});
+  const AdminStatusesView({super.key, this.viewModel});
+
+  /// AdminHome supplies one model for all Flow tabs so tab changes do not
+  /// create extra realtime subscriptions or reload the same graph.
+  final AdminFlowViewModel? viewModel;
 
   static Future<void> confirmToggleStatusActive(
     BuildContext context,
@@ -142,7 +146,8 @@ class AdminStatusesView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ViewModelBuilder<AdminFlowViewModel>.reactive(
-      viewModelBuilder: AdminFlowViewModel.new,
+      viewModelBuilder: () => viewModel ?? AdminFlowViewModel(),
+      disposeViewModel: viewModel == null,
       onViewModelReady: (vm) => vm.loadStatusesPage(),
       builder: (context, vm, child) {
         return AppPageLoadingOverlay(

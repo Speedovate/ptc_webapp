@@ -33,13 +33,13 @@ addEventListener("message", eventListener);
 if (!window._flutter) {
   window._flutter = {};
 }
-_flutter.buildConfig = {"engineRevision":"59aa584fdf100e6c78c785d8a5b565d1de4b48ab","builds":[{"compileTarget":"dart2js","renderer":"canvaskit","mainJsPath":"main.dart.js"},{}]};
+_flutter.buildConfig = {"engineRevision":"59aa584fdf100e6c78c785d8a5b565d1de4b48ab","builds":[{"compileTarget":"dart2js","renderer":"canvaskit","mainJsPath":"main.dart.js"}]};
 
 
 (function () {
   const deployVersion = '2026-09-01-dropdown-refresh-1';
   const flutterServiceWorkerVersion =
-    "3774208904" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
+    "1825203141" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
   const serviceWorkerVersion =
     `${deployVersion}-${flutterServiceWorkerVersion}`;
   const swVersionKey = 'paltranco_sw_version';

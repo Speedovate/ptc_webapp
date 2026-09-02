@@ -1,12 +1,12 @@
 const {onSchedule} = require('firebase-functions/v2/scheduler');
+const {onDocumentUpdated} = require('firebase-functions/v2/firestore');
 const {initializeApp} = require('firebase-admin/app');
 const {getFirestore} = require('firebase-admin/firestore');
+const {getMessaging} = require('firebase-admin/messaging');
 
 initializeApp();
 
 const db = getFirestore();
-const workflowVersionRef = db.collection('manage_cache').doc('chassis_workflow_v1');
-const workflowRoles = ['client', 'admin', 'driver', 'helper', 'manager', 'dispatcher'];
 const staffRoles = ['admin', 'manager', 'dispatcher'];
 
 exports.maintainChassisWorkflow = onSchedule(
@@ -16,162 +16,69 @@ exports.maintainChassisWorkflow = onSchedule(
     region: 'asia-southeast1',
   },
   async () => {
-    await ensureChassisWorkflowConfiguration();
     await advanceDueDeliveredBookings();
   },
 );
 
-async function ensureChassisWorkflowConfiguration() {
-  const marker = await workflowVersionRef.get();
-  if (marker.exists) return;
-
-  const now = new Date().toISOString();
-  await db.runTransaction(async transaction => {
-    const currentMarker = await transaction.get(workflowVersionRef);
-    if (currentMarker.exists) return;
-
-    const [statusesSnapshot, formsSnapshot, fieldsSnapshot] = await Promise.all([
-      transaction.get(db.collection('statuses')),
-      transaction.get(db.collection('status_forms')),
-      transaction.get(db.collection('status_fields')),
-    ]);
-    const statuses = statusesSnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
-    const forms = formsSnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
-    const fields = fieldsSnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
-    let nextStatusId = nextNumericId(statuses);
-    let nextFormId = nextNumericId(forms);
-    let nextFieldId = nextNumericId(fields);
-
-    const requiredStatuses = [
-      ['check', 'Confirm with the client whether the chassis is empty.'],
-      ['empty', 'Assign a driver to return the chassis.'],
-      ['return', 'The assigned driver must confirm the chassis return.'],
-      ['confirm', 'Chassis has been returned and is ready for use.'],
-    ];
-    for (const [key, description] of requiredStatuses) {
-      if (statuses.some(status => normalize(status.key) === key)) continue;
-      const id = String(nextStatusId++);
-      transaction.set(db.collection('statuses').doc(id), {
-        id,
-        key,
-        label: 'Delivered',
-        description,
-        applicable_roles: workflowRoles,
-        role_messages: roleMessagesFor(key),
-        sort_order: nextStatusId,
-        is_active: true,
-        created_at: now,
-        updated_at: now,
-      });
+// This is deliberately separate from maintainChassisWorkflow. It only reads
+// the delivered -> check transition and sends FCM; it never writes Firestore.
+exports.notifyChassisCheck = onDocumentUpdated(
+  {
+    document: 'bookings/{bookingId}',
+    region: 'asia-southeast1',
+  },
+  async event => {
+    const before = event.data.before.data() || {};
+    const after = event.data.after.data() || {};
+    if (normalize(before.client_status) === 'check' ||
+        normalize(after.client_status) !== 'check' ||
+        !String(after.chassis_id || '').trim()) {
+      return;
     }
 
-    const assignedCancellation = forms.find(form =>
-      normalize(form.current_status_key) === 'assigned' &&
-      normalize(form.next_status_key) === 'cancelled',
+    const staffSnapshot = await db.collection('users')
+      .where('role', 'in', staffRoles)
+      .get();
+    const recipientIds = staffSnapshot.docs
+      .filter(document => document.data().is_active !== false)
+      .map(document => String(document.data().id || document.id).trim())
+      .filter(Boolean);
+    if (recipientIds.length === 0) return;
+
+    const tokenSnapshots = await Promise.all(recipientIds.map(userId =>
+      db.collection('manage_notifications')
+        .where('user_id', '==', userId)
+        .where('platform', '==', 'web')
+        .get(),
+    ));
+    const tokens = [...new Set(tokenSnapshots.flatMap(snapshot =>
+      snapshot.docs
+        .map(document => String(document.data().token || '').trim())
+        .filter(Boolean),
+    ))];
+    if (tokens.length === 0) return;
+
+    const bookingId = String(after.id || event.params.bookingId);
+    const chassisId = String(after.chassis_id).trim();
+    const response = await getMessaging().sendEachForMulticast({
+      tokens,
+      data: {
+        notificationId: `chassis-check-${bookingId}`,
+        bookingId,
+        chassisId,
+        title: 'Check Chassis',
+        body: `Booking #${bookingId}: chassis #${chassisId} needs client confirmation.`,
+        url: 'https://paltranco.vercel.app/',
+      },
+      webpush: {
+        fcmOptions: {link: 'https://paltranco.vercel.app/'},
+      },
+    });
+    console.log(
+      `notifyChassisCheck booking=${bookingId} sent=${response.successCount} failed=${response.failureCount}`,
     );
-    if (assignedCancellation) {
-      transaction.set(db.collection('status_forms').doc(assignedCancellation.id), {
-        roles: staffRoles,
-        role: 'admin',
-        updated_at: now,
-      }, {merge: true});
-    }
-
-    const returnDriverFieldId = ensureField({
-      key: 'return_driver_id',
-      title: 'Return Driver',
-      type: 'dropdown',
-      placeholder: 'Select Return Driver',
-      option_source_key: 'drivers',
-      required: true,
-    });
-    const locationFieldId = ensureField({
-      key: 'chassis_location',
-      title: 'Chassis Location',
-      type: 'text',
-      placeholder: 'Enter location or Google Maps link',
-      required: true,
-    });
-
-    ensureForm({
-      current: 'check',
-      next: 'empty',
-      button: 'Confirm Empty',
-      roles: staffRoles,
-      fieldIds: [locationFieldId],
-    });
-    ensureForm({
-      current: 'empty',
-      next: 'return',
-      button: 'Assign Return',
-      roles: staffRoles,
-      fieldIds: [returnDriverFieldId],
-    });
-    ensureForm({
-      current: 'return',
-      next: 'confirm',
-      button: 'Confirm Return',
-      roles: ['driver'],
-      fieldIds: [],
-    });
-    ensureForm({
-      current: 'confirm',
-      next: null,
-      button: null,
-      roles: workflowRoles,
-      fieldIds: [],
-    });
-
-    transaction.set(workflowVersionRef, {
-      version: 1,
-      updated_at: now,
-      created_at: now,
-    });
-
-    function ensureField(input) {
-      const existing = fields.find(field => normalize(field.key) === input.key);
-      if (existing) return String(existing.id);
-      const id = String(nextFieldId++);
-      transaction.set(db.collection('status_fields').doc(id), {
-        id,
-        is_active: true,
-        options: [],
-        created_at: now,
-        updated_at: now,
-        ...input,
-      });
-      return id;
-    }
-
-    function ensureForm(input) {
-      const existing = forms.find(form =>
-        normalize(form.current_status_key) === input.current &&
-        normalize(form.next_status_key) === (input.next || '') &&
-        normalize(form.button_text) === normalize(input.button),
-      );
-      if (existing) return;
-      const id = String(nextFormId++);
-      transaction.set(db.collection('status_forms').doc(id), {
-        id,
-        role: input.roles[0],
-        roles: input.roles,
-        is_main_form: true,
-        current_status_key: input.current,
-        next_status_key: input.next,
-        status_text: null,
-        status_subtext: null,
-        button_text: input.button,
-        field_ids: input.fieldIds,
-        field_overrides: {},
-        dependencies: [],
-        blocked_message: '',
-        is_active: true,
-        created_at: now,
-        updated_at: now,
-      });
-    }
-  });
-}
+  },
+);
 
 async function advanceDueDeliveredBookings() {
   const dueAt = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
@@ -199,47 +106,6 @@ async function advanceDueDeliveredBookings() {
   await batch.commit();
 }
 
-function nextNumericId(records) {
-  return records.reduce((highest, record) => {
-    const value = Number.parseInt(String(record.id || ''), 10);
-    return Number.isFinite(value) ? Math.max(highest, value) : highest;
-  }, 0) + 1;
-}
-
 function normalize(value) {
   return String(value || '').trim().toLowerCase();
-}
-
-function roleMessagesFor(status) {
-  if (status === 'check') {
-    return {
-      client: 'Chassis confirmation is in progress.',
-      driver: 'No chassis action is required.',
-      helper: 'No chassis action is required.',
-      admin: 'Confirm with the client whether the chassis is empty.',
-      manager: 'Confirm with the client whether the chassis is empty.',
-      dispatcher: 'Confirm with the client whether the chassis is empty.',
-    };
-  }
-  if (status === 'empty') {
-    return {
-      client: 'The chassis is empty and waiting for return assignment.',
-      driver: 'No chassis action is required.',
-      helper: 'No chassis action is required.',
-      admin: 'Assign a driver to return the chassis.',
-      manager: 'Assign a driver to return the chassis.',
-      dispatcher: 'Assign a driver to return the chassis.',
-    };
-  }
-  if (status === 'return') {
-    return {
-      client: 'The chassis is being returned.',
-      driver: 'Confirm once the chassis has returned.',
-      helper: 'The chassis is being returned.',
-      admin: 'Wait for the assigned driver to confirm return.',
-      manager: 'Wait for the assigned driver to confirm return.',
-      dispatcher: 'Wait for the assigned driver to confirm return.',
-    };
-  }
-  return Object.fromEntries(workflowRoles.map(role => [role, 'Chassis has been returned and is ready for use.']));
 }

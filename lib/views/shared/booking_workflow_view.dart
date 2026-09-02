@@ -16,6 +16,7 @@ import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
 import 'package:webapp/services/status_form_engine.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 import 'package:webapp/view_models/shared/booking_workflow.vm.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/views/shared/support_center_view.dart';
@@ -1092,7 +1093,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
   }
 
   void _log(String message) {
-    // Temporary diagnostics removed.
+    PerformanceTrace.event('booking-workflow-view', message);
   }
 }
 
@@ -1274,7 +1275,7 @@ class _WorkflowInteractiveFormSectionState
   }
 
   void _log(String message) {
-    // Temporary diagnostics removed.
+    PerformanceTrace.event('booking-workflow-action', message);
   }
 
   @override

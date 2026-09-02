@@ -5,6 +5,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/models/status.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/requests/auth.request.dart';
@@ -709,5 +710,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     return nextAnswers;
   }
 
-  void _log(String _) {}
+  void _log(String message) {
+    PerformanceTrace.event('client-booking-form-vm', message);
+  }
 }

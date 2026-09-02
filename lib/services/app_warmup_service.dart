@@ -9,6 +9,7 @@ import 'package:webapp/requests/support.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 
 class AppWarmupService {
   AppWarmupService({
@@ -46,6 +47,8 @@ class AppWarmupService {
       _providedSupportRequest ?? SupportRequest.instance;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   final Map<String, Future<void>> _inFlightTasks = <String, Future<void>>{};
+  final Map<String, Future<void>> _inFlightUserWarmups =
+      <String, Future<void>>{};
   final Set<String> _completedTasks = <String>{};
 
   static const String _taskBookings = 'bookings';
@@ -75,12 +78,45 @@ class AppWarmupService {
   }
 
   Future<void> warmUpForUser(UserModel? user) async {
+    // A transient unauthenticated shell must not duplicate the catalog warmup
+    // while the authenticated shell is already loading it.
+    if (user == null || normalizeId(user.id) == null) {
+      PerformanceTrace.event('warmup', 'skip unauthenticated user');
+      return;
+    }
+    final userKey = '${normalizeId(user.id) ?? 'guest'}:${user.role ?? '-'}';
+    final inFlight = _inFlightUserWarmups[userKey];
+    if (inFlight != null) {
+      PerformanceTrace.event('warmup', 'join in-flight user=$userKey');
+      return inFlight;
+    }
+    final future = _warmUpForUserInternal(user);
+    _inFlightUserWarmups[userKey] = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_inFlightUserWarmups[userKey], future)) {
+        _inFlightUserWarmups.remove(userKey);
+      }
+    }
+  }
+
+  Future<void> _warmUpForUserInternal(UserModel? user) async {
+    final stopwatch = Stopwatch()..start();
+    PerformanceTrace.event(
+      'warmup',
+      'start user=${normalizeId(user?.id) ?? '-'} role=${user?.role ?? '-'}',
+    );
     _log(
       'warmUpForUser start user=${normalizeId(user?.id) ?? "-"} role=${user?.role ?? "-"}',
     );
     final flowWarmup = _warmFlowData();
     _log('warmUpForUser step=vehicles start');
-    await _warmVehicleCatalogData();
+    await PerformanceTrace.track(
+      'warmup',
+      'vehicle-catalog',
+      _warmVehicleCatalogData,
+    );
     _log('warmUpForUser step=vehicles done');
     if (user == null) {
       _log('warmUpForUser step=role-access start');
@@ -97,26 +133,38 @@ class AppWarmupService {
     }
 
     _log('warmUpForUser step=support start');
-    final threads = await _prefetchSupportDataForUser(user);
+    final threads = await PerformanceTrace.track(
+      'warmup',
+      'support-threads',
+      () => _prefetchSupportDataForUser(user),
+    );
     if (threads.isNotEmpty) {
-      await _runSharedTask<void>(
-        _supportMessagesTaskKey(threads),
-        () => _runSafely(
-          () => _supportRequest.prefetchMessagesForThreads(threads),
+      await PerformanceTrace.track(
+        'warmup',
+        'support-messages threads=${threads.length}',
+        () => _runSharedTask<void>(
+          _supportMessagesTaskKey(threads),
+          () => _runSafely(
+            () => _supportRequest.prefetchMessagesForThreads(threads),
+          ),
         ),
       );
     }
     _log('warmUpForUser step=support done threads=${threads.length}');
     _log('warmUpForUser step=role-access start');
-    await warmRoleAccess();
+    await PerformanceTrace.track('warmup', 'role-access', warmRoleAccess);
     _log('warmUpForUser step=role-access done');
     _log('warmUpForUser step=flows start');
-    await flowWarmup;
+    await PerformanceTrace.track('warmup', 'flow-data', () => flowWarmup);
     _log('warmUpForUser step=flows done');
     _log('warmUpForUser step=users start');
-    await warmUsers();
+    await PerformanceTrace.track('warmup', 'users', warmUsers);
     _log('warmUpForUser step=users done');
     _log('warmUpForUser done threads=${threads.length}');
+    PerformanceTrace.event(
+      'warmup',
+      'done elapsedMs=${stopwatch.elapsedMilliseconds} threads=${threads.length}',
+    );
   }
 
   Future<void> warmBookings() {
@@ -187,10 +235,10 @@ class AppWarmupService {
   }
 
   Future<void> _warmVehicleCatalogData() async {
-    await warmVehicleMakes();
-    await warmVehicleTypes();
-    await warmVehicleSizes();
-    await warmChassis();
+    await PerformanceTrace.track('warmup', 'vehicle-makes', warmVehicleMakes);
+    await PerformanceTrace.track('warmup', 'vehicle-types', warmVehicleTypes);
+    await PerformanceTrace.track('warmup', 'vehicle-sizes', warmVehicleSizes);
+    await PerformanceTrace.track('warmup', 'chassis', warmChassis);
   }
 
   Future<void> _warmFlowData() async {

@@ -11,6 +11,7 @@ import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/repositories/interfaces/status_form_repository.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 
 class ClientBookingHistoryViewModel extends BaseViewModel {
   ClientBookingHistoryViewModel({
@@ -39,6 +40,7 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   static Map<String, UserModel> _cachedUsersById = const {};
   static Map<String, Status> _cachedStatusesByKey = const {};
   static bool _cachedHasLoadedOnce = false;
+  static String? _cachedScopeKey;
 
   static void clearCachedState() {
     _cachedBookings = const [];
@@ -46,6 +48,7 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
     _cachedUsersById = const {};
     _cachedStatusesByKey = const {};
     _cachedHasLoadedOnce = false;
+    _cachedScopeKey = null;
   }
 
   List<Booking> bookings = [];
@@ -68,7 +71,8 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   List<String> get statusOptions => [
     'All',
     if (bookings.any(
-      (booking) => (booking.localSyncStatus ?? '').trim().toLowerCase() == 'queued',
+      (booking) =>
+          (booking.localSyncStatus ?? '').trim().toLowerCase() == 'queued',
     ))
       'Queued',
     ..._statusesByKey.values
@@ -80,6 +84,7 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
 
   Future<void> load(UserModel user) async {
     if (isLoading) {
+      PerformanceTrace.event('booking-history-vm', 'load skipped reason=busy');
       return;
     }
     final hasVisiblePrimaryData =
@@ -91,11 +96,24 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
         _statusesByKey.isNotEmpty ||
         _cachedStatusesByKey.isNotEmpty;
     isLoading = !_hasLoadedOnce && !hasVisiblePrimaryData;
+    PerformanceTrace.event(
+      'booking-history-vm',
+      'load start user=${user.id ?? "-"} role=${user.role ?? "-"} busy=$isLoading cached=${_cachedBookings.length}',
+    );
     errorMessage = null;
     notifyListeners();
 
     try {
       await _bookingRepository.initialize();
+      if (_cachedHasLoadedOnce && _cachedScopeKey == _scopeKeyFor(user)) {
+        await _bindBookingsWatch(user);
+        _hasLoadedOnce = true;
+        PerformanceTrace.event(
+          'booking-history-vm',
+          'load cache hit visible=${bookings.length}',
+        );
+        return;
+      }
       final sharedBookings = BookingRequest.hasResolvedBookings
           ? BookingRequest.hydratedBookingsSnapshot
           : null;
@@ -110,6 +128,10 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
       final users = results[0] as List<UserModel>;
       final statuses = results[1] as List<Status>;
       final allBookings = results[2] as List<Booking>;
+      PerformanceTrace.event(
+        'booking-history-vm',
+        'load queries done users=${users.length} statuses=${statuses.length} bookings=${allBookings.length}',
+      );
       _usersById
         ..clear()
         ..addEntries(
@@ -125,19 +147,18 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
               .map((item) => MapEntry(item.key!, item)),
         );
 
-      await _bookingsSubscription?.cancel();
       _applyBookingsForUser(user, allBookings);
-      _bookingsSubscription = _bookingRepository.watchBookings().listen((
-        liveBookings,
-      ) {
-        _applyBookingsForUser(user, liveBookings);
-        notifyListeners();
-      });
+      await _bindBookingsWatch(user);
       _cachedErrorMessage = null;
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
+      _cachedScopeKey = _scopeKeyFor(user);
+      PerformanceTrace.event(
+        'booking-history-vm',
+        'load success visible=${bookings.length}',
+      );
     } catch (error) {
       errorMessage = userFacingErrorMessage(
         error,
@@ -146,11 +167,33 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
       _cachedErrorMessage = errorMessage;
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
+      PerformanceTrace.event('booking-history-vm', 'load error error=$error');
     } finally {
       isLoading = false;
+      PerformanceTrace.event(
+        'booking-history-vm',
+        'load finish visible=${bookings.length} error=${errorMessage ?? "-"}',
+      );
       notifyListeners();
     }
   }
+
+  Future<void> _bindBookingsWatch(UserModel user) async {
+    await _bookingsSubscription?.cancel();
+    _bookingsSubscription = _bookingRepository.watchBookings().listen((
+      liveBookings,
+    ) {
+      _applyBookingsForUser(user, liveBookings);
+      PerformanceTrace.event(
+        'booking-history-vm',
+        'bookings snapshot total=${liveBookings.length} visible=${bookings.length}',
+      );
+      notifyListeners();
+    });
+  }
+
+  String _scopeKeyFor(UserModel user) =>
+      '${normalizeRoleKey(user.role)}:${user.id ?? ''}';
 
   void _applyBookingsForUser(UserModel user, List<Booking> allBookings) {
     final currentUserId = user.id ?? '';
@@ -379,6 +422,7 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   @override
   void dispose() {
     _bookingsSubscription?.cancel();
+    PerformanceTrace.event('booking-history-vm', 'dispose');
     super.dispose();
   }
 

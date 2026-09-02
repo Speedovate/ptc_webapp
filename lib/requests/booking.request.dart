@@ -228,6 +228,20 @@ class BookingRequest implements BookingRepository {
   @override
   Stream<List<Booking>> watchBookings() {
     return Stream<List<Booking>>.multi((controller) {
+      String? lastEmissionFingerprint;
+
+      void emitIfChanged(List<Booking> bookings, {required String source}) {
+        final fingerprint = _bookingEmissionFingerprint(bookings);
+        if (fingerprint == lastEmissionFingerprint) {
+          _log(
+            'watchBookings skip unchanged source=$source count=${bookings.length}',
+          );
+          return;
+        }
+        lastEmissionFingerprint = fingerprint;
+        controller.add(bookings);
+      }
+
       Future<void> emitCachedBookings({
         bool allowBackgroundRefresh = false,
       }) async {
@@ -242,7 +256,7 @@ class BookingRequest implements BookingRepository {
             canTrustVisibleCache &&
             !controller.isClosed) {
           _log('watchBookings emit memory docs=${_memoryBookings.length}');
-          controller.add(List<Booking>.from(_memoryBookings));
+          emitIfChanged(List<Booking>.from(_memoryBookings), source: 'memory');
         }
         final cachedDocuments = await _cache.readDocuments(
           _bookingsResourceKey,
@@ -259,7 +273,7 @@ class BookingRequest implements BookingRepository {
           // state. The realtime source replaces it once Firestore responds.
           if ((cachedDocuments == null || cachedDocuments.isEmpty) &&
               !controller.isClosed) {
-            controller.add(const <Booking>[]);
+            emitIfChanged(const <Booking>[], source: 'provisional-empty');
           }
           return;
         }
@@ -269,7 +283,7 @@ class BookingRequest implements BookingRepository {
             if (!currentNetworkStatus()) {
               _hasResolvedBookings = true;
             }
-            controller.add(const <Booking>[]);
+            emitIfChanged(const <Booking>[], source: 'empty-cache');
           }
           return;
         }
@@ -287,7 +301,10 @@ class BookingRequest implements BookingRepository {
             documents: visibleDocuments,
           );
         }
-        controller.add(await _cacheInflatedBookings(visibleDocuments));
+        emitIfChanged(
+          await _cacheInflatedBookings(visibleDocuments),
+          source: 'cache',
+        );
       }
 
       unawaited(emitCachedBookings(allowBackgroundRefresh: true));
@@ -1871,6 +1888,23 @@ class BookingRequest implements BookingRepository {
       return false;
     }
     return true;
+  }
+
+  String _bookingEmissionFingerprint(List<Booking> bookings) {
+    return bookings
+        .map(
+          (booking) => [
+            normalizeId(booking.id) ?? '-',
+            booking.updatedAt?.toUtc().toIso8601String() ?? '-',
+            booking.createdAt?.toUtc().toIso8601String() ?? '-',
+            booking.clientStatus?.trim().toLowerCase() ?? '-',
+            booking.driverStatus?.trim().toLowerCase() ?? '-',
+            booking.helperStatus?.trim().toLowerCase() ?? '-',
+            booking.chassisId?.trim() ?? '-',
+            booking.localSyncStatus?.trim().toLowerCase() ?? '-',
+          ].join('|'),
+        )
+        .join('||');
   }
 
   bool _isQueueableUploadError(String normalizedError) {

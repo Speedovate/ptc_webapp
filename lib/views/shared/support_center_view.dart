@@ -17,6 +17,7 @@ import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_cached_network_image.dart';
@@ -218,6 +219,10 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   @override
   void initState() {
     super.initState();
+    PerformanceTrace.event(
+      'support-view',
+      'init user=${widget.user.id ?? '-'} role=${widget.user.role ?? '-'} admin=$_isAdmin embedded=${widget.embedded}',
+    );
     _accessibleBookings = List<Booking>.from(_cachedAccessibleBookings);
     _adminUsers = List<UserModel>.from(_cachedAdminUsers);
     _supportAgentUser = _cachedSupportAgentUser;
@@ -259,6 +264,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
 
   @override
   void dispose() {
+    PerformanceTrace.event('support-view', 'dispose');
     _messageController.dispose();
     _adminSearchController.dispose();
     _chatScrollController.dispose();
@@ -388,6 +394,8 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     }
     final shouldShowBlockingLoading =
         !_cachedHasLoadedBookings && _accessibleBookings.isEmpty;
+    final stopwatch = Stopwatch()..start();
+    PerformanceTrace.event('support-view', 'client bookings load start');
     _log(
       'load start section=support-bookings visible=${!shouldShowBlockingLoading} local=${_accessibleBookings.length} cached=${_cachedAccessibleBookings.length}',
     );
@@ -453,10 +461,16 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       _log(
         'load finish section=support-bookings loading=$_isLoadingBookings count=${_accessibleBookings.length}',
       );
+      PerformanceTrace.event(
+        'support-view',
+        'client bookings load finish elapsedMs=${stopwatch.elapsedMilliseconds} count=${_accessibleBookings.length}',
+      );
     }
   }
 
   Future<void> _loadAdminUsers() async {
+    final stopwatch = Stopwatch()..start();
+    PerformanceTrace.event('support-view', 'admin users load start');
     final sharedUsersResolved = AuthRequest.hasResolvedUsers;
     final sharedAdminUsers = sharedUsersResolved
         ? _filteredAdminUsersFrom(AuthRequest.hydratedUsersSnapshot)
@@ -513,6 +527,10 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       }
       _log(
         'load finish section=support-users loading=$_isLoadingAdminUsers count=${_adminUsers.length}',
+      );
+      PerformanceTrace.event(
+        'support-view',
+        'admin users load finish elapsedMs=${stopwatch.elapsedMilliseconds} count=${_adminUsers.length}',
       );
     }
   }
@@ -901,6 +919,10 @@ class _SupportCenterViewState extends State<SupportCenterView> {
 
   @override
   Widget build(BuildContext context) {
+    PerformanceTrace.build(
+      'support-view',
+      details: 'admin=$_isAdmin selected=$_selectedThreadId',
+    );
     if (!_canReadSupport) {
       return const Center(
         child: AdminListStateText(
