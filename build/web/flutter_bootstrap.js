@@ -39,7 +39,7 @@ _flutter.buildConfig = {"engineRevision":"59aa584fdf100e6c78c785d8a5b565d1de4b48
 (function () {
   const deployVersion = '2026-09-04-ios-safari-startup-1';
   const flutterServiceWorkerVersion =
-    "37456435" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
+    "9485014" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
   const serviceWorkerVersion =
     `${deployVersion}-${flutterServiceWorkerVersion}`;
   const swVersionKey = 'paltranco_sw_version';
@@ -76,20 +76,24 @@ _flutter.buildConfig = {"engineRevision":"59aa584fdf100e6c78c785d8a5b565d1de4b48
     return true;
   }
 
-  function loadFlutterWithSettings(useServiceWorker) {
-    const options = useServiceWorker
-      ? {
-          config: flutterConfig,
-          serviceWorkerSettings: {
-            serviceWorkerVersion,
-            serviceWorkerUrl: `app_service_worker.js?v=${serviceWorkerVersion}`,
-            timeoutMillis: 10000,
-          },
-        }
-      : {
-          config: flutterConfig,
-        };
-    return _flutter.loader.load(options);
+  function registerAppServiceWorker() {
+    if (isLocalDevelopmentHost || !('serviceWorker' in navigator)) {
+      return;
+    }
+
+    // Do not await this. Flutter's deprecated loader registration attempts a
+    // network update before starting the app, which can leave a cold offline
+    // launch on the HTML splash. An already-active worker still controls this
+    // page and serves the cached shell immediately.
+    navigator.serviceWorker
+      .register(`app_service_worker.js?v=${serviceWorkerVersion}`, {
+        scope: './',
+      })
+      .catch(function () {});
+  }
+
+  function loadFlutter() {
+    return _flutter.loader.load({ config: flutterConfig });
   }
 
   const bootstrapStart = isLocalDevelopmentHost
@@ -97,12 +101,13 @@ _flutter.buildConfig = {"engineRevision":"59aa584fdf100e6c78c785d8a5b565d1de4b48
     : clearStaleWebCachesIfNeeded();
 
   bootstrapStart
-    .then(function (shouldLoadFlutter) {
-      return loadFlutterWithSettings(!isLocalDevelopmentHost).catch(function () {
-        return loadFlutterWithSettings(false);
-      });
+    .then(function () {
+      registerAppServiceWorker();
+      return loadFlutter();
     })
     .catch(function () {
-      return loadFlutterWithSettings(false);
+      // A storage exception must not prevent an offline app-shell startup.
+      registerAppServiceWorker();
+      return loadFlutter();
     });
 })();
