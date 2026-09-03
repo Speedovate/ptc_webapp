@@ -345,7 +345,9 @@ class _InAppBrowserInfo {
       isAndroid: isAndroid,
       isIOS: isIOS,
       isDesktopLike: isDesktopLike,
-      shouldPrompt: isInApp || !isPreferredBrowser,
+      // Normal browsers, including Safari on iPhone, should open the app
+      // directly. Only embedded social-app webviews need the escape prompt.
+      shouldPrompt: isInApp,
       isPreferredBrowser: isPreferredBrowser,
       chromeIntentUrl: chromeIntentUrl,
       iOSChromeUrl: iOSChromeUrl,
