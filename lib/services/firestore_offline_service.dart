@@ -12,9 +12,10 @@ class FirestoreOfflineService {
 
     final firestore = FirebaseFirestore.instance;
     try {
-      // Offline data is owned by the app's cache and mutation queues. Keeping
-      // a second Firestore SDK queue can replay stale writes after restart.
-      firestore.settings = const Settings(persistenceEnabled: false);
+      // Keep Firestore's read cache durable across a fully closed browser.
+      // Mutations are still tracked by the app's explicit offline queue, while
+      // this gives every collection a second cache-first read source.
+      firestore.settings = const Settings(persistenceEnabled: true);
     } catch (_) {
       // On web hot restart, Firestore may already be live with existing settings.
     }
