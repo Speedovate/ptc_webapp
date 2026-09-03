@@ -26,6 +26,13 @@ const APP_SHELL_URLS = [
   '/index.html',
   '/flutter_bootstrap.js',
   '/flutter.js',
+  // The HTML splash can only hand off to Flutter offline when the compiled
+  // app and the CanvasKit runtime are part of the install-time shell cache.
+  '/main.dart.js',
+  '/canvaskit/canvaskit.js',
+  '/canvaskit/canvaskit.wasm',
+  '/canvaskit/chromium/canvaskit.js',
+  '/canvaskit/chromium/canvaskit.wasm',
   '/manifest.json',
   '/version.json',
   '/favicon.png',
