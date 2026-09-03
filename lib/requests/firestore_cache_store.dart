@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:archive/archive.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webapp/requests/firestore_cache_persistence.dart';
@@ -36,7 +37,7 @@ class FirestoreCacheStore {
     final key = _dataKey(resourceKey);
     var raw = await _readPersistentValue(key);
     // Migrate caches made by earlier releases on their first successful read.
-    raw ??= _prefs!.getString(key);
+    raw ??= _decodePreferenceValue(_prefs!.getString(key));
     if (raw != null && _persistentStore.isAvailable) {
       unawaited(_persistentStore.write(key, raw).catchError((_) {}));
     }
@@ -78,7 +79,7 @@ class FirestoreCacheStore {
     await _ensurePrefs();
     final key = _versionKey(resourceKey);
     var value = await _readPersistentValue(key);
-    value ??= _prefs!.getString(key);
+    value ??= _decodePreferenceValue(_prefs!.getString(key));
     if (value != null && _persistentStore.isAvailable) {
       unawaited(_persistentStore.write(key, value).catchError((_) {}));
     }
@@ -136,15 +137,24 @@ class FirestoreCacheStore {
   }
 
   Future<void> _writePersistentValue(String key, String value) async {
+    var saved = false;
     if (_persistentStore.isAvailable) {
       try {
         await _persistentStore.write(key, value);
-        return;
+        saved = true;
       } catch (_) {
-        // Preserve the legacy localStorage fallback if IndexedDB is blocked.
+        // Fall through to the compressed localStorage mirror below.
       }
     }
-    final saved = await _prefs!.setString(key, value);
+    try {
+      // Keep a compressed fallback in the same durable store already used by
+      // session/profile data. This protects cold offline startup when a
+      // browser blocks or clears an IndexedDB transaction.
+      saved =
+          await _prefs!.setString(key, _encodePreferenceValue(value)) || saved;
+    } catch (_) {
+      // IndexedDB may already have completed the durable write.
+    }
     if (!saved) {
       throw StateError('Could not persist cache resource $key.');
     }
@@ -159,6 +169,23 @@ class FirestoreCacheStore {
       }
     }
     await _prefs!.remove(key);
+  }
+
+  String _encodePreferenceValue(String value) {
+    final compressed = GZipEncoder().encode(utf8.encode(value));
+    return 'gzip:${base64Encode(compressed)}';
+  }
+
+  String? _decodePreferenceValue(String? value) {
+    if (value == null || !value.startsWith('gzip:')) {
+      return value;
+    }
+    try {
+      final bytes = base64Decode(value.substring('gzip:'.length));
+      return utf8.decode(GZipDecoder().decodeBytes(bytes));
+    } catch (_) {
+      return null;
+    }
   }
 
   List<Map<String, dynamic>> _toSerializableDocuments(
