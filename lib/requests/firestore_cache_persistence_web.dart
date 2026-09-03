@@ -16,7 +16,10 @@ class FirestoreCachePersistence {
   Database? _database;
   Future<Database>? _openingDatabase;
 
-  bool get isAvailable => true;
+  /// Do not use `idbFactoryBrowser` here: it silently substitutes an
+  /// in-memory database when IndexedDB is unavailable. That makes a write
+  /// appear successful until the browser is fully closed.
+  bool get isAvailable => idbFactoryNativeSupported;
 
   Future<Database> _openDatabase() {
     final existing = _database;
@@ -27,7 +30,7 @@ class FirestoreCachePersistence {
     if (opening != null) {
       return opening;
     }
-    final future = idbFactoryBrowser
+    final future = idbFactoryNative
         .open(
           _databaseName,
           version: 1,

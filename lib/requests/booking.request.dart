@@ -63,7 +63,11 @@ class BookingRequest implements BookingRepository {
   static bool get hasHydratedBookings => _memoryBookings.isNotEmpty;
   static bool get hasResolvedBookings => _hasResolvedBookings;
   static bool get hasAuthoritativeBookings =>
-      !currentNetworkStatus() || _hasAuthoritativeOnlineSync;
+      !currentNetworkStatus() ||
+      _hasAuthoritativeOnlineSync ||
+      // A non-empty durable cache is safe to render while an online refresh
+      // reconciles it. Do not treat an empty cache as authoritative.
+      (_hasResolvedBookings && _memoryBookings.isNotEmpty);
   static bool get isAuthoritativeSyncInFlight =>
       instance._backgroundRefreshFuture != null ||
       !(instance._initialRealtimeSyncCompleter?.isCompleted ?? true);
@@ -149,9 +153,12 @@ class BookingRequest implements BookingRepository {
     _isRefreshingFromVersionSignal = true;
     try {
       if (shouldRefresh) {
-        await _invalidatePersistedBookingsCache(
-          reason: 'version-signal-mismatch',
-          remoteVersion: remoteVersion,
+        // Keep visible cached bookings until the incoming server snapshot
+        // replaces them. Clearing here made a cold offline restart lose all
+        // bookings after a version change had merely been detected.
+        _isPersistedCacheTrustedOnline = false;
+        _log(
+          'version signal retained persisted cache remoteVersion=${remoteVersion ?? "-"}',
         );
       }
       await _refreshBookingsCacheInBackground();
@@ -170,10 +177,31 @@ class BookingRequest implements BookingRepository {
     }
     final future = _runRequest(() async {
       await initialize();
-      await _waitForPersistedCacheTrustSync();
       _log(
         'getBookings enter online=${currentNetworkStatus()} memory=${_memoryBookings.length} resolved=$_hasResolvedBookings',
       );
+      // Match the cache-first behavior of vehicle and flow collections.
+      // This avoids a 30-second server timeout when navigator.onLine is stale
+      // even though the browser is actually offline.
+      final persistedDocuments = await _cache.readDocuments(
+        _bookingsResourceKey,
+      );
+      if (persistedDocuments != null &&
+          (persistedDocuments.isNotEmpty || !currentNetworkStatus())) {
+        final queuedDocuments = await _readQueuedBookingDocumentsSafe();
+        final visibleDocuments = _mergeQueuedPendingBookingDocuments(
+          existingDocuments: persistedDocuments,
+          queuedDocuments: queuedDocuments,
+        );
+        final cachedBookings = await _cacheInflatedBookings(visibleDocuments);
+        if (currentNetworkStatus()) {
+          unawaited(
+            _refreshBookingsCacheInBackground(reason: 'cache-first-read'),
+          );
+        }
+        return cachedBookings;
+      }
+      await _waitForPersistedCacheTrustSync();
       if ((_memoryBookings.isNotEmpty || _hasResolvedBookings) &&
           (!currentNetworkStatus() ||
               _hasAuthoritativeOnlineSync ||
@@ -254,8 +282,8 @@ class BookingRequest implements BookingRepository {
             !currentNetworkStatus() ||
             _hasAuthoritativeOnlineSync ||
             _isPersistedCacheTrustedOnline;
-        if ((_memoryBookings.isNotEmpty || _hasResolvedBookings) &&
-            canTrustVisibleCache &&
+        if ((_memoryBookings.isNotEmpty ||
+                (_hasResolvedBookings && canTrustVisibleCache)) &&
             !controller.isClosed) {
           _log('watchBookings emit memory docs=${_memoryBookings.length}');
           emitIfChanged(List<Booking>.from(_memoryBookings), source: 'memory');
@@ -267,7 +295,11 @@ class BookingRequest implements BookingRepository {
         if (controller.isClosed) {
           return;
         }
-        if (!canTrustVisibleCache && currentNetworkStatus()) {
+        final hasDurableCachedBookings =
+            cachedDocuments != null && cachedDocuments.isNotEmpty;
+        if (!canTrustVisibleCache &&
+            currentNetworkStatus() &&
+            !hasDurableCachedBookings) {
           _log(
             'watchBookings skip cached emit reason=awaiting-authoritative-sync cached=${cachedDocuments?.length ?? -1}',
           );
@@ -304,6 +336,11 @@ class BookingRequest implements BookingRepository {
           await _cacheInflatedBookings(visibleDocuments),
           source: 'cache',
         );
+        if (allowBackgroundRefresh && currentNetworkStatus()) {
+          unawaited(
+            _refreshBookingsCacheInBackground(reason: 'watch-cache-first'),
+          );
+        }
       }
 
       unawaited(emitCachedBookings(allowBackgroundRefresh: true));
@@ -1280,9 +1317,11 @@ class BookingRequest implements BookingRepository {
       _log('meta trust accepted version=$remoteVersion');
       return;
     }
-    await _invalidatePersistedBookingsCache(
-      reason: 'meta-version-mismatch',
-      remoteVersion: remoteVersion,
+    // A version mismatch means a refresh is needed, not that local data is
+    // unusable. Retaining it keeps cold-start and flaky-network views usable
+    // until the next confirmed server snapshot arrives.
+    _log(
+      'meta trust mismatch retained local cache remoteVersion=$remoteVersion',
     );
   }
 
@@ -1294,21 +1333,6 @@ class BookingRequest implements BookingRepository {
     try {
       await future.timeout(const Duration(seconds: 2), onTimeout: () => null);
     } catch (_) {}
-  }
-
-  Future<void> _invalidatePersistedBookingsCache({
-    required String reason,
-    String? remoteVersion,
-  }) async {
-    _log(
-      'persisted cache invalidate start reason=$reason remoteVersion=${remoteVersion ?? "-"}',
-    );
-    _isPersistedCacheTrustedOnline = false;
-    _memoryBookings = const [];
-    _hasResolvedBookings = false;
-    await _cache.clearResource(_bookingsResourceKey);
-    _bookingCacheUpdates.add(null);
-    _log('persisted cache invalidate done reason=$reason');
   }
 
   Future<void> _handleRealtimeSnapshot(
