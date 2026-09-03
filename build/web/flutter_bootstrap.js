@@ -37,9 +37,9 @@ _flutter.buildConfig = {"engineRevision":"59aa584fdf100e6c78c785d8a5b565d1de4b48
 
 
 (function () {
-  const deployVersion = '2026-09-04-ios-safari-startup-1';
+  const deployVersion = '2026-09-04-offline-shell-assets-1';
   const flutterServiceWorkerVersion =
-    "2422222529" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
+    "4172026325" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
   const serviceWorkerVersion =
     `${deployVersion}-${flutterServiceWorkerVersion}`;
   const swVersionKey = 'paltranco_sw_version';

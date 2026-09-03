@@ -2,7 +2,7 @@
 {{flutter_build_config}}
 
 (function () {
-  const deployVersion = '2026-09-04-ios-safari-startup-1';
+  const deployVersion = '2026-09-04-offline-shell-assets-1';
   const flutterServiceWorkerVersion =
     {{flutter_service_worker_version}} || String(Date.now());
   const serviceWorkerVersion =

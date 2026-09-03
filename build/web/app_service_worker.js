@@ -33,6 +33,14 @@ const APP_SHELL_URLS = [
   '/canvaskit/canvaskit.wasm',
   '/canvaskit/chromium/canvaskit.js',
   '/canvaskit/chromium/canvaskit.wasm',
+  // Flutter reads these before its first frame. They must be available on a
+  // cold offline launch, not just after a previous runtime asset request.
+  '/assets/AssetManifest.bin',
+  '/assets/AssetManifest.bin.json',
+  '/assets/FontManifest.json',
+  '/assets/fonts/MaterialIcons-Regular.otf',
+  '/assets/packages/cupertino_icons/assets/CupertinoIcons.ttf',
+  '/assets/shaders/ink_sparkle.frag',
   '/manifest.json',
   '/version.json',
   '/favicon.png',
