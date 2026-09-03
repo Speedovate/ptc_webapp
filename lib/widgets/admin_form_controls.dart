@@ -202,6 +202,7 @@ class AdminDropdownFormField<T> extends StatefulWidget {
     this.decoration,
     this.items,
     this.onChanged,
+    this.selectedDisplayText,
     this.isExpanded = true,
     this.disabledTapMessage,
     this.onDisabledTap,
@@ -216,6 +217,7 @@ class AdminDropdownFormField<T> extends StatefulWidget {
   final InputDecoration? decoration;
   final List<DropdownMenuItem<T>>? items;
   final ValueChanged<T?>? onChanged;
+  final String? selectedDisplayText;
   final bool isExpanded;
   final String? disabledTapMessage;
   final VoidCallback? onDisabledTap;
@@ -412,7 +414,10 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
           (item) => item?.value == _selectedValue,
           orElse: () => null,
         );
-    final selectedLabel = selectedItem == null
+    final explicitSelectedLabel = widget.selectedDisplayText?.trim();
+    final selectedLabel = explicitSelectedLabel?.isNotEmpty == true
+        ? explicitSelectedLabel
+        : selectedItem == null
         ? null
         : _collapsedDropdownLabel(selectedItem.child);
     final hasSelectedLabel = selectedLabel?.trim().isNotEmpty == true;
@@ -574,6 +579,20 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
       final data = child.data;
       if (data != null) {
         return data;
+      }
+    }
+    // Popup options can use a Row (for example, name plus Online/Offline).
+    // The collapsed field should use the first readable label, not fall back
+    // to its placeholder just because the option is not a bare Text widget.
+    if (child is ProxyWidget) {
+      return _collapsedDropdownLabel(child.child);
+    }
+    if (child is MultiChildRenderObjectWidget) {
+      for (final nestedChild in child.children) {
+        final label = _collapsedDropdownLabel(nestedChild);
+        if (label.isNotEmpty) {
+          return label;
+        }
       }
     }
     return '';

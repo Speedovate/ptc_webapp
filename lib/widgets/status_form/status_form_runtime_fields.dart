@@ -747,6 +747,17 @@ class _DropdownFieldInput extends StatelessWidget {
         : field.required == true
         ? adminSelectPlaceholder(fieldLabel)
         : 'Optional';
+    final selectedOption = initialValue is String ? initialValue.trim() : '';
+    final selectedDisplayText = selectedOption.isEmpty
+        ? null
+        : optionLabels[selectedOption] ??
+              (optionSourceKey == statusFieldOptionSourceVehicleSizes
+                  ? VehicleRequest.instance.displayVehicleSizeLabel(
+                      selectedOption,
+                    )
+                  : optionSourceKey == statusFieldOptionSourceChassis
+                  ? ChassisRequest.instance.displayChassisLabel(selectedOption)
+                  : selectedOption);
     void closeSelectionFlow(dynamic value) {
       onChanged(value);
       final handleAdvance = onAdvanceAfterSelection;
@@ -764,6 +775,7 @@ class _DropdownFieldInput extends StatelessWidget {
 
     return AdminDropdownFormField<String>(
       initialValue: initialValue is String ? initialValue : null,
+      selectedDisplayText: selectedDisplayText,
       focusNode: focusNode,
       onFocusChanged: (hasFocus) {},
       isExpanded: true,

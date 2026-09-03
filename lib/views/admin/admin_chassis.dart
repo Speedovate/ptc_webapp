@@ -1311,6 +1311,8 @@ class _ChassisFiltersPanelState extends State<_ChassisFiltersPanel> {
         label: 'Status',
         value: widget.status,
         items: ['All', ...Chassis.statuses],
+        displayValue: (status) =>
+            status == 'All' ? status : chassisStatusLabel(status),
         onChanged: widget.onStatusChanged,
         itemBuilder: (status) => status == 'All'
             ? Text('All', style: adminDropdownDisplayTextStyle)

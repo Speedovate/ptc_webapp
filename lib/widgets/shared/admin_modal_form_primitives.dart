@@ -495,6 +495,7 @@ class AdminModalDropdownField<T> extends StatelessWidget {
     this.focusNode,
     this.items,
     this.onChanged,
+    this.selectedDisplayText,
     this.onSelectionCompleted,
     this.bottomPadding = 6,
     this.iconEnabledColor,
@@ -510,6 +511,7 @@ class AdminModalDropdownField<T> extends StatelessWidget {
   final FocusNode? focusNode;
   final List<DropdownMenuItem<T>>? items;
   final ValueChanged<T?>? onChanged;
+  final String? selectedDisplayText;
   final VoidCallback? onSelectionCompleted;
   final double bottomPadding;
   final Color? iconEnabledColor;
@@ -537,6 +539,7 @@ class AdminModalDropdownField<T> extends StatelessWidget {
               ),
             ),
         items: items,
+        selectedDisplayText: selectedDisplayText,
         onChanged: (value) {
           onChanged?.call(value);
           onSelectionCompleted?.call();

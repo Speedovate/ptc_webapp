@@ -995,6 +995,58 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     return items;
   }
 
+  String _bookerLabelForId(String? userId) {
+    final normalizedId = userId?.trim() ?? '';
+    final user = widget.clientUsers.cast<UserModel?>().firstWhere(
+      (candidate) => candidate?.id?.trim() == normalizedId,
+      orElse: () => null,
+    );
+    return user == null ? normalizedId : _collapsedPersonLabel(user, 'Client');
+  }
+
+  String _statusLabelForValue(String? value) {
+    final normalizedValue = value?.trim() ?? '';
+    for (final status in widget.statuses) {
+      if (status.key?.trim() != normalizedValue) {
+        continue;
+      }
+      final label = status.label?.trim();
+      return label?.isNotEmpty == true ? label! : normalizedValue;
+    }
+    if (widget.booking.clientStatus?.trim() == normalizedValue) {
+      return widget.currentStatusLabel;
+    }
+    return normalizedValue;
+  }
+
+  String _roleUserLabelForId(String? userId, String fallbackRole) {
+    final normalizedId = userId?.trim() ?? '';
+    if (normalizedId.isEmpty) {
+      return '';
+    }
+    final user = _userForId(normalizedId);
+    return user == null
+        ? _fallbackUserLabel(normalizedId, fallbackRole)
+        : _collapsedPersonLabel(user, fallbackRole);
+  }
+
+  String _collapsedPersonLabel(UserModel user, String fallback) {
+    final name = (user.name ?? '').trim();
+    if (name.isNotEmpty) {
+      return name;
+    }
+    final phone = (user.phone ?? '').trim();
+    return phone.isNotEmpty ? phone : fallback;
+  }
+
+  String _chassisLabelForId(String? chassisId) {
+    final normalizedId = chassisId?.trim() ?? '';
+    final chassis = widget.chassis
+        .where((item) => item.id.toString() == normalizedId)
+        .firstOrNull;
+    return chassis == null ? normalizedId : _chassisLabel(chassis);
+  }
+
   List<DropdownMenuItem<String>> _buildRoleUserItems({
     required String? selectedUserId,
     required List<UserModel> activeUsers,
@@ -1195,6 +1247,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     initialValue: _selectedBookerId.isEmpty
                         ? null
                         : _selectedBookerId,
+                    selectedDisplayText: _bookerLabelForId(_selectedBookerId),
                     bottomPadding: 8,
                     isExpanded: true,
                     disabledTapMessage: 'No client accounts available yet.',
@@ -1268,6 +1321,11 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     focusNode: _vanSizeFocusNode,
                     label: 'Van Size',
                     initialValue: _vanSize,
+                    selectedDisplayText: _vanSize?.trim().isNotEmpty == true
+                        ? VehicleRequest.instance.displayVehicleSizeLabel(
+                            _vanSize!,
+                          )
+                        : null,
                     bottomPadding: 8,
                     isExpanded: true,
                     disabledTapMessage: 'No active vehicle sizes available.',
@@ -1479,6 +1537,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     focusNode: _statusFocusNode,
                     label: 'Status',
                     initialValue: _statusKey.isEmpty ? null : _statusKey,
+                    selectedDisplayText: _statusLabelForValue(_statusKey),
                     isExpanded: true,
                     bottomPadding: 8,
                     disabledTapMessage: 'No active statuses available.',
@@ -1494,6 +1553,10 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     focusNode: _driverFocusNode,
                     label: 'Driver',
                     initialValue: _driverId,
+                    selectedDisplayText: _roleUserLabelForId(
+                      _driverId,
+                      'Driver',
+                    ),
                     isExpanded: true,
                     bottomPadding: 8,
                     disabledTapMessage: 'No active drivers available.',
@@ -1513,6 +1576,10 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     focusNode: _helperFocusNode,
                     label: 'Helper',
                     initialValue: _helperId,
+                    selectedDisplayText: _roleUserLabelForId(
+                      _helperId,
+                      'Helper',
+                    ),
                     isExpanded: true,
                     bottomPadding: 0,
                     disabledTapMessage: 'No active helpers available.',
@@ -1533,6 +1600,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                     focusNode: _chassisFocusNode,
                     label: 'Chassis',
                     initialValue: _chassisId,
+                    selectedDisplayText: _chassisLabelForId(_chassisId),
                     isExpanded: true,
                     bottomPadding: 0,
                     disabledTapMessage: 'No active chassis available.',

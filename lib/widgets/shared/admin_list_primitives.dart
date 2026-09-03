@@ -560,6 +560,7 @@ class _AdminListDropdownFilterState extends State<_AdminListDropdownFilter> {
         initialValue: filter.value.trim().toLowerCase() == 'all'
             ? null
             : filter.value,
+        selectedDisplayText: filter.displayValue?.call(filter.value),
         focusNode: _focusNode,
         iconEnabledColor: AppColors.primaryColor,
         style: adminDropdownDisplayTextStyle,
