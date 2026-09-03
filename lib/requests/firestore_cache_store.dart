@@ -51,11 +51,15 @@ class FirestoreCacheStore {
     String resourceKey,
     List<Map<String, dynamic>> documents,
   ) async {
-    _documentMemoryCache[resourceKey] = documents
+    final serializableDocuments = _toSerializableDocuments(documents);
+    _documentMemoryCache[resourceKey] = serializableDocuments
         .map((item) => Map<String, dynamic>.from(item))
         .toList();
     await _ensurePrefs();
-    await _prefs!.setString(_dataKey(resourceKey), json.encode(documents));
+    await _prefs!.setString(
+      _dataKey(resourceKey),
+      json.encode(serializableDocuments),
+    );
   }
 
   Future<String?> readVersion(String resourceKey) async {
@@ -99,6 +103,45 @@ class FirestoreCacheStore {
 
   String _dataKey(String resourceKey) => '$_dataPrefix$resourceKey';
   String _versionKey(String resourceKey) => '$_versionPrefix$resourceKey';
+
+  List<Map<String, dynamic>> _toSerializableDocuments(
+    List<Map<String, dynamic>> documents,
+  ) {
+    return documents
+        .map(
+          (document) =>
+              Map<String, dynamic>.from(_toSerializableValue(document) as Map),
+        )
+        .toList(growable: false);
+  }
+
+  dynamic _toSerializableValue(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate().toUtc().toIso8601String();
+    }
+    if (value is DateTime) {
+      return value.toUtc().toIso8601String();
+    }
+    if (value is GeoPoint) {
+      return <String, double>{
+        'latitude': value.latitude,
+        'longitude': value.longitude,
+      };
+    }
+    if (value is DocumentReference) {
+      return value.path;
+    }
+    if (value is Map) {
+      return <String, dynamic>{
+        for (final entry in value.entries)
+          entry.key.toString(): _toSerializableValue(entry.value),
+      };
+    }
+    if (value is Iterable) {
+      return value.map(_toSerializableValue).toList(growable: false);
+    }
+    return value;
+  }
 }
 
 class FirestoreCollectionCache {

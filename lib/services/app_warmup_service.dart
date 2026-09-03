@@ -111,6 +111,13 @@ class AppWarmupService {
       'warmUpForUser start user=${normalizeId(user?.id) ?? "-"} role=${user?.role ?? "-"}',
     );
     final flowWarmup = _warmFlowData();
+    final bookingsWarmup = warmBookings();
+    // Support inbox scope depends on the persisted role-access configuration.
+    // Resolve it first so admin roles prefetch the shared inbox, not an empty
+    // requester-only subset.
+    _log('warmUpForUser step=role-access start');
+    await PerformanceTrace.track('warmup', 'role-access', warmRoleAccess);
+    _log('warmUpForUser step=role-access done');
     _log('warmUpForUser step=vehicles start');
     await PerformanceTrace.track(
       'warmup',
@@ -151,9 +158,9 @@ class AppWarmupService {
       );
     }
     _log('warmUpForUser step=support done threads=${threads.length}');
-    _log('warmUpForUser step=role-access start');
-    await PerformanceTrace.track('warmup', 'role-access', warmRoleAccess);
-    _log('warmUpForUser step=role-access done');
+    _log('warmUpForUser step=bookings start');
+    await PerformanceTrace.track('warmup', 'bookings', () => bookingsWarmup);
+    _log('warmUpForUser step=bookings done');
     _log('warmUpForUser step=flows start');
     await PerformanceTrace.track('warmup', 'flow-data', () => flowWarmup);
     _log('warmUpForUser step=flows done');
