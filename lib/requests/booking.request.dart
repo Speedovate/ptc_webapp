@@ -271,12 +271,9 @@ class BookingRequest implements BookingRepository {
           _log(
             'watchBookings skip cached emit reason=awaiting-authoritative-sync cached=${cachedDocuments?.length ?? -1}',
           );
-          // A missing local cache may render as an immediate provisional empty
-          // state. The realtime source replaces it once Firestore responds.
-          if ((cachedDocuments == null || cachedDocuments.isEmpty) &&
-              !controller.isClosed) {
-            emitIfChanged(const <Booking>[], source: 'provisional-empty');
-          }
+          // Do not emit a provisional empty list here. Consumers interpret an
+          // empty stream event as a confirmed no-data state, which causes the
+          // "No bookings" flash before the first server/cache result arrives.
           return;
         }
         if (cachedDocuments == null || cachedDocuments.isEmpty) {

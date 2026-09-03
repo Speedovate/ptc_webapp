@@ -57,7 +57,7 @@ class _AdminAnalyticsViewState extends State<AdminAnalyticsView> {
       builder: (context, snapshot) {
         final bookings = snapshot.data ?? const <Booking>[];
         final isAwaitingInitialData =
-            !BookingRequest.hasAuthoritativeBookings && !snapshot.hasData;
+            !BookingRequest.hasResolvedBookings && bookings.isEmpty;
         final content = _AnalyticsContent(
           bookings: bookings,
           startDate: _startDate,
