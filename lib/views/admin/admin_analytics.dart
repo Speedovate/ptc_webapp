@@ -124,159 +124,179 @@ class _AnalyticsContent extends StatelessWidget {
       (total, booking) => total + _amount(booking),
     );
     final points = _buildPoints(startDate, endDate, filteredBookings);
-    final width = MediaQuery.sizeOf(context).width;
-    final columns = width >= 1320 ? 4 : 2;
-    final chartWidth = math.max<double>(
-      width - 96,
-      math.max<double>(680, points.length * 112),
-    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.hasBoundedWidth
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width;
+        final isMobile = width < 760;
+        final columns = width >= 1320 ? 4 : 2;
+        // Match the supermarket dashboard: use the remaining page viewport to
+        // size the primary content before the page needs to scroll.
+        final availableHeight = constraints.hasBoundedHeight
+            ? constraints.maxHeight
+            : MediaQuery.sizeOf(context).height;
+        final metricMainAxisExtent = isMobile
+            ? (availableHeight >= 700 ? 126.0 : 118.0)
+            : 154.0;
+        final metricSpacing = isMobile ? 12.0 : 20.0;
+        final sectionSpacing = isMobile ? 14.0 : 24.0;
+        final chartHeight = isMobile
+            ? (availableHeight - 490).clamp(190.0, 280.0)
+            : 280.0;
+        final chartWidth = math.max<double>(
+          width - (isMobile ? 48 : 96),
+          math.max<double>(680, points.length * 112),
+        );
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columns,
-              mainAxisSpacing: 20,
-              crossAxisSpacing: 20,
-              mainAxisExtent: 154,
+        return ListView(
+          padding: const EdgeInsets.all(24),
+          children: [
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                mainAxisSpacing: metricSpacing,
+                crossAxisSpacing: metricSpacing,
+                mainAxisExtent: metricMainAxisExtent,
+              ),
+              itemCount: 4,
+              itemBuilder: (context, index) {
+                final metrics = [
+                  ('Bookings', '$deliveredCount/${bookings.length}'),
+                  ('Unbilled', _formatCurrency(unbilledAmount)),
+                  ('Billed', _formatCurrency(billedAmount)),
+                  ('Total', _formatCurrency(unbilledAmount + billedAmount)),
+                ];
+                final metric = metrics[index];
+                return _MetricCard(label: metric.$1, value: metric.$2);
+              },
             ),
-            itemCount: 4,
-            itemBuilder: (context, index) {
-              final metrics = [
-                ('Bookings', '$deliveredCount/${bookings.length}'),
-                ('Unbilled', _formatCurrency(unbilledAmount)),
-                ('Billed', _formatCurrency(billedAmount)),
-                ('Total', _formatCurrency(unbilledAmount + billedAmount)),
-              ];
-              final metric = metrics[index];
-              return _MetricCard(label: metric.$1, value: metric.$2);
-            },
-          ),
-          const SizedBox(height: 24),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final filters = _AnalyticsFilters(
-                iconOnly: constraints.maxWidth < 300,
-                startDate: startDate,
-                endDate: endDate,
-                onStartDateChanged: onStartDateChanged,
-                onEndDateChanged: onEndDateChanged,
-                onClear: onClear,
-              );
-              final filtersWidth = adminListFiltersButtonWidth(
-                constraints.maxWidth < 300,
-              );
-              if (constraints.maxWidth < 250) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            SizedBox(height: sectionSpacing),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final filters = _AnalyticsFilters(
+                  iconOnly: constraints.maxWidth < 300,
+                  startDate: startDate,
+                  endDate: endDate,
+                  onStartDateChanged: onStartDateChanged,
+                  onEndDateChanged: onEndDateChanged,
+                  onClear: onClear,
+                );
+                final filtersWidth = adminListFiltersButtonWidth(
+                  constraints.maxWidth < 300,
+                );
+                if (constraints.maxWidth < 250) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const _SalesTitle(),
+                      const SizedBox(height: 12),
+                      SizedBox(width: filtersWidth, child: filters),
+                    ],
+                  );
+                }
+                return Row(
                   children: [
-                    const _SalesTitle(),
-                    const SizedBox(height: 12),
+                    const Expanded(child: _SalesTitle()),
                     SizedBox(width: filtersWidth, child: filters),
                   ],
                 );
-              }
-              return Row(
-                children: [
-                  const Expanded(child: _SalesTitle()),
-                  SizedBox(width: filtersWidth, child: filters),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: AppColors.primaryBorder),
+              },
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                    color: AppColors.primarySurface,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final amount = Text(
-                          _formatCurrency(filteredAmount),
-                          style: const TextStyle(
-                            color: AppColors.primaryColor,
-                            fontWeight: FontWeight.w800,
-                            height: 1.15,
-                          ),
-                        );
-                        final range = Text(
-                          '${_longDate(startDate)} - ${_longDate(endDate)}',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: AppColors.primaryColor,
-                            fontWeight: FontWeight.w600,
-                            height: 1.15,
-                          ),
-                        );
-                        final count = Text(
-                          '${filteredBookings.length} ${filteredBookings.length == 1 ? 'booking' : 'bookings'}',
-                          style: const TextStyle(
-                            color: AppColors.primaryColor,
-                            fontWeight: FontWeight.w600,
-                            height: 1.15,
-                          ),
-                        );
-                        if (constraints.maxWidth < 540) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(height: 12),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppColors.primaryBorder),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+                      color: AppColors.primarySurface,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final amount = Text(
+                            _formatCurrency(filteredAmount),
+                            style: const TextStyle(
+                              color: AppColors.primaryColor,
+                              fontWeight: FontWeight.w800,
+                              height: 1.15,
+                            ),
+                          );
+                          final range = Text(
+                            '${_longDate(startDate)} - ${_longDate(endDate)}',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: AppColors.primaryColor,
+                              fontWeight: FontWeight.w600,
+                              height: 1.15,
+                            ),
+                          );
+                          final count = Text(
+                            '${filteredBookings.length} ${filteredBookings.length == 1 ? 'booking' : 'bookings'}',
+                            style: const TextStyle(
+                              color: AppColors.primaryColor,
+                              fontWeight: FontWeight.w600,
+                              height: 1.15,
+                            ),
+                          );
+                          if (constraints.maxWidth < 540) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(children: [amount, const Spacer(), count]),
+                                const SizedBox(height: 10),
+                                Center(child: range),
+                              ],
+                            );
+                          }
+                          return Row(
                             children: [
-                              Row(children: [amount, const Spacer(), count]),
-                              const SizedBox(height: 10),
-                              Center(child: range),
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: amount,
+                                ),
+                              ),
+                              Expanded(child: range),
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: count,
+                                ),
+                              ),
                             ],
                           );
-                        }
-                        return Row(
-                          children: [
-                            Expanded(
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: amount,
-                              ),
-                            ),
-                            Expanded(child: range),
-                            Expanded(
-                              child: Align(
-                                alignment: Alignment.centerRight,
-                                child: count,
-                              ),
-                            ),
-                          ],
-                        );
-                      },
+                        },
+                      ),
                     ),
-                  ),
-                  const Divider(height: 1, color: AppColors.primaryBorder),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.all(20),
-                    child: SizedBox(
-                      width: chartWidth,
-                      child: _BookingActivityChart(points: points),
+                    const Divider(height: 1, color: AppColors.primaryBorder),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.all(20),
+                      child: SizedBox(
+                        width: chartWidth,
+                        child: _BookingActivityChart(
+                          points: points,
+                          chartHeight: chartHeight,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
   }
 }
@@ -395,9 +415,13 @@ class _SalesTitle extends StatelessWidget {
 }
 
 class _BookingActivityChart extends StatelessWidget {
-  const _BookingActivityChart({required this.points});
+  const _BookingActivityChart({
+    required this.points,
+    required this.chartHeight,
+  });
 
   final List<_BookingActivityPoint> points;
+  final double chartHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -408,9 +432,9 @@ class _BookingActivityChart extends StatelessWidget {
     return Column(
       children: [
         SizedBox(
-          height: 250,
+          height: chartHeight,
           child: CustomPaint(
-            size: const Size(double.infinity, 250),
+            size: Size(double.infinity, chartHeight),
             painter: _BookingActivityChartPainter(
               points: points,
               maxBookings: maxBookings,
