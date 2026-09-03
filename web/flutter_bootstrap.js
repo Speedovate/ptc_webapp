@@ -2,7 +2,7 @@
 {{flutter_build_config}}
 
 (function () {
-  const deployVersion = '2026-09-03-persistent-images-1';
+  const deployVersion = '2026-09-04-ios-safari-startup-1';
   const flutterServiceWorkerVersion =
     {{flutter_service_worker_version}} || String(Date.now());
   const serviceWorkerVersion =
@@ -11,7 +11,6 @@
   const refreshFlagKey = 'paltranco_sw_forced_refresh_done';
   const flutterConfig = {
     canvasKitBaseUrl: 'canvaskit/',
-    canvasKitVariant: 'chromium',
   };
   const isLocalDevelopmentHost =
     typeof window !== 'undefined' &&
