@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webapp/requests/firestore_cache_persistence.dart';
 import 'package:webapp/services/network_status_events.dart';
 
 class FirestoreCacheStore {
@@ -13,6 +14,8 @@ class FirestoreCacheStore {
   static const _versionPrefix = 'firestore_cache_version_';
 
   SharedPreferences? _prefs;
+  final FirestoreCachePersistence _persistentStore =
+      createFirestoreCachePersistence();
   final Map<String, List<Map<String, dynamic>>> _documentMemoryCache = {};
   final Map<String, String> _versionMemoryCache = {};
 
@@ -30,7 +33,13 @@ class FirestoreCacheStore {
           .toList();
     }
     await _ensurePrefs();
-    final raw = _prefs!.getString(_dataKey(resourceKey));
+    final key = _dataKey(resourceKey);
+    var raw = await _readPersistentValue(key);
+    // Migrate caches made by earlier releases on their first successful read.
+    raw ??= _prefs!.getString(key);
+    if (raw != null && _persistentStore.isAvailable) {
+      unawaited(_persistentStore.write(key, raw).catchError((_) {}));
+    }
     if (raw == null || raw.isEmpty) {
       return null;
     }
@@ -56,10 +65,9 @@ class FirestoreCacheStore {
         .map((item) => Map<String, dynamic>.from(item))
         .toList();
     await _ensurePrefs();
-    await _prefs!.setString(
-      _dataKey(resourceKey),
-      json.encode(serializableDocuments),
-    );
+    final key = _dataKey(resourceKey);
+    final encoded = json.encode(serializableDocuments);
+    await _writePersistentValue(key, encoded);
   }
 
   Future<String?> readVersion(String resourceKey) async {
@@ -68,7 +76,12 @@ class FirestoreCacheStore {
       return memoryValue;
     }
     await _ensurePrefs();
-    final value = _prefs!.getString(_versionKey(resourceKey));
+    final key = _versionKey(resourceKey);
+    var value = await _readPersistentValue(key);
+    value ??= _prefs!.getString(key);
+    if (value != null && _persistentStore.isAvailable) {
+      unawaited(_persistentStore.write(key, value).catchError((_) {}));
+    }
     if (value != null) {
       _versionMemoryCache[resourceKey] = value;
     }
@@ -78,15 +91,17 @@ class FirestoreCacheStore {
   Future<void> writeVersion(String resourceKey, String version) async {
     _versionMemoryCache[resourceKey] = version;
     await _ensurePrefs();
-    await _prefs!.setString(_versionKey(resourceKey), version);
+    await _writePersistentValue(_versionKey(resourceKey), version);
   }
 
   Future<void> clearResource(String resourceKey) async {
     _documentMemoryCache.remove(resourceKey);
     _versionMemoryCache.remove(resourceKey);
     await _ensurePrefs();
-    await _prefs!.remove(_dataKey(resourceKey));
-    await _prefs!.remove(_versionKey(resourceKey));
+    await Future.wait([
+      _removePersistentValue(_dataKey(resourceKey)),
+      _removePersistentValue(_versionKey(resourceKey)),
+    ]);
   }
 
   Future<void> clearAll() async {
@@ -99,10 +114,52 @@ class FirestoreCacheStore {
     for (final key in keysToRemove) {
       await _prefs!.remove(key);
     }
+    if (_persistentStore.isAvailable) {
+      await _persistentStore.removeWhere((key) {
+        return key.startsWith(_dataPrefix) || key.startsWith(_versionPrefix);
+      });
+    }
   }
 
   String _dataKey(String resourceKey) => '$_dataPrefix$resourceKey';
   String _versionKey(String resourceKey) => '$_versionPrefix$resourceKey';
+
+  Future<String?> _readPersistentValue(String key) async {
+    if (!_persistentStore.isAvailable) {
+      return null;
+    }
+    try {
+      return await _persistentStore.read(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _writePersistentValue(String key, String value) async {
+    if (_persistentStore.isAvailable) {
+      try {
+        await _persistentStore.write(key, value);
+        return;
+      } catch (_) {
+        // Preserve the legacy localStorage fallback if IndexedDB is blocked.
+      }
+    }
+    final saved = await _prefs!.setString(key, value);
+    if (!saved) {
+      throw StateError('Could not persist cache resource $key.');
+    }
+  }
+
+  Future<void> _removePersistentValue(String key) async {
+    if (_persistentStore.isAvailable) {
+      try {
+        await _persistentStore.remove(key);
+      } catch (_) {
+        // The localStorage fallback is still cleared below.
+      }
+    }
+    await _prefs!.remove(key);
+  }
 
   List<Map<String, dynamic>> _toSerializableDocuments(
     List<Map<String, dynamic>> documents,

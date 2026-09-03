@@ -29,6 +29,8 @@ const APP_SHELL_URLS = [
   '/manifest.json',
   '/version.json',
   '/favicon.png',
+  '/assets/assets/icon.png',
+  '/assets/assets/sdv_footer_lite.png',
 ];
 
 self.addEventListener('install', (event) => {

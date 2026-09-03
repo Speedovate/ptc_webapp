@@ -196,7 +196,9 @@ class BookingRequest implements BookingRepository {
         final lateCachedDocuments = await _cache.readDocuments(
           _bookingsResourceKey,
         );
-        if (lateCachedDocuments != null && !currentNetworkStatus()) {
+        // navigator.onLine can remain true when a device has no usable route.
+        // A durable cache is always safer than an empty/error state at startup.
+        if (lateCachedDocuments != null) {
           _log(
             'getBookings offline using cached docs=${lateCachedDocuments.length}',
           );
