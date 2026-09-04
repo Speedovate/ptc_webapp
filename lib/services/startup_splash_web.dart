@@ -2,6 +2,10 @@
 
 import 'dart:html' as html;
 
+void showStartupSplash() {
+  html.window.dispatchEvent(html.Event('paltranco-bootstrap-start'));
+}
+
 void dismissStartupSplash() {
   html.window.dispatchEvent(html.Event('paltranco-bootstrap-ready'));
 }

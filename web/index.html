@@ -294,10 +294,43 @@
   </div>
   <div id="bootstrap-loader" aria-live="polite"></div>
   <script>
-    function removeStartupSplash() {
+    const startupTraceEnabled =
+      ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname) ||
+      new URLSearchParams(window.location.search).has('startupTrace');
+    const startupTraceStartedAt = performance.now();
+
+    function traceStartup(message) {
+      if (!startupTraceEnabled) {
+        return;
+      }
+      console.debug(
+        '[StartupTransition][+' +
+          Math.round(performance.now() - startupTraceStartedAt) +
+          'ms] ' +
+          message,
+      );
+    }
+
+    function removeStartupSplash(reason) {
       const splash = document.getElementById('app-startup-splash');
       if (splash) {
-        splash.remove();
+        traceStartup('HTML splash removed reason=' + (reason || 'unknown'));
+        splash.style.display = 'none';
+        splash.setAttribute('aria-hidden', 'true');
+      }
+    }
+
+    traceStartup('HTML splash mounted');
+
+    function showStartupSplash(reason) {
+      if (window.__PALTRANCO_SOCIAL_INAPP__ === true) {
+        return;
+      }
+      const splash = document.getElementById('app-startup-splash');
+      if (splash) {
+        traceStartup('HTML splash shown reason=' + (reason || 'unknown'));
+        splash.style.display = 'flex';
+        splash.removeAttribute('aria-hidden');
       }
     }
 
@@ -407,14 +440,23 @@
     });
 
     window.addEventListener('paltranco-bootstrap-ready', function() {
-      removeStartupSplash();
+      traceStartup('received Dart bootstrap-ready signal');
+      removeStartupSplash('dart-ready');
+    });
+
+    window.addEventListener('paltranco-bootstrap-start', function() {
+      showStartupSplash('dart-bootstrap-start');
     });
 
     // The Dart bootstrap has an 8-second timeout. If a future regression
     // prevents its ready signal, reveal Flutter's own loading or error UI
     // rather than trapping the user forever behind the HTML splash.
     window.addEventListener('flutter-first-frame', function() {
-      window.setTimeout(removeStartupSplash, 15000);
+      traceStartup('received Flutter first-frame event; fallback timer started');
+      window.setTimeout(function() {
+        traceStartup('fallback timer fired');
+        removeStartupSplash('first-frame-fallback');
+      }, 15000);
     }, { once: true });
   </script>
   <!--

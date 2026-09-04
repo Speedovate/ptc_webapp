@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -12,6 +12,7 @@ import 'package:webapp/services/dashboard_export_naming.dart';
 import 'package:webapp/services/dashboard_docx_export_service.dart';
 import 'package:webapp/services/export_file_service.dart';
 import 'package:webapp/services/role_access_service.dart';
+import 'package:webapp/services/startup_splash.dart';
 import 'package:webapp/view_models/admin/admin_dashboard.vm.dart';
 import 'package:webapp/views/admin/admin_bookings.dart';
 import 'package:webapp/views/shared/booking_workflow_view.dart';
@@ -41,11 +42,13 @@ class AdminDashboardView extends StatefulWidget {
 
 class _AdminDashboardViewState extends State<AdminDashboardView> {
   static const double _toolbarSectionGap = 12;
+  String? _lastStartupTrace;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   final AdminDashboardViewModel _viewModel = AdminDashboardViewModel();
   Booking? _selectedBooking;
   final Set<String> _excludedExportBookingIds = <String>{};
   late final ScrollController _detailScrollController;
+  bool _hasDismissedStartupSplash = false;
 
   bool _canExport(UserModel? user) => _roleAccessService.canAccess(
     DispatcherAccessCapability.dashboardExport,
@@ -65,6 +68,7 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
   @override
   void initState() {
     super.initState();
+    _traceStartup('init; dashboard load started');
     PerformanceTrace.event(
       'admin-dashboard-view',
       'init user=${widget.user.id ?? '-'}',
@@ -108,6 +112,21 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
             selectedBooking == null &&
             vm.errorMessage == null &&
             vm.completedBookings.isEmpty;
+        _traceStartup(
+          'build initialLoading=$showInitialLoading resolved=${vm.hasResolvedInitialBookings} completed=${vm.completedBookings.length} error=${vm.errorMessage != null}',
+        );
+        if (!showInitialLoading && !_hasDismissedStartupSplash) {
+          _hasDismissedStartupSplash = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) {
+              return;
+            }
+            _traceStartup(
+              'dashboard ready first frame; dispatch HTML splash ready signal',
+            );
+            dismissStartupSplash();
+          });
+        }
         if (selectedBooking != null && vm.currentUser != null) {
           return AppPageLoadingOverlay(
             isVisible: false,
@@ -284,6 +303,14 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
         );
       },
     );
+  }
+
+  void _traceStartup(String message) {
+    if (!kDebugMode || _lastStartupTrace == message) {
+      return;
+    }
+    _lastStartupTrace = message;
+    debugPrint('[StartupTransition][AdminDashboard] $message');
   }
 
   void _toggleExportExcludedBookingId(String bookingId) {

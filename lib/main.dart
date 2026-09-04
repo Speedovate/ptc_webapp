@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/firebase_options.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -16,22 +17,32 @@ import 'package:webapp/utils/performance_trace.dart';
 const Duration _firebaseBootstrapTimeout = Duration(seconds: 6);
 const Duration _firestoreBootstrapTimeout = Duration(seconds: 4);
 const Duration _applicationBootstrapTimeout = Duration(seconds: 8);
+final Stopwatch _startupTransitionClock = Stopwatch()..start();
+String? _lastBootstrapGateTrace;
 
 void _bootstrapLog(String message) {
-  // Temporary debug logging removed.
+  if (!kDebugMode) {
+    return;
+  }
+  debugPrint(
+    '[StartupTransition][+${_startupTransitionClock.elapsedMilliseconds}ms] $message',
+  );
 }
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  showStartupSplash();
   PerformanceTrace.installFrameTracing();
   PerformanceTrace.event('bootstrap', 'main start');
   _bootstrapLog('main start');
   FlutterError.onError = (details) {
+    _bootstrapLog('flutter error=${details.exceptionAsString()}');
     FlutterError.presentError(details);
   };
   ErrorWidget.builder = (details) => _AppErrorFallback(details: details);
 
   PlatformDispatcher.instance.onError = (error, stack) {
+    _bootstrapLog('platform error=$error');
     FlutterError.reportError(
       FlutterErrorDetails(exception: error, stack: stack),
     );
@@ -344,9 +355,12 @@ class _BootstrapGate extends StatelessWidget {
     return FutureBuilder<void>(
       future: bootstrapFuture,
       builder: (context, snapshot) {
-        _bootstrapLog(
-          'gate state=${snapshot.connectionState} hasError=${snapshot.hasError}',
-        );
+        final trace =
+            'gate state=${snapshot.connectionState} hasError=${snapshot.hasError}';
+        if (_lastBootstrapGateTrace != trace) {
+          _lastBootstrapGateTrace = trace;
+          _bootstrapLog(trace);
+        }
         if (snapshot.hasError) {
           return _StartupReady(
             child: _AppErrorFallback(
@@ -359,7 +373,7 @@ class _BootstrapGate extends StatelessWidget {
         if (snapshot.connectionState != ConnectionState.done) {
           return const _AppBootstrapLoadingScreen();
         }
-        return const _StartupReady(child: AppShell());
+        return const AppShell();
       },
     );
   }
@@ -378,8 +392,10 @@ class _StartupReadyState extends State<_StartupReady> {
   @override
   void initState() {
     super.initState();
+    _bootstrapLog('bootstrap error fallback selected; waiting for its first Flutter frame');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
+        _bootstrapLog('error fallback first frame; dispatch HTML splash ready signal');
         dismissStartupSplash();
       }
     });
