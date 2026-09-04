@@ -9,6 +9,7 @@ import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/services/firestore_offline_service.dart';
 import 'package:webapp/services/offline_queue_coordinator_service.dart';
+import 'package:webapp/services/startup_splash.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/utils/performance_trace.dart';
 
@@ -347,19 +348,45 @@ class _BootstrapGate extends StatelessWidget {
           'gate state=${snapshot.connectionState} hasError=${snapshot.hasError}',
         );
         if (snapshot.hasError) {
-          return _AppErrorFallback(
-            details: FlutterErrorDetails(
-              exception: snapshot.error ?? 'Application bootstrap failed.',
+          return _StartupReady(
+            child: _AppErrorFallback(
+              details: FlutterErrorDetails(
+                exception: snapshot.error ?? 'Application bootstrap failed.',
+              ),
             ),
           );
         }
         if (snapshot.connectionState != ConnectionState.done) {
           return const _AppBootstrapLoadingScreen();
         }
-        return const AppShell();
+        return const _StartupReady(child: AppShell());
       },
     );
   }
+}
+
+class _StartupReady extends StatefulWidget {
+  const _StartupReady({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_StartupReady> createState() => _StartupReadyState();
+}
+
+class _StartupReadyState extends State<_StartupReady> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        dismissStartupSplash();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class _AppBootstrapLoadingScreen extends StatelessWidget {

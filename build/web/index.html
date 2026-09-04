@@ -406,9 +406,16 @@
       }
     });
 
-    window.addEventListener('flutter-first-frame', function() {
+    window.addEventListener('paltranco-bootstrap-ready', function() {
       removeStartupSplash();
     });
+
+    // The Dart bootstrap has an 8-second timeout. If a future regression
+    // prevents its ready signal, reveal Flutter's own loading or error UI
+    // rather than trapping the user forever behind the HTML splash.
+    window.addEventListener('flutter-first-frame', function() {
+      window.setTimeout(removeStartupSplash, 15000);
+    }, { once: true });
   </script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
