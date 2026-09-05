@@ -80,25 +80,19 @@ class BookingRecordCard extends StatelessWidget {
       _BookingMetaData(label: 'Amount', value: amount),
       if (showScheduleDetails) ...[
         _BookingMetaData(
-          label: 'Pick Up Date',
-          value: outputFieldDisplayValue(booking.statusOutputs, 'pick_up_date'),
-        ),
-        _BookingMetaData(
-          label: 'Pick Up Time',
-          value: outputFieldDisplayValue(booking.statusOutputs, 'pick_up_time'),
-        ),
-        _BookingMetaData(
-          label: 'Drop Off Date',
-          value: outputFieldDisplayValue(
+          label: 'Pickup',
+          value: _scheduleDateTimeDisplay(
             booking.statusOutputs,
-            'drop_off_date',
+            dateFieldKey: 'pick_up_date',
+            timeFieldKey: 'pick_up_time',
           ),
         ),
         _BookingMetaData(
-          label: 'Drop Off Time',
-          value: outputFieldDisplayValue(
+          label: 'Dropoff',
+          value: _scheduleDateTimeDisplay(
             booking.statusOutputs,
-            'drop_off_time',
+            dateFieldKey: 'drop_off_date',
+            timeFieldKey: 'drop_off_time',
           ),
         ),
       ],
@@ -1170,6 +1164,59 @@ String _formatDateTime(DateTime? value) {
   final minute = value.minute.toString().padLeft(2, '0');
   final period = value.hour >= 12 ? 'PM' : 'AM';
   return '$month ${value.day}, ${value.year} | $hour:$minute $period';
+}
+
+String _scheduleDateTimeDisplay(
+  Map<String, dynamic>? outputs, {
+  required String dateFieldKey,
+  required String timeFieldKey,
+}) {
+  final rawDate = BookingRecordCard.outputFieldValue(outputs, dateFieldKey);
+  final rawTime = BookingRecordCard.outputFieldValue(outputs, timeFieldKey);
+  final date = _toDateTime(rawDate);
+  final time = _parseScheduleTime(rawTime);
+  if (date == null || time == null) {
+    return '-';
+  }
+
+  return _formatDateTime(
+    DateTime(date.year, date.month, date.day, time.$1, time.$2),
+  ).replaceFirst(' | ', ' - ');
+}
+
+(int, int)? _parseScheduleTime(dynamic value) {
+  final normalized = value?.toString().trim();
+  if (normalized == null || normalized.isEmpty) {
+    return null;
+  }
+
+  final match = RegExp(
+    r'^(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?$',
+  ).firstMatch(normalized);
+  if (match == null) {
+    return null;
+  }
+  var hour = int.tryParse(match.group(1) ?? '');
+  final minute = int.tryParse(match.group(2) ?? '');
+  final period = match.group(3)?.toUpperCase();
+  if (hour == null || minute == null || minute > 59) {
+    return null;
+  }
+
+  if (period != null) {
+    if (hour < 1 || hour > 12) {
+      return null;
+    }
+    if (hour == 12) {
+      hour = 0;
+    }
+    if (period == 'PM') {
+      hour += 12;
+    }
+  } else if (hour > 23) {
+    return null;
+  }
+  return (hour, minute);
 }
 
 DateTime? _toDateTime(dynamic value) {
