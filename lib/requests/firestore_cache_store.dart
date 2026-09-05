@@ -126,6 +126,13 @@ class FirestoreCacheStore {
   String _versionKey(String resourceKey) => '$_versionPrefix$resourceKey';
 
   Future<String?> _readPersistentValue(String key) async {
+    // The compressed SharedPreferences value is the fast, durable startup
+    // mirror. Prefer it over a serialized IndexedDB operation so cached UI
+    // data can render immediately after a cold start or reconnect.
+    final mirrored = _decodePreferenceValue(_prefs?.getString(key));
+    if (mirrored != null) {
+      return mirrored;
+    }
     if (!_persistentStore.isAvailable) {
       return null;
     }
@@ -137,27 +144,24 @@ class FirestoreCacheStore {
   }
 
   Future<void> _writePersistentValue(String key, String value) async {
-    var saved = false;
-    if (_persistentStore.isAvailable) {
-      try {
-        await _persistentStore.write(key, value);
-        saved = true;
-      } catch (_) {
-        // Fall through to the compressed localStorage mirror below.
-      }
-    }
+    var mirrorSaved = false;
     try {
-      // Keep a compressed fallback in the same durable store already used by
-      // session/profile data. This protects cold offline startup when a
-      // browser blocks or clears an IndexedDB transaction.
-      saved =
-          await _prefs!.setString(key, _encodePreferenceValue(value)) || saved;
+      // Commit the fast durable mirror before returning control to the UI.
+      mirrorSaved = await _prefs!.setString(key, _encodePreferenceValue(value));
     } catch (_) {
-      // IndexedDB may already have completed the durable write.
+      // Fall back to IndexedDB below when browser localStorage is blocked.
     }
-    if (!saved) {
-      throw StateError('Could not persist cache resource $key.');
+    if (mirrorSaved) {
+      if (_persistentStore.isAvailable) {
+        unawaited(_persistentStore.write(key, value).catchError((_) {}));
+      }
+      return;
     }
+    if (_persistentStore.isAvailable) {
+      await _persistentStore.write(key, value);
+      return;
+    }
+    throw StateError('Could not persist cache resource $key.');
   }
 
   Future<void> _removePersistentValue(String key) async {

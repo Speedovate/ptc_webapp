@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
@@ -59,6 +60,18 @@ class AdminBookingsViewModel extends BaseViewModel {
     }
     errorMessage = _cachedErrorMessage;
     _hasLoadedOnce = _cachedHasLoadedOnce;
+    if (_bookings.isEmpty &&
+        BookingRequest.hasResolvedBookings &&
+        BookingRequest.hasAuthoritativeBookings) {
+      _applyBookings(BookingRequest.hydratedBookingsSnapshot);
+      _markInitialBookingsResolved();
+    }
+    _traceHandoff(
+      'created local=${_bookings.length} pageCache=${_cachedBookings.length} '
+      'shared=${BookingRequest.hydratedBookingCount} '
+      'authoritative=${BookingRequest.hasAuthoritativeBookings} '
+      'resolved=${BookingRequest.hasResolvedBookings}',
+    );
   }
 
   final AuthRepository _authRepository;
@@ -157,6 +170,12 @@ class AdminBookingsViewModel extends BaseViewModel {
     final hasVisiblePrimaryData =
         _bookings.isNotEmpty || _cachedBookings.isNotEmpty || hasSharedBookings;
     final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
+    _traceHandoff(
+      'load start local=${_bookings.length} pageCache=${_cachedBookings.length} '
+      'shared=${BookingRequest.hydratedBookingCount} '
+      'authoritative=$hasSharedBookings loadedOnce=$_hasLoadedOnce '
+      'showLoading=$shouldShowLoadingState',
+    );
     if (shouldShowLoadingState) {
       setBusy(true);
       _log('overlay show section=bookings');
@@ -180,6 +199,12 @@ class AdminBookingsViewModel extends BaseViewModel {
       await _bookingRepository.initialize();
       await _ensureBookingsSubscription();
       hasSharedBookings = BookingRequest.hasAuthoritativeBookings;
+      _traceHandoff(
+        'subscription ready local=${_bookings.length} '
+        'shared=${BookingRequest.hydratedBookingCount} '
+        'authoritative=$hasSharedBookings '
+        'resolved=${BookingRequest.hasResolvedBookings}',
+      );
       if (!hasSharedBookings) {
         // Dashboard owns the shared booking read. This page subscribes only,
         // avoiding another request whenever the menu is opened.
@@ -222,6 +247,10 @@ class AdminBookingsViewModel extends BaseViewModel {
       PerformanceTrace.event(
         'admin-bookings-vm',
         'load finish elapsedMs=${stopwatch.elapsedMilliseconds} bookings=${_bookings.length} busy=$isBusy error=${errorMessage ?? "-"}',
+      );
+      _traceHandoff(
+        'load finish local=${_bookings.length} busy=$isBusy '
+        'loadedOnce=$_hasLoadedOnce error=${errorMessage ?? '-'}',
       );
       notifyListeners();
     }
@@ -313,6 +342,11 @@ class AdminBookingsViewModel extends BaseViewModel {
         'admin-bookings-vm',
         'booking stream event count=${bookings.length} authoritative=${BookingRequest.hasAuthoritativeBookings}',
       );
+      _traceHandoff(
+        'stream event count=${bookings.length} '
+        'authoritative=${BookingRequest.hasAuthoritativeBookings} '
+        'localBefore=${_bookings.length}',
+      );
       if (!BookingRequest.hasAuthoritativeBookings) {
         // Wait for the first server-confirmed snapshot instead of briefly
         // rendering an empty list from the provisional local cache.
@@ -325,7 +359,14 @@ class AdminBookingsViewModel extends BaseViewModel {
         setBusy(false);
       }
       notifyListeners();
+      _traceHandoff('stream applied localAfter=${_bookings.length}');
     });
+  }
+
+  void _traceHandoff(String message) {
+    if (kDebugMode) {
+      debugPrint('[BookingHandoffTrace][admin-bookings] $message');
+    }
   }
 
   void _markInitialBookingsResolved() {

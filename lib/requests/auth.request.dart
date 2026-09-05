@@ -397,6 +397,11 @@ class AuthRequest implements AuthRepository {
   Future<UserModel> register(UserModel user) async {
     return _runAuthRequest(() async {
       await initialize();
+      if (!currentNetworkStatus()) {
+        throw const AuthFailure(
+          'Registration requires an internet connection. Please try again when you are online.',
+        );
+      }
       AppSessionReset.clearUserScopedState();
       var users = await _getUsersCachedOnly();
       if (users.isEmpty && currentNetworkStatus()) {
@@ -558,14 +563,18 @@ class AuthRequest implements AuthRepository {
         throw const AuthFailure('That phone number is already registered.');
       }
       final now = DateTime.now();
+      final isCreate = normalizeId(user.id) == null;
+      final submissionKey = 'user:$normalizedEmail:$normalizedPhone';
       final nextId =
           normalizeId(user.id) ??
           (currentNetworkStatus()
               ? await _offlineMutationQueueService.reserveNumericDocumentId(
                   collectionKey: 'users',
-                  submissionKey: 'user:$normalizedEmail:$normalizedPhone',
+                  submissionKey: submissionKey,
                 )
-              : await _nextUserId(users));
+              : _offlineMutationQueueService.createOfflineProvisionalId(
+                  'users',
+                ));
       final existing = users.where((item) => item.id == nextId).firstOrNull;
       final saved = user.copyWith(
         id: nextId,
@@ -604,13 +613,24 @@ class AuthRequest implements AuthRepository {
               .timeout(_localWriteTimeout);
         }
       } else {
-        await _offlineMutationQueueService
-            .queueUserUpsert(
-              userId: nextId,
-              document: document,
-              baseUpdatedAt: baseUpdatedAtIso,
-            )
-            .timeout(_localWriteTimeout);
+        if (isCreate) {
+          await _offlineMutationQueueService
+              .queueOfflineCollectionDocumentCreate(
+                collectionKey: _usersResourceKey,
+                provisionalId: nextId,
+                submissionKey: submissionKey,
+                document: document,
+              )
+              .timeout(_localWriteTimeout);
+        } else {
+          await _offlineMutationQueueService
+              .queueUserUpsert(
+                userId: nextId,
+                document: document,
+                baseUpdatedAt: baseUpdatedAtIso,
+              )
+              .timeout(_localWriteTimeout);
+        }
       }
       await _cache
           .upsertDocument(resourceKey: _usersResourceKey, document: document)
@@ -2175,14 +2195,6 @@ class AuthRequest implements AuthRepository {
       data.remove('vehicle_type');
     }
     return data;
-  }
-
-  Future<String> _nextUserId(List<UserModel> users) async {
-    final highest = users
-        .map((item) => int.tryParse(item.id ?? ''))
-        .whereType<int>()
-        .fold<int>(0, (max, value) => value > max ? value : max);
-    return '${highest + 1}';
   }
 
   bool _supportsOnline(String? role) {

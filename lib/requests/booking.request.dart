@@ -269,6 +269,16 @@ class BookingRequest implements BookingRepository {
           return;
         }
         lastEmissionFingerprint = fingerprint;
+        if (kDebugMode) {
+          debugPrint(
+            '[BookingHandoffTrace][request] emit source=$source '
+            'count=${bookings.length} online=${currentNetworkStatus()} '
+            'memory=${_memoryBookings.length} resolved=$_hasResolvedBookings '
+            'authoritative=$hasAuthoritativeBookings '
+            'serverSync=$_hasAuthoritativeOnlineSync '
+            'trustedCache=$_isPersistedCacheTrustedOnline',
+          );
+        }
         controller.add(bookings);
       }
 
@@ -522,8 +532,10 @@ class BookingRequest implements BookingRepository {
           normalizedId: normalizedBillingStatus,
         });
       } else {
-        throw Exception(
-          'You need an internet connection to update the billing status.',
+        await _offlineMutationQueueService.queueBookingBillingStatusUpdate(
+          bookingId: normalizedId,
+          billingStatus: normalizedBillingStatus,
+          baseUpdatedAt: existingBookingData?['updated_at']?.toString(),
         );
       }
       if (existingBookingData != null) {
@@ -572,8 +584,19 @@ class BookingRequest implements BookingRepository {
       }
       final cachedDocuments = await _cache.readDocuments(_bookingsResourceKey);
       if (!currentNetworkStatus()) {
-        throw Exception(
-          'You need an internet connection to update billing statuses.',
+        final baseUpdatedAtByBookingId = <String, String?>{};
+        for (final document
+            in cachedDocuments ?? const <Map<String, dynamic>>[]) {
+          final documentId = normalizeId(document['id']?.toString());
+          if (documentId != null &&
+              normalizedStatusesByBookingId.containsKey(documentId)) {
+            baseUpdatedAtByBookingId[documentId] = document['updated_at']
+                ?.toString();
+          }
+        }
+        await _offlineMutationQueueService.queueBookingBillingStatusUpdates(
+          normalizedStatusesByBookingId,
+          baseUpdatedAtByBookingId: baseUpdatedAtByBookingId,
         );
       } else {
         await _writeBillingStatusesOnline(normalizedStatusesByBookingId);

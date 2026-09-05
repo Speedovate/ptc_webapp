@@ -10,6 +10,7 @@ import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/services/firestore_public_document_fetcher.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
+import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/support_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -39,6 +40,8 @@ class SupportRequest {
   final FirestorePublicDocumentFetcher _firestorePublicDocumentFetcher;
   final OfflineMediaSyncService _offlineMediaSyncService =
       OfflineMediaSyncService.instance;
+  final OfflineMutationQueueService _offlineMutationQueueService =
+      OfflineMutationQueueService.instance;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
@@ -388,19 +391,31 @@ class SupportRequest {
     if (!_threadReadMarkerUpdates.isClosed) {
       _threadReadMarkerUpdates.add(normalizedUserId);
     }
-    final remoteWrite = _threadReadCollection(
-      normalizedUserId,
-    ).doc(normalizedThreadId).set(nextDocument, SetOptions(merge: true));
     if (currentNetworkStatus()) {
       try {
-        await remoteWrite.timeout(const Duration(seconds: 6));
-      } on TimeoutException {
-        unawaited(remoteWrite);
-      } on FirebaseException {
-        unawaited(remoteWrite);
+        await _threadReadCollection(normalizedUserId)
+            .doc(normalizedThreadId)
+            .set(nextDocument, SetOptions(merge: true))
+            .timeout(const Duration(seconds: 6));
+      } on TimeoutException catch (_) {
+        await _offlineMutationQueueService.queueSupportThreadReadMarker(
+          userId: normalizedUserId,
+          threadId: normalizedThreadId,
+          document: nextDocument,
+        );
+      } on FirebaseException catch (_) {
+        await _offlineMutationQueueService.queueSupportThreadReadMarker(
+          userId: normalizedUserId,
+          threadId: normalizedThreadId,
+          document: nextDocument,
+        );
       }
     } else {
-      unawaited(remoteWrite);
+      await _offlineMutationQueueService.queueSupportThreadReadMarker(
+        userId: normalizedUserId,
+        threadId: normalizedThreadId,
+        document: nextDocument,
+      );
     }
   }
 

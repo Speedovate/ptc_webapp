@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:webapp/models/chassis.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/services/network_status_events.dart';
@@ -44,6 +45,16 @@ class ChassisRequest {
   bool get hasResolvedChassis => _hasResolved;
   List<Chassis> get hydratedChassisSnapshot =>
       List<Chassis>.unmodifiable(_memory);
+
+  int _nextOfflineTemporaryId() {
+    var highestId = 0;
+    for (final chassis in _memory) {
+      if (chassis.id > highestId) {
+        highestId = chassis.id;
+      }
+    }
+    return highestId + 1;
+  }
 
   String displayChassisLabel(String value) {
     final id = int.tryParse(value.trim());
@@ -120,13 +131,18 @@ class ChassisRequest {
   }
 
   Future<Chassis> saveChassis(Chassis chassis, {int? previousBookingId}) async {
+    _trace('save initialize start');
     await initialize();
+    _trace('save initialize done');
     final isCreate = chassis.id <= 0;
     final submissionKey =
         chassis.submissionKey ??
         'chassis:${DateTime.now().toUtc().microsecondsSinceEpoch}:${chassis.name.toLowerCase()}';
     final now = DateTime.now();
     final online = currentNetworkStatus();
+    _trace(
+      'save start create=$isCreate online=$online chassisId=${chassis.id} bookingId=${chassis.currentBookingId ?? '-'}',
+    );
     final id = isCreate
         ? (online
               ? int.parse(
@@ -135,7 +151,7 @@ class ChassisRequest {
                     submissionKey: submissionKey,
                   ),
                 )
-              : -DateTime.now().microsecondsSinceEpoch)
+              : _nextOfflineTemporaryId())
         : chassis.id;
     final saved = chassis.copyWith(
       id: id,
@@ -145,23 +161,58 @@ class ChassisRequest {
     );
     final document = saved.toMap();
     if (online) {
+      _trace('online write start id=$id');
       await _writeAssignmentOnline(
         chassis: saved,
         document: document,
         previousBookingId: previousBookingId,
       );
+      _trace('online write done id=$id');
     } else {
+      _trace('offline queue start provisionalId=$id');
       await _offlineMutationQueueService.queueChassisAssignment(
         documentId: '$id',
         submissionKey: submissionKey,
         chassisDocument: document,
         previousBookingId: previousBookingId?.toString(),
         nextBookingId: saved.currentBookingId?.toString(),
+        isProvisionalCreate: isCreate,
       );
+      _trace('offline queue persisted provisionalId=$id');
     }
-    await _cache.upsertDocument(resourceKey: resourceKey, document: document);
     _upsertMemory(saved);
+    _trace('local publish done id=$id queued=${!online}');
+    // The queue is already durable at this point. Never hold the editor open
+    // for a best-effort cache mirror, especially while the browser is moving
+    // from offline back to online.
+    _persistChassisCacheInBackground(document, queued: !online);
     return saved;
+  }
+
+  void _persistChassisCacheInBackground(
+    Map<String, dynamic> document, {
+    required bool queued,
+  }) {
+    unawaited(() async {
+      try {
+        await _cache.upsertDocument(
+          resourceKey: resourceKey,
+          document: document,
+        );
+        _trace('cache mirror saved id=${document['id']} queued=$queued');
+      } catch (error) {
+        // The mutation queue remains the durable source for offline saves.
+        _trace(
+          'cache mirror deferred id=${document['id']} queued=$queued error=$error',
+        );
+      }
+    }());
+  }
+
+  void _trace(String message) {
+    if (kDebugMode) {
+      debugPrint('[ChassisOfflineTrace][request] $message');
+    }
   }
 
   Future<void> deleteChassis(Chassis chassis) async {
@@ -181,6 +232,18 @@ class ChassisRequest {
           );
         }
         transaction.delete(_collection.doc('$id'));
+        transaction.set(
+          _firestore.collection('manage_cache').doc(resourceKey),
+          {'version': now, 'updated_at': now},
+          SetOptions(merge: true),
+        );
+        if (chassis.currentBookingId != null) {
+          transaction.set(
+            _firestore.collection('manage_cache').doc('bookings'),
+            {'version': now, 'updated_at': now},
+            SetOptions(merge: true),
+          );
+        }
       });
     } else {
       await _offlineMutationQueueService.queueChassisDelete(
@@ -188,9 +251,24 @@ class ChassisRequest {
         bookingId: chassis.currentBookingId?.toString(),
       );
     }
-    await _cache.removeDocument(resourceKey: resourceKey, documentId: '$id');
     _memory = _memory.where((item) => item.id != id).toList(growable: false);
     _updates.add(List<Chassis>.unmodifiable(_memory));
+    // The offline queue is durable already. Keep the delete responsive and
+    // persist the cache cleanup in the background.
+    _removeChassisCacheInBackground(id);
+  }
+
+  void _removeChassisCacheInBackground(int id) {
+    unawaited(() async {
+      try {
+        await _cache.removeDocument(
+          resourceKey: resourceKey,
+          documentId: '$id',
+        );
+      } catch (error) {
+        _trace('cache remove deferred id=$id error=$error');
+      }
+    }());
   }
 
   Future<void> _writeAssignmentOnline({
@@ -248,6 +326,19 @@ class ChassisRequest {
             }, SetOptions(merge: true));
           }
           transaction.set(_collection.doc('${chassis.id}'), document);
+          transaction.set(
+            _firestore.collection('manage_cache').doc(resourceKey),
+            {'version': now, 'updated_at': now},
+            SetOptions(merge: true),
+          );
+          if (previousBookingId != chassis.currentBookingId ||
+              chassis.currentBookingId != null) {
+            transaction.set(
+              _firestore.collection('manage_cache').doc('bookings'),
+              {'version': now, 'updated_at': now},
+              SetOptions(merge: true),
+            );
+          }
         })
         .timeout(_writeTimeout);
   }
@@ -259,8 +350,27 @@ class ChassisRequest {
         .map((document) => Map<String, dynamic>.from(document))
         .toList(growable: false);
     final merged = await _mergeQueuedDocuments(values);
-    await _cache.writeDocuments(resourceKey: resourceKey, documents: merged);
-    return _applyDocuments(merged, writeCache: false);
+    final applied = await _applyDocuments(merged, writeCache: false);
+    // Realtime UI updates must never wait for a serialized IndexedDB cache
+    // transaction. The incoming Firestore snapshot is already authoritative.
+    _persistRemoteDocumentsInBackground(merged);
+    _trace('realtime published count=${applied.length}');
+    return applied;
+  }
+
+  void _persistRemoteDocumentsInBackground(
+    List<Map<String, dynamic>> documents,
+  ) {
+    unawaited(() async {
+      try {
+        await _cache.writeDocuments(
+          resourceKey: resourceKey,
+          documents: documents,
+        );
+      } catch (error) {
+        _trace('realtime cache persistence deferred error=$error');
+      }
+    }());
   }
 
   Future<List<Map<String, dynamic>>> _mergeQueuedDocuments(
@@ -275,6 +385,11 @@ class ChassisRequest {
     for (final document in queued) {
       final id = document['id']?.toString() ?? '';
       if (id.isNotEmpty) next[id] = document;
+    }
+    final deletedIds = await _offlineMutationQueueService
+        .readQueuedCollectionDocumentDeleteIds(collectionKey: resourceKey);
+    for (final id in deletedIds) {
+      next.remove(id);
     }
     return next.values.toList(growable: false);
   }

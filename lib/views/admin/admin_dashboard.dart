@@ -1,6 +1,6 @@
 import 'dart:async';
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -42,7 +42,6 @@ class AdminDashboardView extends StatefulWidget {
 
 class _AdminDashboardViewState extends State<AdminDashboardView> {
   static const double _toolbarSectionGap = 12;
-  String? _lastStartupTrace;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   final AdminDashboardViewModel _viewModel = AdminDashboardViewModel();
   Booking? _selectedBooking;
@@ -68,7 +67,6 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
   @override
   void initState() {
     super.initState();
-    _traceStartup('init; dashboard load started');
     PerformanceTrace.event(
       'admin-dashboard-view',
       'init user=${widget.user.id ?? '-'}',
@@ -108,22 +106,16 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                   .firstOrNull;
         final filteredBookings = vm.filteredCompletedBookings();
         final showInitialLoading =
-            !vm.hasResolvedInitialBookings &&
             selectedBooking == null &&
             vm.errorMessage == null &&
-            vm.completedBookings.isEmpty;
-        _traceStartup(
-          'build initialLoading=$showInitialLoading resolved=${vm.hasResolvedInitialBookings} completed=${vm.completedBookings.length} error=${vm.errorMessage != null}',
-        );
+            vm.completedBookings.isEmpty &&
+            !vm.hasResolvedInitialBookings;
         if (!showInitialLoading && !_hasDismissedStartupSplash) {
           _hasDismissedStartupSplash = true;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) {
               return;
             }
-            _traceStartup(
-              'dashboard ready first frame; dispatch HTML splash ready signal',
-            );
             dismissStartupSplash();
           });
         }
@@ -303,14 +295,6 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
         );
       },
     );
-  }
-
-  void _traceStartup(String message) {
-    if (!kDebugMode || _lastStartupTrace == message) {
-      return;
-    }
-    _lastStartupTrace = message;
-    debugPrint('[StartupTransition][AdminDashboard] $message');
   }
 
   void _toggleExportExcludedBookingId(String bookingId) {

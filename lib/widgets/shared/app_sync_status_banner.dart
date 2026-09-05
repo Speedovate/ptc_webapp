@@ -150,7 +150,9 @@ class _SyncStatusPill extends StatelessWidget {
       textColor = const Color(0xFF6D4C00);
       leadingIcon = Icons.sync_rounded;
       title = snapshot.totalActionsInBatch > 0
-          ? 'Syncing ${snapshot.processedActions}/${snapshot.totalActionsInBatch}'
+          ? snapshot.processedActions == 0
+                ? 'Syncing ${snapshot.totalActionsInBatch} action${snapshot.totalActionsInBatch == 1 ? '' : 's'}'
+                : 'Syncing ${snapshot.processedActions}/${snapshot.totalActionsInBatch}'
           : 'Syncing offline actions';
       subtitle = 'Your queued changes are uploading in the background.';
     } else if (offlineWithPending) {
@@ -641,6 +643,12 @@ _SyncActionPresentation _syncActionPresentation(
         title: 'Update booking billing',
         recordLabel: recordLabel,
         icon: Icons.receipt_long_outlined,
+      );
+    case 'supportThreadReadMarkerUpsert':
+      return _SyncActionPresentation(
+        title: 'Mark support conversation read',
+        recordLabel: 'Support conversation',
+        icon: Icons.mark_chat_read_outlined,
       );
     case 'bookingCreate':
       return _SyncActionPresentation(

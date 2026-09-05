@@ -370,12 +370,14 @@ class StatusRequest implements StatusFormRepository {
   Future<void> saveStatusForm(StatusForm form) async {
     await _runRequest(() async {
       final now = DateTime.now();
+      final isCreate = normalizeId(form.id) == null;
+      final submissionKey =
+          'form:${(form.currentStatusKey ?? '').trim().toLowerCase()}:${(form.nextStatusKey ?? '').trim().toLowerCase()}:${(form.role ?? '').trim().toLowerCase()}';
       final nextId = await _resolveSaveId(
         requestedId: form.id,
         collection: _formsCollection,
         resourceKey: _statusFormsResourceKey,
-        submissionKey:
-            'form:${(form.currentStatusKey ?? '').trim().toLowerCase()}:${(form.nextStatusKey ?? '').trim().toLowerCase()}:${(form.role ?? '').trim().toLowerCase()}',
+        submissionKey: submissionKey,
       );
       final saved = form.copyWith(
         id: nextId,
@@ -395,12 +397,22 @@ class StatusRequest implements StatusFormRepository {
           collection: _formsCollection,
         );
       } else {
-        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
-          collectionKey: _statusFormsResourceKey,
-          documentId: nextId,
-          document: document,
-          baseUpdatedAt: baseUpdatedAtIso,
-        );
+        if (isCreate) {
+          await _offlineMutationQueueService
+              .queueOfflineCollectionDocumentCreate(
+                collectionKey: _statusFormsResourceKey,
+                provisionalId: nextId,
+                submissionKey: submissionKey,
+                document: document,
+              );
+        } else {
+          await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+            collectionKey: _statusFormsResourceKey,
+            documentId: nextId,
+            document: document,
+            baseUpdatedAt: baseUpdatedAtIso,
+          );
+        }
       }
       await _cache.upsertDocument(
         resourceKey: _statusFormsResourceKey,
@@ -452,12 +464,14 @@ class StatusRequest implements StatusFormRepository {
   Future<void> saveField(StatusField field) async {
     await _runRequest(() async {
       final now = DateTime.now();
+      final isCreate = normalizeId(field.id) == null;
+      final submissionKey =
+          'field:${(field.key ?? '').trim().toLowerCase()}:${(field.type ?? '').trim().toLowerCase()}';
       final nextId = await _resolveSaveId(
         requestedId: field.id,
         collection: _fieldsCollection,
         resourceKey: _statusFieldsResourceKey,
-        submissionKey:
-            'field:${(field.key ?? '').trim().toLowerCase()}:${(field.type ?? '').trim().toLowerCase()}',
+        submissionKey: submissionKey,
       );
       final saved = field.copyWith(
         id: nextId,
@@ -477,12 +491,22 @@ class StatusRequest implements StatusFormRepository {
           collection: _fieldsCollection,
         );
       } else {
-        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
-          collectionKey: _statusFieldsResourceKey,
-          documentId: nextId,
-          document: document,
-          baseUpdatedAt: baseUpdatedAtIso,
-        );
+        if (isCreate) {
+          await _offlineMutationQueueService
+              .queueOfflineCollectionDocumentCreate(
+                collectionKey: _statusFieldsResourceKey,
+                provisionalId: nextId,
+                submissionKey: submissionKey,
+                document: document,
+              );
+        } else {
+          await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+            collectionKey: _statusFieldsResourceKey,
+            documentId: nextId,
+            document: document,
+            baseUpdatedAt: baseUpdatedAtIso,
+          );
+        }
       }
       await _cache.upsertDocument(
         resourceKey: _statusFieldsResourceKey,
@@ -495,11 +519,13 @@ class StatusRequest implements StatusFormRepository {
   Future<void> saveStatus(Status status) async {
     await _runRequest(() async {
       final now = DateTime.now();
+      final isCreate = normalizeId(status.id) == null;
+      final submissionKey = 'status:${(status.key ?? '').trim().toLowerCase()}';
       final nextId = await _resolveSaveId(
         requestedId: status.id,
         collection: _statusesCollection,
         resourceKey: _statusesResourceKey,
-        submissionKey: 'status:${(status.key ?? '').trim().toLowerCase()}',
+        submissionKey: submissionKey,
       );
       final saved = status.copyWith(
         id: nextId,
@@ -519,12 +545,22 @@ class StatusRequest implements StatusFormRepository {
           collection: _statusesCollection,
         );
       } else {
-        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
-          collectionKey: _statusesResourceKey,
-          documentId: nextId,
-          document: document,
-          baseUpdatedAt: baseUpdatedAtIso,
-        );
+        if (isCreate) {
+          await _offlineMutationQueueService
+              .queueOfflineCollectionDocumentCreate(
+                collectionKey: _statusesResourceKey,
+                provisionalId: nextId,
+                submissionKey: submissionKey,
+                document: document,
+              );
+        } else {
+          await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+            collectionKey: _statusesResourceKey,
+            documentId: nextId,
+            document: document,
+            baseUpdatedAt: baseUpdatedAtIso,
+          );
+        }
       }
       await _cache.upsertDocument(
         resourceKey: _statusesResourceKey,
@@ -1193,17 +1229,6 @@ class StatusRequest implements StatusFormRepository {
     };
   }
 
-  Future<String> _nextId(
-    CollectionReference<Map<String, dynamic>> collection,
-  ) async {
-    final snapshot = await collection.get();
-    final highest = snapshot.docs
-        .map((doc) => int.tryParse(documentData(doc)['id']?.toString() ?? ''))
-        .whereType<int>()
-        .fold<int>(0, (max, value) => value > max ? value : max);
-    return '${highest + 1}';
-  }
-
   Future<String> _nextCreateId({
     required CollectionReference<Map<String, dynamic>> collection,
     required String resourceKey,
@@ -1215,7 +1240,7 @@ class StatusRequest implements StatusFormRepository {
         submissionKey: submissionKey,
       );
     }
-    return _nextId(collection);
+    return _offlineMutationQueueService.createOfflineProvisionalId(resourceKey);
   }
 
   Future<String> _resolveSaveId({
@@ -1225,12 +1250,15 @@ class StatusRequest implements StatusFormRepository {
     required String submissionKey,
   }) async {
     final normalizedId = normalizeId(requestedId);
-    if (!currentNetworkStatus() || normalizedId == null) {
+    if (normalizedId == null) {
       return _nextCreateId(
         collection: collection,
         resourceKey: resourceKey,
         submissionKey: submissionKey,
       );
+    }
+    if (!currentNetworkStatus()) {
+      return normalizedId;
     }
     final existing = await collection.doc(normalizedId).get();
     if (existing.exists) {

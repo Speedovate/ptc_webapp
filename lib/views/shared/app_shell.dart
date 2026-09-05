@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:stacked/stacked.dart';
@@ -10,7 +9,6 @@ import 'package:webapp/views/admin/admin_home.dart';
 import 'package:webapp/views/auth/auth_view.dart';
 import 'package:webapp/views/client/client_home.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
-import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_sync_status_banner.dart';
 import 'package:webapp/widgets/shared/in_app_browser_guard.dart';
 
@@ -18,54 +16,21 @@ class AppShell extends StatelessWidget {
   const AppShell({super.key});
 
   static final RoleAccessService _roleAccessService = RoleAccessService.instance;
-  static String? _lastStartupTrace;
   static bool _hasDismissedStartupSplash = false;
-
-  static void _log(String message) {
-    if (kDebugMode) {
-      debugPrint('[StartupTransition][AppShell] $message');
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     return ViewModelBuilder<AppShellViewModel>.reactive(
       viewModelBuilder: AppShellViewModel.new,
       onViewModelReady: (vm) {
-        _log('view model ready; initialize start');
-        vm.initialize().then((_) {
-          _log('view model initialize resolved');
-        }).catchError((error, stackTrace) {
-          _log('view model initialize error=$error');
-        });
+        vm.initialize();
       },
       builder: (context, vm, child) {
-        final trace =
-            'build loading=${vm.isLoading} loggedIn=${vm.currentUser != null} user=${vm.currentUser?.id ?? "-"} role=${vm.currentUser?.role ?? "-"} quick=${vm.isQuickLoggedIn}';
-        if (_lastStartupTrace != trace) {
-          _lastStartupTrace = trace;
-          _log(trace);
-        }
         if (vm.isLoading) {
-          return const SelectionArea(
-            child: InAppBrowserGuard(
-              child: Scaffold(
-                backgroundColor: Colors.white,
-                body: SafeArea(
-                  bottom: false,
-                  child: ColoredBox(
-                    color: Color(0xFF5C33CF),
-                    child: Center(
-                      child: AppPageLoading(
-                        message: 'Loading, please wait ...',
-                        compact: true,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          );
+          // The HTML splash remains above Flutter until the first home page
+          // has a trustworthy data state. Do not replace it with a second,
+          // generic Flutter loading card during shell initialization.
+          return const ColoredBox(color: Color(0xFF5C33CF));
         }
 
         // Auth has no data-loading home screen, so its first frame is ready.
@@ -73,7 +38,6 @@ class AppShell extends StatelessWidget {
         if (vm.currentUser == null && !_hasDismissedStartupSplash) {
           _hasDismissedStartupSplash = true;
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            _log('auth UI first frame; dispatch HTML splash ready signal');
             dismissStartupSplash();
           });
         }

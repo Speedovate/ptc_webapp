@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
@@ -27,6 +28,19 @@ class AdminDashboardViewModel extends BaseViewModel {
     _currentUser = _cachedCurrentUser;
     errorMessage = _cachedErrorMessage;
     _hasLoadedOnce = _cachedHasLoadedOnce;
+    if (_completedBookings.isEmpty &&
+        BookingRequest.hasResolvedBookings &&
+        BookingRequest.hasAuthoritativeBookings) {
+      _applyCompletedBookings(BookingRequest.hydratedBookingsSnapshot);
+      _markInitialBookingsResolved();
+    }
+    _traceHandoff(
+      'created localCompleted=${_completedBookings.length} '
+      'pageCache=${_cachedCompletedBookings.length} '
+      'shared=${BookingRequest.hydratedBookingCount} '
+      'authoritative=${BookingRequest.hasAuthoritativeBookings} '
+      'resolved=${BookingRequest.hasResolvedBookings}',
+    );
   }
 
   final AuthRepository _authRepository;
@@ -189,6 +203,13 @@ class AdminDashboardViewModel extends BaseViewModel {
         _cachedCompletedBookings.isNotEmpty ||
         hasSharedBookings;
     final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
+    _traceHandoff(
+      'load start localCompleted=${_completedBookings.length} '
+      'pageCache=${_cachedCompletedBookings.length} '
+      'shared=${BookingRequest.hydratedBookingCount} '
+      'authoritative=$hasSharedBookings loadedOnce=$_hasLoadedOnce '
+      'showLoading=$shouldShowLoadingState',
+    );
     if (shouldShowLoadingState) {
       setBusy(true);
       _log('overlay show section=dashboard');
@@ -217,6 +238,12 @@ class AdminDashboardViewModel extends BaseViewModel {
       );
       await _ensureBookingsSubscription();
       hasSharedBookings = BookingRequest.hasAuthoritativeBookings;
+      _traceHandoff(
+        'subscription ready localCompleted=${_completedBookings.length} '
+        'shared=${BookingRequest.hydratedBookingCount} '
+        'authoritative=$hasSharedBookings '
+        'resolved=${BookingRequest.hasResolvedBookings}',
+      );
       if (!hasSharedBookings) {
         // Dashboard owns the shared booking read. The stream controls the
         // visible state, so a slow SDK request cannot hold this overlay.
@@ -256,6 +283,10 @@ class AdminDashboardViewModel extends BaseViewModel {
       PerformanceTrace.event(
         'admin-dashboard-vm',
         'load finish elapsedMs=${stopwatch.elapsedMilliseconds} completed=${_completedBookings.length} busy=$isBusy error=${errorMessage ?? "-"}',
+      );
+      _traceHandoff(
+        'load finish localCompleted=${_completedBookings.length} busy=$isBusy '
+        'loadedOnce=$_hasLoadedOnce error=${errorMessage ?? '-'}',
       );
       notifyListeners();
     }
@@ -354,6 +385,11 @@ class AdminDashboardViewModel extends BaseViewModel {
         'admin-dashboard-vm',
         'booking stream event count=${liveBookings.length} authoritative=${BookingRequest.hasAuthoritativeBookings}',
       );
+      _traceHandoff(
+        'stream event count=${liveBookings.length} '
+        'authoritative=${BookingRequest.hasAuthoritativeBookings} '
+        'localBefore=${_completedBookings.length}',
+      );
       if (!BookingRequest.hasAuthoritativeBookings) {
         // The shared stream can emit an empty provisional cache while the
         // first server snapshot is still pending. Do not turn that into an
@@ -367,7 +403,16 @@ class AdminDashboardViewModel extends BaseViewModel {
         setBusy(false);
       }
       notifyListeners();
+      _traceHandoff(
+        'stream applied localCompletedAfter=${_completedBookings.length}',
+      );
     });
+  }
+
+  void _traceHandoff(String message) {
+    if (kDebugMode) {
+      debugPrint('[BookingHandoffTrace][admin-dashboard] $message');
+    }
   }
 
   void _markInitialBookingsResolved() {

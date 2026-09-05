@@ -311,6 +311,9 @@ class _PlatformSyncStatusButton extends StatelessWidget {
     final bool hasIssue = snapshot.hasFailedActions;
     final bool isSyncing = snapshot.isSyncing;
     final bool hasPendingActions = snapshot.hasPendingActions;
+    final syncActionCount = snapshot.totalActionsInBatch > 0
+        ? snapshot.totalActionsInBatch
+        : snapshot.pendingActions;
     final IconData icon = hasIssue
         ? Icons.error_outline_rounded
         : isSyncing
@@ -323,7 +326,9 @@ class _PlatformSyncStatusButton extends StatelessWidget {
     final String label = hasIssue
         ? 'Sync issue - Review'
         : isSyncing
-        ? 'Syncing'
+        ? syncActionCount > 0
+              ? 'Syncing $syncActionCount action${syncActionCount == 1 ? '' : 's'}'
+              : 'Syncing'
         : hasPendingActions
         ? '${snapshot.pendingActions} unsynced action${snapshot.pendingActions == 1 ? '' : 's'}'
         : 'Offline mode';

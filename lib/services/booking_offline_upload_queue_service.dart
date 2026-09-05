@@ -157,6 +157,9 @@ class BookingOfflineUploadQueueService {
       return;
     }
 
+    if (currentNetworkStatus()) {
+      _markPendingAsSyncing();
+    }
     _isFlushing = true;
     try {
       final currentStorageKey = await _resolvedStorageKey();
@@ -427,6 +430,21 @@ class BookingOfflineUploadQueueService {
   Future<void> _refreshStatusFromStorage() async {
     final entries = await _readEntries();
     _setStatus(_currentStatus.copyWith(pendingCount: entries.length));
+  }
+
+  void _markPendingAsSyncing() {
+    final pendingCount = _currentStatus.pendingCount;
+    if (pendingCount <= 0 || _currentStatus.isSyncing) {
+      return;
+    }
+    _setStatus(
+      _currentStatus.copyWith(
+        isSyncing: true,
+        processedInBatch: 0,
+        totalInBatch: pendingCount,
+        clearLastSyncAt: true,
+      ),
+    );
   }
 
   void _setStatus(OfflineQueueStatusSnapshot nextStatus) {

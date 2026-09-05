@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
@@ -10,6 +11,7 @@ import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/chassis.request.dart';
 import 'package:webapp/services/role_access_service.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
@@ -38,6 +40,8 @@ class _AdminChassisViewState extends State<AdminChassisView> {
       AdminListMeasurements.defaultTrailingPadding;
   static const _extraWidthAllowance =
       AdminListMeasurements.defaultExtraWidthAllowance;
+  static const _noBookingOptionValue = '__chassis_no_booking__';
+  static const _noDriverOptionValue = '__chassis_no_driver__';
   String _query = '';
   String _status = 'All';
   String _activeFilter = 'All';
@@ -513,6 +517,9 @@ class _AdminChassisViewState extends State<AdminChassisView> {
                               return;
                             }
                             setDialogState(() => isSaving = true);
+                            _traceOffline(
+                              'modal save pressed editing=${item != null}',
+                            );
                             final now = DateTime.now();
                             final next = Chassis(
                               id: item?.id ?? 0,
@@ -532,10 +539,12 @@ class _AdminChassisViewState extends State<AdminChassisView> {
                                 next,
                                 previousBookingId: item?.currentBookingId,
                               );
+                              _traceOffline('modal save resolved; closing');
                               if (dialogContext.mounted) {
                                 Navigator.of(dialogContext).pop(true);
                               }
-                            } catch (_) {
+                            } catch (error) {
+                              _traceOffline('modal save failed error=$error');
                               if (!dialogContext.mounted) return;
                               setDialogState(() => isSaving = false);
                               AppSnackbar.showError(
@@ -604,7 +613,8 @@ class _AdminChassisViewState extends State<AdminChassisView> {
                         minHeight: adminModalFieldMinHeight,
                       ),
                       items: _bookingDropdownItems(),
-                      onChanged: (value) => selectedBookingId = value,
+                      onChanged: (value) => selectedBookingId =
+                          value == _noBookingOptionValue ? null : value,
                     ),
                     const SizedBox(height: 6),
                     AdminDropdownFormField<String>(
@@ -617,7 +627,8 @@ class _AdminChassisViewState extends State<AdminChassisView> {
                         minHeight: adminModalFieldMinHeight,
                       ),
                       items: _driverDropdownItems(),
-                      onChanged: (value) => selectedDriverId = value,
+                      onChanged: (value) => selectedDriverId =
+                          value == _noDriverOptionValue ? null : value,
                     ),
                     const SizedBox(height: 6),
                     AdminModalTextField(
@@ -666,6 +677,12 @@ class _AdminChassisViewState extends State<AdminChassisView> {
 
   int? _optionalId(String? value) => int.tryParse(value?.trim() ?? '');
 
+  void _traceOffline(String message) {
+    if (kDebugMode) {
+      debugPrint('[ChassisOfflineTrace][modal] $message');
+    }
+  }
+
   _ChassisContact _clientContactForBooking(int? bookingId) {
     final bookingIdText = bookingId?.toString();
     for (final booking in _bookingOptions) {
@@ -692,40 +709,50 @@ class _AdminChassisViewState extends State<AdminChassisView> {
     return const _ChassisContact.empty();
   }
 
-  List<DropdownMenuItem<String>> _bookingDropdownItems() => _bookingOptions
-      .where((booking) => booking.id?.trim().isNotEmpty == true)
-      .map(
-        (booking) => DropdownMenuItem<String>(
-          value: booking.id,
-          child: Text(
-            _bookingOptionLabel(booking),
-            overflow: TextOverflow.ellipsis,
-            style: adminDropdownDisplayTextStyle,
+  List<DropdownMenuItem<String>> _bookingDropdownItems() => [
+    const DropdownMenuItem<String>(
+      value: _noBookingOptionValue,
+      child: Text('No Booking', style: adminDropdownDisplayTextStyle),
+    ),
+    ..._bookingOptions
+        .where((booking) => booking.id?.trim().isNotEmpty == true)
+        .map(
+          (booking) => DropdownMenuItem<String>(
+            value: booking.id,
+            child: Text(
+              _bookingOptionLabel(booking),
+              overflow: TextOverflow.ellipsis,
+              style: adminDropdownDisplayTextStyle,
+            ),
           ),
         ),
-      )
-      .toList();
+  ];
 
-  List<DropdownMenuItem<String>> _driverDropdownItems() => _driverOptions
-      .where((driver) => driver.id?.trim().isNotEmpty == true)
-      .map(
-        (driver) => DropdownMenuItem<String>(
-          value: driver.id,
-          child: Text(
-            _driverOptionLabel(driver),
-            overflow: TextOverflow.ellipsis,
-            style: adminDropdownDisplayTextStyle,
+  List<DropdownMenuItem<String>> _driverDropdownItems() => [
+    const DropdownMenuItem<String>(
+      value: _noDriverOptionValue,
+      child: Text('No Driver', style: adminDropdownDisplayTextStyle),
+    ),
+    ..._driverOptions
+        .where((driver) => driver.id?.trim().isNotEmpty == true)
+        .map(
+          (driver) => DropdownMenuItem<String>(
+            value: driver.id,
+            child: Text(
+              _driverOptionLabel(driver),
+              overflow: TextOverflow.ellipsis,
+              style: adminDropdownDisplayTextStyle,
+            ),
           ),
         ),
-      )
-      .toList();
+  ];
 
   String _bookingOptionLabel(Booking booking) {
     final id = booking.id ?? '-';
-    final clientName = booking.client?.name?.trim();
-    return clientName == null || clientName.isEmpty
+    final status = booking.clientStatus?.trim();
+    return status == null || status.isEmpty
         ? 'Booking $id'
-        : 'Booking $id | $clientName';
+        : 'Booking $id | ${toTitleCase(status.replaceAll('_', ' '))}';
   }
 
   String _driverOptionLabel(UserModel driver) {

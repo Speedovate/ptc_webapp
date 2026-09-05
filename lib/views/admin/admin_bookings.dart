@@ -337,10 +337,10 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
                   _selectedBooking;
         final filteredBookings = vm.filteredBookings();
         final showInitialLoading =
-            !vm.hasResolvedInitialBookings &&
             selectedBooking == null &&
             vm.errorMessage == null &&
-            vm.bookings.isEmpty;
+            vm.bookings.isEmpty &&
+            !vm.hasResolvedInitialBookings;
 
         if (selectedBooking != null) {
           return AppPageLoadingOverlay(

@@ -551,13 +551,15 @@ class VehicleRequest implements VehicleCatalogRepository {
   Future<VehicleMake> saveMake(VehicleMake make) async {
     return _runRequest(() async {
       final existingId = normalizeId(make.id);
+      final isCreate = existingId == null;
+      final submissionKey =
+          'make:${(make.code ?? '').trim().toLowerCase()}:${normalizeId(make.type?.id) ?? '-'}:${normalizeId(make.driver?.id) ?? '-'}';
       final nextId =
           existingId ??
           await _nextCreateId(
             collection: _makesCollection,
             resourceKey: _vehicleMakesResourceKey,
-            submissionKey:
-                'make:${(make.code ?? '').trim().toLowerCase()}:${normalizeId(make.type?.id) ?? '-'}:${normalizeId(make.driver?.id) ?? '-'}',
+            submissionKey: submissionKey,
           );
       final now = DateTime.now();
       final saved = make.copyWith(
@@ -578,12 +580,22 @@ class VehicleRequest implements VehicleCatalogRepository {
           collection: _makesCollection,
         );
       } else {
-        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
-          collectionKey: _vehicleMakesResourceKey,
-          documentId: nextId,
-          document: document,
-          baseUpdatedAt: baseUpdatedAtIso,
-        );
+        if (isCreate) {
+          await _offlineMutationQueueService
+              .queueOfflineCollectionDocumentCreate(
+                collectionKey: _vehicleMakesResourceKey,
+                provisionalId: nextId,
+                submissionKey: submissionKey,
+                document: document,
+              );
+        } else {
+          await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+            collectionKey: _vehicleMakesResourceKey,
+            documentId: nextId,
+            document: document,
+            baseUpdatedAt: baseUpdatedAtIso,
+          );
+        }
       }
       await _cache.upsertDocument(
         resourceKey: _vehicleMakesResourceKey,
@@ -701,13 +713,16 @@ class VehicleRequest implements VehicleCatalogRepository {
     required VehicleCatalogItem item,
   }) async {
     return _runRequest(() async {
+      final existingId = normalizeId(item.id);
+      final isCreate = existingId == null;
+      final submissionKey =
+          'catalog:${(item.slug ?? item.name ?? '').trim().toLowerCase()}';
       final nextId =
-          normalizeId(item.id) ??
+          existingId ??
           await _nextCreateId(
             collection: collection,
             resourceKey: resourceKey,
-            submissionKey:
-                'catalog:${(item.slug ?? item.name ?? '').trim().toLowerCase()}',
+            submissionKey: submissionKey,
           );
       final now = DateTime.now();
       final saved = item.copyWith(
@@ -728,12 +743,22 @@ class VehicleRequest implements VehicleCatalogRepository {
           collection: collection,
         );
       } else {
-        await _offlineMutationQueueService.queueCollectionDocumentUpsert(
-          collectionKey: resourceKey,
-          documentId: nextId,
-          document: document,
-          baseUpdatedAt: baseUpdatedAtIso,
-        );
+        if (isCreate) {
+          await _offlineMutationQueueService
+              .queueOfflineCollectionDocumentCreate(
+                collectionKey: resourceKey,
+                provisionalId: nextId,
+                submissionKey: submissionKey,
+                document: document,
+              );
+        } else {
+          await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+            collectionKey: resourceKey,
+            documentId: nextId,
+            document: document,
+            baseUpdatedAt: baseUpdatedAtIso,
+          );
+        }
       }
       await _cache.upsertDocument(resourceKey: resourceKey, document: document);
       if (resourceKey == _vehicleTypesResourceKey) {
@@ -934,49 +959,6 @@ class VehicleRequest implements VehicleCatalogRepository {
     return UserModel.fromMap(map);
   }
 
-  Future<String> _nextId({
-    required CollectionReference<Map<String, dynamic>> collection,
-    required String resourceKey,
-  }) async {
-    int highestFromDocuments(List<Map<String, dynamic>> documents) {
-      return documents
-          .map((doc) => int.tryParse(doc['id']?.toString() ?? ''))
-          .whereType<int>()
-          .fold<int>(0, (max, value) => value > max ? value : max);
-    }
-
-    final cachedDocuments = await _cache.readDocuments(resourceKey);
-    var highest = highestFromDocuments(cachedDocuments ?? const []);
-    if (!currentNetworkStatus()) {
-      return '${highest + 1}';
-    }
-
-    try {
-      final snapshot = await collection.get().timeout(
-        _startupTimeout,
-        onTimeout: () => throw TimeoutException('$resourceKey next id timeout'),
-      );
-      final remoteHighest = highestFromDocuments(
-        snapshot.docs.map(documentData).toList(growable: false),
-      );
-      if (remoteHighest > highest) {
-        highest = remoteHighest;
-      }
-      return '${highest + 1}';
-    } catch (_) {
-      try {
-        final remoteDocuments = await _fetchCollectionDocumentsViaPublicRest(
-          resourceKey,
-        );
-        final remoteHighest = highestFromDocuments(remoteDocuments);
-        if (remoteHighest > highest) {
-          highest = remoteHighest;
-        }
-      } catch (_) {}
-      return '${highest + 1}';
-    }
-  }
-
   Future<String> _nextCreateId({
     required CollectionReference<Map<String, dynamic>> collection,
     required String resourceKey,
@@ -990,7 +972,7 @@ class VehicleRequest implements VehicleCatalogRepository {
     }
     // The offline queue preserves this provisional document locally. The
     // reconnect transaction remains the authority for the final numeric ID.
-    return _nextId(collection: collection, resourceKey: resourceKey);
+    return _offlineMutationQueueService.createOfflineProvisionalId(resourceKey);
   }
 
   int _compareByNewestIdFirst(dynamic a, dynamic b) {
