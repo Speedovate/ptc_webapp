@@ -3,10 +3,10 @@ import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/services/role_access_service.dart';
-import 'package:webapp/utils/functions.dart';
 import 'package:webapp/utils/performance_trace.dart';
 import 'package:webapp/views/client/client_booking_history_view.dart';
 import 'package:webapp/views/client/client_booking_home_view.dart';
@@ -371,6 +371,12 @@ class _RoleAssignedHomeSection extends StatelessWidget {
         );
         final showOnlineAvailability = RoleAccessService.instance
             .isOnlineEligibleRole(currentUser.role);
+        final showScheduleDetails = switch (normalizeRoleKey(
+          currentUser.role,
+        )) {
+          'driver' || 'helper' => true,
+          _ => false,
+        };
 
         return AppPageLoadingOverlay(
           isVisible: vm.isBusy,
@@ -499,6 +505,7 @@ class _RoleAssignedHomeSection extends StatelessWidget {
                               ),
                               statusLabelForKey: vm.statusLabelForKey,
                               showStatusSubmissions: false,
+                              showScheduleDetails: showScheduleDetails,
                               clientName: vm.clientName(entry.value),
                               clientPhone: vm.clientPhone(entry.value),
                               driverName: vm.driverName(entry.value),

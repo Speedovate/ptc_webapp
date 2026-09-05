@@ -18,6 +18,7 @@ class BookingRecordCard extends StatelessWidget {
     this.onTap,
     this.showStatusSubmissions = true,
     this.showAllDetails = false,
+    this.showScheduleDetails = false,
     this.originValue = '-',
     this.destinationValue = '-',
     this.clientName = '-',
@@ -41,6 +42,7 @@ class BookingRecordCard extends StatelessWidget {
   final VoidCallback? onTap;
   final bool showStatusSubmissions;
   final bool showAllDetails;
+  final bool showScheduleDetails;
   final String originValue;
   final String destinationValue;
   final String clientName;
@@ -53,7 +55,8 @@ class BookingRecordCard extends StatelessWidget {
   final String? driverId;
   final String? helperId;
   final ValueChanged<String>? onLinkedUserTap;
-  final String? Function(String fieldKey, String rawValue)? linkedUserDisplayForField;
+  final String? Function(String fieldKey, String rawValue)?
+  linkedUserDisplayForField;
   final VoidCallback? Function(String fieldKey, String rawValue)?
   onLinkedUserTapForField;
   final Widget? trailingActions;
@@ -75,6 +78,30 @@ class BookingRecordCard extends StatelessWidget {
       _BookingMetaData(label: 'Van Number', value: vanNumber),
       _BookingMetaData(label: 'Van Size', value: vanSize),
       _BookingMetaData(label: 'Amount', value: amount),
+      if (showScheduleDetails) ...[
+        _BookingMetaData(
+          label: 'Pick Up Date',
+          value: outputFieldDisplayValue(booking.statusOutputs, 'pick_up_date'),
+        ),
+        _BookingMetaData(
+          label: 'Pick Up Time',
+          value: outputFieldDisplayValue(booking.statusOutputs, 'pick_up_time'),
+        ),
+        _BookingMetaData(
+          label: 'Drop Off Date',
+          value: outputFieldDisplayValue(
+            booking.statusOutputs,
+            'drop_off_date',
+          ),
+        ),
+        _BookingMetaData(
+          label: 'Drop Off Time',
+          value: outputFieldDisplayValue(
+            booking.statusOutputs,
+            'drop_off_time',
+          ),
+        ),
+      ],
     ];
 
     return AppMousePressable(
@@ -627,7 +654,8 @@ class BookingStatusSubmissionsSection extends StatelessWidget {
   final String Function(String? statusKey) statusLabelForKey;
   final String Function(String? userId) userNameForId;
   final String Function(String? userId, String fallbackRole) userRoleForId;
-  final String? Function(String fieldKey, String rawValue)? linkedUserDisplayForField;
+  final String? Function(String fieldKey, String rawValue)?
+  linkedUserDisplayForField;
   final VoidCallback? Function(String fieldKey, String rawValue)?
   onLinkedUserTapForField;
 
@@ -705,10 +733,14 @@ class BookingStatusSubmissionsSection extends StatelessWidget {
                             fieldKey: field.key,
                             label: _titleCase(field.key.replaceAll('_', ' ')),
                             value: field.value,
-                            linkedUserDisplay:
-                                _resolvedLinkedUserDisplay(field.key, field.value),
-                            onLinkedUserTap:
-                                _resolvedLinkedUserTap(field.key, field.value),
+                            linkedUserDisplay: _resolvedLinkedUserDisplay(
+                              field.key,
+                              field.value,
+                            ),
+                            onLinkedUserTap: _resolvedLinkedUserTap(
+                              field.key,
+                              field.value,
+                            ),
                           ),
                         ),
                       ];

@@ -5,6 +5,7 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/view_models/client/client_booking_history.vm.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/utils/performance_trace.dart';
 import 'package:webapp/views/shared/booking_workflow_view.dart';
 import 'package:webapp/views/shared/support_center_view.dart';
@@ -672,6 +673,10 @@ class _BookingHistoryCard extends StatelessWidget {
       headlineStatusLabel: vm.statusLabelForRole(userRole, booking),
       statusLabelForKey: vm.statusLabelForKey,
       showStatusSubmissions: false,
+      showScheduleDetails: switch (normalizeRoleKey(userRole)) {
+        'driver' || 'helper' => true,
+        _ => false,
+      },
       clientName: vm.clientName(booking),
       clientPhone: vm.clientPhone(booking),
       driverName: vm.driverName(booking),
