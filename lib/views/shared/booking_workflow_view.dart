@@ -814,6 +814,10 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
           statusLabelForKey: vm.statusLabelForKey,
           showStatusSubmissions: false,
           showAllDetails: vm.canViewWorkflowAdminDetails,
+          showScheduleDetails: switch (normalizeRoleKey(widget.user.role)) {
+            'driver' || 'helper' => true,
+            _ => false,
+          },
           originValue: BookingRecordCard.outputFieldDisplayValue(
             currentBooking.statusOutputs,
             'origin',
