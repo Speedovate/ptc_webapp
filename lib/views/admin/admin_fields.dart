@@ -1714,6 +1714,7 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
                           ? null
                           : value,
                     ),
+                    'textCase' => _field.copyWith(textCase: value as String?),
                     'visibilityControllerKey' => _field.copyWith(
                       visibilityControllerKey: value as String?,
                     ),

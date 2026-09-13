@@ -505,7 +505,7 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
                                                             .start,
                                                     children: [
                                                       const Text(
-                                                        'Paltranco',
+                                                        'PALTRANCO',
                                                         style: TextStyle(
                                                           color: AppColors
                                                               .primaryColor,
@@ -2060,6 +2060,8 @@ class _AuthHeaderCameraButton extends StatelessWidget {
                   Image.memory(
                     previewBytes!,
                     key: ValueKey<int>(previewBytes!.length),
+                    cacheWidth: 112,
+                    cacheHeight: 112,
                     fit: BoxFit.cover,
                     gaplessPlayback: true,
                     filterQuality: FilterQuality.medium,

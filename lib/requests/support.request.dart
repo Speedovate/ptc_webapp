@@ -69,6 +69,14 @@ class SupportRequest {
       StreamController<String>.broadcast();
   final StreamController<String> _messageCacheUpdates =
       StreamController<String>.broadcast();
+  late final StreamController<List<SupportThread>> _allThreadsUpdates =
+      StreamController<List<SupportThread>>.broadcast(
+        onListen: _startAllThreadsWatcher,
+        onCancel: _stopAllThreadsWatcher,
+      );
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _allThreadsRemoteSubscription;
+  StreamSubscription<void>? _allThreadsLocalSubscription;
 
   CollectionReference<Map<String, dynamic>> get _supportCollection =>
       _firestore.collection('support');
@@ -442,64 +450,86 @@ class SupportRequest {
 
   Stream<List<SupportThread>> watchAllThreads() {
     return Stream<List<SupportThread>>.multi((controller) {
-      Future<void> emitCachedThreads() async {
-        final cached = await _readVisibleThreadDocuments();
-        if (controller.isClosed) {
-          return;
-        }
-        if (cached.isEmpty) {
-          controller.add(const <SupportThread>[]);
-          return;
-        }
-        final cachedThreads = cached.map(SupportThread.fromMap).toList()
-          ..sort(_compareThreadsNewestFirst);
-        _storeHydratedAllThreads(cachedThreads);
-        controller.add(cachedThreads);
+      final hydrated = _hydratedAllThreadsSnapshot;
+      if (hydrated.isNotEmpty) {
+        controller.add(List<SupportThread>.from(hydrated));
       }
-
-      unawaited(emitCachedThreads());
-
-      final remoteSubscription = _supportCollection.snapshots().listen((
-        snapshot,
-      ) async {
-        final documents = snapshot.docs.map(documentData).toList();
-        // A server snapshot confirms an optimistic draft thread. It no longer
-        // needs to be kept in the local overlay after this point.
-        for (final document in documents) {
-          final threadId = normalizeId(document['id']);
-          if (threadId != null) {
-            _volatileThreadDocumentsById.remove(threadId);
-          }
-        }
-        final cachedDocuments =
-            await _cache.readDocuments(_supportThreadsResourceKey) ??
-            const <Map<String, dynamic>>[];
-        final mergedDocuments = _mergeVisibleThreadDocuments(
-          remoteDocuments: documents,
-          cachedDocuments: cachedDocuments,
-        );
-        await _cache.writeDocuments(
-          resourceKey: _supportThreadsResourceKey,
-          documents: mergedDocuments,
-        );
-        if (controller.isClosed) {
-          return;
-        }
-        final threads = mergedDocuments.map(SupportThread.fromMap).toList()
-          ..sort(_compareThreadsNewestFirst);
-        _storeHydratedAllThreads(threads);
-        controller.add(threads);
-      }, onError: controller.addError);
-
-      final localSubscription = _threadCacheUpdates.stream.listen((_) {
-        unawaited(emitCachedThreads());
-      }, onError: controller.addError);
-
-      controller.onCancel = () async {
-        await remoteSubscription.cancel();
-        await localSubscription.cancel();
-      };
+      final subscription = _allThreadsUpdates.stream.listen(
+        controller.add,
+        onError: controller.addError,
+      );
+      controller.onCancel = subscription.cancel;
     });
+  }
+
+  void _startAllThreadsWatcher() {
+    if (_allThreadsRemoteSubscription != null) {
+      return;
+    }
+    PerformanceTrace.event('support-threads', 'shared watcher start');
+    unawaited(_emitAllThreadsFromCache());
+    _allThreadsRemoteSubscription = _supportCollection.snapshots().listen(
+      (snapshot) => unawaited(_applyAllThreadsSnapshot(snapshot)),
+      onError: _allThreadsUpdates.addError,
+    );
+    _allThreadsLocalSubscription = _threadCacheUpdates.stream.listen(
+      (_) => unawaited(_emitAllThreadsFromCache()),
+      onError: _allThreadsUpdates.addError,
+    );
+  }
+
+  Future<void> _stopAllThreadsWatcher() async {
+    if (_allThreadsUpdates.hasListener) {
+      return;
+    }
+    await _allThreadsRemoteSubscription?.cancel();
+    await _allThreadsLocalSubscription?.cancel();
+    _allThreadsRemoteSubscription = null;
+    _allThreadsLocalSubscription = null;
+    PerformanceTrace.event('support-threads', 'shared watcher stop');
+  }
+
+  Future<void> _emitAllThreadsFromCache() async {
+    final cached = await _readVisibleThreadDocuments();
+    if (_allThreadsUpdates.isClosed) {
+      return;
+    }
+    final threads = cached.map(SupportThread.fromMap).toList()
+      ..sort(_compareThreadsNewestFirst);
+    _storeHydratedAllThreads(threads);
+    _allThreadsUpdates.add(threads);
+  }
+
+  Future<void> _applyAllThreadsSnapshot(
+    QuerySnapshot<Map<String, dynamic>> snapshot,
+  ) async {
+    final documents = snapshot.docs.map(documentData).toList();
+    // A server snapshot confirms an optimistic draft thread. It no longer
+    // needs to be kept in the local overlay after this point.
+    for (final document in documents) {
+      final threadId = normalizeId(document['id']);
+      if (threadId != null) {
+        _volatileThreadDocumentsById.remove(threadId);
+      }
+    }
+    final cachedDocuments =
+        await _cache.readDocuments(_supportThreadsResourceKey) ??
+        const <Map<String, dynamic>>[];
+    final mergedDocuments = _mergeVisibleThreadDocuments(
+      remoteDocuments: documents,
+      cachedDocuments: cachedDocuments,
+    );
+    await _cache.writeDocuments(
+      resourceKey: _supportThreadsResourceKey,
+      documents: mergedDocuments,
+    );
+    if (_allThreadsUpdates.isClosed) {
+      return;
+    }
+    final threads = mergedDocuments.map(SupportThread.fromMap).toList()
+      ..sort(_compareThreadsNewestFirst);
+    _storeHydratedAllThreads(threads);
+    _allThreadsUpdates.add(threads);
   }
 
   Stream<List<SupportThread>> watchThreadsForUser(String userId) {

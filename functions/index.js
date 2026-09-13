@@ -60,7 +60,7 @@ exports.notifyChassisCheck = onDocumentUpdated(
 
     const bookingId = String(after.id || event.params.bookingId);
     const chassisId = String(after.chassis_id).trim();
-    const response = await getMessaging().sendEachForMulticast({
+    await getMessaging().sendEachForMulticast({
       tokens,
       data: {
         notificationId: `chassis-check-${bookingId}`,
@@ -74,9 +74,6 @@ exports.notifyChassisCheck = onDocumentUpdated(
         fcmOptions: {link: 'https://paltranco.vercel.app/'},
       },
     });
-    console.log(
-      `notifyChassisCheck booking=${bookingId} sent=${response.successCount} failed=${response.failureCount}`,
-    );
   },
 );
 

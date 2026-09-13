@@ -5,6 +5,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/services/app_warmup_service.dart';
+import 'package:webapp/services/booking_chat_alert_service.dart';
 import 'package:webapp/services/chassis_check_alert_service.dart';
 import 'package:webapp/services/chassis_push_notification_service.dart';
 import 'package:webapp/services/role_access_service.dart';
@@ -18,6 +19,8 @@ class AppShellViewModel extends BaseViewModel {
   final AppWarmupService _warmupService = AppWarmupService.instance;
   final ChassisCheckAlertService _chassisCheckAlertService =
       ChassisCheckAlertService.instance;
+  final BookingChatAlertService _bookingChatAlertService =
+      BookingChatAlertService.instance;
   final ChassisPushNotificationService _chassisPushNotificationService =
       ChassisPushNotificationService.instance;
 
@@ -47,6 +50,7 @@ class AppShellViewModel extends BaseViewModel {
 
       _roleAccessService.setCurrentUser(currentUser);
       unawaited(_chassisCheckAlertService.startForUser(currentUser));
+      unawaited(_bookingChatAlertService.startForUser(currentUser));
       unawaited(_chassisPushNotificationService.startForUser(currentUser));
       unawaited(
         _roleAccessService
@@ -80,6 +84,7 @@ class AppShellViewModel extends BaseViewModel {
     currentUser = await _repository.getCurrentUser();
     _roleAccessService.setCurrentUser(currentUser);
     unawaited(_chassisCheckAlertService.startForUser(currentUser));
+    unawaited(_bookingChatAlertService.startForUser(currentUser));
     unawaited(_chassisPushNotificationService.startForUser(currentUser));
     isQuickLoggedIn = await _repository.hasQuickLoginSource();
     await _bindCurrentSessionWatch();
@@ -99,6 +104,7 @@ class AppShellViewModel extends BaseViewModel {
     currentUser = user;
     _roleAccessService.setCurrentUser(user);
     unawaited(_chassisCheckAlertService.startForUser(user));
+    unawaited(_bookingChatAlertService.startForUser(user));
     unawaited(_chassisPushNotificationService.startForUser(user));
     notifyListeners();
     try {
@@ -141,6 +147,7 @@ class AppShellViewModel extends BaseViewModel {
     // Logout is local-first. Optional audio/push cleanup must never make an
     // offline user wait before the signed-out screen is shown.
     unawaited(_chassisCheckAlertService.stop());
+    unawaited(_bookingChatAlertService.stop());
     unawaited(_chassisPushNotificationService.stop());
     isQuickLoggedIn = false;
     notifyListeners();
@@ -166,6 +173,7 @@ class AppShellViewModel extends BaseViewModel {
       currentUser = await _repository.returnToQuickLoginSource();
       _roleAccessService.setCurrentUser(currentUser);
       unawaited(_chassisCheckAlertService.startForUser(currentUser));
+      unawaited(_bookingChatAlertService.startForUser(currentUser));
       unawaited(_chassisPushNotificationService.startForUser(currentUser));
       isQuickLoggedIn = await _repository.hasQuickLoginSource();
       await _bindCurrentSessionWatch();
@@ -174,6 +182,7 @@ class AppShellViewModel extends BaseViewModel {
       currentUser = previousUser;
       _roleAccessService.setCurrentUser(currentUser);
       unawaited(_chassisCheckAlertService.startForUser(currentUser));
+      unawaited(_bookingChatAlertService.startForUser(currentUser));
       unawaited(_chassisPushNotificationService.startForUser(currentUser));
       isQuickLoggedIn = previousQuickLoggedIn;
       await _bindCurrentSessionWatch();
@@ -207,6 +216,7 @@ class AppShellViewModel extends BaseViewModel {
           currentUser = null;
           _roleAccessService.setCurrentUser(null);
           unawaited(_chassisCheckAlertService.stop());
+          unawaited(_bookingChatAlertService.stop());
           unawaited(_chassisPushNotificationService.stop());
           isQuickLoggedIn = false;
           notifyListeners();
@@ -228,6 +238,7 @@ class AppShellViewModel extends BaseViewModel {
       );
       _roleAccessService.setCurrentUser(currentUser);
       unawaited(_chassisCheckAlertService.startForUser(currentUser));
+      unawaited(_bookingChatAlertService.startForUser(currentUser));
       unawaited(_chassisPushNotificationService.startForUser(currentUser));
       isQuickLoggedIn = await _repository.hasQuickLoginSource();
       if (authEpoch != _sessionEpoch) {
@@ -249,6 +260,7 @@ class AppShellViewModel extends BaseViewModel {
       currentUser = fallbackUser;
       _roleAccessService.setCurrentUser(currentUser);
       unawaited(_chassisCheckAlertService.startForUser(currentUser));
+      unawaited(_bookingChatAlertService.startForUser(currentUser));
       unawaited(_chassisPushNotificationService.startForUser(currentUser));
       _startWarmupForAuthenticatedMainUi(
         currentUser,
@@ -293,6 +305,7 @@ class AppShellViewModel extends BaseViewModel {
   void dispose() {
     _sessionInvalidationSubscription?.cancel();
     unawaited(_chassisCheckAlertService.stop());
+    unawaited(_bookingChatAlertService.stop());
     unawaited(_chassisPushNotificationService.stop());
     super.dispose();
   }

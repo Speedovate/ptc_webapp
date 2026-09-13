@@ -933,6 +933,7 @@ class AdminFlowViewModel extends BaseViewModel {
             ? null
             : value,
       ),
+      'textCase' => field.copyWith(textCase: value as String?),
       'visibilityControllerKey' => field.copyWith(
         visibilityControllerKey: value as String?,
       ),

@@ -53,6 +53,8 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
   String? _supportInitialBookingId;
   String? _supportInitialUserId;
   int _supportViewTick = 0;
+  final Map<RolePlatformSection, Widget> _retainedSections =
+      <RolePlatformSection, Widget>{};
 
   @override
   void initState() {
@@ -69,6 +71,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
     if (oldWidget.user.id != widget.user.id ||
         oldWidget.user.updatedAt != widget.user.updatedAt) {
       _shellUser = widget.user;
+      _retainedSections.clear();
       _log(
         'user updated loggedIn=${widget.user.id != null} user=${widget.user.id ?? "-"} role=${widget.user.role ?? "-"}',
       );
@@ -116,6 +119,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
       }
       setState(() {
         _shellUser = updatedUser;
+        _retainedSections.remove(RolePlatformSection.profile);
       });
     } finally {
       if (mounted) {
@@ -170,16 +174,14 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
                     _supportInitialUserId = initialUserId;
                     _supportViewTick++;
                     _selectedHistoryBooking = null;
+                    _retainedSections.remove(RolePlatformSection.support);
                   });
                   _viewModel.selectSection(RolePlatformSection.support);
                 },
             child: AppPageLoadingOverlay(
               isVisible: overlayVisible,
               message: overlayMessage,
-              child: KeyedSubtree(
-                key: ValueKey(vm.selectedSection),
-                child: _buildSelectedSection(vm.selectedSection),
-              ),
+              child: _buildRetainedSection(vm.selectedSection),
             ),
           ),
         );
@@ -274,6 +276,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
                 onBookingSubmitted: (booking) {
                   setState(() {
                     _selectedHistoryBooking = booking;
+                    _retainedSections.remove(RolePlatformSection.history);
                   });
                   _viewModel.selectSection(RolePlatformSection.history);
                 },
@@ -283,11 +286,13 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
                 onUserUpdated: (updatedUser) {
                   setState(() {
                     _shellUser = updatedUser;
+                    _retainedSections.remove(RolePlatformSection.profile);
                   });
                 },
                 onOpenBooking: (booking) {
                   setState(() {
                     _selectedHistoryBooking = booking;
+                    _retainedSections.remove(RolePlatformSection.history);
                   });
                   _viewModel.selectSection(RolePlatformSection.history);
                 },
@@ -298,6 +303,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
         onNewPressed: () {
           setState(() {
             _selectedHistoryBooking = null;
+            _retainedSections.remove(RolePlatformSection.home);
           });
           _viewModel.selectSection(RolePlatformSection.home);
         },
@@ -335,6 +341,29 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
         ),
       ),
     };
+  }
+
+  Widget _buildRetainedSection(RolePlatformSection section) {
+    final wasRetained = _retainedSections.containsKey(section);
+    _retainedSections.putIfAbsent(
+      section,
+      () => _buildSelectedSection(section),
+    );
+    PerformanceTrace.event(
+      'role-navigation-cache',
+      '${wasRetained ? 'hit' : 'create'} section=${section.name}',
+    );
+    return IndexedStack(
+      index: section.index,
+      children: RolePlatformSection.values
+          .map(
+            (candidate) => KeyedSubtree(
+              key: ValueKey<String>('role-retained:${candidate.name}'),
+              child: _retainedSections[candidate] ?? const SizedBox.shrink(),
+            ),
+          )
+          .toList(growable: false),
+    );
   }
 }
 

@@ -66,8 +66,8 @@ Future<ExportFileResult> _shareFiles(
 
   await Share.shareXFiles(
     exportedFiles,
-    subject: 'Paltranco Export',
-    text: 'Paltranco Export',
+    subject: 'PALTRANCO Export',
+    text: 'PALTRANCO Export',
     sharePositionOrigin: shareOrigin,
   );
 

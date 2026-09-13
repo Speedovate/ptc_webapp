@@ -61,6 +61,10 @@ class AppProfileAvatar extends StatelessWidget {
                   normalizedPhoto: normalizedPhoto,
                   hasDisplayablePhoto: hasDisplayablePhoto,
                   hasImageError: hasImageError,
+                  cacheDimension:
+                      (diameter * MediaQuery.devicePixelRatioOf(context))
+                          .round()
+                          .clamp(1, 512),
                 ),
               ),
             ),
@@ -104,15 +108,23 @@ class AppProfileAvatar extends StatelessWidget {
     required String? normalizedPhoto,
     required bool hasDisplayablePhoto,
     required bool hasImageError,
+    required int cacheDimension,
   }) {
     if (memoryBytes != null && memoryBytes.isNotEmpty) {
-      return Image.memory(memoryBytes, fit: BoxFit.cover);
+      return Image.memory(
+        memoryBytes,
+        fit: BoxFit.cover,
+        cacheWidth: cacheDimension,
+        cacheHeight: cacheDimension,
+      );
     }
 
     if (hasDisplayablePhoto) {
       return AppCachedNetworkImage(
         imageUrl: normalizedPhoto!,
         fit: BoxFit.cover,
+        cacheWidth: cacheDimension,
+        cacheHeight: cacheDimension,
         errorBuilder: (context, error) {
           return _FallbackAvatarContent(
             radius: radius,

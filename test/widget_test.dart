@@ -10,7 +10,7 @@ void main() {
     );
 
     expect(
-      find.text('Starting Paltranco and preparing offline data ...'),
+      find.text('Starting PALTRANCO and preparing offline data ...'),
       findsOneWidget,
     );
   });

@@ -1002,6 +1002,8 @@ class _LicensePreview extends StatelessWidget {
             memoryBytes!,
             width: double.infinity,
             height: 220,
+            cacheWidth: 1280,
+            cacheHeight: 880,
             fit: BoxFit.contain,
           ),
         ),
@@ -1030,6 +1032,8 @@ class _LicensePreview extends StatelessWidget {
               imageUrl: normalizedValue,
               width: double.infinity,
               height: 220,
+              cacheWidth: 1280,
+              cacheHeight: 880,
               fit: BoxFit.contain,
               errorBuilder: (context, error) {
                 return const _LicenseImageFallback(

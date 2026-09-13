@@ -31,6 +31,11 @@ class PersistentImageCacheService {
   static const int _maximumMemoryCacheEntries = 6;
   static const int _maximumMemoryCacheBytes = 6 * 1024 * 1024;
   static const int _maximumConcurrentNetworkFetches = 2;
+  // Image widgets already display their browser-network fallback immediately.
+  // Do not keep converting images from a page that has since been disposed.
+  // An unbounded queue can otherwise keep a web renderer decoding old avatars
+  // and attachments long after a user switches screens.
+  static const int _maximumQueuedNetworkFetches = 12;
 
   Future<void> initialize() async {
     if (_isInitialized) {
@@ -138,6 +143,9 @@ class PersistentImageCacheService {
   }
 
   Future<PersistentFetchedImage?> _fetchWithConcurrency(String url) {
+    if (_networkFetchQueue.length >= _maximumQueuedNetworkFetches) {
+      return Future<PersistentFetchedImage?>.value(null);
+    }
     final completer = Completer<PersistentFetchedImage?>();
     _networkFetchQueue.add(_QueuedImageFetch(url: url, completer: completer));
     _drainNetworkFetchQueue();

@@ -123,7 +123,7 @@ class MyApp extends StatelessWidget {
         );
 
     return MaterialApp(
-      title: 'Paltranco Digital Platform',
+      title: 'PALTRANCO Digital Platform',
       debugShowCheckedModeBanner: false,
       builder: (context, child) {
         return GestureDetector(
@@ -368,7 +368,7 @@ class _AppBootstrapLoadingScreen extends StatelessWidget {
           color: Color(0xFF5C33CF),
           child: Center(
             child: AppPageLoading(
-              message: 'Starting Paltranco and preparing offline data ...',
+              message: 'Starting PALTRANCO and preparing offline data ...',
               compact: true,
             ),
           ),

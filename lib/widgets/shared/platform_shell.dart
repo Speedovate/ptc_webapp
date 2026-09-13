@@ -478,7 +478,7 @@ class PlatformSidebarBrandTile extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Paltranco',
+                          'PALTRANCO',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

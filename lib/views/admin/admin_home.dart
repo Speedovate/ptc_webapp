@@ -74,6 +74,9 @@ class _AdminHomeState extends State<AdminHome> {
   List<Chassis> _sidebarChassis = const <Chassis>[];
   List<SupportThread> _sidebarThreads = const <SupportThread>[];
   Map<String, String> _sidebarThreadReadMarkers = const <String, String>{};
+  // Badge updates must not rebuild the active page. The sidebar listens to
+  // this revision separately from the shell content.
+  final ValueNotifier<int> _sidebarBadgeRevision = ValueNotifier<int>(0);
   bool _hasResolvedSidebarThreadReadMarkers = false;
   bool _isUploadingProfilePhoto = false;
   String? _supportInitialTopicKey;
@@ -84,6 +87,9 @@ class _AdminHomeState extends State<AdminHome> {
   bool _hasVisitedBookings = false;
   Widget? _retainedDashboardSection;
   Widget? _retainedBookingsSection;
+  final Map<String, Widget> _retainedSecondarySections = <String, Widget>{};
+  final List<String> _secondarySectionRecency = <String>[];
+  static const int _maxRetainedSecondarySections = 3;
 
   void _log(String message) {
     // Temporary debug logging removed.
@@ -127,6 +133,7 @@ class _AdminHomeState extends State<AdminHome> {
     _chassisBadgeSubscription?.cancel();
     _supportBadgeSubscription?.cancel();
     _supportReadBadgeSubscription?.cancel();
+    _sidebarBadgeRevision.dispose();
     _flowViewModel.dispose();
     _profileUsersViewModel.dispose();
     super.dispose();
@@ -151,9 +158,8 @@ class _AdminHomeState extends State<AdminHome> {
         if (!mounted) {
           return;
         }
-        setState(() {
-          _sidebarBookings = List<Booking>.from(bookings);
-        });
+        _sidebarBookings = List<Booking>.from(bookings);
+        _notifySidebarBadgeChanged();
         PerformanceTrace.event(
           'admin-home',
           'sidebar bookings update count=${bookings.length}',
@@ -166,9 +172,8 @@ class _AdminHomeState extends State<AdminHome> {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _sidebarChassis = List<Chassis>.from(chassis);
-      });
+      _sidebarChassis = List<Chassis>.from(chassis);
+      _notifySidebarBadgeChanged();
     });
     _supportBadgeSubscription = _supportRequest.watchAllThreads().listen((
       threads,
@@ -176,9 +181,8 @@ class _AdminHomeState extends State<AdminHome> {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _sidebarThreads = List<SupportThread>.from(threads);
-      });
+      _sidebarThreads = List<SupportThread>.from(threads);
+      _notifySidebarBadgeChanged();
       PerformanceTrace.event(
         'admin-home',
         'sidebar support update count=${threads.length}',
@@ -198,14 +202,17 @@ class _AdminHomeState extends State<AdminHome> {
     if (!mounted || _shellUser.id?.trim() != userId) {
       return;
     }
-    setState(() {
-      _sidebarThreadReadMarkers = markers;
-      _hasResolvedSidebarThreadReadMarkers = true;
-    });
+    _sidebarThreadReadMarkers = markers;
+    _hasResolvedSidebarThreadReadMarkers = true;
+    _notifySidebarBadgeChanged();
     PerformanceTrace.event(
       'admin-home',
       'sidebar read markers resolved count=${markers.length}',
     );
+  }
+
+  void _notifySidebarBadgeChanged() {
+    _sidebarBadgeRevision.value++;
   }
 
   int get _pendingBookingsBadgeCount => _sidebarBookings.where((booking) {
@@ -378,7 +385,12 @@ class _AdminHomeState extends State<AdminHome> {
               onProfile: () => vm.selectSection(AdminSection.profile),
               onLogout: widget.onLogout,
               logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-              sidebar: _buildSidebar(vm, isCompact: isCompact),
+              sidebar: ValueListenableBuilder<int>(
+                valueListenable: _sidebarBadgeRevision,
+                builder: (context, _, _) {
+                  return _buildSidebar(vm, isCompact: isCompact);
+                },
+              ),
               body: SupportSectionNavigationScope(
                 onOpenSupport:
                     ({
@@ -877,17 +889,24 @@ class _AdminHomeState extends State<AdminHome> {
   }
 
   Widget _buildRetainedSection(AdminSection section) {
-    // Dashboard and bookings are the largest admin data views. Keep their
-    // state and hydrated data mounted while another section is open. The
-    // third slot remains disposable so background pages cannot grow unbounded.
+    // Keep the frequently revisited pages alive, but bound inactive page
+    // memory. Recreating every page on a sidebar tap was the main navigation
+    // hitch; retaining every page forever risks long-session web memory growth.
     if (section == AdminSection.bookings) {
       _hasVisitedBookings = true;
     }
-    final selectedIndex = switch (section) {
-      AdminSection.dashboard => 0,
-      AdminSection.bookings => 1,
-      _ => 2,
-    };
+    final secondaryKey = _secondarySectionKey(section);
+    if (secondaryKey != null) {
+      _retainSecondarySection(secondaryKey, section);
+    }
+    final secondaryKeys = _retainedSecondarySections.keys.toList(
+      growable: false,
+    );
+    final selectedIndex = section == AdminSection.dashboard
+        ? 0
+        : section == AdminSection.bookings
+        ? 1
+        : 2 + secondaryKeys.indexOf(secondaryKey!);
     return IndexedStack(
       index: selectedIndex,
       children: [
@@ -907,23 +926,48 @@ class _AdminHomeState extends State<AdminHome> {
                 },
               ))
             : const SizedBox.shrink(),
-        KeyedSubtree(
-          key: ValueKey<String>(
-            '${section.name}:${_viewModel.selectedSettingsSection.name}:${_viewModel.selectedVehiclesSection.name}:$_supportViewTick',
+        ...secondaryKeys.map(
+          (key) => KeyedSubtree(
+            key: ValueKey<String>('admin-retained:$key'),
+            child: _retainedSecondarySections[key]!,
           ),
-          child:
-              section == AdminSection.dashboard ||
-                  section == AdminSection.bookings
-              ? const SizedBox.shrink()
-              : _buildSelectedSection(section),
         ),
       ],
     );
   }
 
+  String? _secondarySectionKey(AdminSection section) {
+    return switch (section) {
+      AdminSection.dashboard || AdminSection.bookings => null,
+      AdminSection.vehicles => 'vehicles:${_resolvedVehiclesSection().name}',
+      AdminSection.settings => 'settings:${_resolvedSettingsSection().name}',
+      AdminSection.support => 'support:$_supportViewTick',
+      _ => section.name,
+    };
+  }
+
+  void _retainSecondarySection(String key, AdminSection section) {
+    final existing = _retainedSecondarySections[key];
+    if (existing == null) {
+      _retainedSecondarySections[key] = _buildSelectedSection(section);
+      PerformanceTrace.event('admin-navigation-cache', 'create key=$key');
+    } else {
+      PerformanceTrace.event('admin-navigation-cache', 'hit key=$key');
+    }
+    _secondarySectionRecency.remove(key);
+    _secondarySectionRecency.add(key);
+    while (_secondarySectionRecency.length > _maxRetainedSecondarySections) {
+      final evictedKey = _secondarySectionRecency.removeAt(0);
+      _retainedSecondarySections.remove(evictedKey);
+      PerformanceTrace.event('admin-navigation-cache', 'evict key=$evictedKey');
+    }
+  }
+
   void _invalidateRetainedPrimarySections() {
     _retainedDashboardSection = null;
     _retainedBookingsSection = null;
+    _retainedSecondarySections.clear();
+    _secondarySectionRecency.clear();
   }
 
   AdminVehiclesSection _resolvedVehiclesSection() {

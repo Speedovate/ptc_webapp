@@ -667,6 +667,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                             Image.memory(
                               previewBytes,
                               width: double.infinity,
+                              cacheWidth: 900,
                               fit: BoxFit.fitWidth,
                             )
                           else if (previewUrl?.isNotEmpty == true)

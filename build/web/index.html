@@ -28,13 +28,13 @@
   >
   <meta name="robots" content="index, follow">
   <meta name="theme-color" content="#5B34D6" id="app-theme-color">
-  <meta name="application-name" content="Paltranco Digital Platform">
+  <meta name="application-name" content="PALTRANCO Digital Platform">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Paltranco Digital Platform">
+  <meta name="apple-mobile-web-app-title" content="PALTRANCO Digital Platform">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="Paltranco Digital Platform">
-  <meta property="og:title" content="Paltranco Digital Platform">
+  <meta property="og:site_name" content="PALTRANCO Digital Platform">
+  <meta property="og:title" content="PALTRANCO Digital Platform">
   <meta property="og:description" content="Transport at your fingertips.">
   <meta property="og:url" content="https://paltranco.vercel.app/">
   <meta property="og:image" content="https://paltranco.vercel.app/social-preview.png">
@@ -42,7 +42,7 @@
   <meta property="og:image:width" content="1080">
   <meta property="og:image:height" content="1080">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Paltranco Digital Platform">
+  <meta name="twitter:title" content="PALTRANCO Digital Platform">
   <meta name="twitter:description" content="Transport at your fingertips.">
   <meta name="twitter:image" content="https://paltranco.vercel.app/social-preview.png">
   <link rel="canonical" href="https://paltranco.vercel.app/">
@@ -56,7 +56,7 @@
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>Paltranco Digital Platform</title>
+  <title>PALTRANCO Digital Platform</title>
   <link rel="manifest" href="manifest.json">
   <style>
     :root {
@@ -251,13 +251,13 @@
   </style>
 </head>
 <body>
-  <div id="app-startup-splash" aria-label="Loading Paltranco Digital Platform">
+  <div id="app-startup-splash" aria-label="Loading PALTRANCO Digital Platform">
     <div id="app-startup-splash__content">
       <div id="app-startup-splash__logo-wrap">
         <img
           id="app-startup-splash__logo"
           src="assets/assets/icon.png"
-          alt="Paltranco Digital Platform"
+          alt="PALTRANCO Digital Platform"
         >
       </div>
       <div id="app-startup-splash__footer" aria-hidden="true">
@@ -270,7 +270,7 @@
       <div
         id="social-browser-gate__logo"
         role="img"
-        aria-label="Paltranco Digital Platform"
+        aria-label="PALTRANCO Digital Platform"
       ></div>
       <h1 id="social-browser-gate__title">Open In Chrome</h1>
       <p id="social-browser-gate__body">
@@ -294,76 +294,13 @@
   </div>
   <div id="bootstrap-loader" aria-live="polite"></div>
   <script>
-    const startupTraceEnabled =
-      ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname) ||
-      new URLSearchParams(window.location.search).has('startupTrace');
-    const startupTraceStartedAt = performance.now();
-
-    function traceStartup(message) {
-      if (!startupTraceEnabled) {
-        return;
-      }
-      console.debug(
-        '[StartupTransition][+' +
-          Math.round(performance.now() - startupTraceStartedAt) +
-          'ms] ' +
-          message,
-      );
-    }
-
-    // Opt-in browser health telemetry for investigating renderer crashes.
-    // Open the app with ?healthTrace=1 and preserve the DevTools console.
-    const browserHealthTraceEnabled =
-      new URLSearchParams(window.location.search).has('healthTrace');
-
-    if (browserHealthTraceEnabled) {
-      const bytesToMb = function(value) {
-        return typeof value === 'number' ? Math.round(value / 1048576) : null;
-      };
-
-      const logBrowserHealth = async function() {
-        const memory = performance.memory;
-        let storage = null;
-        let imageCacheEntries = null;
-        try {
-          storage = await navigator.storage?.estimate?.();
-        } catch (_) {}
-        try {
-          const imageCache = await caches.open('paltranco-images');
-          imageCacheEntries = (await imageCache.keys()).length;
-        } catch (_) {}
-        console.info('[BrowserHealth]', {
-          elapsedMs: Math.round(performance.now()),
-          jsHeapUsedMb: bytesToMb(memory?.usedJSHeapSize),
-          jsHeapTotalMb: bytesToMb(memory?.totalJSHeapSize),
-          jsHeapLimitMb: bytesToMb(memory?.jsHeapSizeLimit),
-          storageUsageMb: bytesToMb(storage?.usage),
-          storageQuotaMb: bytesToMb(storage?.quota),
-          imageCacheEntries: imageCacheEntries,
-          resourceEntries: performance.getEntriesByType('resource').length,
-        });
-      };
-
-      window.addEventListener('error', function(event) {
-        console.error('[BrowserHealth][window-error]', event.error || event.message);
-      });
-      window.addEventListener('unhandledrejection', function(event) {
-        console.error('[BrowserHealth][unhandled-rejection]', event.reason);
-      });
-      logBrowserHealth();
-      window.setInterval(logBrowserHealth, 15000);
-    }
-
     function removeStartupSplash(reason) {
       const splash = document.getElementById('app-startup-splash');
       if (splash) {
-        traceStartup('HTML splash removed reason=' + (reason || 'unknown'));
         splash.style.display = 'none';
         splash.setAttribute('aria-hidden', 'true');
       }
     }
-
-    traceStartup('HTML splash mounted');
 
     function showStartupSplash(reason) {
       if (window.__PALTRANCO_SOCIAL_INAPP__ === true) {
@@ -371,7 +308,6 @@
       }
       const splash = document.getElementById('app-startup-splash');
       if (splash) {
-        traceStartup('HTML splash shown reason=' + (reason || 'unknown'));
         splash.style.display = 'flex';
         splash.removeAttribute('aria-hidden');
       }
@@ -483,7 +419,6 @@
     });
 
     window.addEventListener('paltranco-bootstrap-ready', function() {
-      traceStartup('received Dart bootstrap-ready signal');
       removeStartupSplash('dart-ready');
     });
 
@@ -495,9 +430,7 @@
     // prevents its ready signal, reveal Flutter's own loading or error UI
     // rather than trapping the user forever behind the HTML splash.
     window.addEventListener('flutter-first-frame', function() {
-      traceStartup('received Flutter first-frame event; fallback timer started');
       window.setTimeout(function() {
-        traceStartup('fallback timer fired');
         removeStartupSplash('first-frame-fallback');
       }, 15000);
     }, { once: true });

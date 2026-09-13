@@ -1,5 +1,5 @@
 name: webapp
-description: "Paltranco Web App"
+description: "PALTRANCO Web App"
 publish_to: 'none'
 version: 1.0.0+5
 
@@ -42,6 +42,7 @@ flutter:
     - assets/icon.png
     - assets/sdv_footer_lite.png
     - assets/sounds/alert.mp3
+    - assets/sounds/sound.mp3
     - assets/export_templates/bs-regular.docx
     - assets/export_templates/bs-hustling.docx
     - assets/export_templates/bt-regular.docx

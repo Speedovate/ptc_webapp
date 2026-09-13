@@ -1843,7 +1843,7 @@ String _buildDashboardExportZipFileName(
   final hour = hour12.toString();
   final minute = now.minute.toString().padLeft(2, '0');
   final second = now.second.toString().padLeft(2, '0');
-  return 'Paltranco Export $month-$day-$year $hour-$minute-$second $meridiem.zip';
+  return 'PALTRANCO Export $month-$day-$year $hour-$minute-$second $meridiem.zip';
 }
 
 String _defaultCompanyName(List<Booking> bookings, AdminDashboardViewModel vm) {

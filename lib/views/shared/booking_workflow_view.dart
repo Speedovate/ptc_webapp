@@ -2253,6 +2253,7 @@ class _WorkflowFieldCard extends StatelessWidget {
         phoneFieldHaystack.contains('phone') ||
         phoneFieldHaystack.contains('mobile') ||
         phoneFieldHaystack.contains('contact number');
+    final textCase = StatusField.normalizedTextCase(field.textCase);
     final optionSourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
       field,
     );
@@ -2403,9 +2404,16 @@ class _WorkflowFieldCard extends StatelessWidget {
           nextFocusNode: nextFocusNode,
           activateNextFocus: activateNextFocus,
           keyboardType: isPhoneField ? TextInputType.phone : null,
+          textCapitalization: _textCapitalizationFor(
+            textCase: textCase,
+            isNameField: isNameField,
+          ),
           inputFormatters: isPhoneField
               ? const [PhilippinesPhoneInputFormatter()]
-              : (isNameField ? const [NameCaseTextInputFormatter()] : null),
+              : _textCaseInputFormatters(
+                  textCase: textCase,
+                  isNameField: isNameField,
+                ),
           hintText: (field.required ?? false)
               ? adminEnterPlaceholder(fieldLabel, override: placeholder)
               : (placeholder?.trim().isNotEmpty == true
@@ -2573,6 +2581,36 @@ class _WorkflowFieldCard extends StatelessWidget {
           onChanged: (value) => onChanged(value.trim()),
         );
     }
+  }
+
+  static TextCapitalization _textCapitalizationFor({
+    required String? textCase,
+    required bool isNameField,
+  }) {
+    return switch (textCase) {
+      statusFieldTextCaseUppercase => TextCapitalization.characters,
+      statusFieldTextCaseLowercase => TextCapitalization.none,
+      statusFieldTextCaseTitleCase => TextCapitalization.words,
+      statusFieldTextCaseSentenceCase => TextCapitalization.sentences,
+      _ when isNameField => TextCapitalization.words,
+      _ => TextCapitalization.none,
+    };
+  }
+
+  static List<TextInputFormatter>? _textCaseInputFormatters({
+    required String? textCase,
+    required bool isNameField,
+  }) {
+    return switch (textCase) {
+      statusFieldTextCaseUppercase => const [UppercaseTextInputFormatter()],
+      statusFieldTextCaseLowercase => const [LowercaseTextInputFormatter()],
+      statusFieldTextCaseTitleCase => const [NameCaseTextInputFormatter()],
+      statusFieldTextCaseSentenceCase => const [
+        SentenceCaseTextInputFormatter(),
+      ],
+      _ when isNameField => const [NameCaseTextInputFormatter()],
+      _ => null,
+    };
   }
 
   Widget _roleUserDropdown(
@@ -2915,6 +2953,7 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
                           ? null
                           : value,
                     ),
+                    'textCase' => _field.copyWith(textCase: value as String?),
                     'visibilityControllerKey' => _field.copyWith(
                       visibilityControllerKey: value as String?,
                     ),
@@ -2957,6 +2996,7 @@ class _UnderlineTextField extends StatefulWidget {
     this.hintText,
     this.errorText,
     this.inputFormatters,
+    this.textCapitalization = TextCapitalization.none,
   });
 
   final String? initialValue;
@@ -2971,6 +3011,7 @@ class _UnderlineTextField extends StatefulWidget {
   final String? hintText;
   final String? errorText;
   final List<TextInputFormatter>? inputFormatters;
+  final TextCapitalization textCapitalization;
   final ValueChanged<String> onChanged;
 
   @override
@@ -3061,6 +3102,7 @@ class _UnderlineTextFieldState extends State<_UnderlineTextField> {
       focusNode: widget.focusNode,
       keyboardType: widget.keyboardType,
       inputFormatters: widget.inputFormatters,
+      textCapitalization: widget.textCapitalization,
       textInputAction: widget.nextFocusNode != null
           ? TextInputAction.next
           : TextInputAction.done,

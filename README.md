@@ -1,6 +1,6 @@
 # webapp
 
-Paltranco Web App
+PALTRANCO Web App
 
 ## Getting Started
 

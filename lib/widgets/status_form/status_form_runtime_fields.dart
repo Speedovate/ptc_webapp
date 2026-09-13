@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/constants/palawan_locations.dart';
 import 'package:webapp/models/status_field.dart';
@@ -641,12 +642,10 @@ class _TextFieldInputState extends State<_TextFieldInput> {
       textInputAction: widget.nextFocusNode != null
           ? TextInputAction.next
           : TextInputAction.done,
-      textCapitalization: _isNameField
-          ? TextCapitalization.words
-          : TextCapitalization.none,
+      textCapitalization: _textCapitalization,
       inputFormatters: _isPhoneField
           ? const [PhilippinesPhoneInputFormatter()]
-          : (_isNameField ? const [NameCaseTextInputFormatter()] : null),
+          : _textCaseInputFormatters,
       onSubmitted: (_) {
         final nextFocusNode = widget.nextFocusNode;
         if (nextFocusNode != null) {
@@ -689,6 +688,30 @@ class _TextFieldInputState extends State<_TextFieldInput> {
         ),
       ),
     );
+  }
+
+  TextCapitalization get _textCapitalization {
+    return switch (StatusField.normalizedTextCase(widget.field.textCase)) {
+      statusFieldTextCaseUppercase => TextCapitalization.characters,
+      statusFieldTextCaseLowercase => TextCapitalization.none,
+      statusFieldTextCaseTitleCase => TextCapitalization.words,
+      statusFieldTextCaseSentenceCase => TextCapitalization.sentences,
+      _ when _isNameField => TextCapitalization.words,
+      _ => TextCapitalization.none,
+    };
+  }
+
+  List<TextInputFormatter>? get _textCaseInputFormatters {
+    return switch (StatusField.normalizedTextCase(widget.field.textCase)) {
+      statusFieldTextCaseUppercase => const [UppercaseTextInputFormatter()],
+      statusFieldTextCaseLowercase => const [LowercaseTextInputFormatter()],
+      statusFieldTextCaseTitleCase => const [NameCaseTextInputFormatter()],
+      statusFieldTextCaseSentenceCase => const [
+        SentenceCaseTextInputFormatter(),
+      ],
+      _ when _isNameField => const [NameCaseTextInputFormatter()],
+      _ => null,
+    };
   }
 }
 

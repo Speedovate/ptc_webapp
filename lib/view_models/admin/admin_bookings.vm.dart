@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/status.dart';
@@ -363,11 +362,7 @@ class AdminBookingsViewModel extends BaseViewModel {
     });
   }
 
-  void _traceHandoff(String message) {
-    if (kDebugMode) {
-      debugPrint('[BookingHandoffTrace][admin-bookings] $message');
-    }
-  }
+  void _traceHandoff(String message) {}
 
   void _markInitialBookingsResolved() {
     if (_hasLoadedOnce) {

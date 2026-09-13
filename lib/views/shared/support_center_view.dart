@@ -1033,7 +1033,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         children: [
           if (!widget.embedded) ...[
             _StandaloneSupportHeader(
-              title: _isAdmin ? 'Support' : 'Paltranco Support',
+              title: _isAdmin ? 'Support' : 'PALTRANCO Support',
               onBack: () => Navigator.of(context).maybePop(),
             ),
             const SizedBox(height: 16),
@@ -2822,6 +2822,8 @@ class _PendingAttachmentPreviewCard extends StatelessWidget {
                 ),
                 child: Image.memory(
                   attachment.bytes,
+                  cacheWidth: 184,
+                  cacheHeight: 184,
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) {
                     return Container(

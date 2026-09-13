@@ -1,6 +1,6 @@
 {
-    "name": "Paltranco Digital Platform",
-    "short_name": "Paltranco",
+    "name": "PALTRANCO Digital Platform",
+    "short_name": "PALTRANCO",
     "start_url": ".",
     "display": "standalone",
     "display_override": ["standalone", "minimal-ui", "browser"],

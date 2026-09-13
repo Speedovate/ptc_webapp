@@ -1,6 +1,6 @@
-# Paltranco Development Basis
+# PALTRANCO Development Basis
 
-This file is the working basis for succeeding development in Paltranco.
+This file is the working basis for succeeding development in PALTRANCO.
 
 Use this as the project-wide source of truth for:
 
@@ -15,7 +15,7 @@ Use this as the project-wide source of truth for:
 
 ## Project Scope
 
-Paltranco is a trucking and logistics MVP.
+PALTRANCO is a trucking and logistics MVP.
 
 Current known roles:
 
@@ -244,13 +244,13 @@ For branded auth and similar hero headers:
 
 - use the brand mark and name stack directly
 - prefer:
-  - `Paltranco`
+  - `PALTRANCO`
   - `Digital Platform`
-- `Digital Platform` should be slightly smaller than `Paltranco`, readable, and not bold
+- `Digital Platform` should be slightly smaller than `PALTRANCO`, readable, and not bold
 - do not place an extra `SizedBox` spacer between those two text lines
 - do not add helper subtext below that two-line brand stack
 
-Keep the header minimal, premium, and consistent with the current purple Paltranco branding.
+Keep the header minimal, premium, and consistent with the current purple PALTRANCO branding.
 
 ## Shared Action Rules
 

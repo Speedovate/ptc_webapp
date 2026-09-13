@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/booking.dart';
@@ -677,11 +676,7 @@ class _AdminChassisViewState extends State<AdminChassisView> {
 
   int? _optionalId(String? value) => int.tryParse(value?.trim() ?? '');
 
-  void _traceOffline(String message) {
-    if (kDebugMode) {
-      debugPrint('[ChassisOfflineTrace][modal] $message');
-    }
-  }
+  void _traceOffline(String message) {}
 
   _ChassisContact _clientContactForBooking(int? bookingId) {
     final bookingIdText = bookingId?.toString();

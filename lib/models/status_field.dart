@@ -20,6 +20,16 @@ const statusFieldOptionSourceFields = 'fields';
 const statusFieldOptionSourceBookings = 'bookings';
 const statusFieldOptionSourcePuertoPrincesaBarangays =
     'puerto_princesa_barangays';
+const statusFieldTextCaseUppercase = 'uppercase';
+const statusFieldTextCaseLowercase = 'lowercase';
+const statusFieldTextCaseTitleCase = 'title_case';
+const statusFieldTextCaseSentenceCase = 'sentence_case';
+const statusFieldTextCaseOptions = <String>[
+  statusFieldTextCaseUppercase,
+  statusFieldTextCaseLowercase,
+  statusFieldTextCaseTitleCase,
+  statusFieldTextCaseSentenceCase,
+];
 const statusFieldDynamicOptionSources = <String>[
   statusFieldOptionSourceUsers,
   statusFieldOptionSourceClients,
@@ -71,6 +81,7 @@ class StatusField {
     this.max,
     this.options = const [],
     this.optionSourceKey,
+    this.textCase,
     this.visibilityControllerKey,
     this.visibilityOptionValues = const [],
     this.requiredError,
@@ -94,6 +105,9 @@ class StatusField {
   final int? max;
   final List<String> options;
   final String? optionSourceKey;
+
+  /// Optional input casing for text fields. A null value preserves legacy UI.
+  final String? textCase;
   final String? visibilityControllerKey;
   final List<String> visibilityOptionValues;
   final String? requiredError;
@@ -117,6 +131,7 @@ class StatusField {
     Object? max = _statusFieldUndefined,
     List<String>? options,
     Object? optionSourceKey = _statusFieldUndefined,
+    Object? textCase = _statusFieldUndefined,
     Object? visibilityControllerKey = _statusFieldUndefined,
     List<String>? visibilityOptionValues,
     Object? requiredError = _statusFieldUndefined,
@@ -156,6 +171,9 @@ class StatusField {
       optionSourceKey: identical(optionSourceKey, _statusFieldUndefined)
           ? this.optionSourceKey
           : optionSourceKey as String?,
+      textCase: identical(textCase, _statusFieldUndefined)
+          ? this.textCase
+          : normalizedTextCase(textCase as String?),
       visibilityControllerKey:
           identical(visibilityControllerKey, _statusFieldUndefined)
           ? this.visibilityControllerKey
@@ -198,6 +216,7 @@ class StatusField {
       'max': max,
       'options': options,
       'option_source_key': optionSourceKey,
+      'text_case': textCase,
       'visibility_controller_key': visibilityControllerKey,
       'visibility_option_values': visibilityOptionValues,
       'required_error': requiredError,
@@ -217,6 +236,7 @@ class StatusField {
       'title': title,
       'placeholder': placeholder,
       'required': required,
+      'text_case': textCase,
       'is_active': isActive,
     };
   }
@@ -238,6 +258,7 @@ class StatusField {
           .map((item) => item.toString())
           .toList(),
       optionSourceKey: map['option_source_key']?.toString(),
+      textCase: normalizedTextCase(map['text_case']?.toString()),
       visibilityControllerKey: map['visibility_controller_key']?.toString(),
       visibilityOptionValues:
           (map['visibility_option_values'] as List<dynamic>? ?? const [])
@@ -284,6 +305,7 @@ class StatusField {
         other.max == max &&
         _listEquals(other.options, options) &&
         other.optionSourceKey == optionSourceKey &&
+        other.textCase == textCase &&
         other.visibilityControllerKey == visibilityControllerKey &&
         _listEquals(other.visibilityOptionValues, visibilityOptionValues) &&
         other.requiredError == requiredError &&
@@ -309,6 +331,7 @@ class StatusField {
     max,
     Object.hashAll(options),
     optionSourceKey,
+    textCase,
     visibilityControllerKey,
     Object.hashAll(visibilityOptionValues),
     requiredError,
@@ -327,6 +350,13 @@ class StatusField {
       return value.toInt();
     }
     return int.tryParse(value.toString());
+  }
+
+  /// Unknown and legacy values intentionally become null so existing fields
+  /// retain their current input behavior.
+  static String? normalizedTextCase(String? value) {
+    final normalized = value?.trim().toLowerCase().replaceAll('-', '_');
+    return statusFieldTextCaseOptions.contains(normalized) ? normalized : null;
   }
 
   static DateTime? _toDateTime(dynamic value) {

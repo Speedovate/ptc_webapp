@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import 'package:webapp/models/chassis.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/services/network_status_events.dart';
@@ -209,11 +208,7 @@ class ChassisRequest {
     }());
   }
 
-  void _trace(String message) {
-    if (kDebugMode) {
-      debugPrint('[ChassisOfflineTrace][request] $message');
-    }
-  }
+  void _trace(String message) {}
 
   Future<void> deleteChassis(Chassis chassis) async {
     await initialize();

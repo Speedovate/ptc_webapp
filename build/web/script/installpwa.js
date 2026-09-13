@@ -14,10 +14,10 @@
 
   function showManualInstallHelp() {
     if (isIos()) {
-      window.alert('To install Paltranco: tap Share, then choose Add to Home Screen.');
+      window.alert('To install PALTRANCO: tap Share, then choose Add to Home Screen.');
       return;
     }
-    window.alert('To install Paltranco: open the Chrome three-dot menu, then choose Install app or Add to Home screen.');
+    window.alert('To install PALTRANCO: open the Chrome three-dot menu, then choose Install app or Add to Home screen.');
   }
 
   function setOpenMode() {

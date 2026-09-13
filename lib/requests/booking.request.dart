@@ -269,16 +269,6 @@ class BookingRequest implements BookingRepository {
           return;
         }
         lastEmissionFingerprint = fingerprint;
-        if (kDebugMode) {
-          debugPrint(
-            '[BookingHandoffTrace][request] emit source=$source '
-            'count=${bookings.length} online=${currentNetworkStatus()} '
-            'memory=${_memoryBookings.length} resolved=$_hasResolvedBookings '
-            'authoritative=$hasAuthoritativeBookings '
-            'serverSync=$_hasAuthoritativeOnlineSync '
-            'trustedCache=$_isPersistedCacheTrustedOnline',
-          );
-        }
         controller.add(bookings);
       }
 

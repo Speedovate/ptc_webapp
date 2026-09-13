@@ -127,6 +127,85 @@ class NameCaseTextInputFormatter extends TextInputFormatter {
   }
 }
 
+class UppercaseTextInputFormatter extends TextInputFormatter {
+  const UppercaseTextInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final transformed = newValue.text.toUpperCase();
+    if (transformed == newValue.text) {
+      return newValue;
+    }
+    final offset = newValue.selection.baseOffset.clamp(0, transformed.length);
+    return TextEditingValue(
+      text: transformed,
+      selection: TextSelection.collapsed(offset: offset),
+      composing: TextRange.empty,
+    );
+  }
+}
+
+class LowercaseTextInputFormatter extends TextInputFormatter {
+  const LowercaseTextInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) => _withTransformedText(newValue, newValue.text.toLowerCase());
+}
+
+class SentenceCaseTextInputFormatter extends TextInputFormatter {
+  const SentenceCaseTextInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) => _withTransformedText(newValue, toSentenceCase(newValue.text));
+}
+
+TextEditingValue _withTransformedText(
+  TextEditingValue value,
+  String transformed,
+) {
+  if (transformed == value.text) {
+    return value;
+  }
+  final offset = value.selection.baseOffset.clamp(0, transformed.length);
+  return TextEditingValue(
+    text: transformed,
+    selection: TextSelection.collapsed(offset: offset),
+    composing: TextRange.empty,
+  );
+}
+
+String toSentenceCase(String value) {
+  var capitalizeNextLetter = true;
+  final result = StringBuffer();
+  for (final rune in value.runes) {
+    final character = String.fromCharCode(rune);
+    final isLetter = RegExp(r'[A-Za-z]').hasMatch(character);
+    if (isLetter) {
+      result.write(
+        capitalizeNextLetter
+            ? character.toUpperCase()
+            : character.toLowerCase(),
+      );
+      capitalizeNextLetter = false;
+      continue;
+    }
+    result.write(character);
+    if (character == '.' || character == '!' || character == '?') {
+      capitalizeNextLetter = true;
+    }
+  }
+  return result.toString();
+}
+
 String? normalizePhilippinePhone(String? value) {
   final trimmed = value?.trim();
   if (trimmed == null || trimmed.isEmpty) {

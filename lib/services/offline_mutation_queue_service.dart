@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
 import 'package:webapp/services/network_status_events.dart';
@@ -1410,11 +1409,7 @@ class OfflineMutationQueueService {
     // Temporary diagnostics removed.
   }
 
-  void _traceChassis(String message) {
-    if (kDebugMode) {
-      debugPrint('[ChassisOfflineTrace][queue] $message');
-    }
-  }
+  void _traceChassis(String message) {}
 
   Future<String> _resolvedStorageKey() async {
     final normalizedUserId = normalizeId(

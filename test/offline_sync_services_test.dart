@@ -242,7 +242,7 @@ void main() {
       const sender = UserModel(
         id: '1',
         role: 'admin',
-        name: 'Paltranco Transport Corporation',
+        name: 'PALTRANCO Transport Corporation',
       );
 
       await backend.writeStringList('offline_media_sync_queue_v1', <String>[

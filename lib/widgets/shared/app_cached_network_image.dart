@@ -19,6 +19,8 @@ class AppCachedNetworkImage extends StatefulWidget {
     this.fit,
     this.alignment = Alignment.center,
     this.errorBuilder,
+    this.cacheWidth,
+    this.cacheHeight,
   });
 
   final String imageUrl;
@@ -27,6 +29,10 @@ class AppCachedNetworkImage extends StatefulWidget {
   final BoxFit? fit;
   final Alignment alignment;
   final Widget Function(BuildContext context, Object error)? errorBuilder;
+  // Physical-pixel decode targets. The original file remains in persistent
+  // storage for offline use; this only bounds the in-memory Flutter texture.
+  final int? cacheWidth;
+  final int? cacheHeight;
 
   @override
   State<AppCachedNetworkImage> createState() => _AppCachedNetworkImageState();
@@ -234,11 +240,18 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   }
 
   Widget _buildMemoryImage(String dataUrl) {
+    final cacheWidth = _resolvedCacheWidth(context);
+    final cacheHeight = _resolvedCacheHeight(context);
     return Image.memory(
       _decodeDataUrlBytes(dataUrl),
-      key: ValueKey<String>('mem:$dataUrl|${widget.width}|${widget.height}'),
+      // Do not retain an entire base64 image in the widget key.
+      key: ValueKey<String>(
+        'mem:${dataUrl.hashCode}|${widget.width}|${widget.height}',
+      ),
       width: widget.width,
       height: widget.height,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
       fit: widget.fit,
       alignment: widget.alignment,
       errorBuilder: (context, error, stackTrace) {
@@ -282,6 +295,29 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     (total, bytes) => total + bytes.length,
   );
 
+  static const int _maximumDecodeDimension = 1280;
+
+  int? _resolvedCacheWidth(BuildContext context) {
+    return widget.cacheWidth ??
+        _physicalDimension(context, widget.width) ??
+        _maximumDecodeDimension;
+  }
+
+  int? _resolvedCacheHeight(BuildContext context) {
+    return widget.cacheHeight ?? _physicalDimension(context, widget.height);
+  }
+
+  int? _physicalDimension(BuildContext context, double? logicalDimension) {
+    if (logicalDimension == null ||
+        !logicalDimension.isFinite ||
+        logicalDimension <= 0) {
+      return null;
+    }
+    final physical = (logicalDimension * MediaQuery.devicePixelRatioOf(context))
+        .round();
+    return physical.clamp(1, _maximumDecodeDimension).toInt();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (kIsWeb) {
@@ -303,6 +339,8 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
         ),
         width: widget.width,
         height: widget.height,
+        cacheWidth: _resolvedCacheWidth(context),
+        cacheHeight: _resolvedCacheHeight(context),
         fit: widget.fit,
         alignment: widget.alignment,
         errorBuilder: (context, error, stackTrace) {

@@ -71,6 +71,17 @@ Future<void> showAppImageViewer(
                   padding: const EdgeInsets.all(14),
                   child: LayoutBuilder(
                     builder: (context, constraints) {
+                      final devicePixelRatio = MediaQuery.devicePixelRatioOf(
+                        context,
+                      );
+                      final cacheWidth =
+                          (constraints.maxWidth * devicePixelRatio)
+                              .round()
+                              .clamp(1, 1280);
+                      final cacheHeight =
+                          (constraints.maxHeight * devicePixelRatio)
+                              .round()
+                              .clamp(1, 1280);
                       return ClipRRect(
                         borderRadius: BorderRadius.circular(18),
                         child: ColoredBox(
@@ -87,12 +98,16 @@ Future<void> showAppImageViewer(
                                         memoryBytes,
                                         width: constraints.maxWidth,
                                         height: constraints.maxHeight,
+                                        cacheWidth: cacheWidth,
+                                        cacheHeight: cacheHeight,
                                         fit: BoxFit.contain,
                                       )
                                     : AppCachedNetworkImage(
                                         imageUrl: resolvedImageUrl!,
                                         width: constraints.maxWidth,
                                         height: constraints.maxHeight,
+                                        cacheWidth: cacheWidth,
+                                        cacheHeight: cacheHeight,
                                         fit: BoxFit.contain,
                                         errorBuilder: (context, error) {
                                           return const _AppImageViewerFallback(

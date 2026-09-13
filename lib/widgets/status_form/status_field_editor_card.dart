@@ -48,6 +48,7 @@ class StatusFieldEditorCard extends StatelessWidget {
         fieldType == 'checkbox' ||
         ((fieldType == 'dropdown' || fieldType == 'search_dropdown') &&
             !usesDynamicOptions);
+    final supportsTextCase = fieldType == 'text';
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -138,6 +139,10 @@ class StatusFieldEditorCard extends StatelessWidget {
                         ),
                       ),
                     ],
+                  ],
+                  if (supportsTextCase) ...[
+                    const SizedBox(height: 6),
+                    _fullWidthField(child: _textCaseField(field)),
                   ],
                   SizedBox(height: showStaticChoices ? 4 : 6),
                   _fullWidthField(
@@ -329,6 +334,10 @@ class StatusFieldEditorCard extends StatelessWidget {
                       ),
                     ),
                   ],
+                ],
+                if (supportsTextCase) ...[
+                  const SizedBox(height: 6),
+                  _textCaseField(field),
                 ],
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -536,6 +545,40 @@ class StatusFieldEditorCard extends StatelessWidget {
       bottomPadding: 0,
       items: items,
       onChanged: onChanged,
+    );
+  }
+
+  Widget _textCaseField(StatusField field) {
+    const defaultValue = '__default__';
+    final selectedValue =
+        StatusField.normalizedTextCase(field.textCase) ?? defaultValue;
+    return _dropdownField(
+      label: 'Case Type',
+      initialValue: selectedValue,
+      items: const [
+        DropdownMenuItem<String>(
+          value: defaultValue,
+          child: Text('Default'),
+        ),
+        DropdownMenuItem<String>(
+          value: statusFieldTextCaseUppercase,
+          child: Text('UPPERCASE'),
+        ),
+        DropdownMenuItem<String>(
+          value: statusFieldTextCaseLowercase,
+          child: Text('lowercase'),
+        ),
+        DropdownMenuItem<String>(
+          value: statusFieldTextCaseTitleCase,
+          child: Text('Title Case'),
+        ),
+        DropdownMenuItem<String>(
+          value: statusFieldTextCaseSentenceCase,
+          child: Text('Sentence case'),
+        ),
+      ],
+      onChanged: (value) =>
+          onUpdate('textCase', value == defaultValue ? null : value),
     );
   }
 
