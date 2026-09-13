@@ -627,7 +627,7 @@ String _formatCurrency(double value) {
   );
   final parts = formatted.split('.');
   final whole = parts.first.replaceAllMapped(
-    RegExp(r'(?=(\d{3})+(?!\d))'),
+    RegExp(r'(?<=\d)(?=(\d{3})+(?!\d))'),
     (_) => ',',
   );
   return '\u20B1$whole${parts.length == 2 ? '.${parts.last}' : ''}';

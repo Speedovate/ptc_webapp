@@ -8,6 +8,7 @@ import 'package:flutter/scheduler.dart';
 
 import 'app_cached_network_image_online_listener.dart';
 import '../../services/persistent_image_cache_service.dart';
+import '../../utils/performance_trace.dart';
 
 class AppCachedNetworkImage extends StatefulWidget {
   const AppCachedNetworkImage({
@@ -32,21 +33,40 @@ class AppCachedNetworkImage extends StatefulWidget {
 }
 
 class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
+  // MemoryImage keys use byte-list identity. Reusing the same decoded bytes
+  // lets Flutter share one decode among repeated avatars in a support thread.
+  static final Map<String, Uint8List> _decodedDataUrls = <String, Uint8List>{};
+  static final List<String> _decodedDataUrlRecency = <String>[];
+  static const int _maximumDecodedDataUrlEntries = 6;
+  static const int _maximumDecodedDataUrlBytes = 4 * 1024 * 1024;
+
   StreamSubscription<void>? _onlineSubscription;
   bool _hasError = false;
   Object? _lastError;
   bool _isRecoveringCachedImage = false;
   int _reloadToken = 0;
   String? _cachedImageDataUrl;
+  bool _keepsInitialNetworkImage = false;
   int _webImageLoadSerial = 0;
 
   @override
   void initState() {
     super.initState();
     if (kIsWeb) {
-      unawaited(_refreshWebImageSource());
+      _cachedImageDataUrl = PersistentImageCacheService.instance
+          .peekMemoryImageDataUrl(widget.imageUrl);
+      _keepsInitialNetworkImage = _cachedImageDataUrl == null;
+      _traceImageSource(
+        _cachedImageDataUrl == null ? 'network-fallback' : 'memory-hit',
+      );
+      if (_cachedImageDataUrl == null) {
+        unawaited(_refreshWebImageSource());
+      }
       _onlineSubscription = onlineEvents().listen((_) {
-        if (!mounted) {
+        // A browser can dispatch duplicate `online` events without an actual
+        // failed image. Retrying every visible image changes its URL and
+        // causes needless network, decode, and rebuild work.
+        if (!mounted || !_hasError) {
           return;
         }
         setState(() {
@@ -67,9 +87,18 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
       _lastError = null;
       _isRecoveringCachedImage = false;
       _reloadToken = 0;
-      _cachedImageDataUrl = null;
+      _cachedImageDataUrl = PersistentImageCacheService.instance
+          .peekMemoryImageDataUrl(widget.imageUrl);
+      _keepsInitialNetworkImage = _cachedImageDataUrl == null;
+      _traceImageSource(
+        _cachedImageDataUrl == null
+            ? 'url-change-network-fallback'
+            : 'url-change-memory-hit',
+      );
       if (kIsWeb) {
-        unawaited(_refreshWebImageSource());
+        if (_cachedImageDataUrl == null) {
+          unawaited(_refreshWebImageSource());
+        }
       }
     }
   }
@@ -123,6 +152,18 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     return '${widget.imageUrl}${separator}img_retry=$_reloadToken';
   }
 
+  void _traceImageSource(String source) {
+    if (!PerformanceTrace.enabled) {
+      return;
+    }
+    final cacheKey = widget.imageUrl
+        .trim()
+        .hashCode
+        .toUnsigned(32)
+        .toRadixString(16);
+    PerformanceTrace.event('image-source', 'key=$cacheKey source=$source');
+  }
+
   Future<void> _recoverCachedImageAfterError() async {
     if (!kIsWeb || _isRecoveringCachedImage) {
       return;
@@ -162,13 +203,25 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
       return;
     }
     final requestSerial = ++_webImageLoadSerial;
-    final cachedDataUrl = await PersistentImageCacheService.instance
-        .getImageDataUrl(
-          cacheKey: normalizedUrl,
-          fetchUrl: _resolvedImageUrl,
-          forceRefresh: forceRefresh,
-        );
+    String? cachedDataUrl;
+    try {
+      cachedDataUrl = await PersistentImageCacheService.instance
+          .getImageDataUrl(
+            cacheKey: normalizedUrl,
+            fetchUrl: _resolvedImageUrl,
+            forceRefresh: forceRefresh,
+          );
+    } catch (_) {
+      // The normal network image below remains a fallback when persistent
+      // browser storage is unavailable.
+    }
     if (!mounted || requestSerial != _webImageLoadSerial) {
+      return;
+    }
+    if (_keepsInitialNetworkImage && !forceRefresh) {
+      // Let the first browser image remain visible while its bytes are saved
+      // for the next mount. Swapping it to a data URL mid-render causes the
+      // white flash seen when selecting support users.
       return;
     }
     if (_cachedImageDataUrl == cachedDataUrl) {
@@ -176,6 +229,7 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     }
     _setStateSafely(() {
       _cachedImageDataUrl = cachedDataUrl;
+      _keepsInitialNetworkImage = false;
     });
   }
 
@@ -198,12 +252,35 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   }
 
   Uint8List _decodeDataUrlBytes(String dataUrl) {
+    final cached = _decodedDataUrls[dataUrl];
+    if (cached != null) {
+      _touchDecodedDataUrl(dataUrl);
+      return cached;
+    }
     final commaIndex = dataUrl.indexOf(',');
     final encoded = commaIndex >= 0
         ? dataUrl.substring(commaIndex + 1)
         : dataUrl;
-    return base64Decode(encoded);
+    final decoded = base64Decode(encoded);
+    _decodedDataUrls[dataUrl] = decoded;
+    _touchDecodedDataUrl(dataUrl);
+    while (_decodedDataUrls.length > _maximumDecodedDataUrlEntries ||
+        _decodedDataUrlBytes > _maximumDecodedDataUrlBytes) {
+      final oldest = _decodedDataUrlRecency.removeAt(0);
+      _decodedDataUrls.remove(oldest);
+    }
+    return decoded;
   }
+
+  void _touchDecodedDataUrl(String dataUrl) {
+    _decodedDataUrlRecency.remove(dataUrl);
+    _decodedDataUrlRecency.add(dataUrl);
+  }
+
+  static int get _decodedDataUrlBytes => _decodedDataUrls.values.fold<int>(
+    0,
+    (total, bytes) => total + bytes.length,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -228,7 +305,6 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
         height: widget.height,
         fit: widget.fit,
         alignment: widget.alignment,
-        webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
         errorBuilder: (context, error, stackTrace) {
           _handleError(error);
           final recoveredDataUrl = _cachedImageDataUrl;

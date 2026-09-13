@@ -13,6 +13,7 @@ import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/support_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/utils/performance_trace.dart';
 
 class SupportRequest {
   SupportRequest({
@@ -60,8 +61,8 @@ class SupportRequest {
   _messageLocalSubscriptionsByThreadId = <String, StreamSubscription<String>>{};
   final Map<String, List<SupportMessage>> _lastVisibleMessagesByThreadId =
       <String, List<SupportMessage>>{};
-  final Set<String> _messagePrefetchInFlightThreadIds = <String>{};
-  final Set<String> _messageWarmThreadIds = <String>{};
+  final List<String> _recentMessageThreadIds = <String>[];
+  static const int _maxRetainedMessageThreads = 8;
   final StreamController<void> _threadCacheUpdates =
       StreamController<void>.broadcast();
   final StreamController<String> _threadReadMarkerUpdates =
@@ -94,7 +95,6 @@ class SupportRequest {
       final cachedThreads = cachedDocuments.map(SupportThread.fromMap).toList()
         ..sort(_compareThreadsNewestFirst);
       _storeHydratedAllThreads(cachedThreads);
-      unawaited(_warmThreadMessagesInBackground(cachedThreads));
       return cachedThreads;
     }
     List<Map<String, dynamic>> documents;
@@ -143,7 +143,6 @@ class SupportRequest {
           cachedDocuments.map(SupportThread.fromMap).toList()
             ..sort(_compareThreadsNewestFirst);
       _storeHydratedAllThreads(allCachedThreads);
-      unawaited(_warmThreadMessagesInBackground(cachedThreads));
       return cachedThreads;
     }
     List<Map<String, dynamic>> documents;
@@ -456,7 +455,6 @@ class SupportRequest {
           ..sort(_compareThreadsNewestFirst);
         _storeHydratedAllThreads(cachedThreads);
         controller.add(cachedThreads);
-        unawaited(_warmThreadMessagesInBackground(cachedThreads));
       }
 
       unawaited(emitCachedThreads());
@@ -490,7 +488,6 @@ class SupportRequest {
         final threads = mergedDocuments.map(SupportThread.fromMap).toList()
           ..sort(_compareThreadsNewestFirst);
         _storeHydratedAllThreads(threads);
-        unawaited(_warmThreadMessagesInBackground(threads));
         controller.add(threads);
       }, onError: controller.addError);
 
@@ -533,7 +530,6 @@ class SupportRequest {
           ..sort(_compareThreadsNewestFirst);
         _storeHydratedAllThreads(allCachedThreads);
         controller.add(cachedThreads);
-        unawaited(_warmThreadMessagesInBackground(cachedThreads));
       }
 
       unawaited(emitCachedThreads());
@@ -579,7 +575,6 @@ class SupportRequest {
                 ..sort(_compareThreadsNewestFirst);
               _storeHydratedAllThreads(mergedAllThreads);
             }
-            unawaited(_warmThreadMessagesInBackground(threads));
             controller.add(threads);
           }, onError: controller.addError);
 
@@ -610,15 +605,16 @@ class SupportRequest {
       onListen: () {
         final lastMessages = _lastVisibleMessagesByThreadId[normalizedThreadId];
         if (lastMessages != null && !controller.isClosed) {
+          _touchMessageThread(normalizedThreadId);
           controller.add(List<SupportMessage>.from(lastMessages));
         }
+        _traceMessageRetention('listen thread=$normalizedThreadId');
       },
       onCancel: () async {
         if (controller.hasListener) {
           return;
         }
-        // Keep the shared listener and its in-memory snapshot alive so
-        // reopening a visited chat is cache-first and listener-driven.
+        await _disposeMessageWatcher(normalizedThreadId, controller);
       },
     );
     _messageWatchControllersByThreadId[normalizedThreadId] = controller;
@@ -638,6 +634,7 @@ class SupportRequest {
       if (visibleDocuments.isEmpty && cached.isEmpty) {
         _lastVisibleMessagesByThreadId[normalizedThreadId] =
             const <SupportMessage>[];
+        _touchMessageThread(normalizedThreadId);
         controller.add(const <SupportMessage>[]);
         return;
       }
@@ -647,10 +644,10 @@ class SupportRequest {
           documents: visibleDocuments,
         );
       }
-      final messages = visibleDocuments.map(SupportMessage.fromMap).toList()
-        ..sort(_compareMessagesOldestFirst);
-      _lastVisibleMessagesByThreadId[normalizedThreadId] =
-          List<SupportMessage>.from(messages);
+      final messages = _storeVisibleMessages(
+        normalizedThreadId,
+        visibleDocuments,
+      );
       controller.add(messages);
     }
 
@@ -683,10 +680,10 @@ class SupportRequest {
           if (controller.isClosed) {
             return;
           }
-          final messages = visibleDocuments.map(SupportMessage.fromMap).toList()
-            ..sort(_compareMessagesOldestFirst);
-          _lastVisibleMessagesByThreadId[normalizedThreadId] =
-              List<SupportMessage>.from(messages);
+          final messages = _storeVisibleMessages(
+            normalizedThreadId,
+            visibleDocuments,
+          );
           controller.add(messages);
         }, onError: controller.addError);
     _messageRemoteSubscriptionsByThreadId[normalizedThreadId] =
@@ -704,56 +701,6 @@ class SupportRequest {
     return controller.stream;
   }
 
-  Future<void> _warmThreadMessagesInBackground(
-    List<SupportThread> threads,
-  ) async {
-    if (!currentNetworkStatus()) {
-      return;
-    }
-    final futures = <Future<void>>[];
-    for (final thread in threads) {
-      if (!thread.hasConversation) {
-        continue;
-      }
-      final threadId = normalizeId(thread.id);
-      if (threadId == null ||
-          _messageWarmThreadIds.contains(threadId) ||
-          _messagePrefetchInFlightThreadIds.contains(threadId)) {
-        continue;
-      }
-      final hasVisibleMessages =
-          (_lastVisibleMessagesByThreadId[threadId]?.isNotEmpty ?? false);
-      if (hasVisibleMessages) {
-        _messageWarmThreadIds.add(threadId);
-        continue;
-      }
-      final persistedDocuments = await _cache.readDocuments(
-        _messageResourceKey(threadId),
-      );
-      if (persistedDocuments != null) {
-        _storeVisibleMessages(threadId, persistedDocuments);
-        _messageWarmThreadIds.add(threadId);
-        continue;
-      }
-      _messagePrefetchInFlightThreadIds.add(threadId);
-      futures.add(
-        prefetchMessages(threadId)
-            .then((_) {
-              _messageWarmThreadIds.add(threadId);
-              _emitMessageCacheUpdate(threadId);
-            })
-            .catchError((_) {})
-            .whenComplete(() {
-              _messagePrefetchInFlightThreadIds.remove(threadId);
-            }),
-      );
-    }
-    if (futures.isEmpty) {
-      return;
-    }
-    await Future.wait(futures);
-  }
-
   List<SupportMessage> _storeVisibleMessages(
     String threadId,
     List<Map<String, dynamic>> documents,
@@ -763,8 +710,41 @@ class SupportRequest {
     _lastVisibleMessagesByThreadId[threadId] = List<SupportMessage>.from(
       messages,
     );
-    _messageWarmThreadIds.add(threadId);
+    _touchMessageThread(threadId);
     return messages;
+  }
+
+  void _touchMessageThread(String threadId) {
+    _recentMessageThreadIds.remove(threadId);
+    _recentMessageThreadIds.add(threadId);
+    while (_recentMessageThreadIds.length > _maxRetainedMessageThreads) {
+      final oldestThreadId = _recentMessageThreadIds.removeAt(0);
+      _lastVisibleMessagesByThreadId.remove(oldestThreadId);
+    }
+  }
+
+  Future<void> _disposeMessageWatcher(
+    String threadId,
+    StreamController<List<SupportMessage>> controller,
+  ) async {
+    final activeController = _messageWatchControllersByThreadId[threadId];
+    if (!identical(activeController, controller)) {
+      return;
+    }
+    _messageWatchControllersByThreadId.remove(threadId);
+    await _messageRemoteSubscriptionsByThreadId.remove(threadId)?.cancel();
+    await _messageLocalSubscriptionsByThreadId.remove(threadId)?.cancel();
+    await controller.close();
+    _traceMessageRetention('dispose thread=$threadId');
+  }
+
+  void _traceMessageRetention(String event) {
+    PerformanceTrace.event(
+      'support-memory',
+      '$event activeWatchers=${_messageWatchControllersByThreadId.length} '
+          'remoteListeners=${_messageRemoteSubscriptionsByThreadId.length} '
+          'retainedThreads=${_lastVisibleMessagesByThreadId.length}',
+    );
   }
 
   Future<SupportThread> ensureThread({

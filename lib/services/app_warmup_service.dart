@@ -145,18 +145,6 @@ class AppWarmupService {
       'support-threads',
       () => _prefetchSupportDataForUser(user),
     );
-    if (threads.isNotEmpty) {
-      await PerformanceTrace.track(
-        'warmup',
-        'support-messages threads=${threads.length}',
-        () => _runSharedTask<void>(
-          _supportMessagesTaskKey(threads),
-          () => _runSafely(
-            () => _supportRequest.prefetchMessagesForThreads(threads),
-          ),
-        ),
-      );
-    }
     _log('warmUpForUser step=support done threads=${threads.length}');
     _log('warmUpForUser step=bookings start');
     await PerformanceTrace.track('warmup', 'bookings', () => bookingsWarmup);
@@ -284,20 +272,6 @@ class AppWarmupService {
     );
   }
 
-  String _supportMessagesTaskKey(List<SupportThread> threads) {
-    final normalizedIds =
-        threads
-            .map((thread) => normalizeId(thread.id))
-            .whereType<String>()
-            .where((id) => id.isNotEmpty)
-            .toList(growable: false)
-          ..sort();
-    if (normalizedIds.isEmpty) {
-      return 'support_messages:none';
-    }
-    return 'support_messages:${normalizedIds.join(",")}';
-  }
-
   Future<void> _runSharedTask<T>(
     String key,
     Future<T> Function() action,
@@ -342,12 +316,6 @@ class AppWarmupService {
       return result;
     });
     return result;
-  }
-
-  Future<void> _runSafely<T>(Future<T> Function() action) async {
-    try {
-      await action();
-    } catch (_) {}
   }
 
   Future<List<T>> _runSafelyList<T>(Future<List<T>> Function() action) async {

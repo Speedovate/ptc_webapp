@@ -7,6 +7,8 @@ const RUNTIME_CACHE = `paltranco-runtime-${version}`;
 // deployments so already displayed photos remain available offline.
 const IMAGE_CACHE = 'paltranco-images';
 const IMAGE_CACHE_PREFIX = 'paltranco-images';
+const MAX_IMAGE_CACHE_ENTRIES = 80;
+let imageCacheTrimScheduled = false;
 const NETWORK_FIRST_PATHS = new Set([
   '/',
   '/index.html',
@@ -184,8 +186,32 @@ async function handleImageRequest(request) {
   const response = await fetch(request);
   if (response && (response.ok || response.type === 'opaque')) {
     await imageCache.put(request, response.clone());
+    scheduleImageCacheTrim(imageCache);
   }
   return response;
+}
+
+function scheduleImageCacheTrim(imageCache) {
+  if (imageCacheTrimScheduled) {
+    return;
+  }
+  imageCacheTrimScheduled = true;
+  self.setTimeout(async () => {
+    try {
+      await trimImageCache(imageCache);
+    } finally {
+      imageCacheTrimScheduled = false;
+    }
+  }, 1000);
+}
+
+async function trimImageCache(imageCache) {
+  const requests = await imageCache.keys();
+  const overflow = requests.length - MAX_IMAGE_CACHE_ENTRIES;
+  if (overflow <= 0) {
+    return;
+  }
+  await Promise.all(requests.slice(0, overflow).map((request) => imageCache.delete(request)));
 }
 
 async function matchPersistedImage(request, imageCache) {

@@ -44,10 +44,13 @@ class OfflineQueueCoordinatorService {
   }
 
   Future<void> flushAll() async {
+    // Booking photos patch the booking document after upload, so mutations
+    // must be durable before the upload queue begins. The remaining queues
+    // are independent and can continue concurrently.
+    await OfflineMutationQueueService.instance.flushPendingMutations();
     await Future.wait([
       BookingOfflineUploadQueueService.instance.flushPendingUploads(),
       OfflineMediaSyncService.instance.flushPendingOperations(),
-      OfflineMutationQueueService.instance.flushPendingMutations(),
       OfflineCleanupQueueService.instance.flushPendingCleanups(),
     ]);
   }

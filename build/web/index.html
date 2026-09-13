@@ -311,6 +311,49 @@
       );
     }
 
+    // Opt-in browser health telemetry for investigating renderer crashes.
+    // Open the app with ?healthTrace=1 and preserve the DevTools console.
+    const browserHealthTraceEnabled =
+      new URLSearchParams(window.location.search).has('healthTrace');
+
+    if (browserHealthTraceEnabled) {
+      const bytesToMb = function(value) {
+        return typeof value === 'number' ? Math.round(value / 1048576) : null;
+      };
+
+      const logBrowserHealth = async function() {
+        const memory = performance.memory;
+        let storage = null;
+        let imageCacheEntries = null;
+        try {
+          storage = await navigator.storage?.estimate?.();
+        } catch (_) {}
+        try {
+          const imageCache = await caches.open('paltranco-images');
+          imageCacheEntries = (await imageCache.keys()).length;
+        } catch (_) {}
+        console.info('[BrowserHealth]', {
+          elapsedMs: Math.round(performance.now()),
+          jsHeapUsedMb: bytesToMb(memory?.usedJSHeapSize),
+          jsHeapTotalMb: bytesToMb(memory?.totalJSHeapSize),
+          jsHeapLimitMb: bytesToMb(memory?.jsHeapSizeLimit),
+          storageUsageMb: bytesToMb(storage?.usage),
+          storageQuotaMb: bytesToMb(storage?.quota),
+          imageCacheEntries: imageCacheEntries,
+          resourceEntries: performance.getEntriesByType('resource').length,
+        });
+      };
+
+      window.addEventListener('error', function(event) {
+        console.error('[BrowserHealth][window-error]', event.error || event.message);
+      });
+      window.addEventListener('unhandledrejection', function(event) {
+        console.error('[BrowserHealth][unhandled-rejection]', event.reason);
+      });
+      logBrowserHealth();
+      window.setInterval(logBrowserHealth, 15000);
+    }
+
     function removeStartupSplash(reason) {
       const splash = document.getElementById('app-startup-splash');
       if (splash) {

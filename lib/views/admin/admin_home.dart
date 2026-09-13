@@ -81,6 +81,9 @@ class _AdminHomeState extends State<AdminHome> {
   String? _supportInitialUserId;
   int _supportViewTick = 0;
   Booking? _bookingInitialSelection;
+  bool _hasVisitedBookings = false;
+  Widget? _retainedDashboardSection;
+  Widget? _retainedBookingsSection;
 
   void _log(String message) {
     // Temporary debug logging removed.
@@ -107,8 +110,10 @@ class _AdminHomeState extends State<AdminHome> {
   void didUpdateWidget(covariant AdminHome oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user.id != widget.user.id ||
-        oldWidget.user.updatedAt != widget.user.updatedAt) {
+        oldWidget.user.updatedAt != widget.user.updatedAt ||
+        oldWidget.user.role != widget.user.role) {
       _shellUser = widget.user;
+      _invalidateRetainedPrimarySections();
       if (oldWidget.user.id != widget.user.id) {
         _startSidebarBadgeSync();
       }
@@ -314,6 +319,7 @@ class _AdminHomeState extends State<AdminHome> {
       }
       setState(() {
         _shellUser = updatedUser;
+        _invalidateRetainedPrimarySections();
       });
       await widget.onUserUpdated();
     } finally {
@@ -338,6 +344,7 @@ class _AdminHomeState extends State<AdminHome> {
         }
         setState(() {
           _shellUser = refreshedUser;
+          _invalidateRetainedPrimarySections();
         });
       },
     );
@@ -389,23 +396,21 @@ class _AdminHomeState extends State<AdminHome> {
                     },
                 child: BookingSectionNavigationScope(
                   onOpenBooking: (booking) {
-                    setState(() => _bookingInitialSelection = booking);
+                    setState(() {
+                      _bookingInitialSelection = booking;
+                      _retainedBookingsSection = null;
+                    });
                     vm.selectSection(AdminSection.bookings);
                   },
                   child: AppPageLoadingOverlay(
                     isVisible: overlayVisible,
                     message: 'Uploading profile photo ...',
-                    child: KeyedSubtree(
-                      key: ValueKey(
-                        '${vm.selectedSection}:${vm.selectedSettingsSection}',
-                      ),
-                      child: AdminShellLayoutScope(
-                        filtersRightGap: showRail ? 44 : 24,
-                        // With no rail, align every filter panel with the
-                        // toolbar action's outer right edge.
-                        alignFiltersToToolbarAction: !showRail,
-                        child: _buildSelectedSection(vm.selectedSection),
-                      ),
+                    child: AdminShellLayoutScope(
+                      filtersRightGap: showRail ? 44 : 24,
+                      // With no rail, align every filter panel with the
+                      // toolbar action's outer right edge.
+                      alignFiltersToToolbarAction: !showRail,
+                      child: _buildRetainedSection(resolvedSection),
                     ),
                   ),
                 ),
@@ -869,6 +874,56 @@ class _AdminHomeState extends State<AdminHome> {
       ),
       AdminSection.analytics => const AdminAnalyticsView(),
     };
+  }
+
+  Widget _buildRetainedSection(AdminSection section) {
+    // Dashboard and bookings are the largest admin data views. Keep their
+    // state and hydrated data mounted while another section is open. The
+    // third slot remains disposable so background pages cannot grow unbounded.
+    if (section == AdminSection.bookings) {
+      _hasVisitedBookings = true;
+    }
+    final selectedIndex = switch (section) {
+      AdminSection.dashboard => 0,
+      AdminSection.bookings => 1,
+      _ => 2,
+    };
+    return IndexedStack(
+      index: selectedIndex,
+      children: [
+        _retainedDashboardSection ??= AdminDashboardView(
+          key: const PageStorageKey<String>('admin-dashboard-section'),
+          user: _shellUser,
+        ),
+        _hasVisitedBookings
+            ? (_retainedBookingsSection ??= AdminBookingsView(
+                key: const PageStorageKey<String>('admin-bookings-section'),
+                user: _shellUser,
+                initialBooking: _bookingInitialSelection,
+                onInitialBookingHandled: () {
+                  if (mounted) {
+                    setState(() => _bookingInitialSelection = null);
+                  }
+                },
+              ))
+            : const SizedBox.shrink(),
+        KeyedSubtree(
+          key: ValueKey<String>(
+            '${section.name}:${_viewModel.selectedSettingsSection.name}:${_viewModel.selectedVehiclesSection.name}:$_supportViewTick',
+          ),
+          child:
+              section == AdminSection.dashboard ||
+                  section == AdminSection.bookings
+              ? const SizedBox.shrink()
+              : _buildSelectedSection(section),
+        ),
+      ],
+    );
+  }
+
+  void _invalidateRetainedPrimarySections() {
+    _retainedDashboardSection = null;
+    _retainedBookingsSection = null;
   }
 
   AdminVehiclesSection _resolvedVehiclesSection() {

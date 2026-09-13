@@ -8,8 +8,9 @@ import 'package:flutter/scheduler.dart';
 class PerformanceTrace {
   PerformanceTrace._();
 
-  // Diagnostics are retained for future investigations but disabled for releases.
-  static const bool enabled = false;
+  // Opt in only with --dart-define=PERF_TRACE=true. Production stays silent
+  // unless a diagnostic build explicitly enables it.
+  static const bool enabled = bool.fromEnvironment('PERF_TRACE');
   static final Stopwatch _session = Stopwatch()..start();
   static final Map<String, int> _buildCounts = <String, int>{};
   static final Map<String, DateTime> _lastBuildLogAt = <String, DateTime>{};

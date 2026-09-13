@@ -17,6 +17,10 @@ const Duration _firestoreBootstrapTimeout = Duration(seconds: 4);
 const Duration _applicationBootstrapTimeout = Duration(seconds: 8);
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Keep decoded images bounded on long-running web sessions. Persistent image
+  // data remains available offline through the app cache and service worker.
+  PaintingBinding.instance.imageCache.maximumSize = 48;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 16 * 1024 * 1024;
   showStartupSplash();
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
@@ -71,10 +75,7 @@ Future<void> _bootstrapApplication() async {
           } catch (_) {}
         }());
       }
-    }().timeout(
-      _applicationBootstrapTimeout,
-      onTimeout: () {},
-    );
+    }().timeout(_applicationBootstrapTimeout, onTimeout: () {});
   } finally {}
 }
 

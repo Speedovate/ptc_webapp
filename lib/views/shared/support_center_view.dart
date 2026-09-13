@@ -481,6 +481,13 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       _cachedAdminUsers = List<UserModel>.from(sharedAdminUsers);
       _cachedHasLoadedAdminUsers = true;
     }
+    if (_cachedHasLoadedAdminUsers && _adminUsers.isNotEmpty) {
+      PerformanceTrace.event(
+        'support-view',
+        'admin users reused count=${_adminUsers.length}',
+      );
+      return;
+    }
     final shouldShowBlockingLoading =
         !_cachedHasLoadedAdminUsers && _adminUsers.isEmpty;
     _log(

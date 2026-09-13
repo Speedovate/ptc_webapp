@@ -36,7 +36,7 @@ class OfflineMutationQueueService {
   final AuthStorageBackend _authStorage = createAuthStorageBackend();
 
   bool _isInitialized = false;
-  bool _isFlushing = false;
+  Future<void>? _flushFuture;
   Timer? _retryTimer;
   StreamSubscription<bool>? _networkSubscription;
   final StreamController<OfflineQueueStatusSnapshot> _statusController =
@@ -313,6 +313,26 @@ class OfflineMutationQueueService {
           (entry.kind == _OfflineMutationKind.userUpsert ||
               entry.kind == _OfflineMutationKind.userDelete) &&
           entry.targetId == normalizedUserId,
+    );
+  }
+
+  /// A queued delivery photo may only be uploaded after its booking mutation
+  /// has reached Firestore, otherwise its follow-up photo patch has no
+  /// placeholder field to update.
+  Future<bool> hasPendingBookingMutation(String bookingId) async {
+    await initialize();
+    final normalizedBookingId = normalizeId(bookingId);
+    if (normalizedBookingId == null) {
+      return false;
+    }
+    final entries = await _readEntries();
+    return entries.any(
+      (entry) =>
+          !entry.isBlocked &&
+          entry.targetId == normalizedBookingId &&
+          (entry.kind == _OfflineMutationKind.bookingCreate ||
+              (entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+                  entry.collectionKey == 'bookings')),
     );
   }
 
@@ -759,12 +779,27 @@ class OfflineMutationQueueService {
 
   Future<void> flushPendingMutations() async {
     await initialize();
-    if (_isFlushing || !currentNetworkStatus()) {
+    final activeFlush = _flushFuture;
+    if (activeFlush != null) {
+      return activeFlush;
+    }
+    if (!currentNetworkStatus()) {
       return;
     }
 
+    final flush = _flushPendingMutationsInternal();
+    _flushFuture = flush;
+    try {
+      await flush;
+    } finally {
+      if (identical(_flushFuture, flush)) {
+        _flushFuture = null;
+      }
+    }
+  }
+
+  Future<void> _flushPendingMutationsInternal() async {
     _markPendingAsSyncing();
-    _isFlushing = true;
     try {
       final currentStorageKey = await _resolvedStorageKey();
       final storageKeys = await _allKnownStorageKeys();
@@ -776,7 +811,6 @@ class OfflineMutationQueueService {
       }
       await _refreshStatusFromStorage();
     } finally {
-      _isFlushing = false;
       if (_currentStatus.isSyncing) {
         _setStatus(
           _currentStatus.copyWith(

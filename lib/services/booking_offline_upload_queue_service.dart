@@ -8,6 +8,7 @@ import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
 import 'package:webapp/services/image_upload_processor.dart';
 import 'package:webapp/services/network_status_events.dart';
+import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/offline_sync_status_service.dart';
 import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
@@ -153,13 +154,14 @@ class BookingOfflineUploadQueueService {
 
   Future<void> flushPendingUploads() async {
     await initialize();
-    if (_isFlushing) {
+    if (_isFlushing || !currentNetworkStatus()) {
       return;
     }
 
-    if (currentNetworkStatus()) {
-      _markPendingAsSyncing();
-    }
+    // The booking document contains the pending-upload marker that this
+    // queue replaces with a storage URL. Never race that document write.
+    await OfflineMutationQueueService.instance.flushPendingMutations();
+    _markPendingAsSyncing();
     _isFlushing = true;
     try {
       final currentStorageKey = await _resolvedStorageKey();
@@ -349,6 +351,11 @@ class BookingOfflineUploadQueueService {
 
     for (final entry in entries) {
       try {
+        if (await OfflineMutationQueueService.instance
+            .hasPendingBookingMutation(entry.bookingId)) {
+          remaining.add(entry);
+          continue;
+        }
         final upload = await _photoStorageService.uploadBookingPhoto(
           bytes: base64Decode(entry.bytesBase64),
           bookingId: entry.bookingId,
