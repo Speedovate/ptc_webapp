@@ -329,25 +329,38 @@ class _MetricCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 22),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            decoration: BoxDecoration(
-              color: AppColors.primarySurface,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                color: AppColors.primaryColor,
-                fontWeight: FontWeight.w800,
-                fontSize: MediaQuery.sizeOf(context).width < 700 ? 24 : 32,
-                height: 1.05,
-              ),
-            ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isMobile = MediaQuery.sizeOf(context).width < 700;
+              final amountFontSize = constraints.maxWidth < 170
+                  ? 18.0
+                  : isMobile
+                  ? 22.0
+                  : 32.0;
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 14,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.primarySurface,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                    color: AppColors.primaryColor,
+                    fontWeight: FontWeight.w800,
+                    fontSize: amountFontSize,
+                    height: 1.05,
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
