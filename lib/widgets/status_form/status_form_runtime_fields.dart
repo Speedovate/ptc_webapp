@@ -10,7 +10,6 @@ import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/booking_form_primitives.dart';
-import 'package:webapp/widgets/shared/chassis_status_presentation.dart';
 
 String? _runtimeFieldPlaceholder(StatusField field) {
   final placeholder = field.placeholder?.trim();
@@ -36,6 +35,7 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
     this.optionLabels = const {},
     this.onDisabledTap,
     this.onAdvanceAfterSelection,
+    this.workflowLayout = false,
   });
 
   final StatusField field;
@@ -51,6 +51,7 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
   final Map<String, String> optionLabels;
   final VoidCallback? onDisabledTap;
   final ValueChanged<dynamic>? onAdvanceAfterSelection;
+  final bool workflowLayout;
 
   @override
   Widget build(BuildContext context) {
@@ -80,10 +81,22 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
       instructions: instructions,
       inputTopSpacing: usesDropdownCard ? 10 : 14,
       containerPadding: isSearchDropdownCard
-          ? EdgeInsets.fromLTRB(18, 18, 18, hasValidationError ? 18 : 4)
+          ? EdgeInsets.fromLTRB(
+              18,
+              workflowLayout ? 8 : 18,
+              18,
+              hasValidationError ? 18 : 4,
+            )
           : (isNormalDropdownCard
-                ? EdgeInsets.fromLTRB(18, 18, 18, hasValidationError ? 18 : 8)
-                : const EdgeInsets.all(18)),
+                ? EdgeInsets.fromLTRB(
+                    18,
+                    workflowLayout ? 8 : 18,
+                    18,
+                    hasValidationError ? 18 : 8,
+                  )
+                : (workflowLayout
+                      ? const EdgeInsets.fromLTRB(18, 8, 18, 18)
+                      : const EdgeInsets.all(18))),
       input: StatusFormRuntimeFieldInput(
         field: field,
         initialValue: initialValue,
@@ -831,21 +844,11 @@ class _DropdownFieldInput extends StatelessWidget {
                 : option);
         return DropdownMenuItem<String>(
           value: option,
-          child: optionSourceKey == statusFieldOptionSourceChassis
-              ? ChassisStatusOptionLabel(
-                  label: label,
-                  status:
-                      ChassisRequest.instance.hydratedChassisSnapshot
-                          .where((chassis) => chassis.id.toString() == option)
-                          .firstOrNull
-                          ?.currentStatus ??
-                      '',
-                )
-              : Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: adminDropdownDisplayTextStyle,
-                ),
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: adminDropdownDisplayTextStyle,
+          ),
         );
       }).toList(),
       onChanged: (value) => closeSelectionFlow(value),

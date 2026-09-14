@@ -348,7 +348,7 @@ class AuthRequest implements AuthRepository {
             );
             if ((freshUser.password ?? '') == password) {
               _logLogin('fresh lookup corrected stale login resolution');
-              return _completeLogin(freshUser);
+              return await _completeLogin(freshUser);
             }
           } else {
             _logLogin('fresh lookup returned no user after mismatch');
@@ -356,7 +356,7 @@ class AuthRequest implements AuthRepository {
         }
         throw const AuthFailure('Incorrect password.');
       }
-      return _completeLogin(user);
+      return await _completeLogin(user);
     } on AuthFailure {
       rethrow;
     } catch (error) {
@@ -1325,7 +1325,7 @@ class AuthRequest implements AuthRepository {
       if (!snapshot.exists) {
         return null;
       }
-      return _inflateUser(snapshot);
+      return await _inflateUser(snapshot);
     } catch (error) {
       if (!currentNetworkStatus()) {
         return null;

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -148,7 +150,13 @@ class AdminStatusesView extends StatelessWidget {
     return ViewModelBuilder<AdminFlowViewModel>.reactive(
       viewModelBuilder: () => viewModel ?? AdminFlowViewModel(),
       disposeViewModel: viewModel == null,
-      onViewModelReady: (vm) => vm.loadStatusesPage(),
+      onViewModelReady: (vm) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (context.mounted) {
+            unawaited(vm.loadStatusesPage());
+          }
+        });
+      },
       builder: (context, vm, child) {
         return AppPageLoadingOverlay(
           isVisible: vm.showBlockingLoading,

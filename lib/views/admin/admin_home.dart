@@ -910,30 +910,40 @@ class _AdminHomeState extends State<AdminHome> {
     return IndexedStack(
       index: selectedIndex,
       children: [
-        _retainedDashboardSection ??= AdminDashboardView(
-          key: const PageStorageKey<String>('admin-dashboard-section'),
-          user: _shellUser,
+        KeyedSubtree(
+          key: PageStorageKey<String>(_scrollStorageKey('dashboard')),
+          child: _retainedDashboardSection ??= AdminDashboardView(
+            key: const PageStorageKey<String>('admin-dashboard-section'),
+            user: _shellUser,
+          ),
         ),
-        _hasVisitedBookings
-            ? (_retainedBookingsSection ??= AdminBookingsView(
-                key: const PageStorageKey<String>('admin-bookings-section'),
-                user: _shellUser,
-                initialBooking: _bookingInitialSelection,
-                onInitialBookingHandled: () {
-                  if (mounted) {
-                    setState(() => _bookingInitialSelection = null);
-                  }
-                },
-              ))
-            : const SizedBox.shrink(),
+        KeyedSubtree(
+          key: PageStorageKey<String>(_scrollStorageKey('bookings')),
+          child: _hasVisitedBookings
+              ? (_retainedBookingsSection ??= AdminBookingsView(
+                  key: const PageStorageKey<String>('admin-bookings-section'),
+                  user: _shellUser,
+                  initialBooking: _bookingInitialSelection,
+                  onInitialBookingHandled: () {
+                    if (mounted) {
+                      setState(() => _bookingInitialSelection = null);
+                    }
+                  },
+                ))
+              : const SizedBox.shrink(),
+        ),
         ...secondaryKeys.map(
           (key) => KeyedSubtree(
-            key: ValueKey<String>('admin-retained:$key'),
+            key: PageStorageKey<String>(_scrollStorageKey(key)),
             child: _retainedSecondarySections[key]!,
           ),
         ),
       ],
     );
+  }
+
+  String _scrollStorageKey(String sectionKey) {
+    return 'admin-scroll:${_shellUser.id ?? 'guest'}:$sectionKey';
   }
 
   String? _secondarySectionKey(AdminSection section) {

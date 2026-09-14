@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:webapp/models/chassis.dart';
+import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
@@ -61,8 +62,14 @@ class ChassisRequest {
       return value;
     }
     final chassis = _memory.where((item) => item.id == id).firstOrNull;
-    final name = chassis?.name.trim() ?? '';
-    return name.isEmpty ? 'Chassis $id' : name;
+    final currentBookingId = chassis?.currentBookingId;
+    final bookingStatus = currentBookingId == null
+        ? null
+        : BookingRequest.hydratedBookingsSnapshot
+              .where((booking) => booking.id?.toString() == '$currentBookingId')
+              .firstOrNull
+              ?.clientStatus;
+    return chassis?.dropdownLabel(bookingStatus: bookingStatus) ?? value;
   }
 
   Future<void> initialize() async {

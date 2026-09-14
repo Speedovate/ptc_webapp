@@ -44,101 +44,112 @@ class PlatformShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final expandMainContent = isCompact || !showRail;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Flutter Web can briefly report a near-zero viewport while Chrome is
+        // attaching or restarting the renderer. Never lay out the desktop
+        // rail in that transient space; the drawer is safe at every width.
+        final effectiveCompact = isCompact || constraints.maxWidth < 600;
+        final expandMainContent = effectiveCompact || !showRail;
 
-    return Scaffold(
-      key: scaffoldKey,
-      backgroundColor: isCompact ? Colors.white : AppColors.primarySurface,
-      body: Column(
-        children: [
-          Expanded(
-            child: SafeArea(
-              bottom: false,
-              child: Row(
-                children: [
-                  CollapsibleSidebar(
-                    isVisible: showRail,
-                    width: 280,
-                    color: AppColors.primaryColor,
-                    child: sidebar,
-                  ),
-                  Expanded(
-                    child: Padding(
-                      padding: expandMainContent
-                          ? EdgeInsets.zero
-                          : const EdgeInsets.fromLTRB(20, 28, 20, 20),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: AppColors.primarySurfaceAlt,
-                          borderRadius: BorderRadius.circular(
-                            expandMainContent ? 0 : 32,
-                          ),
-                          boxShadow: expandMainContent
-                              ? null
-                              : const [
-                                  BoxShadow(
-                                    color: Color(0x120E0A1F),
-                                    blurRadius: 30,
-                                    offset: Offset(0, 16),
-                                  ),
-                                ],
+        return Scaffold(
+          key: scaffoldKey,
+          backgroundColor: effectiveCompact
+              ? Colors.white
+              : AppColors.primarySurface,
+          body: Column(
+            children: [
+              Expanded(
+                child: SafeArea(
+                  bottom: false,
+                  child: Row(
+                    children: [
+                      if (!effectiveCompact)
+                        CollapsibleSidebar(
+                          isVisible: showRail,
+                          width: 280,
+                          color: AppColors.primaryColor,
+                          child: sidebar,
                         ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(
-                            expandMainContent ? 0 : 32,
-                          ),
-                          child: Scaffold(
-                            backgroundColor: Colors.white,
-                            appBar: PreferredSize(
-                              preferredSize: const Size.fromHeight(
-                                PlatformShell.sidebarHeaderHeight,
+                      Expanded(
+                        child: Padding(
+                          padding: expandMainContent
+                              ? EdgeInsets.zero
+                              : const EdgeInsets.fromLTRB(20, 28, 20, 20),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: AppColors.primarySurfaceAlt,
+                              borderRadius: BorderRadius.circular(
+                                expandMainContent ? 0 : 32,
                               ),
-                              child: PlatformAppBar(
-                                title: title,
-                                user: user,
-                                isCompact: isCompact,
-                                onMenuPressed: () {
-                                  if (isCompact) {
-                                    scaffoldKey.currentState?.openDrawer();
-                                    return;
-                                  }
-                                  onToggleNavigation();
-                                },
-                                onProfile: onProfile,
-                                onLogout: onLogout,
-                                logoutLabel: logoutLabel,
+                              boxShadow: expandMainContent
+                                  ? null
+                                  : const [
+                                      BoxShadow(
+                                        color: Color(0x120E0A1F),
+                                        blurRadius: 30,
+                                        offset: Offset(0, 16),
+                                      ),
+                                    ],
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(
+                                expandMainContent ? 0 : 32,
+                              ),
+                              child: Scaffold(
+                                backgroundColor: Colors.white,
+                                appBar: PreferredSize(
+                                  preferredSize: const Size.fromHeight(
+                                    PlatformShell.sidebarHeaderHeight,
+                                  ),
+                                  child: PlatformAppBar(
+                                    title: title,
+                                    user: user,
+                                    isCompact: effectiveCompact,
+                                    onMenuPressed: () {
+                                      if (effectiveCompact) {
+                                        scaffoldKey.currentState?.openDrawer();
+                                        return;
+                                      }
+                                      onToggleNavigation();
+                                    },
+                                    onProfile: onProfile,
+                                    onLogout: onLogout,
+                                    logoutLabel: logoutLabel,
+                                  ),
+                                ),
+                                body: body,
                               ),
                             ),
-                            body: body,
                           ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ),
-          const ColoredBox(
-            color: Colors.white,
-            child: SafeArea(
-              top: false,
-              left: false,
-              right: false,
-              child: SizedBox(width: double.infinity),
-            ),
-          ),
-        ],
-      ),
-      drawer: isCompact
-          ? Drawer(
-              width: 250,
-              shape: const RoundedRectangleBorder(
-                borderRadius: BorderRadius.zero,
+              const ColoredBox(
+                color: Colors.white,
+                child: SafeArea(
+                  top: false,
+                  left: false,
+                  right: false,
+                  child: SizedBox(width: double.infinity),
+                ),
               ),
-              child: sidebar,
-            )
-          : null,
+            ],
+          ),
+          drawer: effectiveCompact
+              ? Drawer(
+                  width: 250,
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.zero,
+                  ),
+                  child: sidebar,
+                )
+              : null,
+        );
+      },
     );
   }
 }

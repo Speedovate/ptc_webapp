@@ -1708,7 +1708,7 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
                 },
               );
             },
-            onReorder: (oldIndex, newIndex) {
+            onReorderItem: (oldIndex, newIndex) {
               widget.vm.reorderManagedFields(
                 orderedFields,
                 oldIndex,

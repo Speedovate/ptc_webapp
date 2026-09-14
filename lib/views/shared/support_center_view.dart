@@ -2226,6 +2226,9 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                       return Container(
                         color: const Color(0xFFF8F7FC),
                         child: ListView.builder(
+                          key: PageStorageKey<String>(
+                            'support-thread-messages:${widget.currentUser.id ?? 'guest'}:${widget.thread!.id ?? 'unknown'}',
+                          ),
                           controller: widget.scrollController,
                           padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
                           itemCount: messages.length,

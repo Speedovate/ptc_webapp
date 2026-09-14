@@ -19,6 +19,7 @@ class BookingChatAlertService {
   StreamSubscription<List<Booking>>? _bookingsSubscription;
   StreamSubscription<List<SupportThread>>? _threadsSubscription;
   final Set<String> _knownRelevantBookingIds = <String>{};
+  final Map<String, String> _knownAssignmentSignatures = <String, String>{};
   final Map<String, String> _knownThreadSignatures = <String, String>{};
   String? _activeSessionKey;
   String? _userId;
@@ -68,6 +69,7 @@ class BookingChatAlertService {
     _hasBookingBaseline = false;
     _hasThreadBaseline = false;
     _knownRelevantBookingIds.clear();
+    _knownAssignmentSignatures.clear();
     _knownThreadSignatures.clear();
     try {
       await _player.stop();
@@ -97,11 +99,19 @@ class BookingChatAlertService {
         .map((booking) => normalizeId(booking.id))
         .whereType<String>()
         .toSet();
+    final assignmentSignatures = _assignmentSignatures(
+      bookings,
+      userId,
+      role,
+    );
 
     if (!_hasBookingBaseline) {
       _knownRelevantBookingIds
         ..clear()
         ..addAll(relevantIds);
+      _knownAssignmentSignatures
+        ..clear()
+        ..addAll(assignmentSignatures);
       _hasBookingBaseline = true;
       return;
     }
@@ -112,9 +122,53 @@ class BookingChatAlertService {
     _knownRelevantBookingIds
       ..clear()
       ..addAll(relevantIds);
-    if (hasNewBooking) {
-      unawaited(_playSound());
+    final hasNewAssignment = assignmentSignatures.entries.any(
+      (entry) => _knownAssignmentSignatures[entry.key] != entry.value,
+    );
+    _knownAssignmentSignatures
+      ..clear()
+      ..addAll(assignmentSignatures);
+    if (hasNewAssignment) {
+      // Booking assignment uses the same foreground sound as a chassis check.
+      unawaited(_playAssignmentSound());
+    } else if (hasNewBooking) {
+      // Staff need the booking alert, not the incoming-chat sound.
+      unawaited(_playAssignmentSound());
     }
+  }
+
+  Map<String, String> _assignmentSignatures(
+    List<Booking> bookings,
+    String userId,
+    String role,
+  ) {
+    if (role != 'client' && role != 'driver' && role != 'helper') {
+      return const <String, String>{};
+    }
+
+    final signatures = <String, String>{};
+    for (final booking in bookings) {
+      if (normalizeRoleKey(booking.clientStatus) != 'assigned') {
+        continue;
+      }
+      final isRecipient = switch (role) {
+        'client' => normalizeId(booking.client?.id) == userId,
+        'driver' => normalizeId(booking.driver?.id) == userId,
+        'helper' => normalizeId(booking.helper?.id) == userId,
+        _ => false,
+      };
+      final bookingId = normalizeId(booking.id);
+      if (!isRecipient || bookingId == null) {
+        continue;
+      }
+      signatures[bookingId] = [
+        normalizeRoleKey(booking.clientStatus),
+        normalizeId(booking.driver?.id) ?? '',
+        normalizeId(booking.helper?.id) ?? '',
+        normalizeId(booking.chassisId) ?? '',
+      ].join('|');
+    }
+    return signatures;
   }
 
   bool _isRelevantBooking(Booking booking, String userId, String role) {
@@ -174,7 +228,7 @@ class BookingChatAlertService {
       ..clear()
       ..addAll(currentSignatures);
     if (hasIncomingMessage) {
-      unawaited(_playSound());
+      unawaited(_playChatSound());
     }
   }
 
@@ -184,10 +238,19 @@ class BookingChatAlertService {
         '${thread.lastMessageText ?? ''}';
   }
 
-  Future<void> _playSound() async {
+  Future<void> _playChatSound() async {
     try {
       await _player.stop();
       await _player.play(AssetSource('sounds/sound.mp3'));
+    } catch (_) {
+      // Web browsers can block playback before a user interacts with the app.
+    }
+  }
+
+  Future<void> _playAssignmentSound() async {
+    try {
+      await _player.stop();
+      await _player.play(AssetSource('sounds/alert.mp3'));
     } catch (_) {
       // Web browsers can block playback before a user interacts with the app.
     }

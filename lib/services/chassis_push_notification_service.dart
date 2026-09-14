@@ -7,14 +7,21 @@ import 'package:flutter/foundation.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/utils/functions.dart';
 
-/// Registers this browser for chassis-check notifications when permission exists.
+/// Registers this browser for chassis and booking assignment notifications.
 class ChassisPushNotificationService {
   ChassisPushNotificationService._();
 
   static final ChassisPushNotificationService instance =
       ChassisPushNotificationService._();
 
-  static const _eligibleRoles = {'admin', 'manager', 'dispatcher'};
+  static const _eligibleRoles = {
+    'admin',
+    'manager',
+    'dispatcher',
+    'client',
+    'driver',
+    'helper',
+  };
   static const _vapidKey = String.fromEnvironment(
     'FIREBASE_WEB_PUSH_VAPID_KEY',
     defaultValue:

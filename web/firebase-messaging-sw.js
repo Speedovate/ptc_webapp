@@ -14,11 +14,11 @@ const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
   const data = payload.data || {};
-  self.registration.showNotification(data.title || 'Check Chassis', {
-    body: data.body || 'A chassis needs client confirmation.',
+  self.registration.showNotification(data.title || 'PALTRANCO', {
+    body: data.body || 'You have a new PALTRANCO notification.',
     icon: '/icons/Icon-192.png',
     badge: '/icons/Icon-192.png',
-    tag: data.notificationId || 'chassis-check',
+    tag: data.notificationId || 'paltranco-notification',
     renotify: true,
     requireInteraction: true,
     data: {url: data.url || '/'},

@@ -123,20 +123,22 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
     if (form == null || form.fieldOverrides.isEmpty) {
       return widget.fields;
     }
-    return widget.fields.map((field) {
-      final fieldId = field.id?.trim();
-      if (fieldId == null || fieldId.isEmpty) {
-        return field;
-      }
-      final override = form.fieldOverrides[fieldId];
-      if (override == null) {
-        return field;
-      }
-      return field.copyWith(
-        required: override.required,
-        placeholder: override.placeholder,
-      );
-    }).toList(growable: false);
+    return widget.fields
+        .map((field) {
+          final fieldId = field.id?.trim();
+          if (fieldId == null || fieldId.isEmpty) {
+            return field;
+          }
+          final override = form.fieldOverrides[fieldId];
+          if (override == null) {
+            return field;
+          }
+          return field.copyWith(
+            required: override.required,
+            placeholder: override.placeholder,
+          );
+        })
+        .toList(growable: false);
   }
 
   static bool _isEmptyValue(dynamic value) {
@@ -216,29 +218,29 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
           ),
           if (hasFields) ...[
             const SizedBox(height: 14),
-            ...visibleFields.map(
-              (field) {
-                final index = visibleFields.indexOf(field);
-                final isLastField = index == visibleFields.length - 1;
-                final nextField = isLastField ? null : visibleFields[index + 1];
-                final focusKey = _focusKeyForField(field, index);
-                final nextFocusKey = nextField == null
-                    ? null
-                    : _focusKeyForField(nextField, index + 1);
-                final focusNode = _fieldFocusNodes[focusKey];
-                final nextFocusNode = isLastField
-                    ? _submitFocusNode
-                    : (nextFocusKey == null
-                          ? null
-                          : _fieldFocusNodes[nextFocusKey]);
-                final nextFieldType =
-                    (nextField?.type ?? '').trim().toLowerCase();
-                final activateNextFocus =
-                    isLastField ||
-                    nextFieldType == 'date' ||
-                    nextFieldType == 'time' ||
-                    nextFieldType == 'photo';
-                return Padding(
+            ...visibleFields.map((field) {
+              final index = visibleFields.indexOf(field);
+              final isLastField = index == visibleFields.length - 1;
+              final nextField = isLastField ? null : visibleFields[index + 1];
+              final focusKey = _focusKeyForField(field, index);
+              final nextFocusKey = nextField == null
+                  ? null
+                  : _focusKeyForField(nextField, index + 1);
+              final focusNode = _fieldFocusNodes[focusKey];
+              final nextFocusNode = isLastField
+                  ? _submitFocusNode
+                  : (nextFocusKey == null
+                        ? null
+                        : _fieldFocusNodes[nextFocusKey]);
+              final nextFieldType = (nextField?.type ?? '')
+                  .trim()
+                  .toLowerCase();
+              final activateNextFocus =
+                  isLastField ||
+                  nextFieldType == 'date' ||
+                  nextFieldType == 'time' ||
+                  nextFieldType == 'photo';
+              return Padding(
                 padding: const EdgeInsets.only(bottom: 14),
                 child: StatusFormRuntimeFieldCard(
                   key: ValueKey('${field.key}:$_resetTick'),
@@ -253,6 +255,7 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
                   formTitle: resolvedTitle,
                   formButtonText: buttonText,
                   formStatusKey: currentStatusKey,
+                  workflowLayout: true,
                   onChanged: (value) {
                     final key = field.key;
                     if (key == null || key.isEmpty) {
@@ -262,8 +265,7 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
                   },
                 ),
               );
-              },
-            ),
+            }),
           ],
           if (showActionRow) ...[
             SizedBox(height: actionRowTopSpacing),
@@ -328,96 +330,51 @@ class _PreviewHeaderCard extends StatelessWidget {
       buttonText: buttonText,
       currentStatusKey: currentStatusKey,
     );
-    return BookingFormTitleCardShell(
-      stripColor: bookingFormResolvedStripColor(
-        title: title,
-        buttonText: buttonText,
-        fallbackColor: palette.strip,
-      ),
-      borderColor: palette.border,
-      bodyColor: Colors.white,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              height: 1.2,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        BookingFormHeaderCard(
+          title: title,
+          subtitle: subtitle,
+          buttonText: buttonText,
+          paletteOverride: palette,
+          showRequiredLegend: showRequiredLegend,
+        ),
+        if (showDependencyNotice) ...[
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+              horizontal: bookingFormContentHorizontalPadding,
+              vertical: 12,
             ),
-          ),
-          if (subtitle?.trim().isNotEmpty == true) ...[
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                subtitle!.trim(),
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontWeight: FontWeight.w500,
-                  height: 1.35,
+            decoration: BoxDecoration(
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: palette.border),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.info_outline_rounded,
+                  size: 18,
+                  color: palette.accent,
                 ),
-              ),
-            ),
-          ],
-          if (showRequiredLegend) ...[
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              height: 1,
-              color: palette.border,
-            ),
-            const SizedBox(height: 14),
-            Text(
-              '* indicates required input',
-              style: TextStyle(
-                color: bookingFormResolvedLegendColor(
-                  title: title,
-                  buttonText: buttonText,
-                ),
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-                height: 1.3,
-              ),
-            ),
-          ],
-          if (showDependencyNotice) ...[
-            const SizedBox(height: 14),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(
-                horizontal: bookingFormContentHorizontalPadding,
-                vertical: 12,
-              ),
-              decoration: BoxDecoration(
-                color: palette.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: palette.border),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.info_outline_rounded,
-                    size: 18,
-                    color: palette.accent,
-                  ),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'This form has dependency rules before it can be submitted.',
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontWeight: FontWeight.w600,
-                      ),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'This form has dependency rules before it can be submitted.',
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ],
-      ),
+      ],
     );
   }
 }

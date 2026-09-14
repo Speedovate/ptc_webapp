@@ -358,7 +358,9 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
       children: RolePlatformSection.values
           .map(
             (candidate) => KeyedSubtree(
-              key: ValueKey<String>('role-retained:${candidate.name}'),
+              key: PageStorageKey<String>(
+                'role-scroll:${_shellUser.id ?? 'guest'}:${candidate.name}',
+              ),
               child: _retainedSections[candidate] ?? const SizedBox.shrink(),
             ),
           )

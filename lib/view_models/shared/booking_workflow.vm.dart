@@ -1143,10 +1143,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
       return;
     }
 
-    var targetIndex = newIndex;
-    if (targetIndex > oldIndex) {
-      targetIndex -= 1;
-    }
+    // ReorderableListView.onReorderItem already adjusts the destination after
+    // removing the source item.
+    final targetIndex = newIndex;
     if (targetIndex < 0 || targetIndex >= visibleOrderedFields.length) {
       return;
     }

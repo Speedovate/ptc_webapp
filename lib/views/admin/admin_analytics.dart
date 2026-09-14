@@ -137,164 +137,120 @@ class _AnalyticsContent extends StatelessWidget {
             ? constraints.maxHeight
             : MediaQuery.sizeOf(context).height;
         final metricMainAxisExtent = isMobile
-            ? (availableHeight >= 700 ? 126.0 : 118.0)
-            : 154.0;
+            ? (availableHeight >= 700 ? 92.0 : 88.0)
+            : 124.0;
         final metricSpacing = isMobile ? 12.0 : 20.0;
         final sectionSpacing = isMobile ? 14.0 : 24.0;
+        final pagePadding = isMobile ? 16.0 : 24.0;
+        final metricRows = (4 / columns).ceil();
+        final metricGridHeight =
+            (metricRows * metricMainAxisExtent) +
+            ((metricRows - 1) * metricSpacing);
         final chartHeight = isMobile
-            ? (availableHeight - 490).clamp(190.0, 280.0)
+            ? (availableHeight - 430).clamp(120.0, 280.0)
             : 280.0;
         final chartWidth = math.max<double>(
-          width - (isMobile ? 48 : 96),
+          width - (pagePadding * 2),
           math.max<double>(680, points.length * 112),
         );
+        final metrics = [
+          ('Bookings', '$deliveredCount/${bookings.length}'),
+          ('Unbilled', _formatCurrency(unbilledAmount)),
+          ('Billed', _formatCurrency(billedAmount)),
+          ('Total', _formatCurrency(unbilledAmount + billedAmount)),
+        ];
 
-        return ListView(
-          padding: const EdgeInsets.all(24),
-          children: [
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: columns,
-                mainAxisSpacing: metricSpacing,
-                crossAxisSpacing: metricSpacing,
-                mainAxisExtent: metricMainAxisExtent,
-              ),
-              itemCount: 4,
-              itemBuilder: (context, index) {
-                final metrics = [
-                  ('Bookings', '$deliveredCount/${bookings.length}'),
-                  ('Unbilled', _formatCurrency(unbilledAmount)),
-                  ('Billed', _formatCurrency(billedAmount)),
-                  ('Total', _formatCurrency(unbilledAmount + billedAmount)),
-                ];
-                final metric = metrics[index];
-                return _MetricCard(label: metric.$1, value: metric.$2);
-              },
+        Widget buildMetricsGrid() {
+          return GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              mainAxisSpacing: metricSpacing,
+              crossAxisSpacing: metricSpacing,
+              mainAxisExtent: metricMainAxisExtent,
             ),
-            SizedBox(height: sectionSpacing),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final filters = _AnalyticsFilters(
-                  iconOnly: constraints.maxWidth < 300,
-                  startDate: startDate,
-                  endDate: endDate,
-                  onStartDateChanged: onStartDateChanged,
-                  onEndDateChanged: onEndDateChanged,
-                  onClear: onClear,
-                );
-                final filtersWidth = adminListFiltersButtonWidth(
-                  constraints.maxWidth < 300,
-                );
-                if (constraints.maxWidth < 250) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const _SalesTitle(),
-                      const SizedBox(height: 12),
-                      SizedBox(width: filtersWidth, child: filters),
-                    ],
-                  );
-                }
-                return Row(
-                  children: [
-                    const Expanded(child: _SalesTitle()),
-                    SizedBox(width: filtersWidth, child: filters),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.primaryBorder),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                      color: AppColors.primarySurface,
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final amount = Text(
-                            _formatCurrency(filteredAmount),
-                            style: const TextStyle(
-                              color: AppColors.primaryColor,
-                              fontWeight: FontWeight.w800,
-                              height: 1.15,
-                            ),
-                          );
-                          final range = Text(
-                            '${_longDate(startDate)} - ${_longDate(endDate)}',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: AppColors.primaryColor,
-                              fontWeight: FontWeight.w600,
-                              height: 1.15,
-                            ),
-                          );
-                          final count = Text(
-                            '${filteredBookings.length} ${filteredBookings.length == 1 ? 'booking' : 'bookings'}',
-                            style: const TextStyle(
-                              color: AppColors.primaryColor,
-                              fontWeight: FontWeight.w600,
-                              height: 1.15,
-                            ),
-                          );
-                          if (constraints.maxWidth < 540) {
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(children: [amount, const Spacer(), count]),
-                                const SizedBox(height: 10),
-                                Center(child: range),
-                              ],
-                            );
-                          }
-                          return Row(
-                            children: [
-                              Expanded(
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: amount,
-                                ),
-                              ),
-                              Expanded(child: range),
-                              Expanded(
-                                child: Align(
-                                  alignment: Alignment.centerRight,
-                                  child: count,
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-                    const Divider(height: 1, color: AppColors.primaryBorder),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.all(20),
-                      child: SizedBox(
-                        width: chartWidth,
-                        child: _BookingActivityChart(
-                          points: points,
-                          chartHeight: chartHeight,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
+            itemCount: metrics.length,
+            itemBuilder: (context, index) {
+              final metric = metrics[index];
+              return _MetricCard(
+                label: metric.$1,
+                value: metric.$2,
+                isCompact: isMobile,
+              );
+            },
+          );
+        }
+
+        final salesToolbar = LayoutBuilder(
+          builder: (context, constraints) {
+            final filters = _AnalyticsFilters(
+              iconOnly: constraints.maxWidth < 300,
+              startDate: startDate,
+              endDate: endDate,
+              onStartDateChanged: onStartDateChanged,
+              onEndDateChanged: onEndDateChanged,
+              onClear: onClear,
+            );
+            final filtersWidth = adminListFiltersButtonWidth(
+              constraints.maxWidth < 300,
+            );
+            if (constraints.maxWidth < 250) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const _SalesTitle(),
+                  const SizedBox(height: 12),
+                  SizedBox(width: filtersWidth, child: filters),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                const Expanded(child: _SalesTitle()),
+                SizedBox(width: filtersWidth, child: filters),
+              ],
+            );
+          },
+        );
+        final canFitViewport =
+            constraints.hasBoundedHeight && availableHeight >= 600;
+        final salesPanel = _AnalyticsSalesPanel(
+          filteredAmount: filteredAmount,
+          startDate: startDate,
+          endDate: endDate,
+          filteredBookingCount: filteredBookings.length,
+          points: points,
+          chartWidth: chartWidth,
+          fallbackChartHeight: chartHeight,
+          fitViewport: canFitViewport,
+        );
+
+        if (!canFitViewport) {
+          return ListView(
+            padding: EdgeInsets.all(pagePadding),
+            children: [
+              buildMetricsGrid(),
+              SizedBox(height: sectionSpacing),
+              salesToolbar,
+              const SizedBox(height: 12),
+              salesPanel,
+            ],
+          );
+        }
+
+        return Padding(
+          padding: EdgeInsets.all(pagePadding),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(height: metricGridHeight, child: buildMetricsGrid()),
+              SizedBox(height: sectionSpacing),
+              salesToolbar,
+              const SizedBox(height: 12),
+              Expanded(child: salesPanel),
+            ],
+          ),
         );
       },
     );
@@ -302,15 +258,25 @@ class _AnalyticsContent extends StatelessWidget {
 }
 
 class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.label, required this.value});
+  const _MetricCard({
+    required this.label,
+    required this.value,
+    required this.isCompact,
+  });
 
   final String label;
   final String value;
+  final bool isCompact;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(28, 22, 28, 22),
+      padding: EdgeInsets.fromLTRB(
+        isCompact ? 14 : 18,
+        isCompact ? 10 : 16,
+        isCompact ? 14 : 18,
+        isCompact ? 14 : 18,
+      ),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(22),
@@ -321,48 +287,244 @@ class _MetricCard extends StatelessWidget {
         children: [
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               color: AppColors.primaryColor,
               fontWeight: FontWeight.w700,
-              fontSize: 14,
+              fontSize: isCompact ? 12 : 14,
               height: 1.15,
             ),
           ),
-          const SizedBox(height: 22),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final isMobile = MediaQuery.sizeOf(context).width < 700;
-              final amountFontSize = constraints.maxWidth < 170
-                  ? 18.0
-                  : isMobile
-                  ? 22.0
-                  : 32.0;
-              return Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 14,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.primarySurface,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                    color: AppColors.primaryColor,
-                    fontWeight: FontWeight.w800,
-                    fontSize: amountFontSize,
-                    height: 1.05,
+          SizedBox(height: isCompact ? 10 : 14),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final amountFontSize = constraints.maxWidth < 170
+                    ? (isCompact ? 14.0 : 15.0)
+                    : isCompact
+                    ? 16.0
+                    : 26.0;
+                return Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isCompact ? 10 : 18,
+                    vertical: isCompact ? 8 : 12,
                   ),
-                ),
-              );
-            },
+                  decoration: BoxDecoration(
+                    color: AppColors.primarySurface,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Center(
+                    child: Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                        color: AppColors.primaryColor,
+                        fontWeight: FontWeight.w800,
+                        fontSize: amountFontSize,
+                        height: 1.05,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AnalyticsSalesPanel extends StatelessWidget {
+  const _AnalyticsSalesPanel({
+    required this.filteredAmount,
+    required this.startDate,
+    required this.endDate,
+    required this.filteredBookingCount,
+    required this.points,
+    required this.chartWidth,
+    required this.fallbackChartHeight,
+    required this.fitViewport,
+  });
+
+  final double filteredAmount;
+  final DateTime startDate;
+  final DateTime endDate;
+  final int filteredBookingCount;
+  final List<_BookingActivityPoint> points;
+  final double chartWidth;
+  final double fallbackChartHeight;
+  final bool fitViewport;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.primaryBorder),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _AnalyticsSalesSummary(
+              amount: filteredAmount,
+              startDate: startDate,
+              endDate: endDate,
+              bookingCount: filteredBookingCount,
+            ),
+            const Divider(height: 1, color: AppColors.primaryBorder),
+            if (fitViewport)
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // This area is already below the Sales summary. Fill its
+                    // remaining height instead of applying the old fixed
+                    // 280px chart cap, while reserving room for labels and
+                    // the horizontal scroller padding.
+                    final chartHeight = math.max(
+                      80.0,
+                      constraints.maxHeight - 98,
+                    );
+                    return _AnalyticsChartScroll(
+                      points: points,
+                      chartWidth: chartWidth,
+                      chartHeight: chartHeight,
+                    );
+                  },
+                ),
+              )
+            else
+              _AnalyticsChartScroll(
+                points: points,
+                chartWidth: chartWidth,
+                chartHeight: fallbackChartHeight,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AnalyticsSalesSummary extends StatelessWidget {
+  const _AnalyticsSalesSummary({
+    required this.amount,
+    required this.startDate,
+    required this.endDate,
+    required this.bookingCount,
+  });
+
+  final double amount;
+  final DateTime startDate;
+  final DateTime endDate;
+  final int bookingCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final horizontalPadding = MediaQuery.sizeOf(context).width < 600
+        ? 14.0
+        : 18.0;
+    final amountText = Text(
+      _formatCurrency(amount),
+      style: const TextStyle(
+        color: AppColors.primaryColor,
+        fontWeight: FontWeight.w800,
+        height: 1.15,
+      ),
+    );
+    final rangeText = Text(
+      '${_longDate(startDate)} - ${_longDate(endDate)}',
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        color: AppColors.primaryColor,
+        fontWeight: FontWeight.w600,
+        height: 1.15,
+      ),
+    );
+    final countText = Text(
+      '$bookingCount ${bookingCount == 1 ? 'booking' : 'bookings'}',
+      style: const TextStyle(
+        color: AppColors.primaryColor,
+        fontWeight: FontWeight.w600,
+        height: 1.15,
+      ),
+    );
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(
+        horizontalPadding,
+        16,
+        horizontalPadding,
+        16,
+      ),
+      color: AppColors.primarySurface,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 540) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [amountText, const Spacer(), countText]),
+                const SizedBox(height: 10),
+                Center(child: rangeText),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: amountText,
+                ),
+              ),
+              Expanded(child: rangeText),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: countText,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AnalyticsChartScroll extends StatelessWidget {
+  const _AnalyticsChartScroll({
+    required this.points,
+    required this.chartWidth,
+    required this.chartHeight,
+  });
+
+  final List<_BookingActivityPoint> points;
+  final double chartWidth;
+  final double chartHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    final horizontalPadding = MediaQuery.sizeOf(context).width < 600
+        ? 14.0
+        : 18.0;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: EdgeInsets.fromLTRB(
+        horizontalPadding,
+        20,
+        horizontalPadding,
+        20,
+      ),
+      child: SizedBox(
+        width: chartWidth,
+        child: _BookingActivityChart(points: points, chartHeight: chartHeight),
       ),
     );
   }
@@ -455,48 +617,51 @@ class _BookingActivityChart extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 10),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (final point in points)
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: Column(
-                    children: [
-                      Text(
-                        _shortDateLabel(point.date),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final point in points)
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: Column(
+                      children: [
+                        Text(
+                          _shortDateLabel(point.date),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 1),
-                      Text(
-                        '${point.count} ${point.count == 1 ? 'Booking' : 'Bookings'}',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 11,
+                        const SizedBox(height: 1),
+                        Text(
+                          '${point.count} ${point.count == 1 ? 'Booking' : 'Bookings'}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 11,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        _formatCurrency(point.amount),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: AppColors.primaryColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
+                        const SizedBox(height: 3),
+                        Text(
+                          _formatCurrency(point.amount),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: AppColors.primaryColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ],
     );
@@ -546,11 +711,8 @@ class _BookingActivityChartPainter extends CustomPainter {
     final linePath = Path();
     final fillPath = Path();
     for (var index = 0; index < points.length; index++) {
-      final x =
-          left +
-          (points.length == 1
-              ? width / 2
-              : width / (points.length - 1) * index);
+      // Each point marks the left edge of its matching date/details column.
+      final x = left + width / points.length * index;
       final y = top + height - height * (points[index].count / cap);
       if (index == 0) {
         linePath.moveTo(x, y);
@@ -560,11 +722,7 @@ class _BookingActivityChartPainter extends CustomPainter {
       fillPath.lineTo(x, y);
       canvas.drawCircle(Offset(x, y), 3.5, dot);
     }
-    final lastX =
-        left +
-        (points.length == 1
-            ? width / 2
-            : width / (points.length - 1) * (points.length - 1));
+    final lastX = left + width / points.length * (points.length - 1);
     fillPath.lineTo(lastX, top + height);
     fillPath.close();
     canvas.drawPath(fillPath, fill);

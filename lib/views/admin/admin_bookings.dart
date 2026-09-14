@@ -17,6 +17,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/status.request.dart';
 import 'package:webapp/requests/chassis.request.dart';
+import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/local_form_draft_service.dart';
 import 'package:webapp/services/role_access_service.dart';
@@ -38,7 +39,6 @@ import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
-import 'package:webapp/widgets/shared/chassis_status_presentation.dart';
 
 class AdminBookingsView extends StatefulWidget {
   const AdminBookingsView({
@@ -79,7 +79,7 @@ class AdminBookingsView extends StatefulWidget {
       if (!context.mounted) {
         return null;
       }
-      return showAppDialog<Booking>(
+      return await showAppDialog<Booking>(
         context: context,
         modalKey: 'booking-edit:${booking.id ?? "-"}',
         builder: (dialogContext) => _EditAdminBookingDialog(
@@ -121,7 +121,7 @@ class AdminBookingsView extends StatefulWidget {
       if (!context.mounted) {
         return null;
       }
-      return showAppDialog<Booking>(
+      return await showAppDialog<Booking>(
         context: context,
         modalKey: 'booking-new',
         builder: (dialogContext) => _NewAdminBookingDialog(
@@ -174,8 +174,16 @@ class AdminBookingsView extends StatefulWidget {
 }
 
 String _chassisLabel(Chassis chassis) {
-  final name = chassis.name.trim();
-  return name.isEmpty ? 'Chassis ${chassis.id}' : name;
+  final bookingStatus = chassis.currentBookingId == null
+      ? null
+      : BookingRequest.hydratedBookingsSnapshot
+            .where(
+              (booking) =>
+                  booking.id?.toString() == '${chassis.currentBookingId}',
+            )
+            .firstOrNull
+            ?.clientStatus;
+  return chassis.dropdownLabel(bookingStatus: bookingStatus);
 }
 
 class _AdminBookingsViewState extends State<AdminBookingsView> {
@@ -1119,14 +1127,10 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
       items.add(
         DropdownMenuItem<String>(
           value: normalizedId,
-          child: ChassisStatusOptionLabel(
-            label: label,
-            status:
-                widget.chassis
-                    .where((chassis) => chassis.id.toString() == normalizedId)
-                    .firstOrNull
-                    ?.currentStatus ??
-                '',
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: adminDropdownDisplayTextStyle,
           ),
         ),
       );

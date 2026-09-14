@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:stacked/stacked.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/models/status_form.dart';
@@ -57,7 +59,13 @@ class AdminFormsView extends StatelessWidget {
     return ViewModelBuilder<AdminFlowViewModel>.reactive(
       viewModelBuilder: () => viewModel ?? AdminFlowViewModel(),
       disposeViewModel: viewModel == null,
-      onViewModelReady: (vm) => vm.loadFormsPage(),
+      onViewModelReady: (vm) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (context.mounted) {
+            unawaited(vm.loadFormsPage());
+          }
+        });
+      },
       builder: (context, vm, _) {
         return AppPageLoadingOverlay(
           isVisible: vm.showBlockingLoading,
@@ -2394,7 +2402,7 @@ class _FieldsSectionState extends State<_FieldsSection> {
               );
             },
             itemCount: widget.vm.fields.length,
-            onReorder: widget.vm.reorderAssignedField,
+            onReorderItem: widget.vm.reorderAssignedField,
             itemBuilder: (context, index) {
               final field = widget.vm.fields[index];
               final key = field.id ?? '${field.key ?? 'field'}_$index';

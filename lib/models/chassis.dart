@@ -29,6 +29,39 @@ class Chassis {
   final DateTime? updatedAt;
   final String? submissionKey;
 
+  String get statusLabel {
+    return switch (currentStatus.trim().toLowerCase()) {
+      ready => 'Ready',
+      loaded => 'Loaded',
+      empty => 'Empty',
+      returning => 'Return',
+      final value when value.isNotEmpty =>
+        '${value[0].toUpperCase()}${value.substring(1)}',
+      _ => '-',
+    };
+  }
+
+  /// Shared plain-text label for chassis selectors.
+  String dropdownLabel({String? bookingStatus}) {
+    final segments = <String>['${name.trim()} $statusLabel'];
+    if (currentBookingId != null) {
+      segments.add(
+        'Booking $currentBookingId ${_displayStatus(bookingStatus)}',
+      );
+    }
+    return segments.join(' | ');
+  }
+
+  static String _displayStatus(String? value) {
+    final normalized = value?.trim().toLowerCase() ?? '';
+    if (normalized.isEmpty) return '-';
+    return normalized
+        .split('_')
+        .where((part) => part.isNotEmpty)
+        .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+        .join(' ');
+  }
+
   Chassis copyWith({
     int? id,
     String? name,
