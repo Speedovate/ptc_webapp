@@ -1,3 +1,4 @@
+import 'package:webapp/utils/functions.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/widgets/shared/app_modal_guard.dart';
@@ -51,6 +52,7 @@ class _AdminActionConfirmationDialog extends StatefulWidget {
 class _AdminActionConfirmationDialogState
     extends State<_AdminActionConfirmationDialog> {
   bool _isSubmitting = false;
+  String? _error;
 
   Future<void> _handleConfirm() async {
     if (_isSubmitting) {
@@ -64,27 +66,49 @@ class _AdminActionConfirmationDialogState
     setState(() {
       _isSubmitting = true;
     });
-    final shouldClose = await onConfirmAsync();
-    if (!mounted) {
-      return;
+    try {
+      setState(() => _error = null);
+      final shouldClose = await onConfirmAsync();
+      if (mounted && shouldClose) {
+        Navigator.of(context).pop(true);
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _error = userFacingErrorMessage(
+            error,
+            fallback:
+                'Could not save this action. Your form is still available. Please try again.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
     }
-    if (shouldClose) {
-      Navigator.of(context).pop(true);
-      return;
-    }
-    setState(() {
-      _isSubmitting = false;
-    });
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(widget.title),
-      content: Text(widget.message),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.message),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: const TextStyle(color: AppColors.danger)),
+          ],
+        ],
+      ),
       actions: [
         TextButton(
-          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(false),
+          onPressed: _isSubmitting
+              ? null
+              : () => Navigator.of(context).pop(false),
           child: const Text('Cancel'),
         ),
         FilledButton(

@@ -1,5 +1,11 @@
+import 'package:webapp/services/offline_reference_mapper.dart';
+import 'package:webapp/services/foreground_refresh_gate.dart';
 import 'dart:async';
+import 'package:webapp/utils/shared_replay_stream.dart';
 import 'dart:convert';
+import 'package:webapp/services/booking_id_resolver.dart';
+import 'package:webapp/services/legacy_booking_repair_service.dart';
+import 'package:webapp/utils/latest_value_worker.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -25,10 +31,13 @@ class BookingRequest implements BookingRepository {
     FirebaseFirestore? firestore,
     AuthRequest? authRequest,
     VehicleRequest? vehicleRequest,
+    OfflineMutationQueueService? offlineMutationQueueService,
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
   }) : _providedFirestore = firestore,
        _authRequest = authRequest ?? AuthRequest.instance,
        _vehicleRequest = vehicleRequest ?? VehicleRequest.instance,
+       _offlineMutationQueueService =
+           offlineMutationQueueService ?? OfflineMutationQueueService.instance,
        _firestorePublicDocumentFetcher =
            firestorePublicDocumentFetcher ??
            createFirestorePublicDocumentFetcher();
@@ -60,6 +69,34 @@ class BookingRequest implements BookingRepository {
   _bookingsRealtimeSubscription;
   Completer<void>? _initialRealtimeSyncCompleter;
 
+  late final _legacyRepair = LegacyBookingRepairService(firestore: _firestore);
+  bool _legacyRepairDispatchRunning = false;
+
+  Future<void> _repairLegacyBookings(
+    List<Map<String, dynamic>> documents,
+  ) async {
+    if (_legacyRepairDispatchRunning ||
+        !_legacyRepair.hasCandidates(documents)) {
+      return;
+    }
+    _legacyRepairDispatchRunning = true;
+    try {
+      final user = await _authRequest.getCurrentUser();
+      if (user?.role?.trim().toLowerCase() != 'admin' ||
+          !currentNetworkStatus()) {
+        return;
+      }
+      await _legacyRepair.repairSnapshot(
+        documents,
+        onResult: (result) => debugPrint('[Booking ID repair] $result'),
+      );
+    } catch (error) {
+      debugPrint('[Booking ID repair] Deferred: $error');
+    } finally {
+      _legacyRepairDispatchRunning = false;
+    }
+  }
+
   static bool get hasHydratedBookings => _memoryBookings.isNotEmpty;
   static bool get hasResolvedBookings => _hasResolvedBookings;
   static bool get hasAuthoritativeBookings =>
@@ -84,8 +121,7 @@ class BookingRequest implements BookingRepository {
   final PhotoStorageService _photoStorageService = PhotoStorageService.instance;
   final BookingOfflineUploadQueueService _offlineUploadQueueService =
       BookingOfflineUploadQueueService.instance;
-  final OfflineMutationQueueService _offlineMutationQueueService =
-      OfflineMutationQueueService.instance;
+  final OfflineMutationQueueService _offlineMutationQueueService;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
@@ -102,11 +138,11 @@ class BookingRequest implements BookingRepository {
   @override
   Future<void> initialize() async {
     if (_didKickOffBackgroundQueueInitialization) {
-      _log('initialize skip already-started');
+      _log(() => 'initialize skip already-started');
       return;
     }
     _didKickOffBackgroundQueueInitialization = true;
-    _log('initialize start online=${currentNetworkStatus()}');
+    _log(() => 'initialize start online=${currentNetworkStatus()}');
     _ensureBookingsCacheSync();
     _ensureBookingsRealtimeSync();
     if (currentNetworkStatus()) {
@@ -119,7 +155,7 @@ class BookingRequest implements BookingRepository {
           .then((_) {})
           .catchError((error, stackTrace) {}),
     );
-    _log('initialize done');
+    _log(() => 'initialize done');
   }
 
   void _ensureBookingsCacheSync() {
@@ -133,19 +169,20 @@ class BookingRequest implements BookingRepository {
             unawaited(_handleBookingsVersionSignal(version));
           },
           onError: (error, stackTrace) {
-            _log('version signal error error=$error');
+            _log(() => 'version signal error error=$error');
           },
         );
   }
 
   Future<void> _handleBookingsVersionSignal(String? remoteVersion) async {
-    _log('version signal received version=${remoteVersion ?? "-"}');
+    _log(() => 'version signal received version=${remoteVersion ?? "-"}');
     final shouldRefresh = await _cache.hasRemoteVersionMismatch(
       _bookingsResourceKey,
       remoteVersion,
     );
     _log(
-      'version signal evaluate shouldRefresh=$shouldRefresh refreshing=$_isRefreshingFromVersionSignal',
+      () =>
+          'version signal evaluate shouldRefresh=$shouldRefresh refreshing=$_isRefreshingFromVersionSignal',
     );
     if (!shouldRefresh || _isRefreshingFromVersionSignal) {
       return;
@@ -158,7 +195,8 @@ class BookingRequest implements BookingRepository {
         // bookings after a version change had merely been detected.
         _isPersistedCacheTrustedOnline = false;
         _log(
-          'version signal retained persisted cache remoteVersion=${remoteVersion ?? "-"}',
+          () =>
+              'version signal retained persisted cache remoteVersion=${remoteVersion ?? "-"}',
         );
       }
       await _refreshBookingsCacheInBackground();
@@ -172,13 +210,14 @@ class BookingRequest implements BookingRepository {
   Future<List<Booking>> getBookings() async {
     final existing = _activeGetBookingsFuture;
     if (existing != null) {
-      _log('getBookings join-inflight');
+      _log(() => 'getBookings join-inflight');
       return existing;
     }
     final future = _runRequest(() async {
       await initialize();
       _log(
-        'getBookings enter online=${currentNetworkStatus()} memory=${_memoryBookings.length} resolved=$_hasResolvedBookings',
+        () =>
+            'getBookings enter online=${currentNetworkStatus()} memory=${_memoryBookings.length} resolved=$_hasResolvedBookings',
       );
       // Match the cache-first behavior of vehicle and flow collections.
       // This avoids a 30-second server timeout when navigator.onLine is stale
@@ -207,7 +246,8 @@ class BookingRequest implements BookingRepository {
               _hasAuthoritativeOnlineSync ||
               _isPersistedCacheTrustedOnline)) {
         _log(
-          'getBookings returning hydrated source memory=${_memoryBookings.length} resolved=$_hasResolvedBookings',
+          () =>
+              'getBookings returning hydrated source memory=${_memoryBookings.length} resolved=$_hasResolvedBookings',
         );
         if (currentNetworkStatus() && _bookingsRealtimeSubscription == null) {
           unawaited(_refreshBookingsCacheInBackground());
@@ -217,10 +257,10 @@ class BookingRequest implements BookingRepository {
       List<Map<String, dynamic>> documents;
       try {
         documents = await _fetchBookingsViaSdkOnly();
-        _log('getBookings sdk-only resolved docs=${documents.length}');
+        _log(() => 'getBookings sdk-only resolved docs=${documents.length}');
         _bookingCacheUpdates.add(null);
       } catch (error) {
-        _log('getBookings sdk-only fetch error error=$error');
+        _log(() => 'getBookings sdk-only fetch error error=$error');
         final lateCachedDocuments = await _cache.readDocuments(
           _bookingsResourceKey,
         );
@@ -228,7 +268,8 @@ class BookingRequest implements BookingRepository {
         // A durable cache is always safer than an empty/error state at startup.
         if (lateCachedDocuments != null) {
           _log(
-            'getBookings offline using cached docs=${lateCachedDocuments.length}',
+            () =>
+                'getBookings offline using cached docs=${lateCachedDocuments.length}',
           );
           documents = lateCachedDocuments;
         } else {
@@ -241,7 +282,8 @@ class BookingRequest implements BookingRepository {
         queuedDocuments: queuedDocuments,
       );
       _log(
-        'getBookings merge result base=${documents.length} queued=${queuedDocuments.length} visible=${visibleDocuments.length}',
+        () =>
+            'getBookings merge result base=${documents.length} queued=${queuedDocuments.length} visible=${visibleDocuments.length}',
       );
       return _cacheInflatedBookings(visibleDocuments);
     }, fallback: 'We could not load the bookings right now.');
@@ -255,8 +297,14 @@ class BookingRequest implements BookingRepository {
     }
   }
 
+  late final _sharedBookingUpdates = SharedReplayStream<List<Booking>>(
+    _watchBookingUpdates,
+  );
+
   @override
-  Stream<List<Booking>> watchBookings() {
+  Stream<List<Booking>> watchBookings() => _sharedBookingUpdates.stream;
+
+  Stream<List<Booking>> _watchBookingUpdates() {
     return Stream<List<Booking>>.multi((controller) {
       String? lastEmissionFingerprint;
 
@@ -264,19 +312,21 @@ class BookingRequest implements BookingRepository {
         final fingerprint = _bookingEmissionFingerprint(bookings);
         if (fingerprint == lastEmissionFingerprint) {
           _log(
-            'watchBookings skip unchanged source=$source count=${bookings.length}',
+            () =>
+                'watchBookings skip unchanged source=$source count=${bookings.length}',
           );
           return;
         }
         lastEmissionFingerprint = fingerprint;
-        controller.add(bookings);
+        controller.add(List<Booking>.unmodifiable(bookings));
       }
 
       Future<void> emitCachedBookings({
         bool allowBackgroundRefresh = false,
       }) async {
         _log(
-          'watchBookings emit start allowRefresh=$allowBackgroundRefresh online=${currentNetworkStatus()} memory=${_memoryBookings.length} resolved=$_hasResolvedBookings',
+          () =>
+              'watchBookings emit start allowRefresh=$allowBackgroundRefresh online=${currentNetworkStatus()} memory=${_memoryBookings.length} resolved=$_hasResolvedBookings',
         );
         final canTrustVisibleCache =
             !currentNetworkStatus() ||
@@ -285,13 +335,17 @@ class BookingRequest implements BookingRepository {
         if ((_memoryBookings.isNotEmpty ||
                 (_hasResolvedBookings && canTrustVisibleCache)) &&
             !controller.isClosed) {
-          _log('watchBookings emit memory docs=${_memoryBookings.length}');
+          _log(
+            () => 'watchBookings emit memory docs=${_memoryBookings.length}',
+          );
           emitIfChanged(List<Booking>.from(_memoryBookings), source: 'memory');
         }
         final cachedDocuments = await _cache.readDocuments(
           _bookingsResourceKey,
         );
-        _log('watchBookings cached docs=${cachedDocuments?.length ?? -1}');
+        _log(
+          () => 'watchBookings cached docs=${cachedDocuments?.length ?? -1}',
+        );
         if (controller.isClosed) {
           return;
         }
@@ -301,7 +355,8 @@ class BookingRequest implements BookingRepository {
             currentNetworkStatus() &&
             !hasDurableCachedBookings) {
           _log(
-            'watchBookings skip cached emit reason=awaiting-authoritative-sync cached=${cachedDocuments?.length ?? -1}',
+            () =>
+                'watchBookings skip cached emit reason=awaiting-authoritative-sync cached=${cachedDocuments?.length ?? -1}',
           );
           // Do not emit a provisional empty list here. Consumers interpret an
           // empty stream event as a confirmed no-data state, which causes the
@@ -324,7 +379,8 @@ class BookingRequest implements BookingRepository {
           queuedDocuments: queuedDocuments,
         );
         _log(
-          'watchBookings merge result base=${cachedDocuments.length} queued=${queuedDocuments.length} visible=${visibleDocuments.length}',
+          () =>
+              'watchBookings merge result base=${cachedDocuments.length} queued=${queuedDocuments.length} visible=${visibleDocuments.length}',
         );
         if (!_sameBookingDocumentSet(cachedDocuments, visibleDocuments)) {
           await _cache.writeDocuments(
@@ -343,11 +399,17 @@ class BookingRequest implements BookingRepository {
         }
       }
 
-      unawaited(emitCachedBookings(allowBackgroundRefresh: true));
+      final emitWorker = LatestValueWorker<bool>(
+        apply: (refresh) => emitCachedBookings(allowBackgroundRefresh: refresh),
+        onError: (error, stack) {
+          if (!controller.isClosed) controller.addError(error, stack);
+        },
+      );
+      emitWorker.add(true);
 
       final localSubscription = _bookingCacheUpdates.stream.listen((_) {
-        _log('watchBookings local cache update event');
-        unawaited(emitCachedBookings());
+        _log(() => 'watchBookings local cache update event');
+        emitWorker.add(false);
       }, onError: (_) {});
 
       controller.onCancel = () async {
@@ -385,19 +447,72 @@ class BookingRequest implements BookingRepository {
     }, fallback: 'We could not load the bookings right now.');
   }
 
+  final _pendingActionSaves = <String, Future<Booking>>{};
+
   @override
-  Future<Booking> saveBooking(Booking booking) async {
+  Future<Booking> saveBooking(Booking booking) {
+    final actionAt = booking.pendingActionAt;
+    if (actionAt == null) {
+      return _saveBooking(booking);
+    }
+    final key =
+        '${booking.id ?? booking.submissionKey}:${actionAt.microsecondsSinceEpoch}';
+    final pending = _pendingActionSaves.putIfAbsent(key, () {
+      return _saveBooking(
+        booking,
+      ).whenComplete(() => _pendingActionSaves.remove(key));
+    });
+    return pending.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        throw TimeoutException(
+          'Local saving is still pending. Keep this form and retry; the same action will be reused.',
+        );
+      },
+    );
+  }
+
+  Future<Booking> _saveBooking(Booking booking) async {
     return _runRequest(() async {
       await initialize();
-      final normalizedId = normalizeId(booking.id);
+      var normalizedId = normalizeId(booking.id);
+      final wasTemporary = BookingIdResolver.isTemporary(normalizedId);
+      if (wasTemporary &&
+          booking.pendingActionAt == null &&
+          currentNetworkStatus()) {
+        final resolved = await BookingIdResolver(
+          firestore: _firestore,
+        ).resolve(normalizedId!, submissionKey: booking.submissionKey);
+        if (resolved != null) {
+          final remote = await _bookingsCollection.doc(resolved).get();
+          final remoteVersion = DateTime.tryParse(
+            remote.data()?['updated_at']?.toString() ?? '',
+          );
+          if (booking.updatedAt == null ||
+              remoteVersion == null ||
+              !booking.updatedAt!.isAtSameMomentAs(remoteVersion)) {
+            throw StateError(
+              'Sync conflict: this booking has a confirmed ID and newer data. Refresh it before editing.',
+            );
+          }
+          normalizedId = resolved;
+        }
+      }
       final isCreatingBooking = normalizedId == null;
       final submissionKey = isCreatingBooking
           ? (_normalizedSubmissionKey(booking.submissionKey) ??
                 _newSubmissionKey())
           : booking.submissionKey;
-      var queueRemoteWrite = !currentNetworkStatus();
+      var queueRemoteWrite =
+          (booking.pendingActionAt != null && normalizedId != null) ||
+          wasTemporary ||
+          OfflineReferenceMapper.hasTemporaryReferences(
+            _toFirestoreMap(booking),
+          ) ||
+          !currentNetworkStatus();
       _log(
-        'save start create=$isCreatingBooking online=${currentNetworkStatus()} id=${normalizedId ?? "-"}',
+        () =>
+            'save start create=$isCreatingBooking online=${currentNetworkStatus()} id=${normalizedId ?? "-"}',
       );
       String nextId;
       if (normalizedId != null) {
@@ -414,44 +529,62 @@ class BookingRequest implements BookingRepository {
           // stalled; the same submission key makes the queued retry idempotent.
           queueRemoteWrite = true;
           nextId = _offlineBookingId(submissionKey!);
-          _log('save reservation deferred to offline queue key=$submissionKey');
+          _log(
+            () =>
+                'save reservation deferred to offline queue key=$submissionKey',
+          );
         }
       }
-      _log('save id ready id=$nextId');
+      _log(() => 'save id ready id=$nextId');
       final existingBookingData = isCreatingBooking
           ? null
+          : booking.pendingActionAt != null
+          ? await _getCachedBookingData(
+              nextId,
+            ).timeout(const Duration(seconds: 5), onTimeout: () => null)
           : await _getExistingBookingData(nextId);
       final now = DateTime.now();
       final persistedStatusOutputs = await _persistPhotoFields(
         booking.statusOutputs,
         bookingId: nextId,
+        queueUploads: booking.pendingActionAt != null,
         existingStatusOutputs: _statusOutputsFromFirestoreMap(
           existingBookingData,
         ),
       );
-      _log('save media ready id=$nextId');
+      _log(() => 'save media ready id=$nextId');
       var saved = booking.copyWith(
         id: nextId,
         createdAt: booking.createdAt ?? now,
         billingStatus: _normalizedBillingStatus(booking.billingStatus),
         statusOutputs: persistedStatusOutputs,
-        updatedAt: now,
+        updatedAt: booking.pendingActionAt ?? now,
+        pendingActionAt: null,
+        pendingBaseUpdatedAt: null,
         localSyncStatus: queueRemoteWrite ? 'queued' : null,
         submissionKey: submissionKey,
       );
       var document = _toFirestoreMap(saved);
       var cacheDocument = _toCacheDocument(saved);
-      final baseUpdatedAtIso = existingBookingData?['updated_at']?.toString();
+      final baseUpdatedAtIso = wasTemporary
+          ? (booking.pendingBaseUpdatedAt ?? booking.updatedAt)
+                ?.toIso8601String()
+          : booking.pendingBaseUpdatedAt?.toIso8601String() ??
+                existingBookingData?['updated_at']?.toString();
       if (!queueRemoteWrite) {
-        _log('save firestore set start id=$nextId');
+        _log(() => 'save firestore set start id=$nextId');
         try {
-          await _writeBookingOnline(nextId, document).timeout(
+          await _writeBookingOnline(
+            nextId,
+            document,
+            creating: isCreatingBooking,
+          ).timeout(
             _bookingWriteUiGracePeriod,
             onTimeout: () => throw TimeoutException(
               'booking write acknowledgement is still pending for $nextId',
             ),
           );
-          _log('save firestore set done id=$nextId');
+          _log(() => 'save firestore set done id=$nextId');
         } catch (error) {
           if (!_isQueueableBookingWriteError(error)) {
             rethrow;
@@ -463,7 +596,9 @@ class BookingRequest implements BookingRepository {
           saved = saved.copyWith(localSyncStatus: 'queued');
           document = _toFirestoreMap(saved);
           cacheDocument = _toCacheDocument(saved);
-          _writeTrace('sdk set deferred to app queue id=$nextId error=$error');
+          _writeTrace(
+            () => 'sdk set deferred to app queue id=$nextId error=$error',
+          );
         }
       }
       if (queueRemoteWrite) {
@@ -494,7 +629,7 @@ class BookingRequest implements BookingRepository {
               )
               .catchError((_) {}),
         );
-        _log('save finish id=$nextId sync=queued');
+        _log(() => 'save finish id=$nextId sync=queued');
         return saved;
       }
       await _cache.upsertDocument(
@@ -503,7 +638,10 @@ class BookingRequest implements BookingRepository {
       );
       _upsertMemoryBooking(saved);
       _bookingCacheUpdates.add(null);
-      _log('save finish id=$nextId sync=${saved.localSyncStatus ?? "online"}');
+      _log(
+        () =>
+            'save finish id=$nextId sync=${saved.localSyncStatus ?? "online"}',
+      );
       return saved;
     }, fallback: 'We could not save the booking right now.');
   }
@@ -511,27 +649,40 @@ class BookingRequest implements BookingRepository {
   @override
   Future<Booking> updateBillingStatus(String bookingId, String billingStatus) {
     return _runRequest(() async {
+      final actionAt = DateTime.now().toUtc();
       final normalizedId = normalizeId(bookingId);
       if (normalizedId == null) {
         throw Exception('We could not update the billing status right now.');
       }
       final existingBookingData = await _getCachedBookingData(normalizedId);
       final normalizedBillingStatus = _normalizedBillingStatus(billingStatus);
-      if (currentNetworkStatus()) {
-        await _writeBillingStatusesOnline({
-          normalizedId: normalizedBillingStatus,
-        });
-      } else {
+      var queued =
+          !currentNetworkStatus() ||
+          BookingIdResolver.isTemporary(normalizedId);
+      if (!queued) {
+        try {
+          await _writeBillingStatusesOnline({
+            normalizedId: normalizedBillingStatus,
+          });
+        } catch (error) {
+          if (!_isQueueableBookingWriteError(error)) {
+            rethrow;
+          }
+          queued = true;
+        }
+      }
+      if (queued) {
         await _offlineMutationQueueService.queueBookingBillingStatusUpdate(
           bookingId: normalizedId,
           billingStatus: normalizedBillingStatus,
           baseUpdatedAt: existingBookingData?['updated_at']?.toString(),
+          actionAt: actionAt,
         );
       }
       if (existingBookingData != null) {
         final updatedDocument = Map<String, dynamic>.from(existingBookingData)
           ..['billing_status'] = normalizedBillingStatus
-          ..['updated_at'] = DateTime.now().toIso8601String();
+          ..['updated_at'] = actionAt.toIso8601String();
         await _cache.upsertDocument(
           resourceKey: _bookingsResourceKey,
           document: updatedDocument,
@@ -542,6 +693,14 @@ class BookingRequest implements BookingRepository {
           updatedDocument,
           userById: await _userById(),
           makeById: await _makeById(),
+        );
+      }
+      if (queued) {
+        return Booking(
+          id: normalizedId,
+          billingStatus: normalizedBillingStatus,
+          updatedAt: actionAt,
+          localSyncStatus: 'queued',
         );
       }
       final refreshedBookingData = await _getExistingBookingData(normalizedId);
@@ -562,6 +721,7 @@ class BookingRequest implements BookingRepository {
       if (statusesByBookingId.isEmpty) {
         return;
       }
+      final actionAt = DateTime.now().toUtc();
       final normalizedStatusesByBookingId = <String, String>{};
       for (final entry in statusesByBookingId.entries) {
         final normalizedId = normalizeId(entry.key);
@@ -573,7 +733,20 @@ class BookingRequest implements BookingRepository {
         );
       }
       final cachedDocuments = await _cache.readDocuments(_bookingsResourceKey);
-      if (!currentNetworkStatus()) {
+      var queued =
+          !currentNetworkStatus() ||
+          normalizedStatusesByBookingId.keys.any(BookingIdResolver.isTemporary);
+      if (!queued) {
+        try {
+          await _writeBillingStatusesOnline(normalizedStatusesByBookingId);
+        } catch (error) {
+          if (!_isQueueableBookingWriteError(error)) {
+            rethrow;
+          }
+          queued = true;
+        }
+      }
+      if (queued) {
         final baseUpdatedAtByBookingId = <String, String?>{};
         for (final document
             in cachedDocuments ?? const <Map<String, dynamic>>[]) {
@@ -587,15 +760,14 @@ class BookingRequest implements BookingRepository {
         await _offlineMutationQueueService.queueBookingBillingStatusUpdates(
           normalizedStatusesByBookingId,
           baseUpdatedAtByBookingId: baseUpdatedAtByBookingId,
+          actionAt: actionAt,
         );
-      } else {
-        await _writeBillingStatusesOnline(normalizedStatusesByBookingId);
       }
       if (cachedDocuments == null) {
         await _cache.touch(_bookingsResourceKey);
         return;
       }
-      final nowIso = DateTime.now().toIso8601String();
+      final nowIso = actionAt.toIso8601String();
       final updatedDocuments = cachedDocuments.map((document) {
         final documentId = normalizeId(document['id']?.toString());
         if (documentId == null) {
@@ -845,6 +1017,7 @@ class BookingRequest implements BookingRepository {
     Map<String, dynamic>? statusOutputs, {
     required String bookingId,
     required Map<String, dynamic>? existingStatusOutputs,
+    bool queueUploads = false,
   }) async {
     if (statusOutputs == null) {
       if (existingStatusOutputs != null) {
@@ -870,6 +1043,7 @@ class BookingRequest implements BookingRepository {
         for (final fieldEntry in fieldsValue.entries) {
           nextFields[fieldEntry.key.toString()] = await _persistPhotoValue(
             fieldEntry.value,
+            forceQueue: queueUploads,
             bookingId: bookingId,
             statusKey: sectionEntry.key,
             fieldKey: fieldEntry.key.toString(),
@@ -880,10 +1054,12 @@ class BookingRequest implements BookingRepository {
       nextStatusOutputs[sectionEntry.key] = nextSection;
     }
 
-    await _deleteObsoletePhotos(
-      previousStatusOutputs: existingStatusOutputs,
-      nextStatusOutputs: nextStatusOutputs,
-    );
+    if (!queueUploads) {
+      await _deleteObsoletePhotos(
+        previousStatusOutputs: existingStatusOutputs,
+        nextStatusOutputs: nextStatusOutputs,
+      );
+    }
     return nextStatusOutputs;
   }
 
@@ -892,6 +1068,7 @@ class BookingRequest implements BookingRepository {
     required String bookingId,
     required String statusKey,
     required String fieldKey,
+    bool forceQueue = false,
   }) async {
     final mapValue = value is Map<String, dynamic>
         ? Map<String, dynamic>.from(value)
@@ -906,7 +1083,7 @@ class BookingRequest implements BookingRepository {
     final mimeType = mapValue['mime_type']?.toString().trim();
     final size = _toInt(mapValue['size']) ?? bytes.length;
     final resolvedFileName = fileName?.isNotEmpty == true ? fileName! : 'photo';
-    if (!currentNetworkStatus()) {
+    if (forceQueue || !currentNetworkStatus()) {
       final queuedValue = await _offlineUploadQueueService.enqueueBookingPhoto(
         bytes: bytes,
         bookingId: bookingId,
@@ -959,13 +1136,20 @@ class BookingRequest implements BookingRepository {
 
   Future<void> _writeBookingOnline(
     String bookingId,
-    Map<String, dynamic> document,
-  ) async {
+    Map<String, dynamic> document, {
+    bool creating = false,
+  }) async {
+    if (BookingIdResolver.isTemporary(bookingId)) {
+      throw StateError(
+        'Sync conflict: an offline booking must resolve before a direct server write.',
+      );
+    }
     final stopwatch = Stopwatch()..start();
     _pendingBookingWriteTraces[bookingId] = stopwatch;
     _writeTrace(
-      'sdk set start id=$bookingId online=${currentNetworkStatus()} '
-      'fields=${document.keys.length}',
+      () =>
+          'sdk set start id=$bookingId online=${currentNetworkStatus()} '
+          'fields=${document.keys.length}',
     );
     try {
       await _firestore
@@ -974,6 +1158,7 @@ class BookingRequest implements BookingRepository {
               transaction: transaction,
               bookingId: bookingId,
               document: document,
+              creating: creating,
             ),
           )
           .timeout(
@@ -983,11 +1168,13 @@ class BookingRequest implements BookingRepository {
             ),
           );
       _writeTrace(
-        'sdk set acknowledged id=$bookingId elapsedMs=${stopwatch.elapsedMilliseconds}',
+        () =>
+            'sdk set acknowledged id=$bookingId elapsedMs=${stopwatch.elapsedMilliseconds}',
       );
     } catch (error) {
       _writeTrace(
-        'sdk set error id=$bookingId elapsedMs=${stopwatch.elapsedMilliseconds} error=$error',
+        () =>
+            'sdk set error id=$bookingId elapsedMs=${stopwatch.elapsedMilliseconds} error=$error',
       );
       rethrow;
     }
@@ -997,9 +1184,15 @@ class BookingRequest implements BookingRepository {
     required Transaction transaction,
     required String bookingId,
     required Map<String, dynamic> document,
+    bool creating = false,
   }) async {
     final bookingRef = _bookingsCollection.doc(bookingId);
     final existingBooking = await transaction.get(bookingRef);
+    if (creating && existingBooking.exists) {
+      throw StateError(
+        'Sync conflict: this submission already has a booking. Refresh bookings before submitting again.',
+      );
+    }
     final previousChassisId = normalizeId(
       existingBooking.data()?['chassis_id']?.toString(),
     );
@@ -1033,16 +1226,12 @@ class BookingRequest implements BookingRepository {
 
     final now = DateTime.now().toUtc().toIso8601String();
     if (previousChassisId != null && previousChassisId != nextChassisId) {
-      transaction.set(
-        _firestore.collection('chassis').doc(previousChassisId),
-        {
-          'current_booking_id': FieldValue.delete(),
-          'current_driver_id': FieldValue.delete(),
-          'current_status': 'ready',
-          'updated_at': now,
-        },
-        SetOptions(merge: true),
-      );
+      transaction.set(_firestore.collection('chassis').doc(previousChassisId), {
+        'current_booking_id': FieldValue.delete(),
+        'current_driver_id': FieldValue.delete(),
+        'current_status': 'ready',
+        'updated_at': now,
+      }, SetOptions(merge: true));
     }
     if (displacedBooking?.exists == true) {
       transaction.set(displacedBooking!.reference, {
@@ -1175,8 +1364,10 @@ class BookingRequest implements BookingRepository {
   Future<List<Booking>> _inflateBookings(
     List<Map<String, dynamic>> documents,
   ) async {
+    documents = BookingIdResolver.reconcileCopies(documents);
     _log(
-      'inflate start sourceDocs=${documents.length} ids=${documents.map((doc) => normalizeId(doc["id"]?.toString()) ?? "-").join(",")}',
+      () =>
+          'inflate start sourceDocs=${documents.length} ids=${documents.map((doc) => normalizeId(doc["id"]?.toString()) ?? "-").join(",")}',
     );
     final cachedUserDocuments =
         await _cache.readDocuments('users') ?? const <Map<String, dynamic>>[];
@@ -1187,7 +1378,8 @@ class BookingRequest implements BookingRepository {
         await _cache.readDocuments('vehicle_types') ??
         const <Map<String, dynamic>>[];
     _log(
-      'inflate relations cachedUsers=${cachedUserDocuments.length} cachedMakes=${cachedMakeDocuments.length} cachedTypes=${cachedTypeDocuments.length}',
+      () =>
+          'inflate relations cachedUsers=${cachedUserDocuments.length} cachedMakes=${cachedMakeDocuments.length} cachedTypes=${cachedTypeDocuments.length}',
     );
 
     if (cachedUserDocuments.isEmpty) {
@@ -1251,40 +1443,63 @@ class BookingRequest implements BookingRepository {
         )
         .toList();
     _log(
-      'inflate mapped count=${bookings.length} ids=${bookings.map((booking) => normalizeId(booking.id) ?? "-").join(",")} clientIds=${bookings.map((booking) => normalizeId(booking.client?.id) ?? "-").join(",")}',
+      () =>
+          'inflate mapped count=${bookings.length} ids=${bookings.map((booking) => normalizeId(booking.id) ?? "-").join(",")} clientIds=${bookings.map((booking) => normalizeId(booking.client?.id) ?? "-").join(",")}',
     );
-    bookings.sort((a, b) {
-      final createdComparison = _compareLatestFirst(a.createdAt, b.createdAt);
-      if (createdComparison != 0) {
-        return createdComparison;
-      }
-      final aId = int.tryParse(a.id ?? '');
-      final bId = int.tryParse(b.id ?? '');
-      if (aId != null && bId != null) {
-        return bId.compareTo(aId);
-      }
-      return (b.id ?? '').compareTo(a.id ?? '');
-    });
+    bookings.sort(Booking.compareCreatedLatestFirst);
     _log(
-      'inflate finish count=${bookings.length} sortedIds=${bookings.map((booking) => normalizeId(booking.id) ?? "-").join(",")}',
+      () =>
+          'inflate finish count=${bookings.length} sortedIds=${bookings.map((booking) => normalizeId(booking.id) ?? "-").join(",")}',
     );
     return bookings;
   }
+
+  final _foregroundRefresh = ForegroundRefreshGate();
+
+  Future<void> refreshAfterResume() => _foregroundRefresh.recover(
+    canRefresh: () =>
+        _bookingsRealtimeSubscription != null &&
+        currentNetworkStatus() &&
+        isAppVisible(),
+    refresh: () => _refreshBookingsCacheInBackground(
+      forceServer: true,
+      reason: 'foreground-resume-fallback',
+    ),
+  );
+
+  late final _snapshotWorker =
+      LatestValueWorker<QuerySnapshot<Map<String, dynamic>>>(
+        apply: _handleRealtimeSnapshot,
+        onError: (error, stack) {
+          _log(() => 'realtime apply failed error=$error');
+        },
+      );
 
   void _ensureBookingsRealtimeSync() {
     if (_bookingsRealtimeSubscription != null) {
       return;
     }
     _initialRealtimeSyncCompleter ??= Completer<void>();
-    _log('realtime sync subscribe includeMetadataChanges=true');
+    _log(() => 'realtime sync subscribe includeMetadataChanges=true');
     _bookingsRealtimeSubscription = _bookingsCollection
         .snapshots(includeMetadataChanges: true)
         .listen(
           (snapshot) {
-            unawaited(_handleRealtimeSnapshot(snapshot));
+            // Do not let a provisional/pending snapshot replace a confirmed
+            // snapshot waiting in the worker. These are full collection states.
+            if (currentNetworkStatus() &&
+                (snapshot.metadata.isFromCache ||
+                    snapshot.metadata.hasPendingWrites)) {
+              return;
+            }
+            if (!snapshot.metadata.isFromCache &&
+                !snapshot.metadata.hasPendingWrites) {
+              _foregroundRefresh.confirmedSnapshot();
+            }
+            _snapshotWorker.add(snapshot);
           },
           onError: (error, stackTrace) {
-            _log('realtime sync error error=$error');
+            _log(() => 'realtime sync error error=$error');
             if (!(_initialRealtimeSyncCompleter?.isCompleted ?? true)) {
               _initialRealtimeSyncCompleter?.complete();
             }
@@ -1318,7 +1533,8 @@ class BookingRequest implements BookingRepository {
         .readRemoteVersionSafe(_bookingsResourceKey)
         .timeout(const Duration(seconds: 2), onTimeout: () => null);
     _log(
-      'meta trust evaluate local=${localVersion ?? "-"} remote=${remoteVersion ?? "-"}',
+      () =>
+          'meta trust evaluate local=${localVersion ?? "-"} remote=${remoteVersion ?? "-"}',
     );
     if (remoteVersion == null || remoteVersion.isEmpty) {
       _isPersistedCacheTrustedOnline = true;
@@ -1327,14 +1543,15 @@ class BookingRequest implements BookingRepository {
     final matches = localVersion == remoteVersion;
     _isPersistedCacheTrustedOnline = matches;
     if (matches) {
-      _log('meta trust accepted version=$remoteVersion');
+      _log(() => 'meta trust accepted version=$remoteVersion');
       return;
     }
     // A version mismatch means a refresh is needed, not that local data is
     // unusable. Retaining it keeps cold-start and flaky-network views usable
     // until the next confirmed server snapshot arrives.
     _log(
-      'meta trust mismatch retained local cache remoteVersion=$remoteVersion',
+      () =>
+          'meta trust mismatch retained local cache remoteVersion=$remoteVersion',
     );
   }
 
@@ -1358,15 +1575,18 @@ class BookingRequest implements BookingRepository {
     final shouldApply = !online || (!fromCache && !hasPendingWrites);
     if (hasPendingWrites || _pendingBookingWriteTraces.isNotEmpty) {
       _writeTrace(
-        'realtime snapshot docs=${snapshot.docs.length} fromCache=$fromCache '
-        'pendingWrites=$hasPendingWrites apply=$shouldApply '
-        'trackedWrites=${_pendingBookingWriteTraces.keys.join(",")}',
+        () =>
+            'realtime snapshot docs=${snapshot.docs.length} fromCache=$fromCache '
+            'pendingWrites=$hasPendingWrites apply=$shouldApply '
+            'trackedWrites=${_pendingBookingWriteTraces.keys.join(",")}',
       );
     }
     if (online && hasPendingWrites) {
       // Keep the last server-confirmed list visible. A local pending write is
       // not authoritative, but it must not erase unrelated booking rows.
-      _writeTrace('realtime pending write ignored; retained confirmed list');
+      _writeTrace(
+        () => 'realtime pending write ignored; retained confirmed list',
+      );
       return;
     }
     if (!shouldApply) {
@@ -1374,14 +1594,16 @@ class BookingRequest implements BookingRepository {
     }
     final documents = snapshot.docs.map(documentData).toList(growable: false);
     _log(
-      'realtime sync documentData mapped docs=${documents.length} elapsedMs=${eventStopwatch.elapsedMilliseconds}',
+      () =>
+          'realtime sync documentData mapped docs=${documents.length} elapsedMs=${eventStopwatch.elapsedMilliseconds}',
     );
     await _cache.writeDocuments(
       resourceKey: _bookingsResourceKey,
       documents: documents,
     );
     _log(
-      'realtime sync cache write docs=${documents.length} elapsedMs=${eventStopwatch.elapsedMilliseconds}',
+      () =>
+          'realtime sync cache write docs=${documents.length} elapsedMs=${eventStopwatch.elapsedMilliseconds}',
     );
     if (online && !fromCache) {
       _hasAuthoritativeOnlineSync = true;
@@ -1389,17 +1611,30 @@ class BookingRequest implements BookingRepository {
         final writeIds = _pendingBookingWriteTraces.entries
             .map((entry) => '${entry.key}:${entry.value.elapsedMilliseconds}ms')
             .join(',');
-        _writeTrace('realtime server acknowledgement writes=$writeIds');
+        _writeTrace(() => 'realtime server acknowledgement writes=$writeIds');
         _pendingBookingWriteTraces.clear();
       }
     }
     await _primeMemoryBookingsFromCache();
     _bookingCacheUpdates.add(null);
     _log(
-      'realtime sync apply done docs=${documents.length} authoritative=$_hasAuthoritativeOnlineSync elapsedMs=${eventStopwatch.elapsedMilliseconds}',
+      () =>
+          'realtime sync apply done docs=${documents.length} authoritative=$_hasAuthoritativeOnlineSync elapsedMs=${eventStopwatch.elapsedMilliseconds}',
     );
     if (!(_initialRealtimeSyncCompleter?.isCompleted ?? true)) {
       _initialRealtimeSyncCompleter?.complete();
+    }
+    if (online &&
+        !fromCache &&
+        !hasPendingWrites &&
+        snapshot.docs.any((doc) => BookingIdResolver.isTemporary(doc.id))) {
+      // Use actual Firestore document IDs; stored `id` fields may be corrupt.
+      // Run after hydration/notification, without blocking startup.
+      unawaited(
+        _repairLegacyBookings(
+          snapshot.docs.map((doc) => {...doc.data(), 'id': doc.id}).toList(),
+        ),
+      );
     }
   }
 
@@ -1420,20 +1655,22 @@ class BookingRequest implements BookingRepository {
     String reason = 'general',
   }) async {
     if (_backgroundRefreshFuture != null) {
-      _log('refresh background skip reason=in-flight');
+      _log(() => 'refresh background skip reason=in-flight');
       return _backgroundRefreshFuture;
     }
     final completer = Completer<void>();
     _backgroundRefreshFuture = completer.future;
     final refreshStopwatch = Stopwatch()..start();
     _log(
-      'refresh background start reason=$reason forceServer=$forceServer elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
+      () =>
+          'refresh background start reason=$reason forceServer=$forceServer elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
     );
     try {
       List<Map<String, dynamic>> documents;
       try {
         _log(
-          'refresh background sdk fetch start forceServer=$forceServer elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
+          () =>
+              'refresh background sdk fetch start forceServer=$forceServer elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
         );
         final snapshot =
             await _fetchAuthoritativeBookingsSnapshot(
@@ -1444,18 +1681,21 @@ class BookingRequest implements BookingRepository {
                   throw TimeoutException('bookings refresh timeout'),
             );
         if (currentNetworkStatus() && snapshot.metadata.hasPendingWrites) {
-          _log('refresh background skip pending local booking write');
+          _log(() => 'refresh background skip pending local booking write');
           return;
         }
         documents = snapshot.docs.map(documentData).toList(growable: false);
         _log(
-          'refresh background sdk get done docs=${snapshot.docs.length} fromCache=${snapshot.metadata.isFromCache} pendingWrites=${snapshot.metadata.hasPendingWrites} elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
+          () =>
+              'refresh background sdk get done docs=${snapshot.docs.length} fromCache=${snapshot.metadata.isFromCache} pendingWrites=${snapshot.metadata.hasPendingWrites} elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
         );
         _log(
-          'refresh background source=sdk docs=${documents.length} elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
+          () =>
+              'refresh background source=sdk docs=${documents.length} elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
         );
         _log(
-          'firestore sdk bookings present=${documents.isNotEmpty} count=${documents.length}',
+          () =>
+              'firestore sdk bookings present=${documents.isNotEmpty} count=${documents.length}',
         );
         if (currentNetworkStatus()) {
           _hasAuthoritativeOnlineSync = true;
@@ -1463,7 +1703,8 @@ class BookingRequest implements BookingRepository {
         }
       } catch (error) {
         _log(
-          'refresh background sdk fetch error error=$error elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
+          () =>
+              'refresh background sdk fetch error error=$error elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
         );
         rethrow;
       }
@@ -1472,16 +1713,19 @@ class BookingRequest implements BookingRepository {
         documents: documents,
       );
       _log(
-        'refresh background cache write docs=${documents.length} elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
+        () =>
+            'refresh background cache write docs=${documents.length} elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
       );
       await _primeMemoryBookingsFromCache();
       _log(
-        'refresh background applied memory=${_memoryBookings.length} elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
+        () =>
+            'refresh background applied memory=${_memoryBookings.length} elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
       );
       _bookingCacheUpdates.add(null);
     } catch (error) {
       _log(
-        'refresh background error error=$error elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
+        () =>
+            'refresh background error error=$error elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
       );
     } finally {
       if (!completer.isCompleted) {
@@ -1489,7 +1733,8 @@ class BookingRequest implements BookingRepository {
       }
       _backgroundRefreshFuture = null;
       _log(
-        'refresh background finish elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
+        () =>
+            'refresh background finish elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
       );
     }
   }
@@ -1500,7 +1745,8 @@ class BookingRequest implements BookingRepository {
         ? const GetOptions(source: Source.server)
         : null;
     _log(
-      'authoritative snapshot request start forceServer=$forceServer online=${currentNetworkStatus()} source=${options?.source ?? "default"}',
+      () =>
+          'authoritative snapshot request start forceServer=$forceServer online=${currentNetworkStatus()} source=${options?.source ?? "default"}',
     );
     return _bookingsCollection.get(options);
   }
@@ -1508,13 +1754,15 @@ class BookingRequest implements BookingRepository {
   Future<List<Map<String, dynamic>>> _fetchBookingsViaSdkOnly() async {
     final fetchStopwatch = Stopwatch()..start();
     _log(
-      'getBookings sdk-only fetch start elapsedMs=${fetchStopwatch.elapsedMilliseconds}',
+      () =>
+          'getBookings sdk-only fetch start elapsedMs=${fetchStopwatch.elapsedMilliseconds}',
     );
     final sdkCachedDocuments = await _readCollectionSdkCacheOnly(
       _bookingsCollection,
     );
     _log(
-      'getBookings sdk-only cache docs=${sdkCachedDocuments.length} elapsedMs=${fetchStopwatch.elapsedMilliseconds}',
+      () =>
+          'getBookings sdk-only cache docs=${sdkCachedDocuments.length} elapsedMs=${fetchStopwatch.elapsedMilliseconds}',
     );
     if (sdkCachedDocuments.isNotEmpty && !currentNetworkStatus()) {
       return sdkCachedDocuments;
@@ -1527,15 +1775,17 @@ class BookingRequest implements BookingRepository {
           onTimeout: () => throw TimeoutException('bookings fetch timeout'),
         );
     _log(
-      'getBookings sdk-only get done docs=${snapshot.docs.length} fromCache=${snapshot.metadata.isFromCache} pendingWrites=${snapshot.metadata.hasPendingWrites} elapsedMs=${fetchStopwatch.elapsedMilliseconds}',
+      () =>
+          'getBookings sdk-only get done docs=${snapshot.docs.length} fromCache=${snapshot.metadata.isFromCache} pendingWrites=${snapshot.metadata.hasPendingWrites} elapsedMs=${fetchStopwatch.elapsedMilliseconds}',
     );
     if (currentNetworkStatus() && snapshot.metadata.hasPendingWrites) {
-      _log('getBookings sdk-only skip pending local booking write');
+      _log(() => 'getBookings sdk-only skip pending local booking write');
       return const <Map<String, dynamic>>[];
     }
     final documents = snapshot.docs.map(documentData).toList(growable: false);
     _log(
-      'getBookings sdk-only documentData mapped docs=${documents.length} elapsedMs=${fetchStopwatch.elapsedMilliseconds}',
+      () =>
+          'getBookings sdk-only documentData mapped docs=${documents.length} elapsedMs=${fetchStopwatch.elapsedMilliseconds}',
     );
     await _cache.writeDocuments(
       resourceKey: _bookingsResourceKey,
@@ -1552,13 +1802,15 @@ class BookingRequest implements BookingRepository {
     List<Map<String, dynamic>> visibleDocuments,
   ) async {
     _log(
-      'cache inflate start visible=${visibleDocuments.length} ids=${visibleDocuments.map((doc) => normalizeId(doc["id"]?.toString()) ?? "-").join(",")}',
+      () =>
+          'cache inflate start visible=${visibleDocuments.length} ids=${visibleDocuments.map((doc) => normalizeId(doc["id"]?.toString()) ?? "-").join(",")}',
     );
     final bookings = await _inflateBookings(visibleDocuments);
     _memoryBookings = List<Booking>.from(bookings);
     _hasResolvedBookings = true;
     _log(
-      'cache inflate finish memory=${_memoryBookings.length} ids=${_memoryBookings.map((booking) => normalizeId(booking.id) ?? "-").join(",")}',
+      () =>
+          'cache inflate finish memory=${_memoryBookings.length} ids=${_memoryBookings.map((booking) => normalizeId(booking.id) ?? "-").join(",")}',
     );
     return bookings;
   }
@@ -1568,13 +1820,13 @@ class BookingRequest implements BookingRepository {
     if (cachedDocuments == null) {
       _memoryBookings = const [];
       _hasResolvedBookings = true;
-      _log('prime memory result cached=null memory=0');
+      _log(() => 'prime memory result cached=null memory=0');
       return;
     }
     if (cachedDocuments.isEmpty) {
       _memoryBookings = const [];
       _hasResolvedBookings = true;
-      _log('prime memory result cached=0 memory=0');
+      _log(() => 'prime memory result cached=0 memory=0');
       return;
     }
     final queuedDocuments = await _readQueuedBookingDocumentsSafe();
@@ -1583,11 +1835,13 @@ class BookingRequest implements BookingRepository {
       queuedDocuments: queuedDocuments,
     );
     _log(
-      'prime memory visible docs=${visibleDocuments.length} ids=${visibleDocuments.map((doc) => normalizeId(doc["id"]?.toString()) ?? "-").join(",")}',
+      () =>
+          'prime memory visible docs=${visibleDocuments.length} ids=${visibleDocuments.map((doc) => normalizeId(doc["id"]?.toString()) ?? "-").join(",")}',
     );
     await _cacheInflatedBookings(visibleDocuments);
     _log(
-      'prime memory result cached=${cachedDocuments.length} queued=${queuedDocuments.length} visible=${visibleDocuments.length} memory=${_memoryBookings.length}',
+      () =>
+          'prime memory result cached=${cachedDocuments.length} queued=${queuedDocuments.length} visible=${visibleDocuments.length} memory=${_memoryBookings.length}',
     );
   }
 
@@ -1605,18 +1859,7 @@ class BookingRequest implements BookingRepository {
     } else {
       nextBookings.add(booking);
     }
-    nextBookings.sort((a, b) {
-      final createdComparison = _compareLatestFirst(a.createdAt, b.createdAt);
-      if (createdComparison != 0) {
-        return createdComparison;
-      }
-      final aId = int.tryParse(a.id ?? '');
-      final bId = int.tryParse(b.id ?? '');
-      if (aId != null && bId != null) {
-        return bId.compareTo(aId);
-      }
-      return (b.id ?? '').compareTo(a.id ?? '');
-    });
+    nextBookings.sort(Booking.compareCreatedLatestFirst);
     _memoryBookings = nextBookings;
     _hasResolvedBookings = true;
   }
@@ -1631,10 +1874,10 @@ class BookingRequest implements BookingRepository {
               return const <Map<String, dynamic>>[];
             },
           );
-      _log('queued documents read count=${queued.length}');
+      _log(() => 'queued documents read count=${queued.length}');
       return queued;
     } catch (error) {
-      _log('queued documents read error error=$error');
+      _log(() => 'queued documents read error error=$error');
       return const <Map<String, dynamic>>[];
     }
   }
@@ -1750,7 +1993,7 @@ class BookingRequest implements BookingRepository {
       _idempotencyDocumentId('bookings', submissionKey),
     );
     final bootstrapNextId = await _bootstrapNextBookingIdIfCounterMissing();
-    _log('booking id reservation start key=$submissionKey');
+    _log(() => 'booking id reservation start key=$submissionKey');
     final reservation = await _firestore
         .runTransaction<_BookingIdReservation>((transaction) async {
           final idempotencySnapshot = await transaction.get(idempotencyRef);
@@ -1794,7 +2037,8 @@ class BookingRequest implements BookingRepository {
               throw TimeoutException('booking id reservation timeout'),
         );
     _log(
-      'booking id reservation id=${reservation.id} reused=${reservation.reused}',
+      () =>
+          'booking id reservation id=${reservation.id} reused=${reservation.reused}',
     );
     return reservation.id;
   }
@@ -1864,17 +2108,20 @@ class BookingRequest implements BookingRepository {
     CollectionReference<Map<String, dynamic>> collection,
   ) async {
     try {
-      _log('sdk cache-only read start path=${collection.path}');
+      _log(() => 'sdk cache-only read start path=${collection.path}');
       final snapshot = await collection
           .get(const GetOptions(source: Source.cache))
           .timeout(const Duration(seconds: 1));
       final documents = snapshot.docs.map(documentData).toList(growable: false);
       _log(
-        'sdk cache-only read done path=${collection.path} docs=${documents.length}',
+        () =>
+            'sdk cache-only read done path=${collection.path} docs=${documents.length}',
       );
       return documents;
     } catch (error) {
-      _log('sdk cache-only read error path=${collection.path} error=$error');
+      _log(
+        () => 'sdk cache-only read error path=${collection.path} error=$error',
+      );
       return const <Map<String, dynamic>>[];
     }
   }
@@ -1909,8 +2156,8 @@ class BookingRequest implements BookingRepository {
     }
     final merged = documentsById.values.toList(growable: false);
     merged.sort((left, right) {
-      final leftDate = _toDateTime(left['created_at'] ?? left['updated_at']);
-      final rightDate = _toDateTime(right['created_at'] ?? right['updated_at']);
+      final leftDate = _toDateTime(left['created_at']);
+      final rightDate = _toDateTime(right['created_at']);
       final byDate = _compareLatestFirst(leftDate, rightDate);
       if (byDate != 0) {
         return byDate;
@@ -1981,11 +2228,11 @@ class BookingRequest implements BookingRepository {
     }
   }
 
-  void _log(String message) {
+  void _log(String Function() message) {
     // Temporary diagnostics removed.
   }
 
-  void _writeTrace(String message) {
+  void _writeTrace(String Function() message) {
     // Temporary diagnostics removed.
   }
 }

@@ -168,7 +168,8 @@ class AdminDashboardViewModel extends BaseViewModel {
     _currentUser = user;
     _cachedCurrentUser = user;
     _log(
-      'prime current user loggedIn=true user=${user.id ?? "-"} role=${user.role ?? "-"}',
+      () =>
+          'prime current user loggedIn=true user=${user.id ?? "-"} role=${user.role ?? "-"}',
     );
     notifyListeners();
   }
@@ -176,7 +177,7 @@ class AdminDashboardViewModel extends BaseViewModel {
   Future<void> load() async {
     final existingLoad = _activeLoadFuture;
     if (existingLoad != null) {
-      _log('load join-inflight');
+      _log(() => 'load join-inflight');
       await existingLoad;
       return;
     }
@@ -211,17 +212,18 @@ class AdminDashboardViewModel extends BaseViewModel {
     );
     if (shouldShowLoadingState) {
       setBusy(true);
-      _log('overlay show section=dashboard');
+      _log(() => 'overlay show section=dashboard');
     }
     _log(
-      'load start loggedIn=${_currentUser != null} user=${_currentUser?.id ?? "-"} role=${_currentUser?.role ?? "-"} visibleBookings=${!shouldShowLoadingState} cachedCompleted=${_cachedCompletedBookings.length} localCompleted=${_completedBookings.length} sharedBookings=$hasSharedBookings',
+      () =>
+          'load start loggedIn=${_currentUser != null} user=${_currentUser?.id ?? "-"} role=${_currentUser?.role ?? "-"} visibleBookings=${!shouldShowLoadingState} cachedCompleted=${_cachedCompletedBookings.length} localCompleted=${_completedBookings.length} sharedBookings=$hasSharedBookings',
     );
     PerformanceTrace.event(
       'admin-dashboard-vm',
       'load start cached=${_cachedCompletedBookings.length} local=${_completedBookings.length} authoritative=$hasSharedBookings',
     );
     if (!shouldShowLoadingState) {
-      _log('silent load only section=dashboard');
+      _log(() => 'silent load only section=dashboard');
     }
     errorMessage = null;
     try {
@@ -251,7 +253,8 @@ class AdminDashboardViewModel extends BaseViewModel {
         );
       } else {
         _log(
-          'bookings reused shared count=${BookingRequest.hydratedBookingsSnapshot.length}',
+          () =>
+              'bookings reused shared count=${BookingRequest.hydratedBookingsSnapshot.length}',
         );
       }
       unawaited(_reloadSupportingData());
@@ -264,7 +267,7 @@ class AdminDashboardViewModel extends BaseViewModel {
       _cachedCompletedBookings = List<Booking>.from(_completedBookings);
       _cachedErrorMessage = null;
     } catch (error) {
-      _log('load error error=$error');
+      _log(() => 'load error error=$error');
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the completed bookings right now.',
@@ -274,10 +277,11 @@ class AdminDashboardViewModel extends BaseViewModel {
     } finally {
       if (shouldShowLoadingState && _hasLoadedOnce && !overlayHidden) {
         setBusy(false);
-        _log('overlay hide section=dashboard reason=load-finish');
+        _log(() => 'overlay hide section=dashboard reason=load-finish');
       }
       _log(
-        'load finish busy=$isBusy completed=${_completedBookings.length} users=${_usersById.length} error=${errorMessage ?? "-"}',
+        () =>
+            'load finish busy=$isBusy completed=${_completedBookings.length} users=${_usersById.length} error=${errorMessage ?? "-"}',
       );
       PerformanceTrace.event(
         'admin-dashboard-vm',
@@ -302,7 +306,7 @@ class AdminDashboardViewModel extends BaseViewModel {
 
   Future<void> _reloadSupportingData() async {
     if (_isRealtimeRefreshing) {
-      _log('supporting reload skipped already-running');
+      _log(() => 'supporting reload skipped already-running');
       PerformanceTrace.event(
         'admin-dashboard-vm',
         'supporting reload skipped in-flight',
@@ -312,7 +316,7 @@ class AdminDashboardViewModel extends BaseViewModel {
     final stopwatch = Stopwatch()..start();
     PerformanceTrace.event('admin-dashboard-vm', 'supporting reload start');
     _isRealtimeRefreshing = true;
-    _log('supporting reload start');
+    _log(() => 'supporting reload start');
     try {
       final results = await Future.wait<dynamic>([
         _loadCurrentUserSafe(),
@@ -330,7 +334,8 @@ class AdminDashboardViewModel extends BaseViewModel {
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedCurrentUser = _currentUser;
       _log(
-        'supporting reload done loggedIn=${_currentUser != null} user=${normalizeId(_currentUser?.id) ?? "-"} role=${_currentUser?.role ?? "-"} users=${_usersById.length}',
+        () =>
+            'supporting reload done loggedIn=${_currentUser != null} user=${normalizeId(_currentUser?.id) ?? "-"} role=${_currentUser?.role ?? "-"} users=${_usersById.length}',
       );
       notifyListeners();
     } catch (_) {
@@ -443,7 +448,8 @@ class AdminDashboardViewModel extends BaseViewModel {
     });
     _cachedCompletedBookings = List<Booking>.from(_completedBookings);
     _log(
-      'apply completed loggedIn=${_currentUser != null} user=${_currentUser?.id ?? "-"} role=${_currentUser?.role ?? "-"} source=${bookings.length} delivered=${_completedBookings.length}',
+      () =>
+          'apply completed loggedIn=${_currentUser != null} user=${_currentUser?.id ?? "-"} role=${_currentUser?.role ?? "-"} source=${bookings.length} delivered=${_completedBookings.length}',
     );
   }
 
@@ -458,13 +464,25 @@ class AdminDashboardViewModel extends BaseViewModel {
   String client(Booking booking) {
     final client = _usersById[booking.client?.id];
     final name = client?.name?.trim();
-    return "${name?.isNotEmpty == true ? name! : 'Unknown client'} (${origin(booking)} - ${destination(booking)})"
+    return "${name?.isNotEmpty == true ? name! : 'Loading ...'} (${origin(booking)} - ${destination(booking)})"
         .toUpperCase();
   }
 
+  List<Booking>? _filteredResult;
+
+  @override
+  void notifyListeners() {
+    _filteredResult = null;
+    super.notifyListeners();
+  }
+
   List<Booking> filteredCompletedBookings() {
+    final cached = _filteredResult;
+    if (cached != null) {
+      return cached;
+    }
     final query = _searchQuery.trim().toLowerCase();
-    return _completedBookings.where((booking) {
+    return _filteredResult = _completedBookings.where((booking) {
       final matchesBillingStatus =
           _billingStatusFilter == null ||
           billingStatusValue(booking) == _billingStatusFilter;
@@ -858,7 +876,7 @@ class AdminDashboardViewModel extends BaseViewModel {
     return right.compareTo(left);
   }
 
-  void _log(String message) {
+  void _log(String Function() message) {
     // Temporary debug logging removed.
   }
 

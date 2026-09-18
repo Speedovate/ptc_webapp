@@ -1,3 +1,6 @@
+import 'package:webapp/widgets/shared/paged_data_sliver.dart';
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
+import 'package:webapp/widgets/shared/retained_section_stack.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -861,27 +864,30 @@ class _AdminHomeState extends State<AdminHome> {
         initialBookingId: _supportInitialBookingId,
         initialUserId: _supportInitialUserId,
       ),
-      AdminSection.profile => SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ProfileView(
-              key: profileViewRefreshKey(_shellUser),
-              user: _shellUser,
-              scrollable: false,
-              padding: EdgeInsets.zero,
-              isCurrentUserView: true,
-              onLogout: widget.onLogout,
-              logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-              onSaveProfileChanges: _canUpdateProfile
-                  ? _saveProfileChanges
-                  : null,
-              onEditPressed: () => unawaited(_openProfileEditDialog()),
-            ),
-            const SizedBox(height: 12),
-            UserBookingsSection(user: _shellUser),
-          ],
+      AdminSection.profile => PagedScrollObserver(
+        child: LazyDataScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+          child: SliverSection(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ProfileView(
+                key: profileViewRefreshKey(_shellUser),
+                user: _shellUser,
+                scrollable: false,
+                padding: EdgeInsets.zero,
+                isCurrentUserView: true,
+                onLogout: widget.onLogout,
+                logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
+                onSaveProfileChanges: _canUpdateProfile
+                    ? _saveProfileChanges
+                    : null,
+                onEditPressed: () => unawaited(_openProfileEditDialog()),
+              ),
+              const SizedBox(height: 12),
+              UserBookingsSection(user: _shellUser),
+            ],
+          ),
         ),
       ),
       AdminSection.analytics => const AdminAnalyticsView(),
@@ -907,7 +913,7 @@ class _AdminHomeState extends State<AdminHome> {
         : section == AdminSection.bookings
         ? 1
         : 2 + secondaryKeys.indexOf(secondaryKey!);
-    return IndexedStack(
+    return RetainedSectionStack(
       index: selectedIndex,
       children: [
         KeyedSubtree(

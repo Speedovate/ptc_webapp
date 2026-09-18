@@ -705,7 +705,9 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                                   widget.onBookingUpdated?.call(savedBooking);
                                   AppSnackbar.showSuccess(
                                     context,
-                                    'Booking updated.',
+                                    savedBooking.localSyncStatus == 'queued'
+                                        ? 'Saved on device. Pending sync.'
+                                        : 'Booking updated.',
                                   );
                                   return true;
                                 },
@@ -827,7 +829,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             'destination',
           ),
           clientId: currentBooking.client?.id,
-          clientName: vm.userName(currentBooking.client?.id, 'Unknown client'),
+          clientName: vm.userName(currentBooking.client?.id, 'Loading ...'),
           clientPhone: vm.userPhone(currentBooking.client?.id),
           driverId: currentBooking.driver?.id,
           driverName: vm.userName(currentBooking.driver?.id, '-'),
@@ -1016,7 +1018,9 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                                     widget.onBookingUpdated?.call(savedBooking);
                                     AppSnackbar.showSuccess(
                                       context,
-                                      'Booking cancelled.',
+                                      savedBooking.localSyncStatus == 'queued'
+                                          ? 'Saved on device. Pending sync.'
+                                          : 'Booking cancelled.',
                                     );
                                     return true;
                                   },
@@ -1441,7 +1445,9 @@ class _WorkflowInteractiveFormSectionState
                               }
                               AppSnackbar.showSuccess(
                                 context,
-                                widget.isDanger
+                                savedBooking.localSyncStatus == 'queued'
+                                    ? 'Saved on device. Pending sync.'
+                                    : widget.isDanger
                                     ? 'Booking cancelled.'
                                     : 'Booking updated.',
                               );

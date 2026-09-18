@@ -1,3 +1,7 @@
+import 'package:webapp/widgets/shared/paged_data_sliver.dart';
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
+import 'package:webapp/widgets/shared/retained_section_stack.dart';
+import 'package:webapp/widgets/shared/startup_splash_handoff.dart';
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -318,26 +322,29 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
         initialBookingId: _supportInitialBookingId,
         initialUserId: _supportInitialUserId,
       ),
-      RolePlatformSection.profile => SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ProfileView(
-              key: profileViewRefreshKey(_shellUser),
-              user: _shellUser,
-              scrollable: false,
-              padding: EdgeInsets.zero,
-              isCurrentUserView: true,
-              onLogout: widget.onLogout,
-              logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-              onSaveProfileChanges: _canUpdateProfile
-                  ? _saveProfileChanges
-                  : null,
-            ),
-            const SizedBox(height: 12),
-            UserBookingsSection(user: _shellUser),
-          ],
+      RolePlatformSection.profile => PagedScrollObserver(
+        child: LazyDataScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+          child: SliverSection(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ProfileView(
+                key: profileViewRefreshKey(_shellUser),
+                user: _shellUser,
+                scrollable: false,
+                padding: EdgeInsets.zero,
+                isCurrentUserView: true,
+                onLogout: widget.onLogout,
+                logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
+                onSaveProfileChanges: _canUpdateProfile
+                    ? _saveProfileChanges
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              UserBookingsSection(user: _shellUser),
+            ],
+          ),
         ),
       ),
     };
@@ -353,7 +360,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
       'role-navigation-cache',
       '${wasRetained ? 'hit' : 'create'} section=${section.name}',
     );
-    return IndexedStack(
+    return RetainedSectionStack(
       index: section.index,
       children: RolePlatformSection.values
           .map(
@@ -385,174 +392,176 @@ class _RoleAssignedHomeSection extends StatelessWidget {
     return ViewModelBuilder<RoleAssignedHomeViewModel>.reactive(
       viewModelBuilder: RoleAssignedHomeViewModel.new,
       onViewModelReady: (vm) => vm.load(user),
-      builder: (context, vm, _) {
-        if (vm.errorMessage != null && vm.currentUser == null) {
-          return SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-            child: AdminListItemCard(
-              padding: const EdgeInsets.all(24),
-              child: AdminListStateText(message: vm.errorMessage!),
-            ),
-          );
-        }
+      builder: (context, vm, _) => StartupSplashHandoff(
+        ready: vm.hasResolvedInitialBookings,
+        child: Builder(
+          builder: (context) {
+            if (vm.errorMessage != null && vm.currentUser == null) {
+              return SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                child: AdminListItemCard(
+                  padding: const EdgeInsets.all(24),
+                  child: AdminListStateText(message: vm.errorMessage!),
+                ),
+              );
+            }
 
-        final currentUser = vm.currentUser ?? user;
-        final roleLabel = RoleAccessService.instance.assignedBookingRoleLabel(
-          currentUser.role,
-        );
-        final showOnlineAvailability = RoleAccessService.instance
-            .isOnlineEligibleRole(currentUser.role);
-        final showScheduleDetails = switch (normalizeRoleKey(
-          currentUser.role,
-        )) {
-          'driver' || 'helper' => true,
-          _ => false,
-        };
+            final currentUser = vm.currentUser ?? user;
+            final roleLabel = RoleAccessService.instance
+                .assignedBookingRoleLabel(currentUser.role);
+            final showOnlineAvailability = RoleAccessService.instance
+                .isOnlineEligibleRole(currentUser.role);
+            final showScheduleDetails = switch (normalizeRoleKey(
+              currentUser.role,
+            )) {
+              'driver' || 'helper' => true,
+              _ => false,
+            };
 
-        return AppPageLoadingOverlay(
-          isVisible: vm.isBusy,
-          message: vm.busyMessage,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AppRefreshStrip(isVisible: vm.isBusy),
-                if (showOnlineAvailability)
-                  AdminListItemCard(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 16,
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '$roleLabel Availability',
-                                style: const TextStyle(
-                                  color: AppColors.textPrimary,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                (currentUser.isOnline ?? false)
-                                    ? 'You are currently online and assignable.'
-                                    : 'You are currently offline.',
-                                style: TextStyle(
-                                  color: AppColors.primaryColor.withValues(
-                                    alpha: 0.72,
+            return AppPageLoadingOverlay(
+              isVisible: vm.isBusy,
+              message: vm.busyMessage,
+              child: LazyDataScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                child: SliverSection(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppRefreshStrip(isVisible: vm.isBusy),
+                    if (showOnlineAvailability)
+                      AdminListItemCard(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 16,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '$roleLabel Availability',
+                                    style: const TextStyle(
+                                      color: AppColors.textPrimary,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                    ),
                                   ),
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Switch(
-                          value: currentUser.isOnline ?? false,
-                          trackOutlineColor: WidgetStateProperty.all(
-                            AppColors.primaryColor,
-                          ),
-                          inactiveThumbColor: AppColors.primaryColor,
-                          onChanged: vm.isBusy
-                              ? null
-                              : (value) async {
-                                  try {
-                                    final updatedUser = await vm.setOnline(
-                                      value,
-                                    );
-                                    if (updatedUser != null) {
-                                      onUserUpdated(updatedUser);
-                                    }
-                                  } on AuthFailure catch (error) {
-                                    if (!context.mounted) {
-                                      return;
-                                    }
-                                    AppSnackbar.showError(
-                                      context,
-                                      error.message,
-                                    );
-                                  } catch (error) {
-                                    if (!context.mounted) {
-                                      return;
-                                    }
-                                    AppSnackbar.showError(
-                                      context,
-                                      userFacingErrorMessage(
-                                        error,
-                                        fallback:
-                                            'We could not update your availability. Please try again.',
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    (currentUser.isOnline ?? false)
+                                        ? 'You are currently online and assignable.'
+                                        : 'You are currently offline.',
+                                    style: TextStyle(
+                                      color: AppColors.primaryColor.withValues(
+                                        alpha: 0.72,
                                       ),
-                                    );
-                                  }
-                                },
-                        ),
-                      ],
-                    ),
-                  ),
-                const SizedBox(height: 8),
-                if (vm.errorMessage != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: AdminListItemCard(
-                      padding: const EdgeInsets.all(24),
-                      child: AdminListStateText(message: vm.errorMessage!),
-                    ),
-                  ),
-                if (vm.assignedBookings.isEmpty)
-                  AdminListItemCard(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      'No active assigned bookings now.',
-                      style: TextStyle(
-                        color: AppColors.primaryColor.withValues(alpha: 0.72),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  )
-                else
-                  Column(
-                    children: vm.assignedBookings
-                        .asMap()
-                        .entries
-                        .map(
-                          (entry) => Padding(
-                            padding: EdgeInsets.only(
-                              bottom:
-                                  entry.key == vm.assignedBookings.length - 1
-                                  ? 0
-                                  : 12,
-                            ),
-                            child: BookingRecordCard(
-                              booking: entry.value,
-                              onTap: () => onOpenBooking(entry.value),
-                              headlineStatusLabel: vm.statusLabelForKey(
-                                entry.value.clientStatus,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              statusLabelForKey: vm.statusLabelForKey,
-                              showStatusSubmissions: false,
-                              showScheduleDetails: showScheduleDetails,
-                              clientName: vm.clientName(entry.value),
-                              clientPhone: vm.clientPhone(entry.value),
-                              driverName: vm.driverName(entry.value),
-                              driverPhone: vm.driverPhone(entry.value),
-                              helperName: vm.helperName(entry.value),
-                              helperPhone: vm.helperPhone(entry.value),
                             ),
+                            Switch(
+                              value: currentUser.isOnline ?? false,
+                              trackOutlineColor: WidgetStateProperty.all(
+                                AppColors.primaryColor,
+                              ),
+                              inactiveThumbColor: AppColors.primaryColor,
+                              onChanged: vm.isBusy
+                                  ? null
+                                  : (value) async {
+                                      try {
+                                        final updatedUser = await vm.setOnline(
+                                          value,
+                                        );
+                                        if (updatedUser != null) {
+                                          onUserUpdated(updatedUser);
+                                        }
+                                      } on AuthFailure catch (error) {
+                                        if (!context.mounted) {
+                                          return;
+                                        }
+                                        AppSnackbar.showError(
+                                          context,
+                                          error.message,
+                                        );
+                                      } catch (error) {
+                                        if (!context.mounted) {
+                                          return;
+                                        }
+                                        AppSnackbar.showError(
+                                          context,
+                                          userFacingErrorMessage(
+                                            error,
+                                            fallback:
+                                                'We could not update your availability. Please try again.',
+                                          ),
+                                        );
+                                      }
+                                    },
+                            ),
+                          ],
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    if (vm.errorMessage != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: AdminListItemCard(
+                          padding: const EdgeInsets.all(24),
+                          child: AdminListStateText(message: vm.errorMessage!),
+                        ),
+                      ),
+                    if (vm.assignedBookings.isEmpty &&
+                        vm.hasResolvedInitialBookings &&
+                        vm.errorMessage == null)
+                      AdminListItemCard(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          'No active assigned bookings now.',
+                          style: TextStyle(
+                            color: AppColors.primaryColor.withValues(
+                              alpha: 0.72,
+                            ),
+                            fontWeight: FontWeight.w600,
                           ),
-                        )
-                        .toList(),
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
+                        ),
+                      )
+                    else if (vm.assignedBookings.isNotEmpty)
+                      LazySliverList(
+                        items: vm.assignedBookings.asMap().entries,
+                        itemBuilder: (context, entry) => Padding(
+                          padding: EdgeInsets.only(
+                            bottom: entry.key == vm.assignedBookings.length - 1
+                                ? 0
+                                : 12,
+                          ),
+                          child: BookingRecordCard(
+                            booking: entry.value,
+                            onTap: () => onOpenBooking(entry.value),
+                            headlineStatusLabel: vm.statusLabelForKey(
+                              entry.value.clientStatus,
+                            ),
+                            statusLabelForKey: vm.statusLabelForKey,
+                            showStatusSubmissions: false,
+                            showScheduleDetails: showScheduleDetails,
+                            clientName: vm.clientName(entry.value),
+                            clientPhone: vm.clientPhone(entry.value),
+                            driverName: vm.driverName(entry.value),
+                            driverPhone: vm.driverPhone(entry.value),
+                            helperName: vm.helperName(entry.value),
+                            helperPhone: vm.helperPhone(entry.value),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
     );
   }
 }

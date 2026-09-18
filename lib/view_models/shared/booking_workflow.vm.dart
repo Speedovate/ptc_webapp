@@ -1,3 +1,5 @@
+import 'package:webapp/services/pending_booking_submission.dart';
+import 'package:webapp/services/network_status_events.dart';
 import 'dart:async';
 
 import 'package:stacked/stacked.dart';
@@ -129,6 +131,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
   String? blockedMessage;
   bool isBusyLoading = false;
   bool isSubmitting = false;
+  final _pendingAction = PendingBookingSubmission();
   bool isCancelSubmitting = false;
   int resetTick = 0;
   int cancelResetTick = 0;
@@ -1256,114 +1259,104 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   Future<Booking?> submit() async {
-    final currentUser = user;
-    final currentBooking = booking;
     final activeForm = form;
-    if (currentUser == null || currentBooking == null || activeForm == null) {
+    if (activeForm == null || !validateForSubmit()) {
       return null;
     }
-    if (!canUpdateBooking) {
-      return null;
-    }
-    if (!validateForSubmit()) {
-      return null;
-    }
-    if (!await _canSubmitLifecycleForm(
-      activeForm,
-      currentBooking,
-      currentUser,
-    )) {
-      return null;
-    }
-
-    isSubmitting = true;
-    notifyListeners();
-    await Future<void>.delayed(const Duration(milliseconds: 16));
-
-    try {
-      final nextBooking = _bookingWithResolvedUsers(
-        _engine.applyOutputToBooking(
-          currentBooking,
-          activeForm,
-          [
-            ...StatusFormEngine.visibleFields(fields, answers),
-            ...StatusFormEngine.visibleFields(additionalFields, answers),
-          ],
-          answers,
-          currentUser.id ?? '',
-          currentUser.role,
-        ),
-        currentBooking: currentBooking,
-        formAnswers: answers,
-      );
-      final savedBooking = await _bookingRepository.saveBooking(nextBooking);
-      answers = {};
-      errors = {};
-      additionalFields = const [];
-      resetTick += 1;
-      booking = savedBooking;
-      // The host receives this booking and refreshes the next workflow form.
-      // Do not hold the confirmation dialog open while that background refresh runs.
-      notifyListeners();
-      return savedBooking;
-    } finally {
-      isSubmitting = false;
-      notifyListeners();
-    }
+    return _submitAction(activeForm, answers, [
+      ...StatusFormEngine.visibleFields(fields, answers),
+      ...StatusFormEngine.visibleFields(additionalFields, answers),
+    ]);
   }
 
   Future<Booking?> submitSpecificForm(
     StatusForm activeForm,
     Map<String, dynamic> formAnswers,
-  ) async {
+  ) => _submitAction(activeForm, formAnswers, [
+    ...fieldsForForm(activeForm, answers: formAnswers),
+    ...StatusFormEngine.visibleFields(additionalFields, formAnswers),
+  ]);
+
+  Future<Booking?> _submitAction(
+    StatusForm activeForm,
+    Map<String, dynamic> formAnswers,
+    List<StatusField> actionFields, {
+    bool cancelling = false,
+  }) async {
+    if (isSubmitting || isCancelSubmitting) {
+      return null;
+    }
     final currentUser = user;
     final currentBooking = booking;
-    if (currentUser == null || currentBooking == null) {
+    if (currentUser == null || currentBooking == null || !canUpdateBooking) {
       return null;
     }
-    if (!canUpdateBooking) {
-      return null;
-    }
-    if (!await _canSubmitLifecycleForm(
-      activeForm,
-      currentBooking,
-      currentUser,
-    )) {
-      return null;
-    }
-
-    isSubmitting = true;
-    notifyListeners();
-    await Future<void>.delayed(const Duration(milliseconds: 16));
-
-    try {
-      final nextBooking = _bookingWithResolvedUsers(
-        _engine.applyOutputToBooking(
-          currentBooking,
-          activeForm,
-          [
-            ...fieldsForForm(activeForm, answers: formAnswers),
-            ...StatusFormEngine.visibleFields(additionalFields, formAnswers),
-          ],
-          formAnswers,
-          currentUser.id ?? '',
-          currentUser.role,
-        ),
-        currentBooking: currentBooking,
-        formAnswers: formAnswers,
-      );
-      final savedBooking = await _bookingRepository.saveBooking(nextBooking);
-      answers = {};
-      errors = {};
-      additionalFields = const [];
-      resetTick += 1;
-      booking = savedBooking;
-      // The host receives this booking and refreshes the next workflow form.
-      // Do not hold the confirmation dialog open while that background refresh runs.
+    final validation = _engine.validateFields(actionFields, formAnswers);
+    if (validation.isNotEmpty) {
+      if (cancelling) {
+        cancelErrors = validation;
+      } else {
+        errors = validation;
+      }
       notifyListeners();
-      return savedBooking;
+      return null;
+    }
+    final actionAt = DateTime.now();
+    if (cancelling) {
+      isCancelSubmitting = true;
+    } else {
+      isSubmitting = true;
+    }
+    notifyListeners();
+    try {
+      if (!await _canSubmitLifecycleForm(
+        activeForm,
+        currentBooking,
+        currentUser,
+      )) {
+        return null;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+      final nextBooking = _pendingAction.resolve(
+        {
+          'booking': currentBooking.toMap(),
+          'form': activeForm.toMap(),
+          'fields': actionFields.map((field) => field.toMap()).toList(),
+          'answers': formAnswers,
+          'actor': currentUser.id,
+          'role': currentUser.role,
+        },
+        () => _bookingWithResolvedUsers(
+          _engine.applyOutputToBooking(
+            currentBooking,
+            activeForm,
+            actionFields,
+            formAnswers,
+            currentUser.id ?? '',
+            currentUser.role,
+            actionAt: actionAt,
+          ),
+          currentBooking: currentBooking,
+          formAnswers: formAnswers,
+        ),
+      );
+      final saved = await _bookingRepository.saveBooking(nextBooking);
+      _pendingAction.clear();
+      booking = saved;
+      if (cancelling) {
+        cancelAnswers = {};
+        cancelErrors = {};
+        cancelResetTick++;
+      } else {
+        answers = {};
+        errors = {};
+        additionalFields = const [];
+        resetTick++;
+      }
+      return saved;
     } finally {
       isSubmitting = false;
+      isCancelSubmitting = false;
       notifyListeners();
     }
   }
@@ -1414,10 +1407,22 @@ class BookingWorkflowViewModel extends BaseViewModel {
       notifyListeners();
       return false;
     }
-    final chassis = (await ChassisRequest.instance.getChassis())
+    final request = ChassisRequest.instance;
+    if (!request.hasResolvedChassis && !currentNetworkStatus()) {
+      errors = {
+        'return_driver_id':
+            'Return assignment is not cached on this device. Connect once to load it.',
+      };
+      notifyListeners();
+      return false;
+    }
+    final available = request.hasResolvedChassis
+        ? request.hydratedChassisSnapshot
+        : await request.getChassis().timeout(const Duration(seconds: 5));
+    final chassis = available
         .where((item) => item.id.toString() == chassisId)
         .firstOrNull;
-    if (chassis?.currentDriverId?.toString() == currentUser.id?.trim()) {
+    if (chassis?.driverReferenceId?.toString() == currentUser.id?.trim()) {
       return true;
     }
     errors = {
@@ -1428,49 +1433,16 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   Future<Booking?> submitCancel() async {
-    final currentUser = user;
-    final currentBooking = booking;
     final activeForm = cancelForm;
-    if (currentUser == null || currentBooking == null || activeForm == null) {
+    if (activeForm == null || !validateCancelForSubmit()) {
       return null;
     }
-    if (!canUpdateBooking) {
-      return null;
-    }
-
-    if (!validateCancelForSubmit()) {
-      return null;
-    }
-
-    isCancelSubmitting = true;
-    notifyListeners();
-    await Future<void>.delayed(const Duration(milliseconds: 16));
-
-    try {
-      final nextBooking = _bookingWithResolvedUsers(
-        _engine.applyOutputToBooking(
-          currentBooking,
-          activeForm,
-          cancelFields,
-          cancelAnswers,
-          currentUser.id ?? '',
-          currentUser.role,
-        ),
-        currentBooking: currentBooking,
-        formAnswers: cancelAnswers,
-      );
-      final savedBooking = await _bookingRepository.saveBooking(nextBooking);
-      cancelAnswers = {};
-      cancelErrors = {};
-      cancelResetTick += 1;
-      booking = savedBooking;
-      // The host refreshes the next workflow state after the dialog closes.
-      notifyListeners();
-      return savedBooking;
-    } finally {
-      isCancelSubmitting = false;
-      notifyListeners();
-    }
+    return _submitAction(
+      activeForm,
+      cancelAnswers,
+      cancelFields,
+      cancelling: true,
+    );
   }
 
   bool validateCancelForSubmit() {

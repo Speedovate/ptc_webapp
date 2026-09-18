@@ -1,3 +1,8 @@
+@TestOn('browser')
+library;
+
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:webapp/main.dart';
 
@@ -6,7 +11,7 @@ void main() {
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
-      MyApp(bootstrapFuture: Future<void>.delayed(const Duration(seconds: 1))),
+      MyApp(bootstrapFuture: Completer<void>().future),
     );
 
     expect(

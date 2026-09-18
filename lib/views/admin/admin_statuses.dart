@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -357,10 +358,11 @@ class _StatusesContentState extends State<_StatusesContent> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isNarrow = constraints.maxWidth < 940;
+        final visibleItems = _filteredStatuses;
 
-        return SingleChildScrollView(
+        return LazyDataScrollView(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-          child: Column(
+          child: SliverSection(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _StatusesToolbar(
@@ -391,31 +393,25 @@ class _StatusesContentState extends State<_StatusesContent> {
               ),
               const SizedBox(height: AdminStatusesView.toolbarSectionGap),
               if (isNarrow)
-                _filteredStatuses.isEmpty
+                visibleItems.isEmpty
                     ? _StatusesEmptyState(message: _emptyMessage)
-                    : Column(
-                        children: _filteredStatuses
-                            .asMap()
-                            .entries
-                            .map(
-                              (entry) => Padding(
-                                padding: EdgeInsets.only(
-                                  bottom:
-                                      entry.key == _filteredStatuses.length - 1
-                                      ? 0
-                                      : 12,
-                                ),
-                                child: _StatusResponsiveCard(
-                                  status: entry.value,
-                                  vm: widget.vm,
-                                ),
-                              ),
-                            )
-                            .toList(),
+                    : LazySliverList(
+                        items: visibleItems.asMap().entries,
+                        itemBuilder: (context, entry) => Padding(
+                          padding: EdgeInsets.only(
+                            bottom: entry.key == visibleItems.length - 1
+                                ? 0
+                                : 12,
+                          ),
+                          child: _StatusResponsiveCard(
+                            status: entry.value,
+                            vm: widget.vm,
+                          ),
+                        ),
                       )
               else
                 _StatusesTable(
-                  statuses: _filteredStatuses,
+                  statuses: visibleItems,
                   emptyMessage: _emptyMessage,
                   vm: widget.vm,
                 ),
@@ -929,7 +925,7 @@ class _StatusesDateFilterState extends State<_StatusesDateFilter> {
   }
 }
 
-class _StatusesTable extends StatelessWidget {
+class _StatusesTable extends StatelessWidget implements SliverContent {
   const _StatusesTable({
     required this.statuses,
     required this.emptyMessage,
@@ -962,7 +958,7 @@ class _StatusesTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
+    return SliverWidthBuilder(
       builder: (context, constraints) {
         final textScaler = MediaQuery.textScalerOf(context);
         final sampleId = statuses
@@ -1095,7 +1091,7 @@ class _StatusesTable extends StatelessWidget {
             ? resolvedRolesWidth * variableWidthScale
             : resolvedRolesWidth;
 
-        return Column(
+        return SliverSection(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AdminListHeaderBar(
@@ -1147,8 +1143,9 @@ class _StatusesTable extends StatelessWidget {
             if (statuses.isEmpty)
               _StatusesEmptyState(message: emptyMessage)
             else
-              ...statuses.asMap().entries.map(
-                (entry) => Padding(
+              LazySliverList(
+                items: statuses.asMap().entries,
+                itemBuilder: (context, entry) => Padding(
                   padding: EdgeInsets.only(
                     bottom: entry.key == statuses.length - 1 ? 0 : 12,
                   ),

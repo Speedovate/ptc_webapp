@@ -187,8 +187,10 @@ class StatusFormEngine {
     List<StatusField> fields,
     Map<String, dynamic> answers,
     String userId,
-    String? userRole,
-  ) {
+    String? userRole, {
+    DateTime? actionAt,
+  }) {
+    final occurredAt = actionAt ?? DateTime.now();
     final nextStatus = statusForm.nextStatusKey;
     final normalizedNextStatus = nextStatus?.trim().toLowerCase();
     final vehicleMakeId = _stringAnswer(answers['vehicle_make_id']);
@@ -209,6 +211,7 @@ class StatusFormEngine {
       ],
       submittedBy: userId,
       fields: changedAnswers,
+      submittedAt: occurredAt,
     );
     return booking.copyWith(
       clientStatus: nextStatus ?? booking.clientStatus,
@@ -220,9 +223,11 @@ class StatusFormEngine {
       chassisId: chassisId ?? booking.chassisId,
       statusOutputs: nextOutputs,
       deliveredAt: normalizedNextStatus == 'delivered'
-          ? DateTime.now()
+          ? occurredAt
           : booking.deliveredAt,
-      updatedAt: DateTime.now(),
+      updatedAt: occurredAt,
+      pendingActionAt: occurredAt,
+      pendingBaseUpdatedAt: booking.updatedAt,
     );
   }
 

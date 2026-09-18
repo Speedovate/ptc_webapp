@@ -1,4 +1,6 @@
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
+import 'package:webapp/utils/text_width_cache.dart';
 
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
@@ -336,10 +338,11 @@ class _FieldsContentState extends State<_FieldsContent> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isNarrow = constraints.maxWidth < 940;
+        final visibleItems = _filteredFields;
 
-        return SingleChildScrollView(
+        return LazyDataScrollView(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-          child: Column(
+          child: SliverSection(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _FieldsToolbar(
@@ -369,31 +372,25 @@ class _FieldsContentState extends State<_FieldsContent> {
               ),
               const SizedBox(height: AdminFieldsView.toolbarSectionGap),
               if (isNarrow)
-                _filteredFields.isEmpty
+                visibleItems.isEmpty
                     ? _FieldsEmptyState(message: _emptyMessage)
-                    : Column(
-                        children: _filteredFields
-                            .asMap()
-                            .entries
-                            .map(
-                              (entry) => Padding(
-                                padding: EdgeInsets.only(
-                                  bottom:
-                                      entry.key == _filteredFields.length - 1
-                                      ? 0
-                                      : 12,
-                                ),
-                                child: _FieldResponsiveCard(
-                                  field: entry.value,
-                                  vm: widget.vm,
-                                ),
-                              ),
-                            )
-                            .toList(),
+                    : LazySliverList(
+                        items: visibleItems.asMap().entries,
+                        itemBuilder: (context, entry) => Padding(
+                          padding: EdgeInsets.only(
+                            bottom: entry.key == visibleItems.length - 1
+                                ? 0
+                                : 12,
+                          ),
+                          child: _FieldResponsiveCard(
+                            field: entry.value,
+                            vm: widget.vm,
+                          ),
+                        ),
                       )
               else
                 _FieldsTable(
-                  fields: _filteredFields,
+                  fields: visibleItems,
                   emptyMessage: _emptyMessage,
                   vm: widget.vm,
                 ),
@@ -910,7 +907,8 @@ class _FieldsDateFilterState extends State<_FieldsDateFilter> {
   }
 }
 
-class _FieldsTable extends StatelessWidget {
+class _FieldsTable extends StatelessWidget implements SliverContent {
+  static final _keyMeasurements = TextWidthCache();
   const _FieldsTable({
     required this.fields,
     required this.emptyMessage,
@@ -943,15 +941,13 @@ class _FieldsTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
+    return SliverWidthBuilder(
       builder: (context, constraints) {
         final textScaler = MediaQuery.textScalerOf(context);
         final sampleId = fields
             .map((field) => field.id ?? '-')
             .fold<String>('-', _longerText);
-        final sampleKey = fields
-            .map((field) => field.key ?? '-')
-            .fold<String>('-', _longerText);
+        final keys = fields.map((field) => field.key ?? '-').toSet();
         final sampleTitle = fields
             .map(
               (field) =>
@@ -976,14 +972,19 @@ class _FieldsTable extends StatelessWidget {
           sampleId,
           _valueStyle,
         );
-        final keyWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Key',
-          _headerStyle,
-          sampleKey,
-          _valueStyle,
-        );
+        final inheritedStyle = DefaultTextStyle.of(context).style;
+        double measureKey(String text, TextStyle style) =>
+            _keyMeasurements.measure(
+              text: text,
+              style: inheritedStyle.merge(style),
+              textScaler: textScaler,
+              textDirection: Directionality.of(context),
+              locale: Localizations.maybeLocaleOf(context),
+            );
+        var keyWidth = measureKey('Key', _headerStyle);
+        for (final key in keys) {
+          keyWidth = _maxValue(keyWidth, measureKey(key, _valueStyle));
+        }
         final titleWidth = _maxTextWidth(
           context,
           textScaler,
@@ -1035,23 +1036,22 @@ class _FieldsTable extends StatelessWidget {
             resolvedUpdatedWidth +
             resolvedActionsWidth +
             40;
-        final desiredVariableWidthTotal = resolvedKeyWidth + resolvedTitleWidth;
-        final availableVariableWidth = (constraints.maxWidth - fixedWidthTotal)
-            .clamp(0.0, double.infinity);
-        final shouldCompressVariableColumns =
-            availableVariableWidth < desiredVariableWidthTotal;
-        final variableWidthScale =
-            shouldCompressVariableColumns && desiredVariableWidthTotal > 0
-            ? availableVariableWidth / desiredVariableWidthTotal
-            : 1.0;
-        final effectiveKeyWidth = shouldCompressVariableColumns
-            ? resolvedKeyWidth * variableWidthScale
-            : resolvedKeyWidth;
-        final effectiveTitleWidth = shouldCompressVariableColumns
-            ? resolvedTitleWidth * variableWidthScale
-            : resolvedTitleWidth;
-
-        return Column(
+        final tableWidth = _maxValue(
+          constraints.maxWidth,
+          fixedWidthTotal + resolvedKeyWidth + resolvedTitleWidth,
+        );
+        if (tableWidth > constraints.maxWidth) {
+          return LazySliverList(
+            items: fields.asMap().entries,
+            itemBuilder: (context, entry) => Padding(
+              padding: EdgeInsets.only(
+                bottom: entry.key == fields.length - 1 ? 0 : 12,
+              ),
+              child: _FieldResponsiveCard(field: entry.value, vm: vm),
+            ),
+          );
+        }
+        return SliverSection(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AdminListHeaderBar(
@@ -1064,11 +1064,11 @@ class _FieldsTable extends StatelessWidget {
                     child: const _FieldsHeaderCell(label: 'ID'),
                   ),
                   _FieldsFixedSlot(
-                    width: effectiveKeyWidth,
+                    width: resolvedKeyWidth,
                     child: const _FieldsHeaderCell(label: 'Key'),
                   ),
                   _FieldsFixedSlot(
-                    width: effectiveTitleWidth,
+                    width: resolvedTitleWidth,
                     child: const _FieldsHeaderCell(label: 'Title'),
                   ),
                   _FieldsFixedSlot(
@@ -1099,8 +1099,9 @@ class _FieldsTable extends StatelessWidget {
             if (fields.isEmpty)
               _FieldsEmptyState(message: emptyMessage)
             else
-              ...fields.asMap().entries.map(
-                (entry) => Padding(
+              LazySliverList(
+                items: fields.asMap().entries,
+                itemBuilder: (context, entry) => Padding(
                   padding: EdgeInsets.only(
                     bottom: entry.key == fields.length - 1 ? 0 : 12,
                   ),
@@ -1108,8 +1109,8 @@ class _FieldsTable extends StatelessWidget {
                     field: entry.value,
                     vm: vm,
                     resolvedIdWidth: resolvedIdWidth,
-                    resolvedKeyWidth: effectiveKeyWidth,
-                    resolvedTitleWidth: effectiveTitleWidth,
+                    resolvedKeyWidth: resolvedKeyWidth,
+                    resolvedTitleWidth: resolvedTitleWidth,
                     resolvedTypeWidth: resolvedTypeWidth,
                     resolvedCreatedWidth: resolvedCreatedWidth,
                     resolvedUpdatedWidth: resolvedUpdatedWidth,
@@ -1210,7 +1211,8 @@ class _FieldTableRow extends StatelessWidget {
               child: Text(
                 field.key ?? '-',
                 style: _FieldsStyles.valueStyle,
-                softWrap: true,
+                maxLines: 1,
+                softWrap: false,
               ),
             ),
           ),
@@ -1847,6 +1849,7 @@ class _ResponsiveField extends StatelessWidget {
       width: width,
       centered: centered,
       isTitle: isTitle,
+      singleLine: title == 'Key',
     );
   }
 }

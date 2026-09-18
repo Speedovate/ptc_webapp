@@ -1,3 +1,4 @@
+import 'package:webapp/services/offline_reference_mapper.dart';
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -389,7 +390,8 @@ class StatusRequest implements StatusFormRepository {
         resourceKey: _statusFormsResourceKey,
         documentId: nextId,
       );
-      if (currentNetworkStatus()) {
+      if (currentNetworkStatus() &&
+          !OfflineReferenceMapper.hasTemporaryReferences(document)) {
         await _writeCollectionDocumentOnline(
           collectionPath: _statusFormsResourceKey,
           documentId: nextId,
@@ -438,7 +440,8 @@ class StatusRequest implements StatusFormRepository {
         resourceKey: _statusFormsResourceKey,
         documentId: statusFormId,
       );
-      if (currentNetworkStatus()) {
+      if (currentNetworkStatus() &&
+          !OfflineReferenceMapper.hasTemporaryReferences(updatedFormDocument)) {
         await _writeCollectionDocumentOnline(
           collectionPath: _statusFormsResourceKey,
           documentId: statusFormId,
@@ -483,7 +486,8 @@ class StatusRequest implements StatusFormRepository {
         resourceKey: _statusFieldsResourceKey,
         documentId: nextId,
       );
-      if (currentNetworkStatus()) {
+      if (currentNetworkStatus() &&
+          !OfflineReferenceMapper.hasTemporaryReferences(document)) {
         await _writeCollectionDocumentOnline(
           collectionPath: _statusFieldsResourceKey,
           documentId: nextId,
@@ -537,7 +541,8 @@ class StatusRequest implements StatusFormRepository {
         resourceKey: _statusesResourceKey,
         documentId: nextId,
       );
-      if (currentNetworkStatus()) {
+      if (currentNetworkStatus() &&
+          !OfflineReferenceMapper.hasTemporaryReferences(document)) {
         await _writeCollectionDocumentOnline(
           collectionPath: _statusesResourceKey,
           documentId: nextId,
@@ -824,6 +829,18 @@ class StatusRequest implements StatusFormRepository {
     required Map<String, dynamic> document,
     required CollectionReference<Map<String, dynamic>> collection,
   }) async {
+    if (OfflineReferenceMapper.hasTemporaryReferences(document)) {
+      await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+        collectionKey: collectionPath,
+        documentId: documentId,
+        document: document,
+        baseUpdatedAt: await _cachedUpdatedAt(
+          resourceKey: collectionPath,
+          documentId: documentId,
+        ),
+      );
+      return;
+    }
     if (kIsWeb) {
       try {
         final patched = await _firestorePublicDocumentFetcher
@@ -885,6 +902,13 @@ class StatusRequest implements StatusFormRepository {
     required String documentId,
     required CollectionReference<Map<String, dynamic>> collection,
   }) async {
+    if (OfflineReferenceMapper.hasTemporaryReferences({'id': documentId})) {
+      await _offlineMutationQueueService.queueCollectionDocumentDelete(
+        collectionKey: collectionPath,
+        documentId: documentId,
+      );
+      return;
+    }
     if (kIsWeb) {
       try {
         final deleted = await _firestorePublicDocumentFetcher
@@ -1257,7 +1281,7 @@ class StatusRequest implements StatusFormRepository {
         submissionKey: submissionKey,
       );
     }
-    if (!currentNetworkStatus()) {
+    if (!currentNetworkStatus() || normalizedId.startsWith('offline_')) {
       return normalizedId;
     }
     final existing = await collection.doc(normalizedId).get();

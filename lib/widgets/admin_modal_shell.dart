@@ -13,6 +13,8 @@ class AdminModalShell extends StatelessWidget {
     required this.child,
     this.maxWidth = 560,
     this.maxHeightFactor = 0.82,
+    this.flexibleBody = false,
+    this.bodyHandlesScrolling = false,
     this.actions,
     this.contentInset = const EdgeInsets.fromLTRB(0, 16, 0, 24),
     this.actionsInset = const EdgeInsets.fromLTRB(24, 0, 24, 24),
@@ -27,6 +29,10 @@ class AdminModalShell extends StatelessWidget {
   final Widget child;
   final double maxWidth;
   final double maxHeightFactor;
+  final bool flexibleBody;
+
+  /// Use a bounded body for a child that provides its own lazy viewport.
+  final bool bodyHandlesScrolling;
   final List<Widget>? actions;
   final EdgeInsets contentInset;
   final EdgeInsets actionsInset;
@@ -100,13 +106,31 @@ class AdminModalShell extends StatelessWidget {
                       padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
                       child: Text(title, style: theme.textTheme.titleLarge),
                     ),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: bodyMaxHeight),
-                      child: SingleChildScrollView(
-                        primary: false,
-                        child: Padding(padding: contentInset, child: child),
+                    if (flexibleBody)
+                      Flexible(
+                        child: bodyHandlesScrolling
+                            ? Padding(padding: contentInset, child: child)
+                            : SingleChildScrollView(
+                                primary: false,
+                                child: Padding(
+                                  padding: contentInset,
+                                  child: child,
+                                ),
+                              ),
+                      )
+                    else
+                      ConstrainedBox(
+                        constraints: BoxConstraints(maxHeight: bodyMaxHeight),
+                        child: bodyHandlesScrolling
+                            ? Padding(padding: contentInset, child: child)
+                            : SingleChildScrollView(
+                                primary: false,
+                                child: Padding(
+                                  padding: contentInset,
+                                  child: child,
+                                ),
+                              ),
                       ),
-                    ),
                     if (hasActions)
                       Padding(
                         padding: actionsInset,

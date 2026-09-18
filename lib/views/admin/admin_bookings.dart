@@ -1,3 +1,9 @@
+import 'package:webapp/widgets/shared/paged_data_sliver.dart';
+import 'package:webapp/utils/text_width_cache.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:webapp/services/booking_conflict_review_service.dart';
+import 'package:webapp/view_models/admin/booking_conflict_review.vm.dart';
+import 'package:webapp/views/admin/booking_conflict_review_dialog.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -174,12 +180,12 @@ class AdminBookingsView extends StatefulWidget {
 }
 
 String _chassisLabel(Chassis chassis) {
-  final bookingStatus = chassis.currentBookingId == null
+  final bookingStatus = chassis.bookingReferenceId == null
       ? null
       : BookingRequest.hydratedBookingsSnapshot
             .where(
               (booking) =>
-                  booking.id?.toString() == '${chassis.currentBookingId}',
+                  booking.id?.toString() == '${chassis.bookingReferenceId}',
             )
             .firstOrNull
             ?.clientStatus;
@@ -398,98 +404,166 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
           );
         }
 
-        return AppPageLoadingOverlay(
-          isVisible: showInitialLoading,
-          message: vm.busyMessage,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AppRefreshStrip(isVisible: vm.isBusy),
-                AdminListToolbar(
-                  controlHeight: _toolbarControlHeight,
-                  surfaceRadius: 16,
-                  search: AdminListSearchField(
-                    controlHeight: _toolbarControlHeight,
-                    surfaceRadius: 16,
-                    initialValue: vm.searchQuery,
-                    onChanged: vm.setSearchQuery,
-                  ),
-                  filtersBuilder: (context, iconOnly) =>
-                      AdminListDynamicFiltersPanel(
-                        iconOnly: iconOnly,
-                        filters: [
-                          AdminListDropdownFilterConfig(
-                            label: 'Status',
-                            value: vm.statusFilter,
-                            items: vm.statusOptions,
-                            onChanged: vm.setStatusFilter,
+        return LayoutBuilder(
+          builder: (context, constraints) => AppPageLoadingOverlay(
+            isVisible: showInitialLoading,
+            message: vm.busyMessage,
+            child: PagedScrollObserver(
+              child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.all(24),
+                    sliver: SliverMainAxisGroup(
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              AppRefreshStrip(isVisible: vm.isBusy),
+                              if (widget.user.role == 'admin' &&
+                                  vm.bookings.any(
+                                    (booking) =>
+                                        booking.id?.startsWith('offline_') ==
+                                        true,
+                                  ))
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: OutlinedButton.icon(
+                                    icon: const Icon(Icons.compare_arrows),
+                                    label: const Text(
+                                      'Review offline booking conflicts',
+                                    ),
+                                    onPressed: () => showDialog<void>(
+                                      context: context,
+                                      barrierDismissible: false,
+                                      builder: (_) => SelectionArea(
+                                        child: BookingConflictReviewDialog(
+                                          viewModel:
+                                              BookingConflictReviewViewModel(
+                                                service:
+                                                    BookingConflictReviewService(
+                                                      firestore:
+                                                          FirebaseFirestore
+                                                              .instance,
+                                                    ),
+                                                adminId: widget.user.id ?? '',
+                                              ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              AdminListToolbar(
+                                controlHeight: _toolbarControlHeight,
+                                surfaceRadius: 16,
+                                search: AdminListSearchField(
+                                  controlHeight: _toolbarControlHeight,
+                                  surfaceRadius: 16,
+                                  initialValue: vm.searchQuery,
+                                  onChanged: vm.setSearchQuery,
+                                ),
+                                filtersBuilder: (context, iconOnly) =>
+                                    AdminListDynamicFiltersPanel(
+                                      iconOnly: iconOnly,
+                                      filters: [
+                                        AdminListDropdownFilterConfig(
+                                          label: 'Status',
+                                          value: vm.statusFilter,
+                                          items: vm.statusOptions,
+                                          onChanged: vm.setStatusFilter,
+                                        ),
+                                        AdminListDateFilterConfig(
+                                          label: 'Created Start',
+                                          value: vm.startDate,
+                                          onSelected: vm.updateStartDate,
+                                          formatter: vm.formatDate,
+                                        ),
+                                        AdminListDateFilterConfig(
+                                          label: 'Created End',
+                                          value: vm.endDate,
+                                          onSelected: vm.updateEndDate,
+                                          formatter: vm.formatDate,
+                                        ),
+                                        AdminListDateFilterConfig(
+                                          label: 'Updated Start',
+                                          value: vm.updatedStartDate,
+                                          onSelected: vm.updateUpdatedStartDate,
+                                          formatter: vm.formatDate,
+                                        ),
+                                        AdminListDateFilterConfig(
+                                          label: 'Updated End',
+                                          value: vm.updatedEndDate,
+                                          onSelected: vm.updateUpdatedEndDate,
+                                          formatter: vm.formatDate,
+                                        ),
+                                      ],
+                                      onClear: vm.clearFilters,
+                                    ),
+                                onNewPressed: _canCreateBookings
+                                    ? () => _openNewBookingDialog(vm)
+                                    : null,
+                              ),
+                              const SizedBox(height: 12),
+                              if (vm.errorMessage != null)
+                                _AdminBookingsStateCard(
+                                  child: AdminListStateText(
+                                    message: vm.errorMessage!,
+                                  ),
+                                )
+                              else if (vm.bookings.isEmpty)
+                                _AdminBookingsStateCard(
+                                  child: const AdminListStateText(
+                                    message: 'No bookings yet.',
+                                  ),
+                                )
+                              else if (filteredBookings.isEmpty)
+                                _AdminBookingsStateCard(
+                                  child: const AdminListStateText(
+                                    message:
+                                        'No bookings matched your current search.',
+                                  ),
+                                ),
+                            ],
                           ),
-                          AdminListDateFilterConfig(
-                            label: 'Created Start',
-                            value: vm.startDate,
-                            onSelected: vm.updateStartDate,
-                            formatter: vm.formatDate,
+                        ),
+                        if (vm.errorMessage == null &&
+                            filteredBookings.isNotEmpty)
+                          PagedDataSliver<Booking>(
+                            storageId: 'admin_bookings-page-window',
+                            items: filteredBookings,
+                            resetKey: (
+                              vm.searchQuery,
+                              vm.statusFilter,
+                              vm.startDate,
+                              vm.endDate,
+                              vm.updatedStartDate,
+                              vm.updatedEndDate,
+                            ),
+                            builder: (context, visibleBookings) =>
+                                AdminBookingsListSliver(
+                                  bookings: visibleBookings,
+                                  statusLabelFor: vm.clientStatusLabel,
+                                  availableWidth: constraints.maxWidth - 48,
+                                  onView: (booking) {
+                                    setState(() {
+                                      _selectedBooking = booking;
+                                    });
+                                  },
+                                  onEdit: _canUpdateBookings
+                                      ? (booking) {
+                                          unawaited(
+                                            _openEditBookingDialog(vm, booking),
+                                          );
+                                        }
+                                      : null,
+                                ),
                           ),
-                          AdminListDateFilterConfig(
-                            label: 'Created End',
-                            value: vm.endDate,
-                            onSelected: vm.updateEndDate,
-                            formatter: vm.formatDate,
-                          ),
-                          AdminListDateFilterConfig(
-                            label: 'Updated Start',
-                            value: vm.updatedStartDate,
-                            onSelected: vm.updateUpdatedStartDate,
-                            formatter: vm.formatDate,
-                          ),
-                          AdminListDateFilterConfig(
-                            label: 'Updated End',
-                            value: vm.updatedEndDate,
-                            onSelected: vm.updateUpdatedEndDate,
-                            formatter: vm.formatDate,
-                          ),
-                        ],
-                        onClear: vm.clearFilters,
-                      ),
-                  onNewPressed: _canCreateBookings
-                      ? () => _openNewBookingDialog(vm)
-                      : null,
-                ),
-                const SizedBox(height: 12),
-                if (vm.errorMessage != null)
-                  _AdminBookingsStateCard(
-                    child: AdminListStateText(message: vm.errorMessage!),
-                  )
-                else if (vm.bookings.isEmpty)
-                  _AdminBookingsStateCard(
-                    child: const AdminListStateText(
-                      message: 'No bookings yet.',
+                      ],
                     ),
-                  )
-                else if (filteredBookings.isEmpty)
-                  _AdminBookingsStateCard(
-                    child: const AdminListStateText(
-                      message: 'No bookings matched your current search.',
-                    ),
-                  )
-                else
-                  _AdminBookingsTable(
-                    bookings: filteredBookings,
-                    vm: vm,
-                    onView: (booking) {
-                      setState(() {
-                        _selectedBooking = booking;
-                      });
-                    },
-                    onEdit: _canUpdateBookings
-                        ? (booking) {
-                            unawaited(_openEditBookingDialog(vm, booking));
-                          }
-                        : null,
                   ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -2285,16 +2359,20 @@ class _NewAdminBookingDialogState extends State<_NewAdminBookingDialog> {
   }
 }
 
-class _AdminBookingsTable extends StatelessWidget {
-  const _AdminBookingsTable({
+class AdminBookingsListSliver extends StatelessWidget {
+  static final _vanNumberMeasurements = TextWidthCache();
+  const AdminBookingsListSliver({
+    super.key,
     required this.bookings,
-    required this.vm,
+    required this.statusLabelFor,
+    required this.availableWidth,
     required this.onView,
     this.onEdit,
   });
 
   final List<Booking> bookings;
-  final AdminBookingsViewModel vm;
+  final String Function(Booking) statusLabelFor;
+  final double availableWidth;
   final ValueChanged<Booking> onView;
   final ValueChanged<Booking>? onEdit;
 
@@ -2327,9 +2405,7 @@ class _AdminBookingsTable extends StatelessWidget {
     final longestWaybillNumber = _longestText(
       bookings.map((booking) => _waybillNumber(booking)),
     );
-    final longestVanNumber = _longestText(
-      bookings.map((booking) => _vanNumber(booking)),
-    );
+    final vanNumbers = bookings.map(_vanNumber).toSet();
     final longestVanSize = _longestText(
       bookings.map((booking) => _vanSize(booking)),
     );
@@ -2337,203 +2413,235 @@ class _AdminBookingsTable extends StatelessWidget {
       bookings.map((booking) => _amount(booking)),
     );
     final longestStatusValue = _longestText(
-      bookings.map((booking) => vm.clientStatusLabel(booking)),
+      bookings.map((booking) => statusLabelFor(booking)),
     );
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final textScaler = MediaQuery.textScalerOf(context);
-        final idWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'ID',
-          longestIdValue,
-        );
-        final createdWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Created',
-          longestCreatedValue,
-        );
-        final updatedWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Updated',
-          longestUpdatedValue,
-        );
-        final waybillWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Waybill Number',
-          longestWaybillNumber,
-        );
-        final vanNumberWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Van Number',
-          longestVanNumber,
-        );
-        final vanSizeWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Van Size',
-          longestVanSize,
-        );
-        final amountWidth = _maxTextWidth(
-          context,
-          textScaler,
-          'Amount',
-          longestAmount,
-        );
-        final statusTextWidth = AdminListMeasurements.measureTextWidth(
-          context,
-          textScaler,
-          longestStatusValue,
-          _valueStyle,
-        );
-        final statusHeaderWidth = AdminListMeasurements.measureTextWidth(
-          context,
-          textScaler,
-          'Status',
-          _headerStyle,
-        );
-        final statusWidth = _maxValue(statusTextWidth + 32, statusHeaderWidth);
-        final actionsWidth = _maxValue(
-          88,
-          AdminListMeasurements.measureTextWidth(
-            context,
-            textScaler,
-            'Actions',
-            _headerStyle,
-          ),
-        );
+    return _buildSliver(
+      context,
+      longestIdValue,
+      longestCreatedValue,
+      longestUpdatedValue,
+      longestWaybillNumber,
+      vanNumbers,
+      longestVanSize,
+      longestAmount,
+      longestStatusValue,
+    );
+  }
 
-        final resolvedIdWidth = _resolvedColumnWidth(idWidth);
-        final resolvedCreatedWidth = _resolvedColumnWidth(createdWidth);
-        final resolvedUpdatedWidth = _resolvedColumnWidth(updatedWidth);
-        final resolvedWaybillWidth = _resolvedColumnWidth(waybillWidth);
-        final resolvedVanNumberWidth = _resolvedColumnWidth(vanNumberWidth);
-        final resolvedVanSizeWidth = _resolvedColumnWidth(vanSizeWidth);
-        final resolvedAmountWidth = _resolvedColumnWidth(amountWidth);
-        final resolvedStatusWidth = _resolvedColumnWidth(statusWidth);
-        final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
-        final totalMeasuredWidth =
-            resolvedIdWidth +
-            resolvedWaybillWidth +
-            resolvedVanNumberWidth +
-            resolvedVanSizeWidth +
-            resolvedAmountWidth +
-            resolvedStatusWidth +
-            resolvedCreatedWidth +
-            resolvedUpdatedWidth +
-            resolvedActionsWidth +
-            40;
-        final useResponsiveCards = totalMeasuredWidth > constraints.maxWidth;
+  Widget _buildSliver(
+    BuildContext context,
+    String longestIdValue,
+    String longestCreatedValue,
+    String longestUpdatedValue,
+    String longestWaybillNumber,
+    Set<String> vanNumbers,
+    String longestVanSize,
+    String longestAmount,
+    String longestStatusValue,
+  ) {
+    final textScaler = MediaQuery.textScalerOf(context);
+    final idWidth = _maxTextWidth(context, textScaler, 'ID', longestIdValue);
+    final createdWidth = _maxTextWidth(
+      context,
+      textScaler,
+      'Created',
+      longestCreatedValue,
+    );
+    final updatedWidth = _maxTextWidth(
+      context,
+      textScaler,
+      'Updated',
+      longestUpdatedValue,
+    );
+    final waybillWidth = _maxTextWidth(
+      context,
+      textScaler,
+      'Waybill Number',
+      longestWaybillNumber,
+    );
+    // Equal-length identifiers can have different rendered widths. Match
+    // the inherited font used by Text and measure each distinct value.
+    final inheritedStyle = DefaultTextStyle.of(context).style;
+    final direction = Directionality.of(context);
+    final locale = Localizations.maybeLocaleOf(context);
+    double measureVanText(String text, TextStyle style) =>
+        _vanNumberMeasurements.measure(
+          text: text,
+          style: inheritedStyle.merge(style),
+          textScaler: textScaler,
+          textDirection: direction,
+          locale: locale,
+        );
+    var vanNumberWidth = measureVanText('Van Number', _headerStyle);
+    for (final vanNumber in vanNumbers) {
+      vanNumberWidth = _maxValue(
+        vanNumberWidth,
+        measureVanText(vanNumber, _valueStyle),
+      );
+    }
+    final vanSizeWidth = _maxTextWidth(
+      context,
+      textScaler,
+      'Van Size',
+      longestVanSize,
+    );
+    final amountWidth = _maxTextWidth(
+      context,
+      textScaler,
+      'Amount',
+      longestAmount,
+    );
+    final statusTextWidth = AdminListMeasurements.measureTextWidth(
+      context,
+      textScaler,
+      longestStatusValue,
+      _valueStyle,
+    );
+    final statusHeaderWidth = AdminListMeasurements.measureTextWidth(
+      context,
+      textScaler,
+      'Status',
+      _headerStyle,
+    );
+    final statusWidth = _maxValue(statusTextWidth + 32, statusHeaderWidth);
+    final actionsWidth = _maxValue(
+      88,
+      AdminListMeasurements.measureTextWidth(
+        context,
+        textScaler,
+        'Actions',
+        _headerStyle,
+      ),
+    );
 
-        if (useResponsiveCards) {
-          return Column(
-            children: bookings
-                .asMap()
-                .entries
-                .map(
-                  (entry) => Padding(
-                    padding: EdgeInsets.only(
-                      bottom: entry.key == bookings.length - 1 ? 0 : 12,
-                    ),
-                    child: _AdminBookingResponsiveCard(
-                      booking: entry.value,
-                      statusLabel: vm.clientStatusLabel(entry.value),
-                      onView: () => onView(entry.value),
-                      onEdit: onEdit == null
-                          ? null
-                          : () => onEdit!(entry.value),
-                    ),
-                  ),
-                )
-                .toList(),
+    final resolvedIdWidth = _resolvedColumnWidth(idWidth);
+    final resolvedCreatedWidth = _resolvedColumnWidth(createdWidth);
+    final resolvedUpdatedWidth = _resolvedColumnWidth(updatedWidth);
+    final resolvedWaybillWidth = _resolvedColumnWidth(waybillWidth);
+    final resolvedVanNumberWidth = _resolvedColumnWidth(vanNumberWidth);
+    final resolvedVanSizeWidth = _resolvedColumnWidth(vanSizeWidth);
+    final resolvedAmountWidth = _resolvedColumnWidth(amountWidth);
+    final resolvedStatusWidth = _resolvedColumnWidth(statusWidth);
+    final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
+    final totalMeasuredWidth =
+        resolvedIdWidth +
+        resolvedWaybillWidth +
+        resolvedVanNumberWidth +
+        resolvedVanSizeWidth +
+        resolvedAmountWidth +
+        resolvedStatusWidth +
+        resolvedCreatedWidth +
+        resolvedUpdatedWidth +
+        resolvedActionsWidth +
+        40;
+    final useResponsiveCards = totalMeasuredWidth > availableWidth;
+
+    if (useResponsiveCards) {
+      return SliverList.builder(
+        itemCount: bookings.length,
+        itemBuilder: (context, index) {
+          final booking = bookings[index];
+          return Padding(
+            key: ValueKey(booking.id),
+            padding: EdgeInsets.only(
+              bottom: index == bookings.length - 1 ? 0 : 12,
+            ),
+            child: _AdminBookingResponsiveCard(
+              booking: booking,
+              statusLabel: statusLabelFor(booking),
+              onView: () => onView(booking),
+              onEdit: onEdit == null ? null : () => onEdit!(booking),
+            ),
           );
-        }
+        },
+      );
+    }
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AdminListHeaderBar(
-              minHeight: 52,
-              borderRadius: 16,
-              child: Row(
-                children: [
-                  _AdminBookingsFixedSlot(
-                    width: resolvedIdWidth,
-                    child: const _AdminBookingsHeaderCell(label: 'ID'),
-                  ),
-                  _AdminBookingsFixedSlot(
-                    width: resolvedWaybillWidth,
-                    child: const _AdminBookingsHeaderCell(
-                      label: 'Waybill Number',
-                    ),
-                  ),
-                  _AdminBookingsFixedSlot(
-                    width: resolvedVanNumberWidth,
-                    child: const _AdminBookingsHeaderCell(label: 'Van Number'),
-                  ),
-                  _AdminBookingsFixedSlot(
-                    width: resolvedVanSizeWidth,
-                    child: const _AdminBookingsHeaderCell(label: 'Van Size'),
-                  ),
-                  _AdminBookingsFixedSlot(
-                    width: resolvedAmountWidth,
-                    child: const _AdminBookingsHeaderCell(label: 'Amount'),
-                  ),
-                  _AdminBookingsFixedSlot(
-                    width: resolvedStatusWidth,
-                    child: const _AdminBookingsHeaderCell(label: 'Status'),
-                  ),
-                  _AdminBookingsFixedSlot(
-                    width: resolvedCreatedWidth,
-                    child: const _AdminBookingsHeaderCell(label: 'Created'),
-                  ),
-                  _AdminBookingsFixedSlot(
-                    width: resolvedUpdatedWidth,
-                    child: const _AdminBookingsHeaderCell(label: 'Updated'),
-                  ),
-                  AdminListTrailingActionsLane(
-                    width: resolvedActionsWidth,
-                    child: const _AdminBookingsHeaderCell(
-                      label: 'Actions',
-                      trailingPadding: 0,
-                      alignment: Alignment.centerRight,
-                      textAlign: TextAlign.right,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            ...bookings.asMap().entries.map(
-              (entry) => Padding(
-                padding: EdgeInsets.only(
-                  bottom: entry.key == bookings.length - 1 ? 0 : 12,
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverToBoxAdapter(
+          child: AdminListHeaderBar(
+            minHeight: 52,
+            borderRadius: 16,
+            child: Row(
+              children: [
+                _AdminBookingsFixedSlot(
+                  width: resolvedIdWidth,
+                  child: const _AdminBookingsHeaderCell(label: 'ID'),
                 ),
-                child: _AdminBookingWideRow(
-                  booking: entry.value,
-                  statusLabel: vm.clientStatusLabel(entry.value),
-                  resolvedIdWidth: resolvedIdWidth,
-                  resolvedWaybillWidth: resolvedWaybillWidth,
-                  resolvedVanNumberWidth: resolvedVanNumberWidth,
-                  resolvedVanSizeWidth: resolvedVanSizeWidth,
-                  resolvedAmountWidth: resolvedAmountWidth,
-                  resolvedStatusWidth: resolvedStatusWidth,
-                  resolvedCreatedWidth: resolvedCreatedWidth,
-                  resolvedUpdatedWidth: resolvedUpdatedWidth,
-                  resolvedActionsWidth: resolvedActionsWidth,
-                  onView: () => onView(entry.value),
-                  onEdit: onEdit == null ? null : () => onEdit!(entry.value),
+                _AdminBookingsFixedSlot(
+                  width: resolvedWaybillWidth,
+                  child: const _AdminBookingsHeaderCell(
+                    label: 'Waybill Number',
+                  ),
                 ),
-              ),
+                _AdminBookingsFixedSlot(
+                  width: resolvedVanNumberWidth,
+                  child: const _AdminBookingsHeaderCell(label: 'Van Number'),
+                ),
+                _AdminBookingsFixedSlot(
+                  width: resolvedVanSizeWidth,
+                  child: const _AdminBookingsHeaderCell(label: 'Van Size'),
+                ),
+                _AdminBookingsFixedSlot(
+                  width: resolvedAmountWidth,
+                  child: const _AdminBookingsHeaderCell(label: 'Amount'),
+                ),
+                _AdminBookingsFixedSlot(
+                  width: resolvedStatusWidth,
+                  child: const _AdminBookingsHeaderCell(label: 'Status'),
+                ),
+                _AdminBookingsFixedSlot(
+                  width: resolvedCreatedWidth,
+                  child: const _AdminBookingsHeaderCell(label: 'Created'),
+                ),
+                _AdminBookingsFixedSlot(
+                  width: resolvedUpdatedWidth,
+                  child: const _AdminBookingsHeaderCell(label: 'Updated'),
+                ),
+                AdminListTrailingActionsLane(
+                  width: resolvedActionsWidth,
+                  child: const _AdminBookingsHeaderCell(
+                    label: 'Actions',
+                    trailingPadding: 0,
+                    alignment: Alignment.centerRight,
+                    textAlign: TextAlign.right,
+                  ),
+                ),
+              ],
             ),
-          ],
-        );
-      },
+          ),
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 14)),
+        SliverList.builder(
+          itemCount: bookings.length,
+          itemBuilder: (context, index) {
+            final booking = bookings[index];
+            return Padding(
+              key: ValueKey(booking.id),
+              padding: EdgeInsets.only(
+                bottom: index == bookings.length - 1 ? 0 : 12,
+              ),
+              child: _AdminBookingWideRow(
+                booking: booking,
+                statusLabel: statusLabelFor(booking),
+                resolvedIdWidth: resolvedIdWidth,
+                resolvedWaybillWidth: resolvedWaybillWidth,
+                resolvedVanNumberWidth: resolvedVanNumberWidth,
+                resolvedVanSizeWidth: resolvedVanSizeWidth,
+                resolvedAmountWidth: resolvedAmountWidth,
+                resolvedStatusWidth: resolvedStatusWidth,
+                resolvedCreatedWidth: resolvedCreatedWidth,
+                resolvedUpdatedWidth: resolvedUpdatedWidth,
+                resolvedActionsWidth: resolvedActionsWidth,
+                onView: () => onView(booking),
+                onEdit: onEdit == null ? null : () => onEdit!(booking),
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 
@@ -2651,7 +2759,7 @@ class _AdminBookingWideRow extends StatelessWidget {
             child: _AdminBookingsBodyCell(
               child: Text(
                 booking.id ?? '-',
-                style: _AdminBookingsTable._valueStyle,
+                style: AdminBookingsListSliver._valueStyle,
                 softWrap: true,
               ),
             ),
@@ -2660,8 +2768,8 @@ class _AdminBookingWideRow extends StatelessWidget {
             width: resolvedWaybillWidth,
             child: _AdminBookingsBodyCell(
               child: Text(
-                _AdminBookingsTable._waybillNumber(booking),
-                style: _AdminBookingsTable._valueStyle,
+                AdminBookingsListSliver._waybillNumber(booking),
+                style: AdminBookingsListSliver._valueStyle,
                 softWrap: true,
               ),
             ),
@@ -2670,9 +2778,11 @@ class _AdminBookingWideRow extends StatelessWidget {
             width: resolvedVanNumberWidth,
             child: _AdminBookingsBodyCell(
               child: Text(
-                _AdminBookingsTable._vanNumber(booking),
-                style: _AdminBookingsTable._valueStyle,
-                softWrap: true,
+                AdminBookingsListSliver._vanNumber(booking),
+                style: AdminBookingsListSliver._valueStyle,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ),
@@ -2680,8 +2790,8 @@ class _AdminBookingWideRow extends StatelessWidget {
             width: resolvedVanSizeWidth,
             child: _AdminBookingsBodyCell(
               child: Text(
-                _AdminBookingsTable._vanSize(booking),
-                style: _AdminBookingsTable._valueStyle,
+                AdminBookingsListSliver._vanSize(booking),
+                style: AdminBookingsListSliver._valueStyle,
                 softWrap: true,
               ),
             ),
@@ -2690,8 +2800,8 @@ class _AdminBookingWideRow extends StatelessWidget {
             width: resolvedAmountWidth,
             child: _AdminBookingsBodyCell(
               child: Text(
-                _AdminBookingsTable._amount(booking),
-                style: _AdminBookingsTable._valueStyle,
+                AdminBookingsListSliver._amount(booking),
+                style: AdminBookingsListSliver._valueStyle,
                 softWrap: true,
               ),
             ),
@@ -2704,8 +2814,10 @@ class _AdminBookingWideRow extends StatelessWidget {
             width: resolvedCreatedWidth,
             child: _AdminBookingsBodyCell(
               child: Text(
-                _AdminBookingsTable._formatBookingDateTime(booking.createdAt),
-                style: _AdminBookingsTable._valueStyle,
+                AdminBookingsListSliver._formatBookingDateTime(
+                  booking.createdAt,
+                ),
+                style: AdminBookingsListSliver._valueStyle,
                 softWrap: true,
               ),
             ),
@@ -2714,8 +2826,10 @@ class _AdminBookingWideRow extends StatelessWidget {
             width: resolvedUpdatedWidth,
             child: _AdminBookingsBodyCell(
               child: Text(
-                _AdminBookingsTable._formatBookingDateTime(booking.updatedAt),
-                style: _AdminBookingsTable._valueStyle,
+                AdminBookingsListSliver._formatBookingDateTime(
+                  booking.updatedAt,
+                ),
+                style: AdminBookingsListSliver._valueStyle,
                 softWrap: true,
               ),
             ),
@@ -2772,20 +2886,20 @@ class _AdminBookingResponsiveCard extends StatelessWidget {
 
         final items = [
           ('ID', booking.id ?? '-'),
-          ('Waybill Number', _AdminBookingsTable._waybillNumber(booking)),
-          ('Van Number', _AdminBookingsTable._vanNumber(booking)),
-          ('Van Size', _AdminBookingsTable._vanSize(booking)),
-          ('Amount', _AdminBookingsTable._amount(booking)),
+          ('Waybill Number', AdminBookingsListSliver._waybillNumber(booking)),
+          ('Van Number', AdminBookingsListSliver._vanNumber(booking)),
+          ('Van Size', AdminBookingsListSliver._vanSize(booking)),
+          ('Amount', AdminBookingsListSliver._amount(booking)),
           ('Status', statusLabel),
           (
             'Created',
-            _AdminBookingsTable._formatBookingDateTimeSingleLine(
+            AdminBookingsListSliver._formatBookingDateTimeSingleLine(
               booking.createdAt,
             ),
           ),
           (
             'Updated',
-            _AdminBookingsTable._formatBookingDateTimeSingleLine(
+            AdminBookingsListSliver._formatBookingDateTimeSingleLine(
               booking.updatedAt,
             ),
           ),

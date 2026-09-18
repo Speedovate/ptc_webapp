@@ -1,3 +1,5 @@
+import 'package:webapp/widgets/shared/paged_data_sliver.dart';
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:stacked/stacked.dart';
@@ -280,155 +282,166 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                 : _isUploadingViewedProfilePhoto
                 ? 'Uploading profile photo ...'
                 : vm.busyMessage,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _UserDetailHeader(user: viewedUser, onBack: vm.closeUserView),
-                  const SizedBox(height: 12),
-                  ProfileView(
-                    key: profileViewRefreshKey(viewedUser),
-                    user: viewedUser,
-                    scrollable: false,
-                    padding: EdgeInsets.zero,
-                    businessUser: viewedBusinessUser,
-                    onBusinessDetailsPressed: viewedBusinessUser == null
-                        ? null
-                        : () => vm.openUserView(
-                            viewedBusinessUser,
-                            preserveCurrent: true,
-                          ),
-                    isCurrentUserView: isViewingCurrentUser,
-                    onLogout: widget.onLogout,
-                    logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-                    onSaveProfileChanges:
-                        isViewingCurrentUser &&
-                            RoleAccessService.instance.canAccess(
-                              'profile.update',
-                              role: _effectiveCurrentRole(vm),
+            child: PagedScrollObserver(
+              child: LazyDataScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+                child: SliverSection(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _UserDetailHeader(
+                      user: viewedUser,
+                      onBack: vm.closeUserView,
+                    ),
+                    const SizedBox(height: 12),
+                    ProfileView(
+                      key: profileViewRefreshKey(viewedUser),
+                      user: viewedUser,
+                      scrollable: false,
+                      padding: EdgeInsets.zero,
+                      businessUser: viewedBusinessUser,
+                      onBusinessDetailsPressed: viewedBusinessUser == null
+                          ? null
+                          : () => vm.openUserView(
+                              viewedBusinessUser,
+                              preserveCurrent: true,
+                            ),
+                      isCurrentUserView: isViewingCurrentUser,
+                      onLogout: widget.onLogout,
+                      logoutLabel: widget.isQuickLoggedIn
+                          ? 'Go Back'
+                          : 'Logout',
+                      onSaveProfileChanges:
+                          isViewingCurrentUser &&
+                              RoleAccessService.instance.canAccess(
+                                'profile.update',
+                                role: _effectiveCurrentRole(vm),
+                              )
+                          ? (changes) => _saveViewedUserProfileChanges(
+                              vm,
+                              viewedUser,
+                              changes,
                             )
-                        ? (changes) => _saveViewedUserProfileChanges(
-                            vm,
-                            viewedUser,
-                            changes,
+                          : null,
+                      onQuickActionPressed: isViewingCurrentUser
+                          ? null
+                          : !vm.canSignInAsOtherUsers
+                          ? null
+                          : () async {
+                              final confirmed = await showAdminActionConfirmation(
+                                context,
+                                title: 'Sign In As User',
+                                message:
+                                    'Continue signing in as ${viewedUser.name ?? 'this user'} (${AdminUsersView.formatRole(viewedUser.role)})?',
+                                confirmLabel: 'Sign In',
+                                onConfirmAsync: () async {
+                                  try {
+                                    await vm.loginAsUser(viewedUser);
+                                    if (!context.mounted) {
+                                      return false;
+                                    }
+                                    await widget.onCurrentUserUpdated();
+                                    return true;
+                                  } on AuthFailure catch (error) {
+                                    if (!context.mounted) {
+                                      return false;
+                                    }
+                                    AppSnackbar.showError(
+                                      context,
+                                      error.message,
+                                    );
+                                    return false;
+                                  }
+                                },
+                              );
+                              if (!confirmed || !context.mounted) {
+                                return;
+                              }
+                            },
+                      quickActionLabel: isViewingCurrentUser
+                          ? null
+                          : vm.canSignInAsOtherUsers
+                          ? 'Sign In'
+                          : null,
+                      onEditPressed: () async {
+                        if (!vm.canUpdateUsers) {
+                          return;
+                        }
+                        await AdminUsersView.showEditUserDialog(
+                          context,
+                          vm,
+                          viewedUser,
+                          widget.onCurrentUserUpdated,
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 18),
+                    UserBookingsSection(
+                      user: viewedUser,
+                      padding: const EdgeInsets.only(bottom: 24),
+                      useAdminListStyle: true,
+                      forceWideLayout: false,
+                      onViewBooking: (booking) async {
+                        BookingSectionNavigationScope.maybeOf(
+                          context,
+                        )?.openBooking(booking);
+                      },
+                      onEditBooking:
+                          !RoleAccessService.instance.canAccess(
+                            'bookings.update',
+                            role: _effectiveCurrentRole(vm),
                           )
-                        : null,
-                    onQuickActionPressed: isViewingCurrentUser
-                        ? null
-                        : !vm.canSignInAsOtherUsers
-                        ? null
-                        : () async {
-                            final confirmed = await showAdminActionConfirmation(
-                              context,
-                              title: 'Sign In As User',
-                              message:
-                                  'Continue signing in as ${viewedUser.name ?? 'this user'} (${AdminUsersView.formatRole(viewedUser.role)})?',
-                              confirmLabel: 'Sign In',
-                              onConfirmAsync: () async {
-                                try {
-                                  await vm.loginAsUser(viewedUser);
-                                  if (!context.mounted) {
-                                    return false;
-                                  }
-                                  await widget.onCurrentUserUpdated();
-                                  return true;
-                                } on AuthFailure catch (error) {
-                                  if (!context.mounted) {
-                                    return false;
-                                  }
-                                  AppSnackbar.showError(context, error.message);
-                                  return false;
+                          ? null
+                          : (booking) async {
+                              try {
+                                await AdminBookingsView.showEditBookingDialog(
+                                  context,
+                                  booking: booking,
+                                  currentUser: vm.currentUser ?? widget.user,
+                                );
+                              } catch (error) {
+                                if (!context.mounted) {
+                                  return;
                                 }
-                              },
-                            );
-                            if (!confirmed || !context.mounted) {
-                              return;
-                            }
-                          },
-                    quickActionLabel: isViewingCurrentUser
-                        ? null
-                        : vm.canSignInAsOtherUsers
-                        ? 'Sign In'
-                        : null,
-                    onEditPressed: () async {
-                      if (!vm.canUpdateUsers) {
-                        return;
-                      }
-                      await AdminUsersView.showEditUserDialog(
-                        context,
-                        vm,
-                        viewedUser,
-                        widget.onCurrentUserUpdated,
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 18),
-                  UserBookingsSection(
-                    user: viewedUser,
-                    padding: const EdgeInsets.only(bottom: 24),
-                    useAdminListStyle: true,
-                    forceWideLayout: false,
-                    onViewBooking: (booking) async {
-                      BookingSectionNavigationScope.maybeOf(
-                        context,
-                      )?.openBooking(booking);
-                    },
-                    onEditBooking:
-                        !RoleAccessService.instance.canAccess(
-                          'bookings.update',
-                          role: _effectiveCurrentRole(vm),
-                        )
-                        ? null
-                        : (booking) async {
-                            try {
-                              await AdminBookingsView.showEditBookingDialog(
-                                context,
-                                booking: booking,
-                                currentUser: vm.currentUser ?? widget.user,
-                              );
-                            } catch (error) {
-                              if (!context.mounted) {
-                                return;
+                                AppSnackbar.showError(
+                                  context,
+                                  userFacingErrorMessage(
+                                    error,
+                                    fallback:
+                                        'We could not open the booking editor right now.',
+                                  ),
+                                );
                               }
-                              AppSnackbar.showError(
-                                context,
-                                userFacingErrorMessage(
-                                  error,
-                                  fallback:
-                                      'We could not open the booking editor right now.',
-                                ),
-                              );
-                            }
-                          },
-                    onNewBooking:
-                        !RoleAccessService.instance.canAccess(
-                          'bookings.create',
-                          role: _effectiveCurrentRole(vm),
-                        )
-                        ? null
-                        : () async {
-                            try {
-                              await AdminBookingsView.showNewBookingDialog(
-                                context,
-                                currentUser: vm.currentUser ?? widget.user,
-                              );
-                            } catch (error) {
-                              if (!context.mounted) {
-                                return;
+                            },
+                      onNewBooking:
+                          !RoleAccessService.instance.canAccess(
+                            'bookings.create',
+                            role: _effectiveCurrentRole(vm),
+                          )
+                          ? null
+                          : () async {
+                              try {
+                                await AdminBookingsView.showNewBookingDialog(
+                                  context,
+                                  currentUser: vm.currentUser ?? widget.user,
+                                );
+                              } catch (error) {
+                                if (!context.mounted) {
+                                  return;
+                                }
+                                AppSnackbar.showError(
+                                  context,
+                                  userFacingErrorMessage(
+                                    error,
+                                    fallback:
+                                        'We could not open the new booking dialog right now.',
+                                  ),
+                                );
                               }
-                              AppSnackbar.showError(
-                                context,
-                                userFacingErrorMessage(
-                                  error,
-                                  fallback:
-                                      'We could not open the new booking dialog right now.',
-                                ),
-                              );
-                            }
-                          },
-                  ),
-                ],
+                            },
+                    ),
+                  ],
+                ),
               ),
             ),
           );
@@ -466,9 +479,9 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                     )
                   : 'No users yet.';
 
-              return SingleChildScrollView(
+              return LazyDataScrollView(
                 padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-                child: Column(
+                child: SliverSection(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     AppRefreshStrip(isVisible: vm.showBlockingLoading),
@@ -478,30 +491,24 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                     ),
                     if (isNarrow)
                       if (filteredUsers.isNotEmpty)
-                        Column(
-                          children: filteredUsers
-                              .asMap()
-                              .entries
-                              .map(
-                                (entry) => Padding(
-                                  padding: EdgeInsets.only(
-                                    bottom:
-                                        entry.key == filteredUsers.length - 1
-                                        ? 0
-                                        : 12,
-                                  ),
-                                  child: SizedBox(
-                                    width: double.infinity,
-                                    child: _UsersResponsiveCard(
-                                      user: entry.value,
-                                      vm: vm,
-                                      onCurrentUserUpdated:
-                                          widget.onCurrentUserUpdated,
-                                    ),
-                                  ),
-                                ),
-                              )
-                              .toList(),
+                        LazySliverList(
+                          items: filteredUsers.asMap().entries,
+                          itemBuilder: (context, entry) => Padding(
+                            padding: EdgeInsets.only(
+                              bottom: entry.key == filteredUsers.length - 1
+                                  ? 0
+                                  : 12,
+                            ),
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: _UsersResponsiveCard(
+                                user: entry.value,
+                                vm: vm,
+                                onCurrentUserUpdated:
+                                    widget.onCurrentUserUpdated,
+                              ),
+                            ),
+                          ),
                         )
                       else
                         SizedBox(
@@ -1300,7 +1307,7 @@ class _UsersDateFilterState extends State<_UsersDateFilter> {
   }
 }
 
-class _UsersTable extends StatelessWidget {
+class _UsersTable extends StatelessWidget implements SliverContent {
   const _UsersTable({
     required this.users,
     required this.emptyMessage,
@@ -1359,7 +1366,7 @@ class _UsersTable extends StatelessWidget {
       users.map((user) => AdminUsersView.formatUpdatedAt(user.updatedAt)),
     );
 
-    return LayoutBuilder(
+    return SliverWidthBuilder(
       builder: (context, constraints) {
         final textScaler = MediaQuery.textScalerOf(context);
         final idWidth = _maxTextWidth(
@@ -1454,35 +1461,30 @@ class _UsersTable extends StatelessWidget {
             40;
         final useResponsiveCards = totalMeasuredWidth > constraints.maxWidth;
         if (useResponsiveCards) {
-          return Column(
+          return SliverSection(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: AdminUsersView.usersTableSectionGap),
               if (users.isEmpty) _UsersEmptyState(message: emptyMessage),
               if (users.isNotEmpty)
-                Column(
-                  children: users
-                      .asMap()
-                      .entries
-                      .map(
-                        (entry) => Padding(
-                          padding: EdgeInsets.only(
-                            bottom: entry.key == users.length - 1 ? 0 : 12,
-                          ),
-                          child: _UsersResponsiveCard(
-                            user: entry.value,
-                            vm: vm,
-                            onCurrentUserUpdated: onCurrentUserUpdated,
-                          ),
-                        ),
-                      )
-                      .toList(),
+                LazySliverList(
+                  items: users.asMap().entries,
+                  itemBuilder: (context, entry) => Padding(
+                    padding: EdgeInsets.only(
+                      bottom: entry.key == users.length - 1 ? 0 : 12,
+                    ),
+                    child: _UsersResponsiveCard(
+                      user: entry.value,
+                      vm: vm,
+                      onCurrentUserUpdated: onCurrentUserUpdated,
+                    ),
+                  ),
                 ),
             ],
           );
         }
 
-        return Column(
+        return SliverSection(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AdminListHeaderBar(
@@ -1554,31 +1556,26 @@ class _UsersTable extends StatelessWidget {
             const SizedBox(height: AdminUsersView.usersTableSectionGap),
             if (users.isEmpty) _UsersEmptyState(message: emptyMessage),
             if (users.isNotEmpty)
-              Column(
-                children: users
-                    .asMap()
-                    .entries
-                    .map(
-                      (entry) => Padding(
-                        padding: EdgeInsets.only(
-                          bottom: entry.key == users.length - 1 ? 0 : 12,
-                        ),
-                        child: _UsersWideRow(
-                          user: entry.value,
-                          vm: vm,
-                          onCurrentUserUpdated: onCurrentUserUpdated,
-                          resolvedIdWidth: resolvedIdWidth,
-                          resolvedNameWidth: resolvedNameWidth,
-                          resolvedPhoneWidth: resolvedPhoneWidth,
-                          resolvedEmailWidth: resolvedEmailWidth,
-                          resolvedRoleWidth: resolvedRoleWidth,
-                          resolvedCreatedAtWidth: resolvedCreatedAtWidth,
-                          resolvedUpdatedAtWidth: resolvedUpdatedAtWidth,
-                          resolvedActionsWidth: resolvedActionsWidth,
-                        ),
-                      ),
-                    )
-                    .toList(),
+              LazySliverList(
+                items: users.asMap().entries,
+                itemBuilder: (context, entry) => Padding(
+                  padding: EdgeInsets.only(
+                    bottom: entry.key == users.length - 1 ? 0 : 12,
+                  ),
+                  child: _UsersWideRow(
+                    user: entry.value,
+                    vm: vm,
+                    onCurrentUserUpdated: onCurrentUserUpdated,
+                    resolvedIdWidth: resolvedIdWidth,
+                    resolvedNameWidth: resolvedNameWidth,
+                    resolvedPhoneWidth: resolvedPhoneWidth,
+                    resolvedEmailWidth: resolvedEmailWidth,
+                    resolvedRoleWidth: resolvedRoleWidth,
+                    resolvedCreatedAtWidth: resolvedCreatedAtWidth,
+                    resolvedUpdatedAtWidth: resolvedUpdatedAtWidth,
+                    resolvedActionsWidth: resolvedActionsWidth,
+                  ),
+                ),
               ),
           ],
         );
@@ -2361,120 +2358,125 @@ class _AdminUserDetailDialogBodyState
               : _isUploadingViewedProfilePhoto
               ? 'Uploading profile photo ...'
               : vm.busyMessage,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ProfileView(
-                  key: profileViewRefreshKey(viewedUser),
-                  user: viewedUser,
-                  scrollable: false,
-                  padding: EdgeInsets.zero,
-                  businessUser: viewedBusinessUser,
-                  onBusinessDetailsPressed: viewedBusinessUser == null
-                      ? null
-                      : () => vm.openUserView(
-                          viewedBusinessUser,
-                          preserveCurrent: true,
-                        ),
-                  isCurrentUserView: isViewingCurrentUser,
-                  onLogout: widget.onLogout,
-                  logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
-                  onSaveProfileChanges:
-                      isViewingCurrentUser &&
-                          RoleAccessService.instance.canAccess(
-                            'profile.update',
-                            role: _effectiveCurrentRole(vm),
+          child: PagedScrollObserver(
+            child: LazyDataScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+              child: SliverSection(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ProfileView(
+                    key: profileViewRefreshKey(viewedUser),
+                    user: viewedUser,
+                    scrollable: false,
+                    padding: EdgeInsets.zero,
+                    businessUser: viewedBusinessUser,
+                    onBusinessDetailsPressed: viewedBusinessUser == null
+                        ? null
+                        : () => vm.openUserView(
+                            viewedBusinessUser,
+                            preserveCurrent: true,
+                          ),
+                    isCurrentUserView: isViewingCurrentUser,
+                    onLogout: widget.onLogout,
+                    logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
+                    onSaveProfileChanges:
+                        isViewingCurrentUser &&
+                            RoleAccessService.instance.canAccess(
+                              'profile.update',
+                              role: _effectiveCurrentRole(vm),
+                            )
+                        ? (changes) => _saveViewedUserProfileChanges(
+                            vm,
+                            viewedUser,
+                            changes,
                           )
-                      ? (changes) => _saveViewedUserProfileChanges(
-                          vm,
-                          viewedUser,
-                          changes,
+                        : null,
+                    onQuickActionPressed: isViewingCurrentUser
+                        ? null
+                        : () => Navigator.of(context).pop(),
+                    quickActionLabel: isViewingCurrentUser ? null : 'Close',
+                    onEditPressed: () async {
+                      if (!vm.canUpdateUsers) {
+                        return;
+                      }
+                      await AdminUsersView.showEditUserDialog(
+                        context,
+                        vm,
+                        viewedUser,
+                        widget.onCurrentUserUpdated,
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 18),
+                  UserBookingsSection(
+                    user: viewedUser,
+                    padding: EdgeInsets.zero,
+                    useAdminListStyle: true,
+                    forceWideLayout: false,
+                    onViewBooking: (booking) async {
+                      BookingSectionNavigationScope.maybeOf(
+                        context,
+                      )?.openBooking(booking);
+                    },
+                    onEditBooking:
+                        !RoleAccessService.instance.canAccess(
+                          'bookings.update',
+                          role: _effectiveCurrentRole(vm),
                         )
-                      : null,
-                  onQuickActionPressed: isViewingCurrentUser
-                      ? null
-                      : () => Navigator.of(context).pop(),
-                  quickActionLabel: isViewingCurrentUser ? null : 'Close',
-                  onEditPressed: () async {
-                    if (!vm.canUpdateUsers) {
-                      return;
-                    }
-                    await AdminUsersView.showEditUserDialog(
-                      context,
-                      vm,
-                      viewedUser,
-                      widget.onCurrentUserUpdated,
-                    );
-                  },
-                ),
-                const SizedBox(height: 18),
-                UserBookingsSection(
-                  user: viewedUser,
-                  padding: EdgeInsets.zero,
-                  useAdminListStyle: true,
-                  forceWideLayout: false,
-                  onViewBooking: (booking) async {
-                    BookingSectionNavigationScope.maybeOf(
-                      context,
-                    )?.openBooking(booking);
-                  },
-                  onEditBooking:
-                      !RoleAccessService.instance.canAccess(
-                        'bookings.update',
-                        role: _effectiveCurrentRole(vm),
-                      )
-                      ? null
-                      : (booking) async {
-                          try {
-                            await AdminBookingsView.showEditBookingDialog(
-                              context,
-                              booking: booking,
-                              currentUser: vm.currentUser ?? widget.currentUser,
-                            );
-                          } catch (error) {
-                            if (!context.mounted) {
-                              return;
+                        ? null
+                        : (booking) async {
+                            try {
+                              await AdminBookingsView.showEditBookingDialog(
+                                context,
+                                booking: booking,
+                                currentUser:
+                                    vm.currentUser ?? widget.currentUser,
+                              );
+                            } catch (error) {
+                              if (!context.mounted) {
+                                return;
+                              }
+                              AppSnackbar.showError(
+                                context,
+                                userFacingErrorMessage(
+                                  error,
+                                  fallback:
+                                      'We could not open the booking editor right now.',
+                                ),
+                              );
                             }
-                            AppSnackbar.showError(
-                              context,
-                              userFacingErrorMessage(
-                                error,
-                                fallback:
-                                    'We could not open the booking editor right now.',
-                              ),
-                            );
-                          }
-                        },
-                  onNewBooking:
-                      !RoleAccessService.instance.canAccess(
-                        'bookings.create',
-                        role: _effectiveCurrentRole(vm),
-                      )
-                      ? null
-                      : () async {
-                          try {
-                            await AdminBookingsView.showNewBookingDialog(
-                              context,
-                              currentUser: vm.currentUser ?? widget.currentUser,
-                            );
-                          } catch (error) {
-                            if (!context.mounted) {
-                              return;
+                          },
+                    onNewBooking:
+                        !RoleAccessService.instance.canAccess(
+                          'bookings.create',
+                          role: _effectiveCurrentRole(vm),
+                        )
+                        ? null
+                        : () async {
+                            try {
+                              await AdminBookingsView.showNewBookingDialog(
+                                context,
+                                currentUser:
+                                    vm.currentUser ?? widget.currentUser,
+                              );
+                            } catch (error) {
+                              if (!context.mounted) {
+                                return;
+                              }
+                              AppSnackbar.showError(
+                                context,
+                                userFacingErrorMessage(
+                                  error,
+                                  fallback:
+                                      'We could not open the new booking dialog right now.',
+                                ),
+                              );
                             }
-                            AppSnackbar.showError(
-                              context,
-                              userFacingErrorMessage(
-                                error,
-                                fallback:
-                                    'We could not open the new booking dialog right now.',
-                              ),
-                            );
-                          }
-                        },
-                ),
-              ],
+                          },
+                  ),
+                ],
+              ),
             ),
           ),
         );

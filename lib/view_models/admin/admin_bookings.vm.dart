@@ -32,6 +32,7 @@ class AdminBookingsViewModel extends BaseViewModel {
            vehicleCatalogRepository ?? VehicleRequest.instance {
     PerformanceTrace.event('admin-bookings-vm', 'created');
     _bookings.addAll(_cachedBookings);
+    _bookings.sort(Booking.compareCreatedLatestFirst);
     _usersById.addAll(_cachedUsersById);
     _statusesByKey.addAll(_cachedStatusesByKey);
     _vehicleSizes = List<VehicleCatalogItem>.from(_cachedVehicleSizes);
@@ -146,7 +147,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   Future<void> load() async {
     final existingLoad = _activeLoadFuture;
     if (existingLoad != null) {
-      _log('load join-inflight');
+      _log(() => 'load join-inflight');
       await existingLoad;
       return;
     }
@@ -177,17 +178,18 @@ class AdminBookingsViewModel extends BaseViewModel {
     );
     if (shouldShowLoadingState) {
       setBusy(true);
-      _log('overlay show section=bookings');
+      _log(() => 'overlay show section=bookings');
     }
     _log(
-      'load start visibleBookings=${!shouldShowLoadingState} cachedBookings=${_cachedBookings.length} localBookings=${_bookings.length} sharedBookings=$hasSharedBookings',
+      () =>
+          'load start visibleBookings=${!shouldShowLoadingState} cachedBookings=${_cachedBookings.length} localBookings=${_bookings.length} sharedBookings=$hasSharedBookings',
     );
     PerformanceTrace.event(
       'admin-bookings-vm',
       'load start cached=${_cachedBookings.length} local=${_bookings.length} authoritative=$hasSharedBookings',
     );
     if (!shouldShowLoadingState) {
-      _log('silent load only section=bookings');
+      _log(() => 'silent load only section=bookings');
     }
     errorMessage = null;
     try {
@@ -209,7 +211,8 @@ class AdminBookingsViewModel extends BaseViewModel {
         // avoiding another request whenever the menu is opened.
       } else {
         _log(
-          'primary bookings reused shared count=${BookingRequest.hydratedBookingsSnapshot.length}',
+          () =>
+              'primary bookings reused shared count=${BookingRequest.hydratedBookingsSnapshot.length}',
         );
       }
 
@@ -228,7 +231,7 @@ class AdminBookingsViewModel extends BaseViewModel {
       }
       _cachedErrorMessage = null;
     } catch (error) {
-      _log('load error error=$error');
+      _log(() => 'load error error=$error');
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the bookings right now.',
@@ -238,10 +241,11 @@ class AdminBookingsViewModel extends BaseViewModel {
     } finally {
       if (shouldShowLoadingState && _hasLoadedOnce) {
         setBusy(false);
-        _log('overlay hide section=bookings reason=load-finish');
+        _log(() => 'overlay hide section=bookings reason=load-finish');
       }
       _log(
-        'load finish busy=$isBusy bookings=${_bookings.length} users=${_usersById.length} statuses=${_statusesByKey.length} sizes=${_vehicleSizes.length} error=${errorMessage ?? "-"}',
+        () =>
+            'load finish busy=$isBusy bookings=${_bookings.length} users=${_usersById.length} statuses=${_statusesByKey.length} sizes=${_vehicleSizes.length} error=${errorMessage ?? "-"}',
       );
       PerformanceTrace.event(
         'admin-bookings-vm',
@@ -278,7 +282,7 @@ class AdminBookingsViewModel extends BaseViewModel {
 
   Future<void> _reloadSupportingData() async {
     if (_isRealtimeRefreshing) {
-      _log('supporting reload skipped already-running');
+      _log(() => 'supporting reload skipped already-running');
       PerformanceTrace.event(
         'admin-bookings-vm',
         'supporting reload skipped in-flight',
@@ -288,7 +292,7 @@ class AdminBookingsViewModel extends BaseViewModel {
     final stopwatch = Stopwatch()..start();
     PerformanceTrace.event('admin-bookings-vm', 'supporting reload start');
     _isRealtimeRefreshing = true;
-    _log('supporting reload start');
+    _log(() => 'supporting reload start');
     try {
       final results = await Future.wait<dynamic>([
         _loadUsersSafe(),
@@ -316,7 +320,8 @@ class AdminBookingsViewModel extends BaseViewModel {
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
       _cachedVehicleSizes = List<VehicleCatalogItem>.from(_vehicleSizes);
       _log(
-        'supporting reload done users=${_usersById.length} statuses=${_statusesByKey.length} sizes=${_vehicleSizes.length}',
+        () =>
+            'supporting reload done users=${_usersById.length} statuses=${_statusesByKey.length} sizes=${_vehicleSizes.length}',
       );
       notifyListeners();
     } catch (_) {
@@ -414,10 +419,12 @@ class AdminBookingsViewModel extends BaseViewModel {
   void _applyBookings(List<Booking> bookings) {
     _bookings
       ..clear()
-      ..addAll(bookings);
+      ..addAll(bookings)
+      ..sort(Booking.compareCreatedLatestFirst);
     _cachedBookings = List<Booking>.from(_bookings);
     _log(
-      'apply bookings count=${_bookings.length} ids=${_bookings.map((booking) => normalizeId(booking.id) ?? "-").join(",")} statuses=${_bookings.map((booking) => booking.clientStatus?.trim().toLowerCase() ?? "-").join(",")}',
+      () =>
+          'apply bookings count=${_bookings.length} ids=${_bookings.map((booking) => normalizeId(booking.id) ?? "-").join(",")} statuses=${_bookings.map((booking) => booking.clientStatus?.trim().toLowerCase() ?? "-").join(",")}',
     );
   }
 
@@ -434,20 +441,7 @@ class AdminBookingsViewModel extends BaseViewModel {
     } else {
       _bookings.insert(0, booking);
     }
-    _bookings.sort((left, right) {
-      final leftDate = left.updatedAt ?? left.createdAt;
-      final rightDate = right.updatedAt ?? right.createdAt;
-      if (leftDate == null && rightDate == null) {
-        return (right.id ?? '').compareTo(left.id ?? '');
-      }
-      if (leftDate == null) {
-        return 1;
-      }
-      if (rightDate == null) {
-        return -1;
-      }
-      return rightDate.compareTo(leftDate);
-    });
+    _bookings.sort(Booking.compareCreatedLatestFirst);
     _cachedBookings = List<Booking>.from(_bookings);
     notifyListeners();
   }
@@ -470,7 +464,7 @@ class AdminBookingsViewModel extends BaseViewModel {
     notifyListeners();
   }
 
-  void _log(String message) {
+  void _log(String Function() message) {
     // Temporary debug logging removed.
   }
 
@@ -509,9 +503,21 @@ class AdminBookingsViewModel extends BaseViewModel {
     }
   }
 
+  List<Booking>? _filteredResult;
+
+  @override
+  void notifyListeners() {
+    _filteredResult = null;
+    super.notifyListeners();
+  }
+
   List<Booking> filteredBookings() {
+    final cached = _filteredResult;
+    if (cached != null) {
+      return cached;
+    }
     final query = _searchQuery.trim().toLowerCase();
-    return bookings.where((booking) {
+    return _filteredResult = _bookings.where((booking) {
       final matchesStatus =
           _statusFilter == 'All' || clientStatusLabel(booking) == _statusFilter;
       if (!matchesStatus) {
@@ -613,7 +619,7 @@ class AdminBookingsViewModel extends BaseViewModel {
   String clientName(Booking booking) {
     final client = _usersById[booking.client?.id];
     final name = client?.name?.trim();
-    return name?.isNotEmpty == true ? name! : 'Unknown client';
+    return name?.isNotEmpty == true ? name! : 'Loading ...';
   }
 
   String clientPhone(Booking booking) {

@@ -3,6 +3,8 @@
 import 'dart:async';
 import 'dart:html' as html;
 
+bool isAppVisible() => html.document.visibilityState != 'hidden';
+
 bool currentNetworkStatus() => html.window.navigator.onLine ?? true;
 
 Stream<bool> networkStatusEvents() {

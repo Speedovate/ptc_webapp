@@ -286,7 +286,7 @@ Future<void> showOfflineConflictReviewSheet(BuildContext context) {
     useRootNavigator: true,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (context) => const _ConflictReviewSheet(),
+    builder: (context) => const SelectionArea(child: _ConflictReviewSheet()),
   );
 }
 
@@ -453,7 +453,7 @@ class _ConflictReviewSheetState extends State<_ConflictReviewSheet> {
                             );
                           }
                           return ListView.separated(
-                            shrinkWrap: true,
+                            primary: false,
                             itemCount: conflicts.length,
                             separatorBuilder: (_, _) =>
                                 const SizedBox(height: 10),

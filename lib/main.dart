@@ -1,4 +1,8 @@
 import 'dart:ui';
+import 'package:webapp/services/app_widgets_binding.dart';
+import 'package:webapp/widgets/shared/app_snackbar.dart';
+import 'package:webapp/widgets/shared/app_resume_recovery.dart';
+import 'package:webapp/services/app_resume_service.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:webapp/firebase_options.dart';
@@ -16,7 +20,7 @@ const Duration _firebaseBootstrapTimeout = Duration(seconds: 6);
 const Duration _firestoreBootstrapTimeout = Duration(seconds: 4);
 const Duration _applicationBootstrapTimeout = Duration(seconds: 8);
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  AppWidgetsBinding();
   // Keep decoded images bounded on long-running web sessions. Persistent image
   // data remains available offline through the app cache and service worker.
   PaintingBinding.instance.imageCache.maximumSize = 48;
@@ -123,6 +127,7 @@ class MyApp extends StatelessWidget {
         );
 
     return MaterialApp(
+      scaffoldMessengerKey: AppSnackbar.messengerKey,
       title: 'PALTRANCO Digital Platform',
       debugShowCheckedModeBanner: false,
       builder: (context, child) {
@@ -135,7 +140,10 @@ class MyApp extends StatelessWidget {
               currentFocus.unfocus();
             }
           },
-          child: child ?? const SizedBox.shrink(),
+          child: AppResumeRecovery(
+            recover: AppResumeService.recover,
+            child: child ?? const SizedBox.shrink(),
+          ),
         );
       },
       theme: ThemeData(

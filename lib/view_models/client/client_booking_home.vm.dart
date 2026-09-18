@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:webapp/services/pending_booking_submission.dart';
+
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/status.dart';
@@ -88,12 +90,14 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   String? blockedMessage;
   bool isBusyLoading = false;
   bool isSubmitting = false;
-  String? _pendingSubmissionKey;
+  final _pendingSubmission = PendingBookingSubmission();
   int resetTick = 0;
   UserModel? _activeClientUser;
   UserModel? _pendingClientUser;
   bool _isRealtimeRefreshing = false;
   bool _hasLoadedOnce = false;
+  bool get hasResolvedInitialForm => _hasLoadedOnce;
+
   static const representativeNameKey = 'representative_name';
   static const representativePhoneKey = 'representative_phone';
 
@@ -209,7 +213,6 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       _log(
         'load success user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} forms=${mainForms.length} activeForm=${form?.id ?? "-"} visibleFields=${fields.length} statuses=${statuses.length} blocked=${blockedMessage != null}',
       );
-      unawaited(_warmupService.warmUpForUser(clientUser));
     } catch (error) {
       _log(
         'load error user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} error=$error',
@@ -222,7 +225,11 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
     } finally {
+      // A confirmed missing form is also a resolved initial state.
+      _hasLoadedOnce = true;
+      _cachedHasLoadedOnce = true;
       isBusyLoading = false;
+      unawaited(_warmupService.warmUpForUser(clientUser).catchError((_, _) {}));
       _log(
         'load finish user=${clientUser.id ?? "-"} role=${clientUser.role ?? "-"} busy=$isBusyLoading error=${loadError ?? "-"} pendingClient=${_pendingClientUser?.id ?? "-"}',
       );
@@ -397,6 +404,9 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         _activeClientUser?.updatedAt == clientUser.updatedAt) {
       return;
     }
+    if (_activeClientUser?.id != clientUser.id) {
+      resetPendingSubmission();
+    }
     _activeClientUser = clientUser;
     answers = {};
     errors = {};
@@ -418,6 +428,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   }
 
   void clearForm() {
+    resetPendingSubmission();
     answers = {};
     errors = {};
     resetTick += 1;
@@ -478,30 +489,17 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     await Future<void>.delayed(const Duration(milliseconds: 16));
 
     try {
-      final now = DateTime.now();
-      final submissionKey = _pendingSubmissionKey ??= _createSubmissionKey(
-        submittedByUserId: submittedByUserId,
-        clientUserId: clientUser.id,
-        formId: activeForm.id,
-      );
       final normalizedAnswers = _normalizeRepresentativeAnswers(formAnswers);
-      final baseBooking = Booking(
-        client: clientUser,
-        clientStatus: activeForm.currentStatusKey,
-        createdAt: now,
-        updatedAt: now,
-        submissionKey: submissionKey,
-      );
-      final nextBooking = _engine.applyOutputToBooking(
-        baseBooking,
-        activeForm,
-        fieldsForForm(activeForm, answers: normalizedAnswers),
-        normalizedAnswers,
-        submittedByUserId,
-        submittedByUserRole,
+      final nextBooking = _submissionFor(
+        activeForm: activeForm,
+        normalizedAnswers: normalizedAnswers,
+        submissionFields: fieldsForForm(activeForm, answers: normalizedAnswers),
+        clientUser: clientUser,
+        submittedByUserId: submittedByUserId,
+        submittedByUserRole: submittedByUserRole,
       );
       final saved = await _bookingRepository.saveBooking(nextBooking);
-      _pendingSubmissionKey = null;
+      _pendingSubmission.clear();
       return saved;
     } catch (error) {
       rethrow;
@@ -543,33 +541,20 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     await Future<void>.delayed(const Duration(milliseconds: 16));
 
     try {
-      final now = DateTime.now();
-      final submissionKey = _pendingSubmissionKey ??= _createSubmissionKey(
-        submittedByUserId: submittedByUserId,
-        clientUserId: clientUser.id,
-        formId: activeForm.id,
-      );
       final normalizedAnswers = _normalizeRepresentativeAnswers(answers);
-      final baseBooking = Booking(
-        client: clientUser,
-        clientStatus: activeForm.currentStatusKey,
-        createdAt: now,
-        updatedAt: now,
-        submissionKey: submissionKey,
-      );
-      final nextBooking = _engine.applyOutputToBooking(
-        baseBooking,
-        activeForm,
-        fields,
-        normalizedAnswers,
-        submittedByUserId,
-        submittedByUserRole,
+      final nextBooking = _submissionFor(
+        activeForm: activeForm,
+        normalizedAnswers: normalizedAnswers,
+        submissionFields: fields,
+        clientUser: clientUser,
+        submittedByUserId: submittedByUserId,
+        submittedByUserRole: submittedByUserRole,
       );
       final savedBooking = await _bookingRepository.saveBooking(nextBooking);
       answers = {};
       errors = {};
       resetTick += 1;
-      _pendingSubmissionKey = null;
+      _pendingSubmission.clear();
       return savedBooking;
     } finally {
       isSubmitting = false;
@@ -588,6 +573,49 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     notifyListeners();
     return validationErrors.isEmpty;
   }
+
+  Booking _submissionFor({
+    required StatusForm activeForm,
+    required Map<String, dynamic> normalizedAnswers,
+    required List<StatusField> submissionFields,
+    required UserModel clientUser,
+    required String submittedByUserId,
+    required String? submittedByUserRole,
+  }) {
+    return _pendingSubmission.resolve(
+      {
+        'client_id': clientUser.id,
+        'submitted_by': submittedByUserId,
+        'role': submittedByUserRole,
+        'form': activeForm.toMap(),
+        'fields': submissionFields.map((field) => field.toMap()).toList(),
+        'answers': normalizedAnswers,
+      },
+      () {
+        final now = DateTime.now();
+        return _engine.applyOutputToBooking(
+          Booking(
+            client: clientUser,
+            clientStatus: activeForm.currentStatusKey,
+            createdAt: now,
+            updatedAt: now,
+            submissionKey: _createSubmissionKey(
+              submittedByUserId: submittedByUserId,
+              clientUserId: clientUser.id,
+              formId: activeForm.id,
+            ),
+          ),
+          activeForm,
+          submissionFields,
+          normalizedAnswers,
+          submittedByUserId,
+          submittedByUserRole,
+        );
+      },
+    );
+  }
+
+  void resetPendingSubmission() => _pendingSubmission.clear();
 
   String _createSubmissionKey({
     required String submittedByUserId,

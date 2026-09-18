@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
 
 import 'package:stacked/stacked.dart';
@@ -70,9 +71,9 @@ class AdminFormsView extends StatelessWidget {
         return AppPageLoadingOverlay(
           isVisible: vm.showBlockingLoading,
           message: vm.busyMessage,
-          child: SingleChildScrollView(
+          child: LazyDataScrollView(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-            child: Column(
+            child: SliverSection(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 AppRefreshStrip(isVisible: vm.showBlockingLoading),
@@ -86,7 +87,7 @@ class AdminFormsView extends StatelessWidget {
   }
 }
 
-class _StatusFormsListSection extends StatefulWidget {
+class _StatusFormsListSection extends StatefulWidget implements SliverContent {
   const _StatusFormsListSection({required this.vm});
 
   final AdminFlowViewModel vm;
@@ -554,10 +555,10 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
+    return SliverWidthBuilder(
       builder: (context, constraints) {
         final isNarrow = constraints.maxWidth < 940;
-        return Column(
+        return SliverSection(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _StatusFormsToolbar(
@@ -580,64 +581,56 @@ class _StatusFormsListSectionState extends State<_StatusFormsListSection> {
                   : null,
             ),
             const SizedBox(height: AdminFormsView.toolbarSectionGap),
-            ListenableBuilder(
+            SliverListenableBuilder(
               listenable: widget.vm,
               builder: (context, _) {
+                final visibleForms = _filteredForms;
                 if (isNarrow) {
-                  if (_filteredForms.isEmpty) {
+                  if (visibleForms.isEmpty) {
                     return _StatusFormsEmptyState(message: _emptyMessage);
                   }
 
-                  return Column(
-                    children: _filteredForms
-                        .asMap()
-                        .entries
-                        .map(
-                          (entry) => Padding(
-                            padding: EdgeInsets.only(
-                              bottom: entry.key == _filteredForms.length - 1
-                                  ? 0
-                                  : 12,
-                            ),
-                            child: RepaintBoundary(
-                              child: _StatusFormResponsiveCard(
-                                form: entry.value,
-                                vm: widget.vm,
-                                onViewPressed: () =>
-                                    _openPreviewFormDialog(entry.value),
-                                onEditPressed: widget.vm.canUpdateForms
-                                    ? () => _openEditFormDialog(entry.value)
-                                    : null,
-                                onDeactivatePressed: widget.vm.canUpdateForms
-                                    ? () => _confirmDeactivateForm(entry.value)
-                                    : null,
-                                onDeletePressed: widget.vm.canDeleteForms
-                                    ? () => _confirmDeleteForm(entry.value)
-                                    : null,
-                              ),
-                            ),
-                          ),
-                        )
-                        .toList(),
+                  return LazySliverList(
+                    items: visibleForms.asMap().entries,
+                    itemBuilder: (context, entry) => Padding(
+                      padding: EdgeInsets.only(
+                        bottom: entry.key == visibleForms.length - 1 ? 0 : 12,
+                      ),
+                      child: RepaintBoundary(
+                        child: _StatusFormResponsiveCard(
+                          form: entry.value,
+                          vm: widget.vm,
+                          onViewPressed: () =>
+                              _openPreviewFormDialog(entry.value),
+                          onEditPressed: widget.vm.canUpdateForms
+                              ? () => _openEditFormDialog(entry.value)
+                              : null,
+                          onDeactivatePressed: widget.vm.canUpdateForms
+                              ? () => _confirmDeactivateForm(entry.value)
+                              : null,
+                          onDeletePressed: widget.vm.canDeleteForms
+                              ? () => _confirmDeleteForm(entry.value)
+                              : null,
+                        ),
+                      ),
+                    ),
                   );
                 }
 
-                return RepaintBoundary(
-                  child: _StatusFormsTable(
-                    forms: _filteredForms,
-                    emptyMessage: _emptyMessage,
-                    vm: widget.vm,
-                    onViewPressed: _openPreviewFormDialog,
-                    onEditPressed: widget.vm.canUpdateForms
-                        ? _openEditFormDialog
-                        : null,
-                    onDeactivatePressed: widget.vm.canUpdateForms
-                        ? _confirmDeactivateForm
-                        : null,
-                    onDeletePressed: widget.vm.canDeleteForms
-                        ? _confirmDeleteForm
-                        : null,
-                  ),
+                return _StatusFormsTable(
+                  forms: visibleForms,
+                  emptyMessage: _emptyMessage,
+                  vm: widget.vm,
+                  onViewPressed: _openPreviewFormDialog,
+                  onEditPressed: widget.vm.canUpdateForms
+                      ? _openEditFormDialog
+                      : null,
+                  onDeactivatePressed: widget.vm.canUpdateForms
+                      ? _confirmDeactivateForm
+                      : null,
+                  onDeletePressed: widget.vm.canDeleteForms
+                      ? _confirmDeleteForm
+                      : null,
                 );
               },
             ),
@@ -1158,7 +1151,7 @@ class _StatusFormsDateFilterState extends State<_StatusFormsDateFilter> {
   }
 }
 
-class _StatusFormsTable extends StatelessWidget {
+class _StatusFormsTable extends StatelessWidget implements SliverContent {
   const _StatusFormsTable({
     required this.forms,
     required this.emptyMessage,
@@ -1200,7 +1193,7 @@ class _StatusFormsTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
+    return SliverWidthBuilder(
       builder: (context, constraints) {
         final textScaler = MediaQuery.textScalerOf(context);
         final sampleId = forms
@@ -1335,32 +1328,29 @@ class _StatusFormsTable extends StatelessWidget {
             return _StatusFormsEmptyState(message: emptyMessage);
           }
 
-          return Column(
-            children: forms
-                .map(
-                  (form) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: _StatusFormResponsiveCard(
-                      form: form,
-                      vm: vm,
-                      onViewPressed: () => onViewPressed(form),
-                      onEditPressed: onEditPressed == null
-                          ? null
-                          : () => onEditPressed!(form),
-                      onDeactivatePressed: onDeactivatePressed == null
-                          ? null
-                          : () => onDeactivatePressed!(form),
-                      onDeletePressed: onDeletePressed == null
-                          ? null
-                          : () => onDeletePressed!(form),
-                    ),
-                  ),
-                )
-                .toList(),
+          return LazySliverList(
+            items: forms,
+            itemBuilder: (context, form) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _StatusFormResponsiveCard(
+                form: form,
+                vm: vm,
+                onViewPressed: () => onViewPressed(form),
+                onEditPressed: onEditPressed == null
+                    ? null
+                    : () => onEditPressed!(form),
+                onDeactivatePressed: onDeactivatePressed == null
+                    ? null
+                    : () => onDeactivatePressed!(form),
+                onDeletePressed: onDeletePressed == null
+                    ? null
+                    : () => onDeletePressed!(form),
+              ),
+            ),
           );
         }
 
-        return Column(
+        return SliverSection(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AdminListHeaderBar(
@@ -1419,8 +1409,9 @@ class _StatusFormsTable extends StatelessWidget {
             if (forms.isEmpty)
               _StatusFormsEmptyState(message: emptyMessage)
             else
-              ...forms.asMap().entries.map(
-                (entry) => Padding(
+              LazySliverList(
+                items: forms.asMap().entries,
+                itemBuilder: (context, entry) => Padding(
                   padding: EdgeInsets.only(
                     bottom: entry.key == forms.length - 1 ? 0 : 12,
                   ),

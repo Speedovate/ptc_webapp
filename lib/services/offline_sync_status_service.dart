@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:webapp/utils/latest_value_worker.dart';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -143,31 +144,31 @@ class OfflineSyncStatusService extends ChangeNotifier {
     _mutationStatus = OfflineMutationQueueService.instance.currentStatus;
     _cleanupStatus = OfflineCleanupQueueService.instance.currentStatus;
     _recompute();
-    unawaited(_refreshKnownSessionSnapshot());
+    _knownSessionRefresh.add(true);
     networkStatusEvents().listen((isOnline) {
       _isOnline = isOnline;
       _recompute();
-      unawaited(_refreshKnownSessionSnapshot());
+      _knownSessionRefresh.add(true);
     });
     BookingOfflineUploadQueueService.instance.statusStream.listen((status) {
       _bookingStatus = status;
       _recompute();
-      unawaited(_refreshKnownSessionSnapshot());
+      _knownSessionRefresh.add(true);
     });
     OfflineMediaSyncService.instance.statusStream.listen((status) {
       _mediaStatus = status;
       _recompute();
-      unawaited(_refreshKnownSessionSnapshot());
+      _knownSessionRefresh.add(true);
     });
     OfflineMutationQueueService.instance.statusStream.listen((status) {
       _mutationStatus = status;
       _recompute();
-      unawaited(_refreshKnownSessionSnapshot());
+      _knownSessionRefresh.add(true);
     });
     OfflineCleanupQueueService.instance.statusStream.listen((status) {
       _cleanupStatus = status;
       _recompute();
-      unawaited(_refreshKnownSessionSnapshot());
+      _knownSessionRefresh.add(true);
     });
   }
 
@@ -220,7 +221,9 @@ class OfflineSyncStatusService extends ChangeNotifier {
     bool includeSignedOut = true,
   }) async {
     await initialize();
-    final knownUsers = await _authStorage.readStringList(_knownSessionUserIdsKey);
+    final knownUsers = await _authStorage.readStringList(
+      _knownSessionUserIdsKey,
+    );
     return readSnapshotForUserScopes(
       userIds: knownUsers,
       includeSignedOut: includeSignedOut,
@@ -231,7 +234,9 @@ class OfflineSyncStatusService extends ChangeNotifier {
     bool includeSignedOut = true,
   }) async {
     await initialize();
-    final knownUsers = await _authStorage.readStringList(_knownSessionUserIdsKey);
+    final knownUsers = await _authStorage.readStringList(
+      _knownSessionUserIdsKey,
+    );
     final normalizedUserIds = knownUsers
         .map(normalizeId)
         .whereType<String>()
@@ -276,61 +281,85 @@ class OfflineSyncStatusService extends ChangeNotifier {
       ...cleanupStatuses.keys,
     };
 
-    final details = scopeKeys.map((scopeKey) {
-      final isSignedOut = scopeKey == 'signed_out';
-      final userId = isSignedOut ? null : normalizeId(scopeKey);
-      final userData = userId == null ? null : usersById[userId];
-      final mergedSnapshot = _mergeStatuses(
-        isOnline: _isOnline,
-        bookingStatus:
-            bookingStatuses[scopeKey] ?? const OfflineQueueStatusSnapshot.idle(),
-        mediaStatus:
-            mediaStatuses[scopeKey] ?? const OfflineQueueStatusSnapshot.idle(),
-        mutationStatus:
-            mutationStatuses[scopeKey] ??
-            const OfflineQueueStatusSnapshot.idle(),
-        cleanupStatus:
-            cleanupStatuses[scopeKey] ?? const OfflineQueueStatusSnapshot.idle(),
-      );
-      return AdminOfflineQueueScopeSnapshot(
-        scopeKey: scopeKey,
-        userId: userId,
-        userLabel: isSignedOut
-            ? 'Signed-out queue'
-            : _userLabelFromMap(userData, fallbackUserId: userId),
-        roleLabel: isSignedOut
-            ? 'Local device'
-            : _roleLabelFromMap(userData),
-        snapshot: mergedSnapshot,
-      );
-    }).where((detail) {
-      return detail.snapshot.pendingActions > 0 || detail.snapshot.isSyncing;
-    }).toList()
-      ..sort((left, right) {
-        final byCount = right.snapshot.pendingActions.compareTo(
-          left.snapshot.pendingActions,
-        );
-        if (byCount != 0) {
-          return byCount;
-        }
-        return left.userLabel.toLowerCase().compareTo(
-          right.userLabel.toLowerCase(),
-        );
-      });
+    final details =
+        scopeKeys
+            .map((scopeKey) {
+              final isSignedOut = scopeKey == 'signed_out';
+              final userId = isSignedOut ? null : normalizeId(scopeKey);
+              final userData = userId == null ? null : usersById[userId];
+              final mergedSnapshot = _mergeStatuses(
+                isOnline: _isOnline,
+                bookingStatus:
+                    bookingStatuses[scopeKey] ??
+                    const OfflineQueueStatusSnapshot.idle(),
+                mediaStatus:
+                    mediaStatuses[scopeKey] ??
+                    const OfflineQueueStatusSnapshot.idle(),
+                mutationStatus:
+                    mutationStatuses[scopeKey] ??
+                    const OfflineQueueStatusSnapshot.idle(),
+                cleanupStatus:
+                    cleanupStatuses[scopeKey] ??
+                    const OfflineQueueStatusSnapshot.idle(),
+              );
+              return AdminOfflineQueueScopeSnapshot(
+                scopeKey: scopeKey,
+                userId: userId,
+                userLabel: isSignedOut
+                    ? 'Signed-out queue'
+                    : _userLabelFromMap(userData, fallbackUserId: userId),
+                roleLabel: isSignedOut
+                    ? 'Local device'
+                    : _roleLabelFromMap(userData),
+                snapshot: mergedSnapshot,
+              );
+            })
+            .where((detail) {
+              return detail.snapshot.pendingActions > 0 ||
+                  detail.snapshot.isSyncing;
+            })
+            .toList()
+          ..sort((left, right) {
+            final byCount = right.snapshot.pendingActions.compareTo(
+              left.snapshot.pendingActions,
+            );
+            if (byCount != 0) {
+              return byCount;
+            }
+            return left.userLabel.toLowerCase().compareTo(
+              right.userLabel.toLowerCase(),
+            );
+          });
 
     return details;
   }
 
   void _recompute() {
-    _snapshot = _mergeStatuses(
+    final next = _mergeStatuses(
       isOnline: _isOnline,
       bookingStatus: _bookingStatus,
       mediaStatus: _mediaStatus,
       mutationStatus: _mutationStatus,
       cleanupStatus: _cleanupStatus,
     );
+    if (_sameSnapshot(_snapshot, next)) {
+      return;
+    }
+    _snapshot = next;
     notifyListeners();
   }
+
+  // Queue events also signal changes in other stored account scopes. Keep those
+  // events even if this account's counts match, but coalesce their disk scans.
+  // Queue bursts request one running scan and at most one latest follow-up.
+  late final _knownSessionRefresh = LatestValueWorker<bool>(
+    apply: (_) => _refreshKnownSessionSnapshot(),
+    onError: (error, stack) {
+      if (kDebugMode) {
+        debugPrint('Sync status refresh deferred: $error');
+      }
+    },
+  );
 
   Future<void> _refreshKnownSessionSnapshot() async {
     final nextSnapshot = await readKnownSessionSnapshot();
@@ -358,11 +387,9 @@ class OfflineSyncStatusService extends ChangeNotifier {
     Iterable<OfflineQueueStatusSnapshot> statuses,
   ) {
     final items = statuses.toList();
-    final lastSyncCandidates = items
-        .map((status) => status.lastSyncAt)
-        .whereType<DateTime>()
-        .toList()
-      ..sort();
+    final lastSyncCandidates =
+        items.map((status) => status.lastSyncAt).whereType<DateTime>().toList()
+          ..sort();
     return OfflineQueueStatusSnapshot(
       pendingCount: items.fold(0, (sum, item) => sum + item.pendingCount),
       failedCount: items.fold(0, (sum, item) => sum + item.failedCount),

@@ -6,6 +6,27 @@ import 'package:webapp/models/vehicle_make.dart';
 const _bookingUndefined = Object();
 
 class Booking {
+  static int compareCreatedLatestFirst(Booking left, Booking right) {
+    final leftDate = left.createdAt;
+    final rightDate = right.createdAt;
+    if (leftDate == null && rightDate != null) {
+      return 1;
+    }
+    if (rightDate == null && leftDate != null) {
+      return -1;
+    }
+    final byDate = leftDate == null ? 0 : rightDate!.compareTo(leftDate);
+    if (byDate != 0) {
+      return byDate;
+    }
+    final leftId = int.tryParse(left.id ?? '');
+    final rightId = int.tryParse(right.id ?? '');
+    if (leftId != null && rightId != null) {
+      return rightId.compareTo(leftId);
+    }
+    return (right.id ?? '').compareTo(left.id ?? '');
+  }
+
   static const deliveredWorkflowStatuses = <String>{
     'delivered',
     'check',
@@ -34,6 +55,8 @@ class Booking {
     this.updatedAt,
     this.localSyncStatus,
     this.submissionKey,
+    this.pendingActionAt,
+    this.pendingBaseUpdatedAt,
   });
 
   final String? id;
@@ -52,6 +75,9 @@ class Booking {
   final DateTime? updatedAt;
   final String? localSyncStatus;
   final String? submissionKey;
+  // Local submission metadata; BookingRequest excludes it from server documents.
+  final DateTime? pendingActionAt;
+  final DateTime? pendingBaseUpdatedAt;
 
   Booking copyWith({
     Object? id = _bookingUndefined,
@@ -70,8 +96,16 @@ class Booking {
     Object? updatedAt = _bookingUndefined,
     Object? localSyncStatus = _bookingUndefined,
     Object? submissionKey = _bookingUndefined,
+    Object? pendingActionAt = _bookingUndefined,
+    Object? pendingBaseUpdatedAt = _bookingUndefined,
   }) {
     return Booking(
+      pendingActionAt: identical(pendingActionAt, _bookingUndefined)
+          ? this.pendingActionAt
+          : pendingActionAt as DateTime?,
+      pendingBaseUpdatedAt: identical(pendingBaseUpdatedAt, _bookingUndefined)
+          ? this.pendingBaseUpdatedAt
+          : pendingBaseUpdatedAt as DateTime?,
       id: identical(id, _bookingUndefined) ? this.id : id as String?,
       client: identical(client, _bookingUndefined)
           ? this.client
@@ -139,6 +173,10 @@ class Booking {
       'updated_at': updatedAt?.toIso8601String(),
       'local_sync_status': localSyncStatus,
       'submission_key': submissionKey,
+      if (pendingActionAt != null)
+        'local_action_at': pendingActionAt!.toIso8601String(),
+      if (pendingBaseUpdatedAt != null)
+        'local_base_updated_at': pendingBaseUpdatedAt!.toIso8601String(),
     };
   }
 
@@ -162,6 +200,8 @@ class Booking {
       updatedAt: _toDateTime(map['updated_at']),
       localSyncStatus: map['local_sync_status']?.toString(),
       submissionKey: map['submission_key']?.toString(),
+      pendingActionAt: _toDateTime(map['local_action_at']),
+      pendingBaseUpdatedAt: _toDateTime(map['local_base_updated_at']),
     );
   }
 

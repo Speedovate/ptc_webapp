@@ -99,6 +99,21 @@ Machine keys may still be non-numeric where appropriate, such as:
 
 But `id` should stay numeric.
 
+Offline bookings temporarily use `offline_booking_...` locally. On sync, the
+booking transaction allocates the next unused numeric ID at or above the counter.
+`BookingIdResolver` verifies the exact submission key against both `manage_id`
+and the confirmed booking before resolving a temporary reference. Never infer
+identity from waybill numbers, names, timestamps, or row order. Only known
+historical generated key formats may be reconstructed for lookup.
+
+Booking retries must not overwrite a committed booking or move the counter
+backwards. The reservation keeps the original submitted document for exact retry
+comparison; divergent legacy retries remain blocked for review. Resolve only
+explicit booking reference fields, preserving notes and form values. Conflicting
+legacy temporary/numeric rows must not overwrite each other. Preserve divergent
+temporary records under a separately allocated numeric ID and submission key.
+Offline chassis conflicts retain pending work rather than steal assignments.
+
 ## MVVM Rules
 
 ### Views
@@ -141,6 +156,27 @@ Use a service or engine when logic is:
 - too complex to keep inside a ViewModel cleanly
 
 ## Shared UI Rules
+
+### Initial Home Startup
+
+- Use `StartupSplashHandoff` for non-admin home pages. Signal readiness after
+  essential data resolves, including confirmed empty and error states.
+- Driver assignments require bookings and chassis return assignments; helper
+  assignments require bookings. Users and status labels refresh in the background.
+- Start broad non-admin warmup after the initial home resolves. Preserve form
+  and option loading requirements for the client booking form.
+- Never treat an unresolved empty cache as a confirmed empty assignment list.
+
+### Returning From Background
+
+- Keep the mounted page and unsaved forms intact during foreground recovery.
+- Use `AppResumeRecovery` to debounce recovery; never force a page reload or
+  recreate Firestore merely because the browser was backgrounded.
+- Automatic queue polling pauses while hidden; foreground recovery retries
+  durable queues with their existing conflict checks and write ordering.
+- Only full-state snapshots may be coalesced. Never drop queued user mutations.
+- Cache storage operations must have a bounded timeout, abort stale transactions,
+  and recover their connection without deleting pending user actions.
 
 ### Typography
 
@@ -500,3 +536,362 @@ Update this file when:
 - action meanings or color rules change
 - data model direction changes
 - a project-wide convention is intentionally changed
+
+### Booking identity resolver resource limits
+
+The resolver is demand-driven and has no snapshot subscription or periodic retry
+timer. A shared gate per Firestore instance coalesces identical in-flight lookups,
+limits reads to four concurrent lookups and sixteen starts per minute, and retains
+at most 256 backoff entries. Missing mappings/errors back off from 30 seconds to
+15 minutes. Only queue activity requests another lookup; elapsed time alone does
+not start one. A 30-second caller timeout keeps ownership of an unfinished SDK
+read to prevent accumulating duplicate reads. Confirmed offline creates and
+explicit conflict retries invalidate their ID's backoff without cancelling active
+reads. Numeric IDs bypass the gate. Existing queue scheduling remains separate.
+
+### Existing Firestore booking ID repair
+
+`LegacyBookingRepairService` runs from existing server-confirmed booking snapshots
+only when actual document IDs begin with `offline_`, and only for an online admin.
+It adds no listener or periodic retry; it is not awaited by startup. It attempts
+at most 256 IDs per service lifetime, sequentially, with at most three transaction
+attempts per repair. Network failures are deferred until a later app session.
+
+Exact submission identity is required. An existing numeric counterpart must match
+all business fields (only ID, updated_at, and local queue metadata are ignored).
+Timestamp-only differences are archived without replacing canonical data. An
+orphan with a verified submission key can receive the next unused numeric ID.
+Missing reserved targets, ambiguous identity, and inconsistent chassis assignments
+remain untouched for review. Divergent contents with a verified occupied target
+are preserved as a separate booking under a new unused, unreserved numeric ID. Never auto-select the newest
+status or merge by waybill.
+
+Repairs archive original documents under
+`booking_id_repairs/{temporaryId}/snapshots/{source,canonical}` and atomically
+write the numeric booking/reservation, update explicit chassis/support references,
+and remove the temporary document. Storage paths and arbitrary form strings are
+preserved. Completed/conflicting reports are not automatically reprocessed.
+`needs_review` reports contain a reason and differing business fields when known;
+operator reconciliation must review both source documents and references. This
+path does not apply a human decision about conflicting statuses. Results are
+printed as `[Booking ID repair] ...` in the app console. Old pending deletes for
+temporary IDs must never be redirected into deleting a canonical booking.
+
+### Admin conflict comparison and explicit reconciliation
+
+Admin Bookings shows `Review offline booking conflicts` when temporary bookings
+are present. Opening the modal performs one-time server reads, with manual refresh
+and no new subscriptions. The view uses a dedicated review ViewModel and service.
+It shows live differences, full records/history, and requires an explicit version
+choice plus acknowledgement. No version is preselected.
+
+`Keep numeric booking data` preserves the canonical document. `Use temporary copy
+data under numeric ID` replaces business data only for supported assignment-stage
+corrections (pending/assigned in the same stage or assigned-to-cancelled without a
+chassis). Other transitions require workflow review. Original numeric creation time
+and ID are retained. History is not silently combined: both pre-decision records
+are archived under `booking_id_repairs/{id}/decision_snapshots`. The report records
+resolution, acting admin, and time. Referenced chassis/support data is rechecked;
+other bookings' chassis cannot be taken. Entire source/canonical documents, report,
+reservation and known references must still match the preview transactionally.
+Stale comparisons require reload. The apply transaction checks the admin user role.
+No live reconciliation occurs until the admin applies their chosen version.
+
+The shared `AdminModalShell.flexibleBody` option is enabled for conflict review so
+wrapped titles and actions leave the remaining height for scrolling. Other dialogs
+retain the existing layout by default.
+
+### Copyable modal text
+
+App-owned dialog and bottom-sheet routes wrap their contents in `SelectionArea`,
+including direct nested search pickers, sync conflicts, and booking ID review.
+The page selection region does not extend into navigator overlays. Prefer normal
+`Text` inside these regions for continuous multi-field selection; text inputs keep
+their native editing/clipboard behavior. Modal guard and dismissal semantics stay
+unchanged.
+
+### Booking creation identity and ordering
+
+Bookings lists default to `created_at` descending, including local inserts and
+realtime refreshes. Missing creation dates go last. IDs are only tie breakers;
+updates and delayed sync must not move an old booking above a newer creation.
+The driver/helper assignment work queue keeps its separate existing ordering.
+
+A failed form submission retains the original booking, creation time and event
+history only while the submitted inputs, client, actor and form remain the same.
+Changed inputs or an explicit clear start a new submission identity. Normal
+edits keep the existing booking ID. A direct online create cannot overwrite an
+existing numeric document, even if an old reservation returns that ID.
+Unused numeric IDs are allocated at or above the counter; gaps are acceptable.
+Existing ambiguous legacy pairs still require review, not automatic duplication.
+
+### Foreground recovery workload
+
+Foreground recovery gives the existing booking listener a two-second grace period.
+A recent confirmed snapshot or one received during that grace suppresses a fallback
+collection read. Only one recovery owns an unfinished fallback; going offline or
+hidden cancels the pending fallback. Resume no longer calls enableNetwork on an
+already active Firestore connection. It flushes only initialized queues with known
+pending work; normal enqueue, initialization and periodic queue discovery remain.
+
+Retry snapshots privately copy each Uint8List photo once per new submission and
+reuse its unmodifiable view in retained inputs and returned booking payloads.
+Nested maps remain isolated; changed input bytes still create a new submission.
+Numeric-only booking snapshots bypass temporary-copy reconciliation allocations.
+
+### Occupied booking IDs: preserve both records
+
+Legacy repair policy v2 revisits old content-difference reports once per session.
+When a verified temporary booking conflicts with an occupied numeric target,
+allocate another ID atomically using the shared counter, skipping existing booking
+and reserved IDs. Preserve the occupied booking and its reservation unchanged.
+Process temporary records by original creation time ascending; the list remains
+creation time descending. Existing original creation/update times, status, form
+history and photo paths remain intact on the newly numbered copy.
+
+A distinct `booking_split_<temporaryId>` submission key and reservation belong to
+the new document. The durable repair report maps the original temporary identity
+to this new key/ID, and the resolver verifies that mapping before using it.
+Archives are kept in `split_snapshots`; only references still pointing exactly to
+the temporary ID are remapped. Chassis owned by another booking still block repair.
+An old queued create for a split record stays blocked for explicit review instead
+of replaying into the occupied numeric booking. Other review reasons are not
+repeated automatically. This adds no listeners or periodic retry tasks.
+
+### Booking van-number sizing
+
+Measure rendered widths instead of character counts for the Van Number column.
+Use the bounded TextWidthCache (256 entries) to reuse unchanged metrics across
+rebuilds, keyed by text, effective style, text scale, direction and locale.
+Dispose each temporary TextPainter after measurement. Van-number table cells
+remain single-line; the existing table-to-card breakpoint uses the measured width.
+
+### Offline workflow action time
+
+Existing-booking workflow submissions save a durable local mutation before
+returning success, including when connectivity appears online. Preserve one
+captured action time for status history, delivered_at and updated_at. Retry an
+unchanged failed submission with its original event and remote base version;
+changed inputs create a fresh action. Local action/base markers are excluded from
+Firestore documents. Confirmation failures release loading and display errors.
+
+Photos queue separately and wait for the matching server-side pending marker.
+Upload completion writes media_synced_at rather than changing the booking action
+time. Support message retries reuse their queue ID as the message document ID;
+older offline messages must not replace a newer thread preview. Resolve temporary
+booking references only through the existing verified ID resolver during sync.
+
+### Shared offline resource identity
+
+See docs/offline-write-audit.md for the audited request paths and boundaries.
+Non-booking offline creates use a provisional-ID-scoped reservation key, preserve
+created/updated action times, and record committed payloads in their reservations.
+Retries never overwrite occupied IDs or restore old snapshots over later edits.
+Generic update version checks and writes run in one transaction.
+
+OfflineReferenceMapper remaps only explicit schema references, including form
+field IDs and override keys. Never recursively replace arbitrary strings in form
+answers or notes. Unresolved dependencies remain queued. Aliases are persisted per
+queue user scope and reused by media sync without adding listeners or timers.
+Serialize queue mutations and flush-result merges while keeping network work
+outside the local queue lock. Preserve the first remote base version when
+coalescing updates and the original assignment when coalescing chassis edits.
+
+
+### Offline chassis references and account switching
+
+Chassis.bookingReferenceId and driverReferenceId preserve numeric or temporary
+identities as strings. Keep the legacy integer constructors/accessors; toMap emits
+numeric IDs as integers and temporary IDs as strings. Editors, labels, navigation
+and role assignment checks use the reference getters. New offline chassis use
+negative IDs, never a locally guessed next positive ID.
+
+Chassis replay checks the original version and current booking ownership inside
+the transaction. A conflicting remote assignment stays pending for review.
+Queue writes pin their originating user scope across awaits, including mutation,
+media and booking-photo queues, so account switches cannot redirect local writes.
+Provisional chassis deletes wait for the committed create alias and detach only
+booking links still owned by that chassis.
+
+### Mutually linked offline creates and edits during sync
+
+When a queued booking create and a queued provisional chassis create explicitly
+reference each other, commit the pair in the booking transaction. Match only
+exact queue identities and both reference fields; never infer a pair by name,
+waybill, or date. Reserve the chassis ID using its existing submission identity,
+verify ownership and vacancy inside the transaction, and preserve each record's
+own action dates. Record the linked source payload in the reservation so a retry
+after lost acknowledgement cannot overwrite subsequent edits.
+
+An edit arriving during a successful chassis create becomes an update against
+that committed create's original version, with the same resolved ID. Ordinary
+remote conflicts still require review. Booking-photo enqueue captures its user
+scope before image processing, not after the CPU/async preparation step. These
+paths add no timers or listeners; they run only for existing pending work.
+
+Media queue flush-result persistence must use the same local mutation lock as
+media enqueue. Never discard upload bytes solely because an exception is classified
+as non-retryable. Persist the error and retry deadline; repeated queue checks must
+respect backoff without adding timers, and preserve the original action date.
+
+### Deletes of pending offline resources
+
+Route temporary user/catalog/status/form/field deletes through the mutation queue
+regardless of current connectivity. Keep the pending user create until its exact
+confirmed identity is known (it may already be in flight), then apply its delete
+through the persisted alias. Never delete a raw unresolved `offline_` or negative
+resource target. Preserve ordinary confirmed-ID behavior and booking-specific
+canonical-delete protections.
+
+File-cleanup queue enqueue and flush-result merges share one local mutation lock.
+Capture account scope and action time before awaits. Preserve newly queued or
+replacement cleanup identities during sync, retain errors with persisted retry
+backoff, and let concurrent flush callers await the active operation. Treat Storage
+paths literally; never apply numeric document-ID resolution to arbitrary paths.
+
+Support read-marker queue targets are local composite keys, not numeric resource
+IDs. Resolve their payload.user_id through the scoped aliases; do not classify the
+entire user:thread target as an unresolved document ID. Queue temporary-user read
+markers even online and capture action time before local cache awaits.
+
+Repeated offline user-photo uploads link exact preceding preview/queue identities.
+Persist optional previous_upload_id before removing predecessors; atomically record
+per-field offline_photo_uploads receipts with the final photo patch. Only a receipt
+matching both predecessor identity and current URL authorizes the next photo;
+never bypass a remote change based on timestamps. Keep unverifiable work pending.
+Use the shared support read-marker transaction for both direct writes and replay,
+and never coalesce an older action over a newer pending read-marker timestamp.
+
+To acknowledge older queued photos after a lost batch acknowledgement, walk the
+exact persisted predecessor chain from the latest server receipt, checking the
+same user and field and bounding cycles. Do not infer by timestamp or retain an
+unbounded server history. User-delete replay must verify linked membership owners
+and durably hand asset cleanup to the originating scoped cleanup queue before
+acknowledging success. Billing and support requests must continue queueing temporary
+references after reconnect; existing support requester links may only be remapped
+when they still match the original temporary identity.
+
+
+### Support notifications
+
+Support incoming-message notifications cover all six current roles. Foreground
+thread updates show a shared snackbar and play sounds/sound.mp3. Foreground FCM
+also handles messages received after offline replay; a bounded, session-scoped
+256-entry signature set deduplicates the thread and push paths. Initial thread
+snapshots remain silent and sender echoes are excluded. The FCM subscription is
+cancelled on stop and reused during the session; no polling timer is added.
+
+The notifySupportMessage function triggers only on support/{threadId}/messages
+creation. Recipients match inbox visibility: active admin/manager/dispatcher users
+plus the active requester, excluding the sender. Parent clients and unrelated
+client/driver/helper accounts are not recipients. Payload previews are bounded;
+visible background notifications use generic text. Original action timestamps
+remain unchanged. Background delivery requires deployment of the function and
+notification permission; the service worker uses browser/OS notification audio,
+not custom MP3 playback. Function deployment is separate from building the web app.
+
+### Sync status feedback and retry overhead
+
+Queue readScopedStatuses must remain observational after initialization: do not
+call initialize again there, because its status refresh emits events that trigger
+another aggregate scope read. This previously formed a self-sustaining feedback
+loop through OfflineSyncStatusService. Keep queue events for changes in other
+account scopes, coalesce aggregate reads with LatestValueWorker, and notify the
+current UI only when the merged status changes.
+
+Media and cleanup queues with no due entries must preserve their stored payloads
+without rewriting or announcing active syncing. This also applies after reopening
+while a persisted retry deadline is in the future. Keep deadline checks, scoped
+ownership, original action times, and concurrent-enqueue merge safeguards.
+
+### Web engine view teardown guard
+
+The app starts with AppWidgetsBinding. Its sendFramesToEngine gate checks the
+public platform dispatcher registry against the exact FlutterView objects used
+by framework RenderViews. A removed view, including an old object whose ID was
+reused, cannot submit graphics/semantics to the engine. Registered views resume
+normally without a sticky flag. Preserve the superclass first-frame gate and
+native behavior. Do not suppress engine assertions, auto-reload the page, clear
+local storage, or patch the shared Flutter SDK to handle this condition.
+
+The window.dart:99 disposed-view assertion was reproduced in isolated headless
+Chrome during hot restart, before this guard. Repeated restarts after the guard
+no longer emitted it, and the login UI still rendered. This establishes coverage
+for that restart path, not every possible GPU/browser crash or authenticated flow.
+
+### Admin Fields key widths
+
+Measure every distinct field key with its inherited rendered text style using
+the bounded TextWidthCache. Do not proportionally compress the measured Key
+column to fit the viewport. Table headers and rows share the measured widths;
+the list switches to responsive cards if those widths do not fit. Keys remain single-line and fully
+accessible, including responsive cards via the opt-in singleLine field rendering.
+Other responsive field values retain their existing wrapping behavior.
+
+### Retained navigation rendering
+
+AdminHome and RolePlatformHome use RetainedSectionStack. Keep the existing
+bounded page-retention policy and child identity, but disable tickers on hidden
+sections and isolate each section's repaint work. Derive wrapper ValueKeys from
+child keys rather than reusing GlobalKeys. Do not dispose hidden pages or disable
+their data subscriptions: drafts, scroll positions and live data must survive
+navigation. This reduces hidden animation/paint work; IndexedStack still performs
+layout and this is not a claim that all scrolling or hot-restart lag is resolved.
+
+### Lazy admin bookings list
+
+The bookings overview uses one CustomScrollView with a toolbar/state sliver and
+AdminBookingsListSliver. Both responsive cards and wide table rows use lazy
+SliverList builders. Do not nest a shrink-wrapped full list in an outer Column:
+that eagerly lays out every booking again. Keep table-wide content measurements
+outside scroll-time SliverLayoutBuilder callbacks so scrolling alone does not
+rescan the dataset. Preserve the existing filters, order, row actions and separate
+booking-detail scroll path. Tests cover 1,000 bookings at narrow and wide widths.
+
+
+### Lazy data lists across roles
+
+Use LazyDataScrollView with SliverSection and LazySliverList for long read-only
+record lists. This now covers dashboard completed bookings, Users, Chassis,
+vehicle catalogs, Flow catalogs, client history, assigned driver/helper bookings,
+profile booking history, and grouped support conversations. Existing staff
+support and message builders remain lazy. UserBookingsSection produces a sliver;
+its profile and user-detail hosts must place it in a SliverSection.
+
+SliverWidthBuilder caches width-dependent table construction while scrolling,
+and invalidates for new widget data, viewport width and inherited text/theme
+changes. Snapshot filtered lists before building lazy rows, so each row does not
+repeat filtering. Wide tables fall back to responsive cards where measured
+columns cannot fit. The export modal keeps its form controls mounted and gives
+its booking candidate list a bounded, separately scrollable viewport.
+
+Do not virtualize editable/reorderable forms or fixed navigation/control groups
+just because they contain Columns. Preserve form values, validation and focus.
+This rendering change does not change repository operations, offline queue or ID
+resolution behavior, and does not add timers or database listeners. Widget tests
+use 1,000-row fixtures; authenticated release profiling is still needed to
+quantify production performance and investigate remaining non-rendering costs.
+
+
+The Access role catalog and booking conflict review now also use lazy slivers.
+AdminModalShell.bodyHandlesScrolling opts a dialog into a bounded child viewport;
+its default preserves the existing form scroll behavior. Sync Review uses a
+bounded ListView without shrinkWrap. Full conflict JSON records are constructed
+when their expansion is opened. Keep review choices, acknowledgement and write
+permissions in the existing view model; virtualization must not bypass them.
+
+### Shared booking processing and display windows
+
+BookingRequest.watchBookings uses SharedReplayStream so retained pages share
+cache processing as well as the remote listener. The replay is released with the
+last observer and each new session uses the existing cache trust rules. Keep
+emitted lists immutable. Booking/dashboard filters cache their results until a
+view-model notification invalidates them. Diagnostic strings must stay lazy.
+
+PagedDataSliver bounds Bookings and Dashboard presentation to batches of 15, with pull-up loading instead of a button;
+filter over all records first and never use the display subset for export or
+reconciliation. Preserve its PageStorage window across detail navigation and
+reset on changed filter criteria. This is not server pagination: never limit the
+shared authoritative collection snapshot without separating partial-page cache
+semantics from complete offline/reconciliation snapshots. See
+`docs/booking-data-performance.md` for the remaining data-layer work.

@@ -696,10 +696,12 @@ class _AdminSearchSelectFormFieldState
       selected = await showDialog<String>(
         context: context,
         useRootNavigator: false,
-        builder: (context) => _AdminSearchSelectDialog(
-          title: _resolvedDialogTitle(widget.dialogTitle, widget.decoration),
-          options: widget.options,
-          initialQuery: _controller.text.trim(),
+        builder: (context) => SelectionArea(
+          child: _AdminSearchSelectDialog(
+            title: _resolvedDialogTitle(widget.dialogTitle, widget.decoration),
+            options: widget.options,
+            initialQuery: _controller.text.trim(),
+          ),
         ),
       );
     } finally {

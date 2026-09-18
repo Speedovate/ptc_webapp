@@ -1,3 +1,4 @@
+import 'package:webapp/services/offline_reference_mapper.dart';
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -572,7 +573,8 @@ class VehicleRequest implements VehicleCatalogRepository {
         resourceKey: _vehicleMakesResourceKey,
         documentId: nextId,
       );
-      if (currentNetworkStatus()) {
+      if (currentNetworkStatus() &&
+          !OfflineReferenceMapper.hasTemporaryReferences(document)) {
         await _writeCollectionDocumentOnline(
           collectionPath: _vehicleMakesResourceKey,
           documentId: nextId,
@@ -735,7 +737,8 @@ class VehicleRequest implements VehicleCatalogRepository {
         resourceKey: resourceKey,
         documentId: nextId,
       );
-      if (currentNetworkStatus()) {
+      if (currentNetworkStatus() &&
+          !OfflineReferenceMapper.hasTemporaryReferences(document)) {
         await _writeCollectionDocumentOnline(
           collectionPath: resourceKey,
           documentId: nextId,
@@ -797,6 +800,18 @@ class VehicleRequest implements VehicleCatalogRepository {
     required Map<String, dynamic> document,
     required CollectionReference<Map<String, dynamic>> collection,
   }) async {
+    if (OfflineReferenceMapper.hasTemporaryReferences(document)) {
+      await _offlineMutationQueueService.queueCollectionDocumentUpsert(
+        collectionKey: collectionPath,
+        documentId: documentId,
+        document: document,
+        baseUpdatedAt: await _cachedUpdatedAt(
+          resourceKey: collectionPath,
+          documentId: documentId,
+        ),
+      );
+      return;
+    }
     if (kIsWeb) {
       try {
         final patched = await _firestorePublicDocumentFetcher
@@ -858,6 +873,13 @@ class VehicleRequest implements VehicleCatalogRepository {
     required String documentId,
     required CollectionReference<Map<String, dynamic>> collection,
   }) async {
+    if (OfflineReferenceMapper.hasTemporaryReferences({'id': documentId})) {
+      await _offlineMutationQueueService.queueCollectionDocumentDelete(
+        collectionKey: collectionPath,
+        documentId: documentId,
+      );
+      return;
+    }
     if (kIsWeb) {
       try {
         final deleted = await _firestorePublicDocumentFetcher

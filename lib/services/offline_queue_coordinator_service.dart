@@ -43,6 +43,27 @@ class OfflineQueueCoordinatorService {
     unawaited(flushAll());
   }
 
+  /// Resume does not initialize queues or scan empty queues. Enqueue/startup
+  /// and existing periodic processing still discover other stored sessions.
+  Future<void> flushPendingOnResume() async {
+    if (!_isInitialized) {
+      return;
+    }
+    final mutations = OfflineMutationQueueService.instance;
+    final uploads = BookingOfflineUploadQueueService.instance;
+    final media = OfflineMediaSyncService.instance;
+    final cleanup = OfflineCleanupQueueService.instance;
+    if (mutations.currentStatus.pendingCount > 0) {
+      await mutations.flushPendingMutations();
+    }
+    await Future.wait([
+      if (uploads.currentStatus.pendingCount > 0) uploads.flushPendingUploads(),
+      if (media.currentStatus.pendingCount > 0) media.flushPendingOperations(),
+      if (cleanup.currentStatus.pendingCount > 0)
+        cleanup.flushPendingCleanups(),
+    ]);
+  }
+
   Future<void> flushAll() async {
     // Booking photos patch the booking document after upload, so mutations
     // must be durable before the upload queue begins. The remaining queues

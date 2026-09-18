@@ -216,7 +216,7 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
   }
 
   String clientName(Booking booking) =>
-      _userName(booking.client?.id, 'Unknown client');
+      _userName(booking.client?.id, 'Loading ...');
 
   String clientPhone(Booking booking) => _userPhone(booking.client?.id);
 

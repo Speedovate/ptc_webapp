@@ -1,3 +1,4 @@
+import 'package:webapp/services/offline_reference_mapper.dart';
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -13,9 +14,13 @@ class ChassisRequest {
   ChassisRequest({
     FirebaseFirestore? firestore,
     OfflineMutationQueueService? offlineMutationQueueService,
+    Future<void> Function()? queueInitializer,
   }) : _providedFirestore = firestore,
        _offlineMutationQueueService =
-           offlineMutationQueueService ?? OfflineMutationQueueService.instance;
+           offlineMutationQueueService ?? OfflineMutationQueueService.instance,
+       _queueInitializer =
+           queueInitializer ??
+           OfflineQueueCoordinatorService.instance.initialize;
 
   static final ChassisRequest instance = ChassisRequest();
   static const resourceKey = 'chassis';
@@ -27,6 +32,7 @@ class ChassisRequest {
   FirebaseFirestore get _firestore =>
       _providedFirestore ?? FirebaseFirestore.instance;
   final OfflineMutationQueueService _offlineMutationQueueService;
+  final Future<void> Function() _queueInitializer;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
@@ -46,14 +52,13 @@ class ChassisRequest {
   List<Chassis> get hydratedChassisSnapshot =>
       List<Chassis>.unmodifiable(_memory);
 
+  static int _lastOfflineIdTick = 0;
   int _nextOfflineTemporaryId() {
-    var highestId = 0;
-    for (final chassis in _memory) {
-      if (chassis.id > highestId) {
-        highestId = chassis.id;
-      }
-    }
-    return highestId + 1;
+    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+    _lastOfflineIdTick = now > _lastOfflineIdTick
+        ? now
+        : _lastOfflineIdTick + 1;
+    return -_lastOfflineIdTick;
   }
 
   String displayChassisLabel(String value) {
@@ -62,11 +67,11 @@ class ChassisRequest {
       return value;
     }
     final chassis = _memory.where((item) => item.id == id).firstOrNull;
-    final currentBookingId = chassis?.currentBookingId;
+    final currentBookingId = chassis?.bookingReferenceId;
     final bookingStatus = currentBookingId == null
         ? null
         : BookingRequest.hydratedBookingsSnapshot
-              .where((booking) => booking.id?.toString() == '$currentBookingId')
+              .where((booking) => booking.id?.toString() == currentBookingId)
               .firstOrNull
               ?.clientStatus;
     return chassis?.dropdownLabel(bookingStatus: bookingStatus) ?? value;
@@ -75,13 +80,18 @@ class ChassisRequest {
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
-    unawaited(
-      OfflineQueueCoordinatorService.instance.initialize().catchError((_) {}),
-    );
+    unawaited(_queueInitializer().catchError((_) {}));
     _subscription = _collection.snapshots(includeMetadataChanges: true).listen((
       snapshot,
     ) {
       if (!currentNetworkStatus() && snapshot.metadata.isFromCache) return;
+      // An online listener's provisional empty cache is not confirmation that
+      // this driver has no return assignments. Wait for cache data or server.
+      if (currentNetworkStatus() &&
+          snapshot.metadata.isFromCache &&
+          snapshot.docs.isEmpty) {
+        return;
+      }
       // Preserve the Firestore document ID when legacy/manual records do not
       // also store an `id` field. This matches the other catalog requests.
       unawaited(_applyRemoteDocuments(snapshot.docs.map(documentData)));
@@ -136,18 +146,32 @@ class ChassisRequest {
     );
   }
 
-  Future<Chassis> saveChassis(Chassis chassis, {int? previousBookingId}) async {
+  Future<Chassis> saveChassis(
+    Chassis chassis, {
+    Object? previousBookingId,
+    DateTime? baseUpdatedAt,
+  }) async {
     _trace('save initialize start');
     await initialize();
     _trace('save initialize done');
-    final isCreate = chassis.id <= 0;
+    final isCreate = chassis.id <= 0 && chassis.submissionKey == null;
     final submissionKey =
         chassis.submissionKey ??
         'chassis:${DateTime.now().toUtc().microsecondsSinceEpoch}:${chassis.name.toLowerCase()}';
     final now = DateTime.now();
-    final online = currentNetworkStatus();
+    final pendingCreate = await _offlineMutationQueueService
+        .hasPendingChassisCreate('${chassis.id}');
+    final online =
+        !pendingCreate &&
+        currentNetworkStatus() &&
+        (isCreate || chassis.id > 0) &&
+        !OfflineReferenceMapper.hasTemporaryReferences({
+          'current_booking_id': chassis.bookingReferenceId,
+          'current_driver_id': chassis.driverReferenceId,
+          'previous_booking_id': previousBookingId,
+        });
     _trace(
-      'save start create=$isCreate online=$online chassisId=${chassis.id} bookingId=${chassis.currentBookingId ?? '-'}',
+      'save start create=$isCreate online=$online chassisId=${chassis.id} bookingId=${chassis.bookingReferenceId ?? '-'}',
     );
     final id = isCreate
         ? (online
@@ -171,7 +195,7 @@ class ChassisRequest {
       await _writeAssignmentOnline(
         chassis: saved,
         document: document,
-        previousBookingId: previousBookingId,
+        previousBookingId: previousBookingId?.toString(),
       );
       _trace('online write done id=$id');
     } else {
@@ -181,8 +205,11 @@ class ChassisRequest {
         submissionKey: submissionKey,
         chassisDocument: document,
         previousBookingId: previousBookingId?.toString(),
-        nextBookingId: saved.currentBookingId?.toString(),
+        nextBookingId: saved.bookingReferenceId?.toString(),
         isProvisionalCreate: isCreate,
+        baseUpdatedAt: (baseUpdatedAt ?? chassis.updatedAt)
+            ?.toUtc()
+            .toIso8601String(),
       );
       _trace('offline queue persisted provisionalId=$id');
     }
@@ -220,15 +247,20 @@ class ChassisRequest {
   Future<void> deleteChassis(Chassis chassis) async {
     await initialize();
     final id = chassis.id;
-    if (id <= 0) return;
+    if (id == 0) return;
     final now = DateTime.now().toUtc().toIso8601String();
-    if (currentNetworkStatus()) {
+    if (currentNetworkStatus() &&
+        id > 0 &&
+        !await _offlineMutationQueueService.hasPendingChassisCreate('$id') &&
+        !OfflineReferenceMapper.hasTemporaryReferences({
+          'booking_id': chassis.bookingReferenceId,
+        })) {
       await _firestore.runTransaction<void>((transaction) async {
-        if (chassis.currentBookingId != null) {
+        if (chassis.bookingReferenceId != null) {
           transaction.set(
             _firestore
                 .collection('bookings')
-                .doc('${chassis.currentBookingId}'),
+                .doc('${chassis.bookingReferenceId}'),
             {'chassis_id': FieldValue.delete(), 'updated_at': now},
             SetOptions(merge: true),
           );
@@ -239,7 +271,7 @@ class ChassisRequest {
           {'version': now, 'updated_at': now},
           SetOptions(merge: true),
         );
-        if (chassis.currentBookingId != null) {
+        if (chassis.bookingReferenceId != null) {
           transaction.set(
             _firestore.collection('manage_cache').doc('bookings'),
             {'version': now, 'updated_at': now},
@@ -250,7 +282,7 @@ class ChassisRequest {
     } else {
       await _offlineMutationQueueService.queueChassisDelete(
         documentId: '$id',
-        bookingId: chassis.currentBookingId?.toString(),
+        bookingId: chassis.bookingReferenceId?.toString(),
       );
     }
     _memory = _memory.where((item) => item.id != id).toList(growable: false);
@@ -276,16 +308,16 @@ class ChassisRequest {
   Future<void> _writeAssignmentOnline({
     required Chassis chassis,
     required Map<String, dynamic> document,
-    required int? previousBookingId,
+    required String? previousBookingId,
   }) async {
     final now = DateTime.now().toUtc().toIso8601String();
     await _firestore
         .runTransaction<void>((transaction) async {
           DocumentSnapshot<Map<String, dynamic>>? priorChassisSnapshot;
-          if (chassis.currentBookingId != null) {
+          if (chassis.bookingReferenceId != null) {
             final targetBooking = _firestore
                 .collection('bookings')
-                .doc('${chassis.currentBookingId}');
+                .doc('${chassis.bookingReferenceId}');
             final targetSnapshot = await transaction.get(targetBooking);
             if (!targetSnapshot.exists) {
               throw StateError('The selected booking no longer exists.');
@@ -300,18 +332,18 @@ class ChassisRequest {
             }
           }
           if (previousBookingId != null &&
-              previousBookingId != chassis.currentBookingId) {
+              previousBookingId != chassis.bookingReferenceId) {
             transaction.set(
-              _firestore.collection('bookings').doc('$previousBookingId'),
+              _firestore.collection('bookings').doc(previousBookingId),
               {'chassis_id': FieldValue.delete(), 'updated_at': now},
               SetOptions(merge: true),
             );
           }
-          if (chassis.currentBookingId != null) {
+          if (chassis.bookingReferenceId != null) {
             transaction.set(
               _firestore
                   .collection('bookings')
-                  .doc('${chassis.currentBookingId}'),
+                  .doc('${chassis.bookingReferenceId}'),
               <String, dynamic>{
                 'chassis_id': '${chassis.id}',
                 'updated_at': now,
@@ -333,8 +365,8 @@ class ChassisRequest {
             {'version': now, 'updated_at': now},
             SetOptions(merge: true),
           );
-          if (previousBookingId != chassis.currentBookingId ||
-              chassis.currentBookingId != null) {
+          if (previousBookingId != chassis.bookingReferenceId ||
+              chassis.bookingReferenceId != null) {
             transaction.set(
               _firestore.collection('manage_cache').doc('bookings'),
               {'version': now, 'updated_at': now},

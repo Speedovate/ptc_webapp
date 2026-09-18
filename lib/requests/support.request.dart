@@ -1,4 +1,6 @@
+import 'package:webapp/services/support_read_marker_writer.dart';
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -11,6 +13,7 @@ import 'package:webapp/services/firestore_public_document_fetcher.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
+import 'package:webapp/services/offline_reference_mapper.dart';
 import 'package:webapp/services/support_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/utils/performance_trace.dart';
@@ -19,9 +22,15 @@ class SupportRequest {
   SupportRequest({
     FirebaseFirestore? firestore,
     SupportStorageService? storage,
+    OfflineMutationQueueService? offlineMutationQueueService,
+    OfflineMediaSyncService? offlineMediaSyncService,
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
   }) : _providedFirestore = firestore,
        _storage = storage ?? SupportStorageService.instance,
+       _offlineMediaSyncService =
+           offlineMediaSyncService ?? OfflineMediaSyncService.instance,
+       _offlineMutationQueueService =
+           offlineMutationQueueService ?? OfflineMutationQueueService.instance,
        _firestorePublicDocumentFetcher =
            firestorePublicDocumentFetcher ??
            createFirestorePublicDocumentFetcher();
@@ -39,10 +48,8 @@ class SupportRequest {
       _providedFirestore ?? FirebaseFirestore.instance;
   final SupportStorageService _storage;
   final FirestorePublicDocumentFetcher _firestorePublicDocumentFetcher;
-  final OfflineMediaSyncService _offlineMediaSyncService =
-      OfflineMediaSyncService.instance;
-  final OfflineMutationQueueService _offlineMutationQueueService =
-      OfflineMutationQueueService.instance;
+  final OfflineMediaSyncService _offlineMediaSyncService;
+  final OfflineMutationQueueService _offlineMutationQueueService;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
   );
@@ -373,6 +380,7 @@ class SupportRequest {
         normalizedMarker.isEmpty) {
       return;
     }
+    final actionAt = DateTime.now().toUtc().toIso8601String();
     final resourceKey = _threadReadMarkersResourceKey(normalizedUserId);
     final existing =
         await FirestoreCacheStore.instance.readDocumentMaps(resourceKey) ??
@@ -384,7 +392,7 @@ class SupportRequest {
       'id': normalizedThreadId,
       'thread_id': normalizedThreadId,
       'marker': normalizedMarker,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      'updated_at': actionAt,
     };
     final existingIndex = next.indexWhere(
       (item) => normalizeId(item['thread_id']) == normalizedThreadId,
@@ -398,12 +406,16 @@ class SupportRequest {
     if (!_threadReadMarkerUpdates.isClosed) {
       _threadReadMarkerUpdates.add(normalizedUserId);
     }
-    if (currentNetworkStatus()) {
+    if (currentNetworkStatus() &&
+        !OfflineReferenceMapper.hasTemporaryReferences({
+          'user_id': normalizedUserId,
+        })) {
       try {
-        await _threadReadCollection(normalizedUserId)
-            .doc(normalizedThreadId)
-            .set(nextDocument, SetOptions(merge: true))
-            .timeout(const Duration(seconds: 6));
+        await writeSupportReadMarker(
+          _firestore,
+          _threadReadCollection(normalizedUserId).doc(normalizedThreadId),
+          nextDocument,
+        ).timeout(const Duration(seconds: 6));
       } on TimeoutException catch (_) {
         await _offlineMutationQueueService.queueSupportThreadReadMarker(
           userId: normalizedUserId,
@@ -918,6 +930,7 @@ class SupportRequest {
     List<SupportAttachment> attachments = const [],
     String? pendingMessageId,
     String? pendingLocalOrderKey,
+    DateTime? actionAt,
   }) async {
     final normalizedThreadId = normalizeId(threadId);
     final normalizedSenderId = normalizeId(sender.id);
@@ -930,9 +943,17 @@ class SupportRequest {
     }
 
     final threadDoc = _supportCollection.doc(normalizedThreadId);
-    final messageDoc = threadDoc.collection('messages').doc();
-    final now = DateTime.now().toUtc();
+    final stableId = pendingLocalOrderKey?.isNotEmpty == true
+        ? 'support_message_${base64UrlEncode(utf8.encode('$normalizedThreadId:$normalizedSenderId:$pendingLocalOrderKey'))}'
+        : null;
+    final messageDoc = threadDoc.collection('messages').doc(stableId);
+    final now = actionAt?.toUtc() ?? DateTime.now().toUtc();
     final existingThread = await _findThreadById(normalizedThreadId);
+    if (_hasPendingSupportReferences(sender, existingThread)) {
+      throw StateError(
+        'Support reference is temporarily unavailable. Try again after sync.',
+      );
+    }
     final message = SupportMessage(
       id: messageDoc.id,
       localOrderKey: pendingLocalOrderKey,
@@ -947,7 +968,6 @@ class SupportRequest {
       updatedAt: now,
     );
     final messageMap = message.toMap();
-    await messageDoc.set(message.toMap());
     await _replaceCachedMessageDocument(
       threadId: normalizedThreadId,
       pendingMessageId: pendingMessageId,
@@ -982,7 +1002,18 @@ class SupportRequest {
       'updated_at': now.toIso8601String(),
       'is_active': true,
     };
-    await threadDoc.set(threadPatch, SetOptions(merge: true));
+    await _firestore.runTransaction<void>((tx) async {
+      final existingMessage = await tx.get(messageDoc);
+      final currentThread = await tx.get(threadDoc);
+      if (existingMessage.exists) return;
+      tx.set(messageDoc, messageMap);
+      final latestAt = DateTime.tryParse(
+        currentThread.data()?['last_message_at']?.toString() ?? '',
+      );
+      if (latestAt == null || !latestAt.isAfter(now)) {
+        tx.set(threadDoc, threadPatch, SetOptions(merge: true));
+      }
+    });
     await _upsertThreadPatch(
       threadId: normalizedThreadId,
       patch: {
@@ -1029,8 +1060,9 @@ class SupportRequest {
       attachments: attachments,
     );
 
-    if (!currentNetworkStatus()) {
-      final thread = await _findThreadById(threadId);
+    final thread = await _findThreadById(threadId);
+    if (!currentNetworkStatus() ||
+        _hasPendingSupportReferences(sender, thread)) {
       await _offlineMediaSyncService.queueSupportMessage(
         threadId: threadId,
         sender: sender,
@@ -1063,6 +1095,7 @@ class SupportRequest {
         attachments: uploadedAttachments,
         pendingMessageId: localQueuedMessage?.id,
         pendingLocalOrderKey: localQueuedMessage?.localOrderKey,
+        actionAt: localQueuedMessage?.createdAt,
       );
       return false;
     } catch (error) {
@@ -1085,6 +1118,15 @@ class SupportRequest {
       return true;
     }
   }
+
+  bool _hasPendingSupportReferences(UserModel sender, SupportThread? thread) =>
+      OfflineReferenceMapper.hasTemporaryReferences({
+        'sender_user_id': sender.id,
+        'requester_user_id': thread?.requesterUserId,
+        'requester_parent_client_id':
+            thread?.requesterParentClientId ?? sender.parentClientId,
+        'booking_id': thread?.bookingId,
+      });
 
   bool _isQueueableUploadError(String normalizedError) {
     return normalizedError.contains('internet connection') ||

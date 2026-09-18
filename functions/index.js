@@ -8,6 +8,7 @@ initializeApp();
 
 const db = getFirestore();
 const staffRoles = ['admin', 'manager', 'dispatcher'];
+const {supportRecipients, supportPreview} = require('./support-notifications');
 
 // Sends a booking-created notification without changing Firestore. Foreground
 // users receive alert.mp3 from the Flutter booking alert service.
@@ -213,3 +214,51 @@ async function advanceDueDeliveredBookings() {
 function normalize(value) {
   return String(value || '').trim().toLowerCase();
 }
+
+// Trigger on message creation (including offline replay), not thread previews:
+// edits and read markers must never send another notification.
+exports.notifySupportMessage = onDocumentCreated(
+  {document: 'support/{threadId}/messages/{messageId}', region: 'asia-southeast1'},
+  async event => {
+    const message = event.data.data() || {};
+    const threadSnapshot = await event.data.ref.parent.parent.get();
+    if (!threadSnapshot.exists) return;
+    const thread = threadSnapshot.data();
+    const requesterId = String(thread.requester_user_id || '').trim();
+    if (!requesterId) return;
+    const [staff, requester] = await Promise.all([
+      db.collection('users').where('role', 'in', staffRoles).get(),
+      db.collection('users').doc(requesterId).get(),
+    ]);
+    const users = staff.docs.map(doc => ({...doc.data(), id: doc.id}));
+    if (requester.exists) users.push({...requester.data(), id: requester.id});
+    const recipients = supportRecipients(thread, message.sender_user_id, users);
+    const preview = supportPreview(message).slice(0, 200);
+    for (const recipientId of recipients) {
+      const snapshot = await db.collection('manage_notifications')
+        .where('user_id', '==', recipientId).where('platform', '==', 'web').get();
+      const tokens = [...new Set(snapshot.docs.map(doc =>
+        String(doc.data().token || '').trim()).filter(Boolean))];
+      // FCM accepts at most 500 tokens per multicast.
+      for (let offset = 0; offset < tokens.length; offset += 500) {
+        await getMessaging().sendEachForMulticast({
+          tokens: tokens.slice(offset, offset + 500),
+          data: {
+            type: 'support_message', recipientId,
+            threadId: event.params.threadId,
+            messageId: event.params.messageId,
+            senderId: String(message.sender_user_id || ''),
+            messageAt: String(message.created_at || ''),
+            // Only used for deduplication with the foreground thread preview.
+            preview,
+            notificationId: `support-${event.params.threadId}-${event.params.messageId}`,
+            title: 'New Support Message',
+            body: 'You received a new message in Support.',
+            url: 'https://paltranco.vercel.app/',
+          },
+          webpush: {fcmOptions: {link: 'https://paltranco.vercel.app/'}},
+        });
+      }
+    }
+  },
+);

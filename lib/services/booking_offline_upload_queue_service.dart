@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'package:webapp/services/booking_id_resolver.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -18,10 +19,14 @@ class BookingOfflineUploadQueueService {
     BookingStorageBackend? backend,
     FirebaseFirestore? firestore,
     PhotoStorageService? photoStorageService,
+    Future<void> Function()? flushMutations,
   }) : _backend = backend ?? createBookingStorageBackend(),
        _providedFirestore = firestore,
        _photoStorageService =
-           photoStorageService ?? PhotoStorageService.instance;
+           photoStorageService ?? PhotoStorageService.instance,
+       _flushMutations =
+           flushMutations ??
+           OfflineMutationQueueService.instance.flushPendingMutations;
 
   static final BookingOfflineUploadQueueService instance =
       BookingOfflineUploadQueueService();
@@ -36,6 +41,7 @@ class BookingOfflineUploadQueueService {
   FirebaseFirestore get _firestore =>
       _providedFirestore ?? FirebaseFirestore.instance;
   final PhotoStorageService _photoStorageService;
+  final Future<void> Function() _flushMutations;
   final ImageUploadProcessor _imageUploadProcessor =
       ImageUploadProcessor.instance;
   final AuthStorageBackend _authStorage = createAuthStorageBackend();
@@ -60,7 +66,10 @@ class BookingOfflineUploadQueueService {
     Iterable<String> userIds = const [],
     bool includeSignedOut = true,
   }) async {
-    await initialize();
+    // Inspection must not publish status and recursively trigger aggregate scans.
+    if (!_isInitialized) {
+      await initialize();
+    }
     final normalizedUserIds = userIds
         .map(normalizeId)
         .whereType<String>()
@@ -89,15 +98,35 @@ class BookingOfflineUploadQueueService {
     await _backend.initialize();
     await _refreshStatusFromStorage();
     _retryTimer ??= Timer.periodic(_retryInterval, (_) {
+      if (!isAppVisible()) return;
       unawaited(flushPendingUploads());
     });
     _networkSubscription ??= networkStatusEvents().listen((isOnline) {
-      if (isOnline) {
+      if (isOnline && isAppVisible()) {
         unawaited(flushPendingUploads());
       }
     });
     _isInitialized = true;
     unawaited(flushPendingUploads());
+  }
+
+  Future<void> _queueMutationTail = Future<void>.value();
+  final Object _storageScopeKey = Object();
+
+  Future<T> _mutateQueue<T>(
+    Future<T> Function() action, {
+    String? originatingStorageKey,
+  }) {
+    // Capture the originating account before waiting for another local write.
+    final scope = originatingStorageKey == null
+        ? _resolvedStorageKey()
+        : Future.value(originatingStorageKey);
+    final next = _queueMutationTail.then((_) async {
+      final storageKey = await scope;
+      return runZoned(action, zoneValues: {_storageScopeKey: storageKey});
+    });
+    _queueMutationTail = next.then<void>((_) {}, onError: (Object _) {});
+    return next;
   }
 
   Future<Map<String, dynamic>> enqueueBookingPhoto({
@@ -109,6 +138,8 @@ class BookingOfflineUploadQueueService {
     String? mimeType,
     int? size,
   }) async {
+    final actionAt = DateTime.now().toUtc();
+    final originatingStorageKey = await _resolvedStorageKey();
     await initialize();
     final processed = await _imageUploadProcessor.prepare(
       bytes: bytes,
@@ -116,40 +147,56 @@ class BookingOfflineUploadQueueService {
       mimeType: mimeType,
     );
 
-    final entry = _PendingBookingUploadEntry(
-      id: _nextEntryId(),
-      bookingId: bookingId,
-      statusKey: statusKey,
-      fieldKey: fieldKey,
-      bytesBase64: base64Encode(processed.bytes),
-      fileName: processed.fileName,
-      mimeType: processed.mimeType,
-      size: processed.size,
-      createdAtIso: DateTime.now().toUtc().toIso8601String(),
-      retryCount: 0,
-      lastError: null,
-    );
+    return _mutateQueue(() async {
+      final entries = await _readEntries();
+      final encodedBytes = base64Encode(processed.bytes);
+      final staged = entries
+          .where(
+            (entry) =>
+                entry.bookingId == bookingId &&
+                entry.statusKey == statusKey &&
+                entry.fieldKey == fieldKey &&
+                entry.bytesBase64 == encodedBytes,
+          )
+          .firstOrNull;
+      final entry =
+          staged ??
+          _PendingBookingUploadEntry(
+            id: _nextEntryId(),
+            bookingId: bookingId,
+            statusKey: statusKey,
+            fieldKey: fieldKey,
+            bytesBase64: base64Encode(processed.bytes),
+            fileName: processed.fileName,
+            mimeType: processed.mimeType,
+            size: processed.size,
+            createdAtIso: actionAt.toIso8601String(),
+            retryCount: 0,
+            lastError: null,
+          );
 
-    final entries = await _readEntries();
-    entries.add(entry);
-    await _writeEntries(entries);
-    _setStatus(_currentStatus.copyWith(pendingCount: entries.length));
-    unawaited(flushPendingUploads());
+      if (staged == null) {
+        entries.add(entry);
+        await _writeEntries(entries);
+      }
+      _setStatus(_currentStatus.copyWith(pendingCount: entries.length));
+      unawaited(flushPendingUploads());
 
-    final resolvedMimeType = processed.mimeType.trim().isNotEmpty
-        ? processed.mimeType.trim()
-        : 'image/jpeg';
-    final previewDataUrl =
-        'data:$resolvedMimeType;base64,${base64Encode(processed.bytes)}';
+      final resolvedMimeType = processed.mimeType.trim().isNotEmpty
+          ? processed.mimeType.trim()
+          : 'image/jpeg';
+      final previewDataUrl =
+          'data:$resolvedMimeType;base64,${base64Encode(processed.bytes)}';
 
-    return {
-      'name': processed.fileName,
-      'download_url': previewDataUrl,
-      'mime_type': processed.mimeType,
-      'size': processed.size,
-      'pending_upload': true,
-      'pending_upload_id': entry.id,
-    };
+      return {
+        'name': processed.fileName,
+        'download_url': previewDataUrl,
+        'mime_type': processed.mimeType,
+        'size': processed.size,
+        'pending_upload': true,
+        'pending_upload_id': entry.id,
+      };
+    }, originatingStorageKey: originatingStorageKey);
   }
 
   Future<void> flushPendingUploads() async {
@@ -158,12 +205,13 @@ class BookingOfflineUploadQueueService {
       return;
     }
 
-    // The booking document contains the pending-upload marker that this
-    // queue replaces with a storage URL. Never race that document write.
-    await OfflineMutationQueueService.instance.flushPendingMutations();
-    _markPendingAsSyncing();
+    // Acquire ownership before awaiting dependencies: timer and resume events
+    // must not both proceed into the same upload batch.
     _isFlushing = true;
     try {
+      // Persist pending-upload markers before replacing them with storage URLs.
+      await _flushMutations();
+      _markPendingAsSyncing();
       final currentStorageKey = await _resolvedStorageKey();
       final storageKeys = await _allKnownStorageKeys();
       for (final storageKey in storageKeys) {
@@ -223,7 +271,7 @@ class BookingOfflineUploadQueueService {
             FieldValue.delete(),
         'status_outputs.${entry.statusKey}.fields.${entry.fieldKey}.pending_upload_id':
             FieldValue.delete(),
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
+        'media_synced_at': DateTime.now().toUtc().toIso8601String(),
       });
       applied = true;
     });
@@ -269,6 +317,8 @@ class BookingOfflineUploadQueueService {
   }
 
   Future<String> _resolvedStorageKey() async {
+    final captured = Zone.current[_storageScopeKey];
+    if (captured is String) return captured;
     final normalizedUserId = normalizeId(
       await _authStorage.readString(_currentUserIdKey),
     );
@@ -349,11 +399,43 @@ class BookingOfflineUploadQueueService {
     final remaining = <_PendingBookingUploadEntry>[];
     var processed = 0;
 
-    for (final entry in entries) {
+    for (final sourceEntry in entries) {
+      var entry = sourceEntry;
       try {
+        if (BookingIdResolver.isTemporary(entry.bookingId)) {
+          final resolved = await BookingIdResolver(
+            firestore: _firestore,
+          ).resolve(entry.bookingId);
+          if (resolved == null) {
+            remaining.add(entry);
+            continue;
+          }
+          entry = entry.copyWith(bookingId: resolved);
+        }
         if (await OfflineMutationQueueService.instance
-            .hasPendingBookingMutation(entry.bookingId)) {
+                .hasPendingBookingMutation(entry.bookingId) ||
+            (sourceEntry.bookingId != entry.bookingId &&
+                await OfflineMutationQueueService.instance
+                    .hasPendingBookingMutation(sourceEntry.bookingId))) {
           remaining.add(entry);
+          continue;
+        }
+        final markerSnapshot = await _bookingsCollection
+            .doc(entry.bookingId)
+            .get()
+            .timeout(const Duration(seconds: 10));
+        final markerField = _fieldValueFromStatusOutputs(
+          _statusOutputsFromBooking(markerSnapshot.data() ?? {}),
+          statusKey: entry.statusKey,
+          fieldKey: entry.fieldKey,
+        );
+        if (!markerSnapshot.exists || markerField == null) {
+          remaining.add(entry);
+          continue;
+        }
+        if (_pendingUploadId(markerField) != entry.id) {
+          // This field was superseded. Do not upload or replace its newer value.
+          mutated = true;
           continue;
         }
         final upload = await _photoStorageService.uploadBookingPhoto(
@@ -383,7 +465,8 @@ class BookingOfflineUploadQueueService {
           error.toString(),
           fallback: 'Something went wrong. Please try again.',
         );
-        if (_isRetryableUploadError(normalizedError)) {
+        if (_isRetryableUploadError(normalizedError) ||
+            normalizedError.toLowerCase().contains('sync conflict')) {
           remaining.add(
             entry.copyWith(
               retryCount: entry.retryCount + 1,
@@ -419,7 +502,15 @@ class BookingOfflineUploadQueueService {
     }
 
     if (mutated || remaining.length != entries.length) {
-      await _writeEntriesForStorageKey(storageKey, remaining);
+      await _mutateQueue(() async {
+        final latest = await _readEntriesForStorageKey(storageKey);
+        final processedIds = entries.map((entry) => entry.id).toSet();
+        final merged = [
+          ...latest.where((entry) => !processedIds.contains(entry.id)),
+          ...remaining,
+        ];
+        await _writeEntriesForStorageKey(storageKey, merged);
+      });
     }
     if (updateStatus) {
       _setStatus(
@@ -542,10 +633,14 @@ class _PendingBookingUploadEntry {
   final int retryCount;
   final String? lastError;
 
-  _PendingBookingUploadEntry copyWith({int? retryCount, String? lastError}) {
+  _PendingBookingUploadEntry copyWith({
+    int? retryCount,
+    String? lastError,
+    String? bookingId,
+  }) {
     return _PendingBookingUploadEntry(
       id: id,
-      bookingId: bookingId,
+      bookingId: bookingId ?? this.bookingId,
       statusKey: statusKey,
       fieldKey: fieldKey,
       bytesBase64: bytesBase64,

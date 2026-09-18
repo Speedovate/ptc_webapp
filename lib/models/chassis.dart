@@ -4,13 +4,16 @@ class Chassis {
     required this.name,
     required this.isActive,
     required this.currentStatus,
-    this.currentBookingId,
-    this.currentDriverId,
+    int? currentBookingId,
+    int? currentDriverId,
+    String? bookingReferenceId,
+    String? driverReferenceId,
     this.location,
     this.createdAt,
     this.updatedAt,
     this.submissionKey,
-  });
+  }) : _bookingReference = bookingReferenceId ?? currentBookingId,
+       _driverReference = driverReferenceId ?? currentDriverId;
 
   static const ready = 'ready';
   static const loaded = 'loaded';
@@ -22,8 +25,14 @@ class Chassis {
   final String name;
   final bool isActive;
   final String currentStatus;
-  final int? currentBookingId;
-  final int? currentDriverId;
+  final Object? _bookingReference;
+  final Object? _driverReference;
+
+  // Keep the existing numeric API for callers with confirmed records.
+  int? get currentBookingId => _asInt(_bookingReference);
+  int? get currentDriverId => _asInt(_driverReference);
+  String? get bookingReferenceId => _asNullableText(_bookingReference);
+  String? get driverReferenceId => _asNullableText(_driverReference);
   final String? location;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -44,9 +53,9 @@ class Chassis {
   /// Shared plain-text label for chassis selectors.
   String dropdownLabel({String? bookingStatus}) {
     final segments = <String>['${name.trim()} $statusLabel'];
-    if (currentBookingId != null) {
+    if (bookingReferenceId != null) {
       segments.add(
-        'Booking $currentBookingId ${_displayStatus(bookingStatus)}',
+        'Booking $bookingReferenceId ${_displayStatus(bookingStatus)}',
       );
     }
     return segments.join(' | ');
@@ -68,8 +77,10 @@ class Chassis {
     bool? isActive,
     String? currentStatus,
     int? currentBookingId,
+    String? bookingReferenceId,
     bool clearCurrentBookingId = false,
     int? currentDriverId,
+    String? driverReferenceId,
     bool clearCurrentDriverId = false,
     String? location,
     bool clearLocation = false,
@@ -81,12 +92,16 @@ class Chassis {
     name: name ?? this.name,
     isActive: isActive ?? this.isActive,
     currentStatus: currentStatus ?? this.currentStatus,
-    currentBookingId: clearCurrentBookingId
+    bookingReferenceId: clearCurrentBookingId
         ? null
-        : (currentBookingId ?? this.currentBookingId),
-    currentDriverId: clearCurrentDriverId
+        : (bookingReferenceId ??
+              currentBookingId?.toString() ??
+              this.bookingReferenceId),
+    driverReferenceId: clearCurrentDriverId
         ? null
-        : (currentDriverId ?? this.currentDriverId),
+        : (driverReferenceId ??
+              currentDriverId?.toString() ??
+              this.driverReferenceId),
     location: clearLocation ? null : (location ?? this.location),
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
@@ -100,8 +115,8 @@ class Chassis {
       name: map['name']?.toString().trim() ?? '',
       isActive: map['is_active'] == true,
       currentStatus: statuses.contains(status) ? status! : ready,
-      currentBookingId: _asInt(map['current_booking_id']),
-      currentDriverId: _asInt(map['current_driver_id']),
+      bookingReferenceId: _asNullableText(map['current_booking_id']),
+      driverReferenceId: _asNullableText(map['current_driver_id']),
       location: _asNullableText(map['location']),
       createdAt: _asDateTime(map['created_at']),
       updatedAt: _asDateTime(map['updated_at']),
@@ -114,8 +129,8 @@ class Chassis {
     'name': name,
     'is_active': isActive,
     'current_status': currentStatus,
-    'current_booking_id': currentBookingId,
-    'current_driver_id': currentDriverId,
+    'current_booking_id': currentBookingId ?? bookingReferenceId,
+    'current_driver_id': currentDriverId ?? driverReferenceId,
     'location': location,
     'created_at': createdAt?.toUtc().toIso8601String(),
     'updated_at': updatedAt?.toUtc().toIso8601String(),

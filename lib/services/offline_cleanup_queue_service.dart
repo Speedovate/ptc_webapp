@@ -13,8 +13,10 @@ class OfflineCleanupQueueService {
   OfflineCleanupQueueService({
     BookingStorageBackend? backend,
     FirebaseStorage? storage,
+    bool Function()? isOnline,
   }) : _backend = backend ?? createBookingStorageBackend(),
-       _providedStorage = storage;
+       _providedStorage = storage,
+       _isOnline = isOnline ?? currentNetworkStatus;
 
   static final OfflineCleanupQueueService instance =
       OfflineCleanupQueueService();
@@ -26,11 +28,13 @@ class OfflineCleanupQueueService {
 
   final BookingStorageBackend _backend;
   final FirebaseStorage? _providedStorage;
+  final bool Function() _isOnline;
+  Future<void> _queueMutationTail = Future<void>.value();
   FirebaseStorage get _storage => _providedStorage ?? FirebaseStorage.instance;
   final AuthStorageBackend _authStorage = createAuthStorageBackend();
 
   bool _isInitialized = false;
-  bool _isFlushing = false;
+  Future<void>? _flushFuture;
   Timer? _retryTimer;
   StreamSubscription<bool>? _networkSubscription;
   final StreamController<OfflineQueueStatusSnapshot> _statusController =
@@ -46,7 +50,10 @@ class OfflineCleanupQueueService {
     Iterable<String> userIds = const [],
     bool includeSignedOut = true,
   }) async {
-    await initialize();
+    // Inspection must not publish status and recursively trigger aggregate scans.
+    if (!_isInitialized) {
+      await initialize();
+    }
     final normalizedUserIds = userIds
         .map(normalizeId)
         .whereType<String>()
@@ -75,10 +82,11 @@ class OfflineCleanupQueueService {
     await _backend.initialize();
     await _refreshStatusFromStorage();
     _retryTimer ??= Timer.periodic(_retryInterval, (_) {
+      if (!isAppVisible()) return;
       unawaited(flushPendingCleanups());
     });
     _networkSubscription ??= networkStatusEvents().listen((isOnline) {
-      if (isOnline) {
+      if (isOnline && isAppVisible()) {
         unawaited(flushPendingCleanups());
       }
     });
@@ -86,66 +94,86 @@ class OfflineCleanupQueueService {
     unawaited(flushPendingCleanups());
   }
 
-  Future<void> queueDeleteByPath(String storagePath) async {
+  Future<void> queueDeleteByPath(String storagePath) =>
+      _enqueue(_OfflineCleanupKind.deleteByPath, storagePath);
+
+  Future<void> queueDeleteFolder(
+    String storagePath, {
+    String? userScope,
+    DateTime? actionAt,
+  }) => _enqueue(
+    _OfflineCleanupKind.deleteFolder,
+    storagePath,
+    userScope: userScope,
+    occurredAt: actionAt,
+  );
+
+  Future<void> _enqueue(
+    _OfflineCleanupKind kind,
+    String storagePath, {
+    String? userScope,
+    DateTime? occurredAt,
+  }) async {
     final normalized = storagePath.trim();
     if (normalized.isEmpty) {
       return;
     }
+    final actionAt = (occurredAt ?? DateTime.now()).toUtc().toIso8601String();
+    // Pin the originating account before initialization or another queued write.
+    final scope = userScope == null
+        ? _resolvedStorageKey()
+        : Future.value(_storageKeyForUserId(userScope));
     await initialize();
-    final entries = await _readEntries();
-    entries.removeWhere(
-      (entry) =>
-          entry.kind == _OfflineCleanupKind.deleteByPath &&
-          entry.targetPath == normalized,
-    );
-    entries.add(
-      _OfflineCleanupEntry(
-        id: _nextEntryId('delete_path'),
-        kind: _OfflineCleanupKind.deleteByPath,
-        targetPath: normalized,
-        createdAtIso: DateTime.now().toUtc().toIso8601String(),
-        retryCount: 0,
-      ),
-    );
-    await _writeEntries(entries);
-    _setStatus(_currentStatus.copyWith(pendingCount: entries.length));
+    final storageKey = await scope;
+    await _serializeQueueMutation(() async {
+      final entries = await _readEntriesForStorageKey(storageKey);
+      entries.removeWhere(
+        (entry) => entry.kind == kind && entry.targetPath == normalized,
+      );
+      entries.add(
+        _OfflineCleanupEntry(
+          id: _nextEntryId(kind.name),
+          kind: kind,
+          targetPath: normalized,
+          createdAtIso: actionAt,
+          retryCount: 0,
+        ),
+      );
+      await _writeEntriesForStorageKey(storageKey, entries);
+    });
+    await _refreshStatusFromStorage();
     unawaited(flushPendingCleanups());
   }
 
-  Future<void> queueDeleteFolder(String storagePath) async {
-    final normalized = storagePath.trim();
-    if (normalized.isEmpty) {
-      return;
-    }
-    await initialize();
-    final entries = await _readEntries();
-    entries.removeWhere(
-      (entry) =>
-          entry.kind == _OfflineCleanupKind.deleteFolder &&
-          entry.targetPath == normalized,
-    );
-    entries.add(
-      _OfflineCleanupEntry(
-        id: _nextEntryId('delete_folder'),
-        kind: _OfflineCleanupKind.deleteFolder,
-        targetPath: normalized,
-        createdAtIso: DateTime.now().toUtc().toIso8601String(),
-        retryCount: 0,
-      ),
-    );
-    await _writeEntries(entries);
-    _setStatus(_currentStatus.copyWith(pendingCount: entries.length));
-    unawaited(flushPendingCleanups());
+  Future<T> _serializeQueueMutation<T>(Future<T> Function() action) {
+    final next = _queueMutationTail.then((_) => action());
+    _queueMutationTail = next.then<void>((_) {}, onError: (Object _) {});
+    return next;
   }
 
   Future<void> flushPendingCleanups() async {
     await initialize();
-    if (_isFlushing || !currentNetworkStatus()) {
+    final active = _flushFuture;
+    if (active != null) {
+      return active;
+    }
+    if (!_isOnline()) {
       return;
     }
-    _markPendingAsSyncing();
-    _isFlushing = true;
+    final flush = _flushPendingCleanupsInternal();
+    _flushFuture = flush;
     try {
+      await flush;
+    } finally {
+      if (identical(_flushFuture, flush)) {
+        _flushFuture = null;
+      }
+    }
+  }
+
+  Future<void> _flushPendingCleanupsInternal() async {
+    try {
+      await _queueMutationTail;
       final currentStorageKey = await _resolvedStorageKey();
       final storageKeys = await _allKnownStorageKeys();
       for (final storageKey in storageKeys) {
@@ -156,7 +184,6 @@ class OfflineCleanupQueueService {
       }
       await _refreshStatusFromStorage();
     } finally {
-      _isFlushing = false;
       if (_currentStatus.isSyncing) {
         _setStatus(
           _currentStatus.copyWith(
@@ -223,13 +250,6 @@ class OfflineCleanupQueueService {
         .toList();
   }
 
-  Future<void> _writeEntries(List<_OfflineCleanupEntry> entries) async {
-    await _backend.writeStringList(
-      await _resolvedStorageKey(),
-      entries.map((entry) => jsonEncode(entry.toMap())).toList(),
-    );
-  }
-
   Future<String> _resolvedStorageKey() async {
     final normalizedUserId = normalizeId(
       await _authStorage.readString(_currentUserIdKey),
@@ -261,7 +281,7 @@ class OfflineCleanupQueueService {
     final entries = await _readEntriesForStorageKey(storageKey);
     return const OfflineQueueStatusSnapshot.idle().copyWith(
       pendingCount: entries.length,
-      failedCount: 0,
+      failedCount: entries.where((entry) => entry.lastError != null).length,
     );
   }
 
@@ -292,6 +312,26 @@ class OfflineCleanupQueueService {
     required bool updateStatus,
   }) async {
     final entries = await _readEntriesForStorageKey(storageKey);
+    final now = DateTime.now().toUtc();
+    final hasDueWork = entries.any(
+      (entry) => entry.nextRetryAt?.isAfter(now) != true,
+    );
+    if (!hasDueWork) {
+      if (updateStatus) {
+        _setStatus(
+          _currentStatus.copyWith(
+            pendingCount: entries.length,
+            failedCount: entries
+                .where((entry) => entry.lastError != null)
+                .length,
+            isSyncing: false,
+          ),
+        );
+      }
+      // Preserve the stored payload verbatim until work is actually due.
+      return;
+    }
+    final originalIds = entries.map((entry) => entry.id).toSet();
     if (updateStatus) {
       _setStatus(
         _currentStatus.copyWith(
@@ -311,20 +351,28 @@ class OfflineCleanupQueueService {
     var processed = 0;
     for (final entry in entries) {
       try {
+        if (entry.nextRetryAt?.isAfter(DateTime.now().toUtc()) == true) {
+          remaining.add(entry);
+          continue;
+        }
         await _applyEntry(entry);
       } catch (error) {
         final normalizedError = normalizeUserErrorText(
           error.toString(),
           fallback: 'Something went wrong. Please try again.',
         );
-        if (_isRetryable(normalizedError)) {
-          remaining.add(
-            entry.copyWith(
-              retryCount: entry.retryCount + 1,
-              lastError: normalizedError,
+        final delaySeconds = _isRetryable(normalizedError)
+            ? min(1200, 20 * pow(2, min(entry.retryCount, 6)).toInt())
+            : 1200;
+        remaining.add(
+          entry.copyWith(
+            retryCount: entry.retryCount + 1,
+            lastError: normalizedError,
+            nextRetryAt: DateTime.now().toUtc().add(
+              Duration(seconds: delaySeconds),
             ),
-          );
-        }
+          ),
+        );
       } finally {
         processed++;
         if (updateStatus) {
@@ -340,7 +388,14 @@ class OfflineCleanupQueueService {
       }
     }
 
-    await _writeEntriesForStorageKey(storageKey, remaining);
+    await _serializeQueueMutation(() async {
+      final latest = await _readEntriesForStorageKey(storageKey);
+      final retainedIds = latest.map((entry) => entry.id).toSet();
+      await _writeEntriesForStorageKey(storageKey, [
+        ...remaining.where((entry) => retainedIds.contains(entry.id)),
+        ...latest.where((entry) => !originalIds.contains(entry.id)),
+      ]);
+    });
     if (updateStatus) {
       _setStatus(
         _currentStatus.copyWith(
@@ -356,20 +411,10 @@ class OfflineCleanupQueueService {
 
   Future<void> _refreshStatusFromStorage() async {
     final entries = await _readEntries();
-    _setStatus(_currentStatus.copyWith(pendingCount: entries.length));
-  }
-
-  void _markPendingAsSyncing() {
-    final pendingCount = _currentStatus.pendingCount;
-    if (pendingCount <= 0 || _currentStatus.isSyncing) {
-      return;
-    }
     _setStatus(
       _currentStatus.copyWith(
-        isSyncing: true,
-        processedInBatch: 0,
-        totalInBatch: pendingCount,
-        clearLastSyncAt: true,
+        pendingCount: entries.length,
+        failedCount: entries.where((entry) => entry.lastError != null).length,
       ),
     );
   }
@@ -406,6 +451,7 @@ class _OfflineCleanupEntry {
     required this.createdAtIso,
     required this.retryCount,
     this.lastError,
+    this.nextRetryAt,
   });
 
   final String id;
@@ -414,8 +460,13 @@ class _OfflineCleanupEntry {
   final String createdAtIso;
   final int retryCount;
   final String? lastError;
+  final DateTime? nextRetryAt;
 
-  _OfflineCleanupEntry copyWith({int? retryCount, String? lastError}) {
+  _OfflineCleanupEntry copyWith({
+    int? retryCount,
+    String? lastError,
+    DateTime? nextRetryAt,
+  }) {
     return _OfflineCleanupEntry(
       id: id,
       kind: kind,
@@ -423,6 +474,7 @@ class _OfflineCleanupEntry {
       createdAtIso: createdAtIso,
       retryCount: retryCount ?? this.retryCount,
       lastError: lastError ?? this.lastError,
+      nextRetryAt: nextRetryAt ?? this.nextRetryAt,
     );
   }
 
@@ -434,6 +486,7 @@ class _OfflineCleanupEntry {
       'created_at': createdAtIso,
       'retry_count': retryCount,
       'last_error': lastError,
+      'next_retry_at': nextRetryAt?.toIso8601String(),
     };
   }
 
@@ -451,6 +504,7 @@ class _OfflineCleanupEntry {
           ? (map['retry_count'] as num).toInt()
           : int.tryParse(map['retry_count']?.toString() ?? '') ?? 0,
       lastError: map['last_error']?.toString(),
+      nextRetryAt: DateTime.tryParse(map['next_retry_at']?.toString() ?? ''),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:webapp/services/booking_chat_alert_service.dart';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -32,6 +33,7 @@ class ChassisPushNotificationService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   StreamSubscription<String>? _tokenRefreshSubscription;
+  StreamSubscription<RemoteMessage>? _messageSubscription;
   String? _userId;
   String? _role;
   String? _token;
@@ -49,6 +51,11 @@ class ChassisPushNotificationService {
 
     _userId = userId;
     _role = role;
+    _messageSubscription ??= FirebaseMessaging.onMessage.listen((message) {
+      if (message.data['type'] == 'support_message') {
+        BookingChatAlertService.instance.handleSupportPush(message.data);
+      }
+    });
     try {
       final permission = await _messaging.requestPermission(
         alert: true,
@@ -72,6 +79,8 @@ class ChassisPushNotificationService {
   }
 
   Future<void> stop() async {
+    await _messageSubscription?.cancel();
+    _messageSubscription = null;
     await _tokenRefreshSubscription?.cancel();
     _tokenRefreshSubscription = null;
 

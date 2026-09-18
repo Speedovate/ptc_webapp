@@ -292,7 +292,9 @@ class AppShellViewModel extends BaseViewModel {
     UserModel? resolvedUser, {
     required String source,
   }) {
-    if (resolvedUser == null) {
+    // Non-admin homes start broad warmup after their essential data resolves.
+    if (resolvedUser == null ||
+        !_roleAccessService.usesAdminShell(role: resolvedUser.role)) {
       return;
     }
     _log(

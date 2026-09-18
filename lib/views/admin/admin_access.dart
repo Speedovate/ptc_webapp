@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -43,7 +44,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
   final AppWarmupService _warmupService = AppWarmupService.instance;
   StreamSubscription<void>? _roleAccessCacheUpdatesSubscription;
   StreamSubscription<void>? _usersCacheUpdatesSubscription;
-  static List<_AccessRoleEntry> _cachedRoles = const [];
+  static List<AccessRoleEntry> _cachedRoles = const [];
   static String? _cachedErrorMessage;
   static bool _cachedHasCompletedInitialLoad = false;
 
@@ -55,7 +56,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
   DateTime? _createdEndDate;
   DateTime? _updatedStartDate;
   DateTime? _updatedEndDate;
-  List<_AccessRoleEntry> _roles = List<_AccessRoleEntry>.from(_cachedRoles);
+  List<AccessRoleEntry> _roles = List<AccessRoleEntry>.from(_cachedRoles);
   bool _isRealtimeReloading = false;
 
   bool get _canReadRoles =>
@@ -182,7 +183,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
 
       _roles = _buildRoleEntries(roleKeys);
       _log('load resolved roles=${_roles.length} users=${users.length}');
-      _cachedRoles = List<_AccessRoleEntry>.from(_roles);
+      _cachedRoles = List<AccessRoleEntry>.from(_roles);
       _cachedErrorMessage = null;
       _cachedHasCompletedInitialLoad = true;
     } catch (error) {
@@ -207,7 +208,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
     // Temporary debug logging removed.
   }
 
-  List<_AccessRoleEntry> _buildRoleEntries(Iterable<String> roleKeys) {
+  List<AccessRoleEntry> _buildRoleEntries(Iterable<String> roleKeys) {
     final uniqueRoleKeys = roleKeys
         .map(_normalizeRoleKey)
         .whereType<String>()
@@ -255,7 +256,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
         .entries
         .map((entry) {
           final role = entry.value;
-          return _AccessRoleEntry(
+          return AccessRoleEntry(
             // Alphabetical rows stay top-to-bottom while IDs descend visually.
             id: '${sortableEntries.length - entry.key}',
             roleKey: role.roleKey,
@@ -278,7 +279,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
     return DateTime.tryParse(raw)?.toUtc();
   }
 
-  Future<void> _openRoleEditor(_AccessRoleEntry role) async {
+  Future<void> _openRoleEditor(AccessRoleEntry role) async {
     if (!_canUpdateRoles) {
       AppSnackbar.showError(context, 'You do not have access to update roles.');
       return;
@@ -390,9 +391,9 @@ class _AdminAccessViewState extends State<AdminAccessView> {
       child: AppPageLoadingOverlay(
         isVisible: showInitialLoading,
         message: 'Loading roles ...',
-        child: SingleChildScrollView(
+        child: LazyDataScrollView(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-          child: Column(
+          child: SliverSection(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _RolesToolbar(
@@ -420,7 +421,7 @@ class _AdminAccessViewState extends State<AdminAccessView> {
                 onNewPressed: _canUpdateRoles ? _openNewRoleDialog : null,
               ),
               const SizedBox(height: _tableSectionGap),
-              _AccessListSection(
+              AccessRoleListSliver(
                 roles: filteredRoles,
                 errorMessage: _errorMessage,
                 isLoading: _isLoading,
@@ -547,8 +548,8 @@ class _RolesToolbar extends StatelessWidget {
   );
 }
 
-class _AccessRoleEntry {
-  const _AccessRoleEntry({
+class AccessRoleEntry {
+  const AccessRoleEntry({
     required this.id,
     required this.roleKey,
     required this.label,
@@ -581,8 +582,9 @@ class _SortableAccessRoleEntry {
   final DateTime? updatedAt;
 }
 
-class _AccessListSection extends StatelessWidget {
-  const _AccessListSection({
+class AccessRoleListSliver extends StatelessWidget implements SliverContent {
+  const AccessRoleListSliver({
+    super.key,
     required this.roles,
     required this.errorMessage,
     required this.isLoading,
@@ -590,15 +592,15 @@ class _AccessListSection extends StatelessWidget {
     required this.onEditPressed,
   });
 
-  final List<_AccessRoleEntry> roles;
+  final List<AccessRoleEntry> roles;
   final String? errorMessage;
   final bool isLoading;
   final bool hasCompletedInitialLoad;
-  final ValueChanged<_AccessRoleEntry>? onEditPressed;
+  final ValueChanged<AccessRoleEntry>? onEditPressed;
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
+    return SliverWidthBuilder(
       builder: (context, constraints) {
         final isNarrow = constraints.maxWidth < 920;
         if (errorMessage != null) {
@@ -622,9 +624,10 @@ class _AccessListSection extends StatelessWidget {
             child: AdminListStateText(message: 'No roles found.'),
           );
         }
-        if (isNarrow) {
-          return Column(
-            children: roles.asMap().entries.map((entry) {
+        Widget responsiveCards() {
+          return LazySliverList(
+            items: roles.asMap().entries,
+            itemBuilder: (context, entry) {
               return Padding(
                 padding: EdgeInsets.only(
                   bottom: entry.key == roles.length - 1 ? 0 : 12,
@@ -636,8 +639,12 @@ class _AccessListSection extends StatelessWidget {
                       : () => onEditPressed!(entry.value),
                 ),
               );
-            }).toList(),
+            },
           );
+        }
+
+        if (isNarrow) {
+          return responsiveCards();
         }
 
         final idWidth = _AdminAccessViewState._resolvedColumnWidth(
@@ -704,7 +711,20 @@ class _AccessListSection extends StatelessWidget {
           ),
         );
 
-        return Column(
+        final tableWidth =
+            idWidth +
+            roleWidth +
+            permissionsWidth +
+            createdWidth +
+            updatedWidth +
+            _AdminAccessViewState._actionsWidth +
+            _AdminAccessViewState._extraWidthAllowance +
+            40;
+        if (tableWidth > constraints.maxWidth) {
+          return responsiveCards();
+        }
+
+        return SliverSection(
           children: [
             _AccessHeaderRow(
               idWidth: idWidth,
@@ -717,24 +737,27 @@ class _AccessListSection extends StatelessWidget {
                   _AdminAccessViewState._extraWidthAllowance,
             ),
             const SizedBox(height: _AdminAccessViewState._tableSectionGap),
-            ...roles.asMap().entries.map((entry) {
-              return Padding(
-                padding: EdgeInsets.only(
-                  bottom: entry.key == roles.length - 1 ? 0 : 12,
-                ),
-                child: _AccessDesktopRow(
-                  role: entry.value,
-                  idWidth: idWidth,
-                  roleWidth: roleWidth,
-                  permissionsWidth: permissionsWidth,
-                  createdWidth: createdWidth,
-                  updatedWidth: updatedWidth,
-                  onEdit: onEditPressed == null
-                      ? null
-                      : () => onEditPressed!(entry.value),
-                ),
-              );
-            }),
+            LazySliverList(
+              items: roles.asMap().entries,
+              itemBuilder: (context, entry) {
+                return Padding(
+                  padding: EdgeInsets.only(
+                    bottom: entry.key == roles.length - 1 ? 0 : 12,
+                  ),
+                  child: _AccessDesktopRow(
+                    role: entry.value,
+                    idWidth: idWidth,
+                    roleWidth: roleWidth,
+                    permissionsWidth: permissionsWidth,
+                    createdWidth: createdWidth,
+                    updatedWidth: updatedWidth,
+                    onEdit: onEditPressed == null
+                        ? null
+                        : () => onEditPressed!(entry.value),
+                  ),
+                );
+              },
+            ),
           ],
         );
       },
@@ -812,7 +835,7 @@ class _AccessDesktopRow extends StatelessWidget {
     required this.onEdit,
   });
 
-  final _AccessRoleEntry role;
+  final AccessRoleEntry role;
   final double idWidth;
   final double roleWidth;
   final double permissionsWidth;
@@ -882,7 +905,7 @@ class _AccessDesktopRow extends StatelessWidget {
 class _AccessResponsiveCard extends StatelessWidget {
   const _AccessResponsiveCard({required this.role, required this.onEdit});
 
-  final _AccessRoleEntry role;
+  final AccessRoleEntry role;
   final VoidCallback? onEdit;
 
   @override
@@ -1081,7 +1104,7 @@ class _RoleAccessDialog extends StatefulWidget {
     this.onSave,
   });
 
-  final _AccessRoleEntry role;
+  final AccessRoleEntry role;
   final Map<String, bool> initialDraft;
   final Future<void> Function(Map<String, bool> draft)? onSave;
 

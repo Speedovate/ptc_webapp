@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/startup_splash_handoff.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -163,108 +164,114 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
         );
         vm.load(_effectiveClientUser);
       },
-      builder: (context, vm, _) {
-        _viewModel = vm;
-        _log(
-          'build client=${_effectiveClientUser.id ?? "-"} bookingClient=${widget.bookingClientUser?.id ?? "-"} busy=${vm.isBusyLoading} forms=${vm.mainForms.length} activeForm=${vm.form?.id ?? "-"} loadError=${vm.loadError ?? "-"}',
-        );
-        final loadError = vm.loadError;
-        if (loadError != null) {
-          return AppPageLoadingOverlay(
-            isVisible: vm.isBusyLoading,
-            message: 'Loading booking form ...',
-            visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
-            loadingAlignmentY: widget.loadingOverlayAlignmentY,
-            child: _ClientBookingStateCard(
-              scrollable: widget.scrollable,
-              padding: widget.padding,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AppRefreshStrip(isVisible: vm.isBusyLoading),
-                  Text(
-                    loadError,
-                    style: TextStyle(
-                      color: AppColors.primaryColor.withValues(alpha: 0.72),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
-
-        final form = vm.form;
-        if (form == null || vm.mainForms.isEmpty) {
-          return AppPageLoadingOverlay(
-            isVisible: vm.isBusyLoading,
-            message: 'Loading booking form ...',
-            visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
-            loadingAlignmentY: widget.loadingOverlayAlignmentY,
-            child: _ClientBookingStateCard(
-              scrollable: widget.scrollable,
-              padding: widget.padding,
-              child: SizedBox(
-                width: double.infinity,
-                height: _loadingPlaceholderMinHeight,
-                child: vm.isBusyLoading
-                    ? const SizedBox.shrink()
-                    : Center(
-                        child: Text(
-                          'No client booking form available yet.',
-                          style: TextStyle(
-                            color: AppColors.primaryColor.withValues(
-                              alpha: 0.72,
-                            ),
-                            fontWeight: FontWeight.w600,
-                          ),
+      builder: (context, vm, _) => StartupSplashHandoff(
+        ready: vm.hasResolvedInitialForm,
+        child: Builder(
+          builder: (context) {
+            _viewModel = vm;
+            _log(
+              'build client=${_effectiveClientUser.id ?? "-"} bookingClient=${widget.bookingClientUser?.id ?? "-"} busy=${vm.isBusyLoading} forms=${vm.mainForms.length} activeForm=${vm.form?.id ?? "-"} loadError=${vm.loadError ?? "-"}',
+            );
+            final loadError = vm.loadError;
+            if (loadError != null) {
+              return AppPageLoadingOverlay(
+                isVisible: vm.isBusyLoading,
+                message: 'Loading booking form ...',
+                visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
+                loadingAlignmentY: widget.loadingOverlayAlignmentY,
+                child: _ClientBookingStateCard(
+                  scrollable: widget.scrollable,
+                  padding: widget.padding,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AppRefreshStrip(isVisible: vm.isBusyLoading),
+                      Text(
+                        loadError,
+                        style: TextStyle(
+                          color: AppColors.primaryColor.withValues(alpha: 0.72),
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-              ),
-            ),
-          );
-        }
-
-        final content = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ...vm.mainForms.asMap().entries.map((entry) {
-              final activeForm = entry.value;
-              return Padding(
-                padding: EdgeInsets.only(
-                  bottom: entry.key == vm.mainForms.length - 1 ? 0 : 18,
-                ),
-                child: _ClientBookingFormSection(
-                  key: ValueKey(activeForm.id),
-                  vm: vm,
-                  form: activeForm,
-                  clientUser: _effectiveClientUser,
-                  submittedByUserId: _effectiveSubmittedByUserId,
-                  submittedByUserRole: _effectiveSubmittedByUserRole,
-                  submitBlockMessage: widget.submitBlockMessage,
-                  additionalFormAnswers: widget.additionalFormAnswers,
-                  onRepresentativeTapWithoutClient:
-                      widget.onRepresentativeTapWithoutClient,
-                  onBookingSubmitted: widget.onBookingSubmitted,
-                  onUnfocusWithoutScroll: () => _unfocusWithoutScroll(context),
+                    ],
+                  ),
                 ),
               );
-            }),
-          ],
-        );
+            }
 
-        final scaffold = widget.scrollable
-            ? SingleChildScrollView(padding: widget.padding, child: content)
-            : Padding(padding: widget.padding, child: content);
-        return AppPageLoadingOverlay(
-          isVisible: vm.isBusyLoading,
-          message: 'Loading booking form ...',
-          visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
-          loadingAlignmentY: widget.loadingOverlayAlignmentY,
-          child: scaffold,
-        );
-      },
+            final form = vm.form;
+            if (form == null || vm.mainForms.isEmpty) {
+              return AppPageLoadingOverlay(
+                isVisible: vm.isBusyLoading,
+                message: 'Loading booking form ...',
+                visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
+                loadingAlignmentY: widget.loadingOverlayAlignmentY,
+                child: _ClientBookingStateCard(
+                  scrollable: widget.scrollable,
+                  padding: widget.padding,
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: _loadingPlaceholderMinHeight,
+                    child: vm.isBusyLoading
+                        ? const SizedBox.shrink()
+                        : Center(
+                            child: Text(
+                              'No client booking form available yet.',
+                              style: TextStyle(
+                                color: AppColors.primaryColor.withValues(
+                                  alpha: 0.72,
+                                ),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                  ),
+                ),
+              );
+            }
+
+            final content = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ...vm.mainForms.asMap().entries.map((entry) {
+                  final activeForm = entry.value;
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      bottom: entry.key == vm.mainForms.length - 1 ? 0 : 18,
+                    ),
+                    child: _ClientBookingFormSection(
+                      key: ValueKey(activeForm.id),
+                      vm: vm,
+                      form: activeForm,
+                      clientUser: _effectiveClientUser,
+                      submittedByUserId: _effectiveSubmittedByUserId,
+                      submittedByUserRole: _effectiveSubmittedByUserRole,
+                      submitBlockMessage: widget.submitBlockMessage,
+                      additionalFormAnswers: widget.additionalFormAnswers,
+                      onRepresentativeTapWithoutClient:
+                          widget.onRepresentativeTapWithoutClient,
+                      onBookingSubmitted: widget.onBookingSubmitted,
+                      onUnfocusWithoutScroll: () =>
+                          _unfocusWithoutScroll(context),
+                    ),
+                  );
+                }),
+              ],
+            );
+
+            final scaffold = widget.scrollable
+                ? SingleChildScrollView(padding: widget.padding, child: content)
+                : Padding(padding: widget.padding, child: content);
+            return AppPageLoadingOverlay(
+              isVisible: vm.isBusyLoading,
+              message: 'Loading booking form ...',
+              visibleHeightWhenUnbounded: widget.loadingOverlayVisibleHeight,
+              loadingAlignmentY: widget.loadingOverlayAlignmentY,
+              child: scaffold,
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -742,6 +749,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
             }
           },
           onClear: () {
+            vm.resetPendingSubmission();
             widget.onUnfocusWithoutScroll();
             setState(() {
               _answers = {};

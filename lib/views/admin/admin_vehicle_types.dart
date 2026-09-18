@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -239,9 +240,9 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
             return AppPageLoadingOverlay(
               isVisible: vm.showBlockingLoading,
               message: vm.busyMessage,
-              child: SingleChildScrollView(
+              child: LazyDataScrollView(
                 padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-                child: Column(
+                child: SliverSection(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     AppRefreshStrip(isVisible: vm.showBlockingLoading),
@@ -350,35 +351,27 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
                           actionsWidth: resolvedActionsWidth,
                         ),
                       if (useWideTable) const SizedBox(height: 14),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: filteredTypes
-                            .asMap()
-                            .entries
-                            .map(
-                              (entry) => Padding(
-                                padding: EdgeInsets.only(
-                                  bottom: entry.key == filteredTypes.length - 1
-                                      ? 0
-                                      : 12,
-                                ),
-                                child: useWideTable
-                                    ? _VehicleTypeDesktopRow(
-                                        item: entry.value,
-                                        idWidth: resolvedIdWidth,
-                                        nameWidth: resolvedNameWidth,
-                                        slugWidth: resolvedSlugWidth,
-                                        activeWidth: resolvedActiveWidth,
-                                        createdWidth: resolvedCreatedWidth,
-                                        updatedWidth: resolvedUpdatedWidth,
-                                        actionsWidth: resolvedActionsWidth,
-                                      )
-                                    : _VehicleTypeResponsiveCard(
-                                        item: entry.value,
-                                      ),
-                              ),
-                            )
-                            .toList(),
+                      LazySliverList(
+                        items: filteredTypes.asMap().entries,
+                        itemBuilder: (context, entry) => Padding(
+                          padding: EdgeInsets.only(
+                            bottom: entry.key == filteredTypes.length - 1
+                                ? 0
+                                : 12,
+                          ),
+                          child: useWideTable
+                              ? _VehicleTypeDesktopRow(
+                                  item: entry.value,
+                                  idWidth: resolvedIdWidth,
+                                  nameWidth: resolvedNameWidth,
+                                  slugWidth: resolvedSlugWidth,
+                                  activeWidth: resolvedActiveWidth,
+                                  createdWidth: resolvedCreatedWidth,
+                                  updatedWidth: resolvedUpdatedWidth,
+                                  actionsWidth: resolvedActionsWidth,
+                                )
+                              : _VehicleTypeResponsiveCard(item: entry.value),
+                        ),
                       ),
                     ],
                   ],

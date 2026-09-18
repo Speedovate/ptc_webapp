@@ -10,8 +10,7 @@ class AppModalGuard {
   static const Duration _debounceWindow = Duration(milliseconds: 350);
   static final Map<String, Future<Object?>> _activeModalFutures =
       <String, Future<Object?>>{};
-  static final Map<String, DateTime> _lastAttemptAtByKey =
-      <String, DateTime>{};
+  static final Map<String, DateTime> _lastAttemptAtByKey = <String, DateTime>{};
   static bool _presentationLocked = false;
 
   static Future<T?> showDialog<T>({
@@ -55,7 +54,7 @@ class AppModalGuard {
 
     final future = material.showDialog<T>(
       context: context,
-      builder: builder,
+      builder: (context) => SelectionArea(child: builder(context)),
       barrierDismissible: barrierDismissible,
       barrierColor: barrierColor,
       barrierLabel: barrierLabel,
@@ -126,7 +125,7 @@ class AppModalGuard {
 
     final future = material.showModalBottomSheet<T>(
       context: context,
-      builder: builder,
+      builder: (context) => SelectionArea(child: builder(context)),
       backgroundColor: backgroundColor,
       barrierLabel: barrierLabel,
       elevation: elevation,
@@ -135,8 +134,7 @@ class AppModalGuard {
       constraints: constraints,
       barrierColor: barrierColor,
       isScrollControlled: isScrollControlled,
-      scrollControlDisabledMaxHeightRatio:
-          scrollControlDisabledMaxHeightRatio,
+      scrollControlDisabledMaxHeightRatio: scrollControlDisabledMaxHeightRatio,
       useRootNavigator: useRootNavigator,
       isDismissible: isDismissible,
       enableDrag: enableDrag,
@@ -245,8 +243,7 @@ Future<T?> showAppModalBottomSheet<T>({
     constraints: constraints,
     barrierColor: barrierColor,
     isScrollControlled: isScrollControlled,
-    scrollControlDisabledMaxHeightRatio:
-        scrollControlDisabledMaxHeightRatio,
+    scrollControlDisabledMaxHeightRatio: scrollControlDisabledMaxHeightRatio,
     useRootNavigator: useRootNavigator,
     isDismissible: isDismissible,
     enableDrag: enableDrag,

@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
@@ -1067,7 +1068,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                           _openAdminThreadForUser(user, threads);
                         },
                       )
-                    : _UserSupportSidebar(
+                    : UserSupportSidebar(
                         currentUser: widget.user,
                         threads: threads,
                         selectedThreadId: _selectedThreadId,
@@ -1372,8 +1373,9 @@ class _SupportSidebarSurface extends StatelessWidget {
   }
 }
 
-class _UserSupportSidebar extends StatelessWidget {
-  const _UserSupportSidebar({
+class UserSupportSidebar extends StatelessWidget {
+  const UserSupportSidebar({
+    super.key,
     required this.currentUser,
     required this.threads,
     required this.selectedThreadId,
@@ -1478,45 +1480,51 @@ class _UserSupportSidebar extends StatelessWidget {
                     child: AdminListStateText(message: 'No support chats yet.'),
                   ),
                 )
-              : ListView(
+              : LazyDataScrollView(
                   padding: const EdgeInsets.fromLTRB(14, 16, 14, 16),
-                  children: [
-                    for (final topicKey in topicKeys) ...[
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(6, 0, 6, 10),
-                        child: Text(
-                          topicKey,
-                          style: TextStyle(
-                            color: AppColors.primaryColor.withValues(
-                              alpha: 0.72,
+                  child: SliverSection(
+                    children: [
+                      for (final topicKey in topicKeys) ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(6, 0, 6, 10),
+                          child: Text(
+                            topicKey,
+                            style: TextStyle(
+                              color: AppColors.primaryColor.withValues(
+                                alpha: 0.72,
+                              ),
+                              fontWeight: FontWeight.w700,
                             ),
-                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                      ),
-                      ...grouped[topicKey]!.asMap().entries.map((entry) {
-                        final thread = entry.value;
-                        return Padding(
-                          padding: EdgeInsets.only(
-                            bottom: entry.key == grouped[topicKey]!.length - 1
-                                ? 0
-                                : 8,
-                          ),
-                          child: _SupportThreadTile(
-                            currentUser: currentUser,
-                            thread: thread,
-                            isUnread: isThreadUnread(thread),
-                            isSelected:
-                                normalizeId(thread.id) ==
-                                normalizeId(selectedThreadId),
-                            onTap: () => onSelectThread(thread),
-                          ),
-                        );
-                      }),
-                      if (topicKey != topicKeys.last)
-                        const SizedBox(height: 14),
+                        LazySliverList(
+                          items: grouped[topicKey]!.asMap().entries,
+                          itemBuilder: (context, entry) {
+                            final thread = entry.value;
+                            return Padding(
+                              padding: EdgeInsets.only(
+                                bottom:
+                                    entry.key == grouped[topicKey]!.length - 1
+                                    ? 0
+                                    : 8,
+                              ),
+                              child: _SupportThreadTile(
+                                currentUser: currentUser,
+                                thread: thread,
+                                isUnread: isThreadUnread(thread),
+                                isSelected:
+                                    normalizeId(thread.id) ==
+                                    normalizeId(selectedThreadId),
+                                onTap: () => onSelectThread(thread),
+                              ),
+                            );
+                          },
+                        ),
+                        if (topicKey != topicKeys.last)
+                          const SizedBox(height: 14),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
         ),
       ],

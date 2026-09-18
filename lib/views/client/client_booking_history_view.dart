@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -183,7 +184,7 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
           child: _HistoryScaffold(
             toolbar: _HistoryToolbar(vm: vm, onNewPressed: widget.onNewPressed),
             framed: false,
-            child: Column(
+            child: SliverSection(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 AppRefreshStrip(isVisible: vm.isLoading),
@@ -196,31 +197,25 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
                     ),
                   )
                 else
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: filteredBookings
-                        .asMap()
-                        .entries
-                        .map(
-                          (entry) => Padding(
-                            padding: EdgeInsets.only(
-                              bottom: entry.key == filteredBookings.length - 1
-                                  ? 0
-                                  : 12,
-                            ),
-                            child: _BookingHistoryCard(
-                              userRole: widget.user.role,
-                              booking: entry.value,
-                              vm: vm,
-                              onOpen: () {
-                                setState(() {
-                                  _selectedBooking = entry.value;
-                                });
-                              },
-                            ),
-                          ),
-                        )
-                        .toList(),
+                  LazySliverList(
+                    items: filteredBookings.asMap().entries,
+                    itemBuilder: (context, entry) => Padding(
+                      padding: EdgeInsets.only(
+                        bottom: entry.key == filteredBookings.length - 1
+                            ? 0
+                            : 12,
+                      ),
+                      child: _BookingHistoryCard(
+                        userRole: widget.user.role,
+                        booking: entry.value,
+                        vm: vm,
+                        onOpen: () {
+                          setState(() {
+                            _selectedBooking = entry.value;
+                          });
+                        },
+                      ),
+                    ),
                   ),
               ],
             ),
@@ -246,9 +241,9 @@ class _HistoryScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
+    return LazyDataScrollView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-      child: Column(
+      child: SliverSection(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           toolbar,

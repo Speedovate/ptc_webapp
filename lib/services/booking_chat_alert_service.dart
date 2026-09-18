@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:webapp/widgets/shared/app_snackbar.dart';
+import 'package:webapp/services/support_alert_deduplicator.dart';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:webapp/models/booking.dart';
@@ -16,6 +18,7 @@ class BookingChatAlertService {
   static final BookingChatAlertService instance = BookingChatAlertService._();
 
   final AudioPlayer _player = AudioPlayer();
+  final _supportAlerts = SupportAlertDeduplicator();
   StreamSubscription<List<Booking>>? _bookingsSubscription;
   StreamSubscription<List<SupportThread>>? _threadsSubscription;
   final Set<String> _knownRelevantBookingIds = <String>{};
@@ -71,6 +74,7 @@ class BookingChatAlertService {
     _knownRelevantBookingIds.clear();
     _knownAssignmentSignatures.clear();
     _knownThreadSignatures.clear();
+    _supportAlerts.clear();
     try {
       await _player.stop();
     } catch (_) {
@@ -99,11 +103,7 @@ class BookingChatAlertService {
         .map((booking) => normalizeId(booking.id))
         .whereType<String>()
         .toSet();
-    final assignmentSignatures = _assignmentSignatures(
-      bookings,
-      userId,
-      role,
-    );
+    final assignmentSignatures = _assignmentSignatures(bookings, userId, role);
 
     if (!_hasBookingBaseline) {
       _knownRelevantBookingIds
@@ -211,7 +211,7 @@ class BookingChatAlertService {
       return;
     }
 
-    final hasIncomingMessage = threads.any((thread) {
+    final incomingMessages = threads.where((thread) {
       final threadId = normalizeId(thread.id);
       if (threadId == null || !thread.hasConversation) {
         return false;
@@ -223,13 +223,51 @@ class BookingChatAlertService {
           messageAt != null &&
           !messageAt.isBefore(sessionStartedAt) &&
           _knownThreadSignatures[threadId] != _threadSignature(thread);
-    });
+    }).toList();
     _knownThreadSignatures
       ..clear()
       ..addAll(currentSignatures);
-    if (hasIncomingMessage) {
-      unawaited(_playChatSound());
+    var shouldAlert = false;
+    for (final thread in incomingMessages) {
+      shouldAlert =
+          _supportAlerts.accept(
+            threadId: thread.id!,
+            senderId: thread.lastSenderUserId!,
+            messageAt: thread.lastMessageAt!,
+            preview: thread.lastMessageText ?? '',
+          ) ||
+          shouldAlert;
     }
+    if (shouldAlert) {
+      _notifySupportMessage();
+    }
+  }
+
+  void handleSupportPush(Map<String, dynamic> data) {
+    if (_userId == null ||
+        data['recipientId'] != _userId ||
+        data['senderId'] == _userId) {
+      return;
+    }
+    final threadId = normalizeId(data['threadId']?.toString());
+    final senderId = normalizeId(data['senderId']?.toString());
+    final at = DateTime.tryParse(data['messageAt']?.toString() ?? '');
+    if (threadId == null || senderId == null || at == null) {
+      return;
+    }
+    if (_supportAlerts.accept(
+      threadId: threadId,
+      senderId: senderId,
+      messageAt: at,
+      preview: data['preview']?.toString() ?? '',
+    )) {
+      _notifySupportMessage();
+    }
+  }
+
+  void _notifySupportMessage() {
+    AppSnackbar.showSupportNotification();
+    unawaited(_playChatSound());
   }
 
   String _threadSignature(SupportThread thread) {

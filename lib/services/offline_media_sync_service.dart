@@ -1,5 +1,7 @@
+import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'package:webapp/services/booking_id_resolver.dart';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -22,12 +24,14 @@ class OfflineMediaSyncService {
     FirebaseFirestore? firestore,
     PhotoStorageService? photoStorageService,
     SupportStorageService? supportStorageService,
+    bool Function()? isOnline,
   }) : _backend = backend ?? createBookingStorageBackend(),
        _providedFirestore = firestore,
        _photoStorageService =
            photoStorageService ?? PhotoStorageService.instance,
        _supportStorageService =
-           supportStorageService ?? SupportStorageService.instance;
+           supportStorageService ?? SupportStorageService.instance,
+       _isOnline = isOnline ?? currentNetworkStatus;
 
   static final OfflineMediaSyncService instance = OfflineMediaSyncService();
 
@@ -37,6 +41,7 @@ class OfflineMediaSyncService {
   static const _retryInterval = Duration(seconds: 20);
   static const Duration _queuedSupportReadTimeout = Duration(seconds: 1);
 
+  final bool Function() _isOnline;
   final BookingStorageBackend _backend;
   final FirebaseFirestore? _providedFirestore;
   FirebaseFirestore get _firestore =>
@@ -71,7 +76,10 @@ class OfflineMediaSyncService {
     Iterable<String> userIds = const [],
     bool includeSignedOut = true,
   }) async {
-    await initialize();
+    // Inspection must not publish status and recursively trigger aggregate scans.
+    if (!_isInitialized) {
+      await initialize();
+    }
     final normalizedUserIds = userIds
         .map(normalizeId)
         .whereType<String>()
@@ -126,10 +134,11 @@ class OfflineMediaSyncService {
     await _backend.initialize();
     await _refreshStatusFromStorage();
     _retryTimer ??= Timer.periodic(_retryInterval, (_) {
+      if (!isAppVisible()) return;
       unawaited(flushPendingOperations());
     });
     _networkSubscription ??= networkStatusEvents().listen((isOnline) {
-      if (isOnline) {
+      if (isOnline && isAppVisible()) {
         unawaited(flushPendingOperations());
       }
     });
@@ -146,6 +155,7 @@ class OfflineMediaSyncService {
     int? size,
     required String? originalValue,
   }) async {
+    final actionAt = DateTime.now().toUtc();
     await initialize();
     return _serializeQueueMutation(() async {
       final processed = await _imageUploadProcessor.prepare(
@@ -153,9 +163,16 @@ class OfflineMediaSyncService {
         fileName: fileName,
         mimeType: mimeType,
       );
+      final entries = await _readEntries();
+      final previous = _photoPredecessor(
+        entries,
+        userId,
+        fieldKey,
+        originalValue,
+      );
       final entry = _OfflineMediaQueueEntry.userUpload(
         id: _nextEntryId('user_upload'),
-        createdAtIso: DateTime.now().toUtc().toIso8601String(),
+        createdAtIso: actionAt.toIso8601String(),
         userId: userId,
         fieldKey: fieldKey,
         fileName: processed.fileName,
@@ -163,8 +180,8 @@ class OfflineMediaSyncService {
         size: processed.size,
         bytesBase64: base64Encode(processed.bytes),
         originalValue: originalValue,
+        previousUploadId: previous?.id,
       );
-      final entries = await _readEntries();
       entries.add(entry);
       await _writeEntries(entries);
       _setStatus(
@@ -177,7 +194,7 @@ class OfflineMediaSyncService {
           bytes: processed.bytes,
           mimeType: processed.mimeType,
         ),
-        queuedAt: DateTime.now(),
+        queuedAt: actionAt,
       );
     });
   }
@@ -197,7 +214,9 @@ class OfflineMediaSyncService {
           DateTime.tryParse(localCreatedAtIso ?? '')?.toUtc() ??
           DateTime.now().toUtc();
       final entry = _OfflineMediaQueueEntry.supportMessage(
-        id: _nextEntryId('support_message'),
+        id: localOrderKey?.isNotEmpty == true
+            ? 'support_message_${base64UrlEncode(utf8.encode('$threadId:${sender.id}:$localOrderKey'))}'
+            : _nextEntryId('support_message'),
         createdAtIso: queuedAt.toIso8601String(),
         localOrderKey: localOrderKey,
         threadId: threadId,
@@ -219,7 +238,9 @@ class OfflineMediaSyncService {
             .toList(),
       );
       final entries = await _readEntries();
-      entries.add(entry);
+      if (!entries.any((pending) => pending.id == entry.id)) {
+        entries.add(entry);
+      }
       await _writeEntries(entries);
       _setStatus(
         _currentStatus.copyWith(pendingCount: entries.length, isSyncing: false),
@@ -233,23 +254,22 @@ class OfflineMediaSyncService {
     if (_isFlushing) {
       return;
     }
-    await _queueMutationChain;
-    var shouldFlushAgainImmediately = false;
-    if (!currentNetworkStatus()) {
-      final entries = await _readEntries();
-      _setStatus(
-        _currentStatus.copyWith(
-          pendingCount: entries.length,
-          isSyncing: false,
-          processedInBatch: 0,
-          totalInBatch: 0,
-        ),
-      );
-      return;
-    }
-    _markPendingAsSyncing();
     _isFlushing = true;
+    var shouldFlushAgainImmediately = false;
     try {
+      await _queueMutationChain;
+      if (!_isOnline()) {
+        final entries = await _readEntries();
+        _setStatus(
+          _currentStatus.copyWith(
+            pendingCount: entries.length,
+            isSyncing: false,
+            processedInBatch: 0,
+            totalInBatch: 0,
+          ),
+        );
+        return;
+      }
       final currentStorageKey = await _resolvedStorageKey();
       final storageKeys = await _allKnownStorageKeys();
       for (final storageKey in storageKeys) {
@@ -278,14 +298,109 @@ class OfflineMediaSyncService {
     }
   }
 
-  Future<bool> _flushUserUpload(_OfflineMediaQueueEntry entry) async {
+  _OfflineMediaQueueEntry? _photoPredecessor(
+    List<_OfflineMediaQueueEntry> entries,
+    String? userId,
+    String? fieldKey,
+    String? originalValue,
+  ) {
+    if (originalValue?.startsWith('data:') != true) {
+      return null;
+    }
+    for (final candidate in entries.reversed) {
+      if (candidate.kind == _OfflineMediaQueueKind.userUpload &&
+          candidate.userId == userId &&
+          candidate.fieldKey == fieldKey &&
+          candidate.bytesBase64 != null &&
+          _dataUrlForBytes(
+                bytes: base64Decode(candidate.bytesBase64!),
+                mimeType: candidate.mimeType,
+              ) ==
+              originalValue) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  bool _canApplyUserPhoto(
+    _OfflineMediaQueueEntry entry,
+    Map<String, dynamic> data,
+  ) {
+    final currentValue = entry.fieldKey == 'license_photo'
+        ? data['license']?.toString()
+        : data['photo']?.toString();
+    final receipts = data['offline_photo_uploads'];
+    final receipt = receipts is Map ? receipts[entry.fieldKey] : null;
+    final followsPrevious =
+        entry.previousUploadId != null &&
+        receipt is Map &&
+        receipt['id'] == entry.previousUploadId &&
+        receipt['url'] == currentValue;
+    if (receipt is Map && receipt['id'] == entry.id) {
+      return false; // Acknowledged retry must not restore an older photo.
+    }
+    if (!followsPrevious &&
+        (currentValue ?? '') != (entry.originalValue ?? '')) {
+      if (entry.previousUploadId != null) {
+        throw StateError(
+          'Previous photo is temporarily unavailable. Try again after sync.',
+        );
+      }
+      return false;
+    }
+
+    return true;
+  }
+
+  bool _photoWasAcknowledged(
+    _OfflineMediaQueueEntry entry,
+    Map<String, dynamic> user,
+    Map<String, _OfflineMediaQueueEntry> pending,
+  ) {
+    final receipts = user['offline_photo_uploads'];
+    final receipt = receipts is Map ? receipts[entry.fieldKey] : null;
+    if (receipt is! Map) {
+      return false;
+    }
+    String? id = receipt['id']?.toString();
+    final visited = <String>{};
+    while (id != null && visited.add(id)) {
+      if (id == entry.id) {
+        return true;
+      }
+      final successor = pending[id];
+      if (successor == null ||
+          successor.userId != entry.userId ||
+          successor.fieldKey != entry.fieldKey) {
+        return false;
+      }
+      id = successor.previousUploadId;
+    }
+    return false;
+  }
+
+  Future<bool> _flushUserUpload(
+    _OfflineMediaQueueEntry entry,
+    String scope,
+    Map<String, _OfflineMediaQueueEntry> pending,
+  ) async {
     final bytesBase64 = entry.bytesBase64;
-    final userId = entry.userId;
+    final references = await OfflineMutationQueueService(
+      firestore: _firestore,
+    ).resolveResourceReferences({'user_id': entry.userId}, scope: scope);
+    final userId = references['user_id']?.toString();
     final fieldKey = entry.fieldKey;
     if (bytesBase64 == null || userId == null || fieldKey == null) {
       return true;
     }
 
+    final currentUser = await _usersCollection.doc(userId).get();
+    if (!currentUser.exists ||
+        _photoWasAcknowledged(entry, documentData(currentUser), pending) ||
+        !_canApplyUserPhoto(entry, documentData(currentUser))) {
+      return true;
+    }
     final uploaded = await _photoStorageService.uploadUserPhoto(
       bytes: base64Decode(bytesBase64),
       userId: userId,
@@ -294,23 +409,25 @@ class OfflineMediaSyncService {
       mimeType: entry.mimeType,
       size: entry.size,
     );
-    var applied = false;
-    await _firestore.runTransaction((transaction) async {
+    final applied = await _firestore.runTransaction<bool>((transaction) async {
       final userRef = _usersCollection.doc(userId);
       final snapshot = await transaction.get(userRef);
       if (!snapshot.exists) {
-        return;
+        return false;
       }
       final data = documentData(snapshot);
-      final currentValue = fieldKey == 'license_photo'
-          ? data['license']?.toString()
-          : data['photo']?.toString();
-      if ((currentValue ?? '') != (entry.originalValue ?? '')) {
-        return;
+      if (_photoWasAcknowledged(entry, data, pending) ||
+          !_canApplyUserPhoto(entry, data)) {
+        return false;
       }
 
       final patch = <String, dynamic>{
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
+        'offline_photo_uploads.$fieldKey': {
+          'id': entry.id,
+          'url': uploaded['download_url']?.toString(),
+        },
+        'photo_updated_at': entry.createdAtIso,
+        'media_synced_at': DateTime.now().toUtc().toIso8601String(),
       };
       if (fieldKey == 'license_photo') {
         patch['license'] = uploaded['download_url']?.toString();
@@ -318,7 +435,7 @@ class OfflineMediaSyncService {
         patch['photo'] = uploaded['download_url']?.toString();
       }
       transaction.update(userRef, patch);
-      applied = true;
+      return true;
     });
 
     if (!applied) {
@@ -329,18 +446,84 @@ class OfflineMediaSyncService {
     return true;
   }
 
-  Future<void> _flushSupportMessage(_OfflineMediaQueueEntry entry) async {
+  Future<void> _flushSupportMessage(
+    _OfflineMediaQueueEntry entry,
+    String scope,
+  ) async {
     final threadId = entry.threadId;
-    final senderUserId = entry.senderUserId;
+    final references = await OfflineMutationQueueService(firestore: _firestore)
+        .resolveResourceReferences({
+          'sender_user_id': entry.senderUserId,
+        }, scope: scope);
+    final senderUserId = references['sender_user_id']?.toString();
     if (threadId == null || senderUserId == null) {
       return;
     }
     final threadDoc = _supportCollection.doc(threadId);
-    final threadDocument = entry.threadDocument;
+    final threadDocument = entry.threadDocument == null
+        ? null
+        : Map<String, dynamic>.from(entry.threadDocument!);
     if (threadDocument != null) {
-      await threadDoc.set(threadDocument, SetOptions(merge: true));
+      final originalId = threadDocument['booking_id']?.toString();
+      if (BookingIdResolver.isTemporary(originalId)) {
+        final finalId = await BookingIdResolver(
+          firestore: _firestore,
+        ).resolve(originalId!);
+        if (finalId == null) {
+          throw StateError(
+            'Booking identity is temporarily unavailable. Try again after sync.',
+          );
+        }
+        threadDocument['booking_id'] = finalId;
+      }
+      final originalReferences = Map<String, dynamic>.from(threadDocument);
+      final linkedDocument = await OfflineMutationQueueService(
+        firestore: _firestore,
+      ).resolveResourceReferences(threadDocument, scope: scope);
+      threadDocument.addAll(linkedDocument);
+      await _firestore.runTransaction((transaction) async {
+        final existing = await transaction.get(threadDoc);
+        final existingId = existing.data()?['booking_id']?.toString();
+        final finalId = threadDocument['booking_id']?.toString();
+        if (existingId != null &&
+            existingId != originalId &&
+            existingId != finalId) {
+          throw StateError(
+            'Sync conflict: support thread is linked to another booking.',
+          );
+        }
+        if (!existing.exists) {
+          transaction.set(threadDoc, threadDocument);
+        } else {
+          final patch = <String, dynamic>{};
+          if (BookingIdResolver.isTemporary(originalId)) {
+            patch['booking_id'] = finalId;
+          }
+          for (final field in [
+            'requester_user_id',
+            'requester_parent_client_id',
+          ]) {
+            final original = originalReferences[field];
+            final resolved = threadDocument[field];
+            if (original != resolved && existing.data()?[field] == original) {
+              patch[field] = resolved;
+            } else if (original != resolved &&
+                existing.data()?[field] != resolved) {
+              throw StateError(
+                'Sync conflict: support requester identity changed.',
+              );
+            }
+          }
+          if (patch.isNotEmpty) {
+            transaction.update(threadDoc, patch);
+          }
+        }
+      });
     }
 
+    if ((await threadDoc.collection('messages').doc(entry.id).get()).exists) {
+      return;
+    }
     final uploadedAttachments = <SupportAttachment>[];
     for (final attachment in entry.attachments) {
       uploadedAttachments.add(
@@ -354,7 +537,7 @@ class OfflineMediaSyncService {
       );
     }
 
-    final messageDoc = threadDoc.collection('messages').doc();
+    final messageDoc = threadDoc.collection('messages').doc(entry.id);
     final now =
         DateTime.tryParse(entry.createdAtIso)?.toUtc() ??
         DateTime.now().toUtc();
@@ -371,7 +554,6 @@ class OfflineMediaSyncService {
       createdAt: now,
       updatedAt: now,
     );
-    await messageDoc.set(message.toMap());
 
     final lastPreview = entry.text?.trim().isNotEmpty == true
         ? entry.text!.trim()
@@ -379,14 +561,27 @@ class OfflineMediaSyncService {
         ? 'Sent an attachment'
         : 'Sent ${uploadedAttachments.length} attachments';
 
-    await threadDoc.set({
-      'last_message_text': lastPreview,
-      'last_message_at': now.toIso8601String(),
-      'last_sender_user_id': senderUserId,
-      'last_sender_role': entry.senderRole,
-      'updated_at': now.toIso8601String(),
-      'is_active': true,
-    }, SetOptions(merge: true));
+    await _firestore.runTransaction<void>((tx) async {
+      final existingMessage = await tx.get(messageDoc);
+      final currentThread = await tx.get(threadDoc);
+      if (existingMessage.exists) {
+        return;
+      }
+      tx.set(messageDoc, message.toMap());
+      final latestAt = DateTime.tryParse(
+        currentThread.data()?['last_message_at']?.toString() ?? '',
+      );
+      if (latestAt == null || !latestAt.isAfter(now)) {
+        tx.set(threadDoc, {
+          'last_message_text': lastPreview,
+          'last_message_at': now.toIso8601String(),
+          'last_sender_user_id': senderUserId,
+          'last_sender_role': entry.senderRole,
+          'updated_at': now.toIso8601String(),
+          'is_active': true,
+        }, SetOptions(merge: true));
+      }
+    });
   }
 
   Future<List<_OfflineMediaQueueEntry>> _readEntries() async {
@@ -407,6 +602,8 @@ class OfflineMediaSyncService {
   }
 
   Future<String> _resolvedStorageKey() async {
+    final captured = Zone.current[_storageScopeKey];
+    if (captured is String) return captured;
     final normalizedUserId = normalizeId(
       await _authStorage.readString(_currentUserIdKey),
     );
@@ -437,7 +634,7 @@ class OfflineMediaSyncService {
     final entries = await _readEntriesForStorageKey(storageKey);
     return const OfflineQueueStatusSnapshot.idle().copyWith(
       pendingCount: entries.length,
-      failedCount: 0,
+      failedCount: entries.where((entry) => entry.lastError != null).length,
     );
   }
 
@@ -467,8 +664,56 @@ class OfflineMediaSyncService {
     String storageKey, {
     required bool updateStatus,
   }) async {
-    final entries = await _readEntriesForStorageKey(storageKey);
-    final originalEntryIds = entries.map((entry) => entry.id).toSet();
+    // Persist exact predecessor links for legacy pending photos before removing
+    // any successfully synced predecessor from the queue.
+    final entries = await _serializeQueueMutation(() async {
+      final stored = await _readEntriesForStorageKey(storageKey);
+      final linked = <_OfflineMediaQueueEntry>[];
+      var changed = false;
+      for (final entry in stored) {
+        final previous =
+            entry.kind == _OfflineMediaQueueKind.userUpload &&
+                entry.previousUploadId == null
+            ? _photoPredecessor(
+                linked,
+                entry.userId,
+                entry.fieldKey,
+                entry.originalValue,
+              )
+            : null;
+        linked.add(
+          previous == null
+              ? entry
+              : entry.copyWith(previousUploadId: previous.id),
+        );
+        changed = changed || previous != null;
+      }
+      if (changed) {
+        await _writeEntriesForStorageKey(storageKey, linked);
+      }
+      return linked;
+    });
+    final now = DateTime.now().toUtc();
+    final hasDueWork = entries.any(
+      (entry) => entry.nextRetryAt?.isAfter(now) != true,
+    );
+    if (!hasDueWork) {
+      if (updateStatus) {
+        _setStatus(
+          _currentStatus.copyWith(
+            pendingCount: entries.length,
+            failedCount: entries
+                .where((entry) => entry.lastError != null)
+                .length,
+            isSyncing: false,
+          ),
+        );
+      }
+      // Preserve the stored payload verbatim until work is actually due.
+      return const _ScopedMediaFlushResult(shouldFlushAgainImmediately: false);
+    }
+    final entriesById = {for (final entry in entries) entry.id: entry};
+    final originalEntryIds = entriesById.keys.toSet();
     if (updateStatus) {
       _setStatus(
         _currentStatus.copyWith(
@@ -489,28 +734,44 @@ class OfflineMediaSyncService {
 
     for (final entry in entries) {
       try {
+        if (entry.nextRetryAt?.isAfter(DateTime.now().toUtc()) == true) {
+          remaining.add(entry);
+          continue;
+        }
         if (entry.kind == _OfflineMediaQueueKind.userUpload) {
-          final applied = await _flushUserUpload(entry);
+          final applied = await _flushUserUpload(
+            entry,
+            storageKey.substring('$_storageKey::'.length),
+            entriesById,
+          );
           if (!applied) {
             continue;
           }
         } else if (entry.kind == _OfflineMediaQueueKind.supportMessage) {
-          await _flushSupportMessage(entry);
+          await _flushSupportMessage(
+            entry,
+            storageKey.substring('$_storageKey::'.length),
+          );
         }
       } catch (error) {
         final normalizedError = normalizeUserErrorText(
           error.toString(),
           fallback: 'Something went wrong. Please try again.',
         );
-        if (_isRetryable(normalizedError) ||
-            entry.kind == _OfflineMediaQueueKind.supportMessage) {
-          remaining.add(
-            entry.copyWith(
-              retryCount: entry.retryCount + 1,
-              lastError: normalizedError,
+        // Keep the only persisted copy, even for permission/storage failures.
+        // The existing scheduler checks this deadline; no extra timer is added.
+        final delaySeconds = _isRetryable(normalizedError)
+            ? min(1200, 20 * pow(2, min(entry.retryCount, 6)).toInt())
+            : 1200;
+        remaining.add(
+          entry.copyWith(
+            retryCount: entry.retryCount + 1,
+            lastError: normalizedError,
+            nextRetryAt: DateTime.now().toUtc().add(
+              Duration(seconds: delaySeconds),
             ),
-          );
-        }
+          ),
+        );
       } finally {
         processed++;
         if (updateStatus) {
@@ -526,19 +787,19 @@ class OfflineMediaSyncService {
       }
     }
 
-    await _queueMutationChain;
-    final latestStoredEntries = await _readEntriesForStorageKey(storageKey);
-    final newlyQueuedEntries = latestStoredEntries.where((entry) {
-      return !originalEntryIds.contains(entry.id);
-    }).toList();
-    final nextEntries = <_OfflineMediaQueueEntry>[
-      ...remaining,
-      ...newlyQueuedEntries,
-    ];
-    await _writeEntriesForStorageKey(storageKey, nextEntries);
+    await _serializeQueueMutation(() async {
+      final latestStoredEntries = await _readEntriesForStorageKey(storageKey);
+      final newlyQueuedEntries = latestStoredEntries.where((entry) {
+        return !originalEntryIds.contains(entry.id);
+      });
+      await _writeEntriesForStorageKey(storageKey, [
+        ...remaining,
+        ...newlyQueuedEntries,
+      ]);
+    });
     final latestEntries = await _readEntriesForStorageKey(storageKey);
     final shouldFlushAgainImmediately =
-        currentNetworkStatus() &&
+        _isOnline() &&
         latestEntries.isNotEmpty &&
         latestEntries.length < entries.length;
     if (updateStatus) {
@@ -559,20 +820,10 @@ class OfflineMediaSyncService {
 
   Future<void> _refreshStatusFromStorage() async {
     final entries = await _readEntries();
-    _setStatus(_currentStatus.copyWith(pendingCount: entries.length));
-  }
-
-  void _markPendingAsSyncing() {
-    final pendingCount = _currentStatus.pendingCount;
-    if (pendingCount <= 0 || _currentStatus.isSyncing) {
-      return;
-    }
     _setStatus(
       _currentStatus.copyWith(
-        isSyncing: true,
-        processedInBatch: 0,
-        totalInBatch: pendingCount,
-        clearLastSyncAt: true,
+        pendingCount: entries.length,
+        failedCount: entries.where((entry) => entry.lastError != null).length,
       ),
     );
   }
@@ -598,16 +849,17 @@ class OfflineMediaSyncService {
     return '${prefix}_${timestamp}_$randomSuffix';
   }
 
+  final Object _storageScopeKey = Object();
+
   Future<T> _serializeQueueMutation<T>(Future<T> Function() action) {
-    final completer = Completer<T>();
-    _queueMutationChain = _queueMutationChain.then((_) async {
-      try {
-        completer.complete(await action());
-      } catch (error, stackTrace) {
-        completer.completeError(error, stackTrace);
-      }
+    // Capture the originating account before waiting for another local write.
+    final scope = _resolvedStorageKey();
+    final next = _queueMutationChain.then((_) async {
+      final storageKey = await scope;
+      return runZoned(action, zoneValues: {_storageScopeKey: storageKey});
     });
-    return completer.future;
+    _queueMutationChain = next.then<void>((_) {}, onError: (Object _) {});
+    return next;
   }
 
   String _dataUrlForBytes({required Uint8List bytes, String? mimeType}) {
@@ -705,6 +957,7 @@ class _OfflineMediaQueueEntry {
     required this.retryCount,
     this.localOrderKey,
     this.lastError,
+    this.nextRetryAt,
     this.userId,
     this.fieldKey,
     this.fileName,
@@ -712,6 +965,7 @@ class _OfflineMediaQueueEntry {
     this.size,
     this.bytesBase64,
     this.originalValue,
+    this.previousUploadId,
     this.threadId,
     this.senderUserId,
     this.senderRole,
@@ -732,6 +986,7 @@ class _OfflineMediaQueueEntry {
     int? size,
     required String bytesBase64,
     required String? originalValue,
+    String? previousUploadId,
   }) {
     return _OfflineMediaQueueEntry(
       id: id,
@@ -745,6 +1000,7 @@ class _OfflineMediaQueueEntry {
       size: size,
       bytesBase64: bytesBase64,
       originalValue: originalValue,
+      previousUploadId: previousUploadId,
     );
   }
 
@@ -786,6 +1042,7 @@ class _OfflineMediaQueueEntry {
   final int retryCount;
   final String? localOrderKey;
   final String? lastError;
+  final DateTime? nextRetryAt;
   final String? userId;
   final String? fieldKey;
   final String? fileName;
@@ -793,6 +1050,7 @@ class _OfflineMediaQueueEntry {
   final int? size;
   final String? bytesBase64;
   final String? originalValue;
+  final String? previousUploadId;
   final String? threadId;
   final String? senderUserId;
   final String? senderRole;
@@ -802,7 +1060,12 @@ class _OfflineMediaQueueEntry {
   final Map<String, dynamic>? threadDocument;
   final List<_QueuedAttachmentPayload> attachments;
 
-  _OfflineMediaQueueEntry copyWith({int? retryCount, String? lastError}) {
+  _OfflineMediaQueueEntry copyWith({
+    int? retryCount,
+    String? lastError,
+    DateTime? nextRetryAt,
+    String? previousUploadId,
+  }) {
     return _OfflineMediaQueueEntry(
       id: id,
       kind: kind,
@@ -810,6 +1073,7 @@ class _OfflineMediaQueueEntry {
       retryCount: retryCount ?? this.retryCount,
       localOrderKey: localOrderKey,
       lastError: lastError ?? this.lastError,
+      nextRetryAt: nextRetryAt ?? this.nextRetryAt,
       userId: userId,
       fieldKey: fieldKey,
       fileName: fileName,
@@ -817,6 +1081,7 @@ class _OfflineMediaQueueEntry {
       size: size,
       bytesBase64: bytesBase64,
       originalValue: originalValue,
+      previousUploadId: previousUploadId ?? this.previousUploadId,
       threadId: threadId,
       senderUserId: senderUserId,
       senderRole: senderRole,
@@ -838,6 +1103,7 @@ class _OfflineMediaQueueEntry {
       'retry_count': retryCount,
       'local_order_key': localOrderKey,
       'last_error': lastError,
+      'next_retry_at': nextRetryAt?.toIso8601String(),
       'user_id': userId,
       'field_key': fieldKey,
       'file_name': fileName,
@@ -845,6 +1111,7 @@ class _OfflineMediaQueueEntry {
       'size': size,
       'bytes_base64': bytesBase64,
       'original_value': originalValue,
+      'previous_upload_id': previousUploadId,
       'thread_id': threadId,
       'sender_user_id': senderUserId,
       'sender_role': senderRole,
@@ -869,6 +1136,7 @@ class _OfflineMediaQueueEntry {
           : int.tryParse(map['retry_count']?.toString() ?? '') ?? 0,
       localOrderKey: map['local_order_key']?.toString(),
       lastError: map['last_error']?.toString(),
+      nextRetryAt: DateTime.tryParse(map['next_retry_at']?.toString() ?? ''),
       userId: map['user_id']?.toString(),
       fieldKey: map['field_key']?.toString(),
       fileName: map['file_name']?.toString(),
@@ -878,6 +1146,7 @@ class _OfflineMediaQueueEntry {
           : int.tryParse(map['size']?.toString() ?? ''),
       bytesBase64: map['bytes_base64']?.toString(),
       originalValue: map['original_value']?.toString(),
+      previousUploadId: map['previous_upload_id']?.toString(),
       threadId: map['thread_id']?.toString(),
       senderUserId: map['sender_user_id']?.toString(),
       senderRole: map['sender_role']?.toString(),

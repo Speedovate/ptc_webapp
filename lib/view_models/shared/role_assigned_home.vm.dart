@@ -22,9 +22,13 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
     AuthRepository? authRepository,
     BookingRepository? bookingRepository,
     StatusFormRepository? statusRepository,
+    ChassisRequest? chassisRequest,
+    AppWarmupService? warmupService,
   }) : _authRepository = authRepository ?? AuthRequest.instance,
        _bookingRepository = bookingRepository ?? BookingRequest.instance,
-       _statusRepository = statusRepository ?? StatusRequest.instance {
+       _statusRepository = statusRepository ?? StatusRequest.instance,
+       _chassisRequest = chassisRequest ?? ChassisRequest.instance,
+       _warmupService = warmupService ?? AppWarmupService.instance {
     assignedBookings = List<Booking>.from(_cachedAssignedBookings);
     currentUser = _cachedCurrentUser;
     errorMessage = _cachedErrorMessage;
@@ -37,7 +41,8 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   final BookingRepository _bookingRepository;
   final StatusFormRepository _statusRepository;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
-  final AppWarmupService _warmupService = AppWarmupService.instance;
+  final AppWarmupService _warmupService;
+  final ChassisRequest _chassisRequest;
   StreamSubscription<List<Booking>>? _bookingsSubscription;
   StreamSubscription<List<Chassis>>? _chassisSubscription;
   StreamSubscription<void>? _usersCacheUpdatesSubscription;
@@ -72,120 +77,60 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   int _loadEpoch = 0;
   bool _isDisposed = false;
 
+  bool get hasResolvedInitialBookings => _hasLoadedOnce;
+  bool _hasPrimarySnapshot = false;
+  Completer<void>? _initialLoad;
+
   Future<void> load(UserModel user) async {
     final loadEpoch = ++_loadEpoch;
-    final loadStopwatch = Stopwatch()..start();
-    _log(
-      'load start loggedIn=${user.id != null} user=${user.id ?? "-"} role=${user.role ?? "-"} visiblePrimary=${assignedBookings.isNotEmpty || _cachedAssignedBookings.isNotEmpty || currentUser != null || _cachedCurrentUser != null || _usersById.isNotEmpty || _cachedUsersById.isNotEmpty || _statusesByKey.isNotEmpty || _cachedStatusesByKey.isNotEmpty}',
-    );
-    _ensureSupportingSubscriptions();
-    busyMessage = 'Loading assigned bookings ...';
-    final hasVisiblePrimaryData =
-        assignedBookings.isNotEmpty ||
-        _cachedAssignedBookings.isNotEmpty ||
-        BookingRequest.hasResolvedBookings ||
-        currentUser != null ||
-        _cachedCurrentUser != null ||
-        _usersById.isNotEmpty ||
-        _cachedUsersById.isNotEmpty ||
-        _statusesByKey.isNotEmpty ||
-        _cachedStatusesByKey.isNotEmpty;
-    final shouldShowLoadingState = !_hasLoadedOnce && !hasVisiblePrimaryData;
-    if (shouldShowLoadingState) {
-      setBusy(true);
-      _log('overlay show section=assigned-home');
+    _completeInitialLoad();
+    final initialLoad = Completer<void>();
+    _initialLoad = initialLoad;
+    bool isCurrent() => !_isDisposed && loadEpoch == _loadEpoch;
+
+    // Page caches must never carry another account's assignments into a frame.
+    if (currentUser?.id != user.id || currentUser?.role != user.role) {
+      assignedBookings = [];
+      _usersById.clear();
+      _statusesByKey.clear();
+      _hasLoadedOnce = false;
+      clearCachedState();
     }
-    if (!shouldShowLoadingState) {
-      _log('silent load only section=assigned-home');
-    }
+    currentUser = user;
+    _cachedCurrentUser = user;
+    _latestBookings = [];
+    _returnBookingIds = {};
+    _hasPrimarySnapshot = false;
     errorMessage = null;
-    try {
-      if (BookingRequest.hasResolvedBookings && assignedBookings.isEmpty) {
-        _applyAssignedBookings(BookingRequest.hydratedBookingsSnapshot);
-        notifyListeners();
-      }
-      await _bookingRepository.initialize();
-      final results = await Future.wait([
-        _authRepository.getUsers(),
-        _statusRepository.getStatuses(),
-        if (BookingRequest.hasResolvedBookings)
-          Future<List<Booking>>.value(BookingRequest.hydratedBookingsSnapshot)
-        else
-          _bookingRepository.getBookings(),
-        ChassisRequest.instance.getChassis(),
-      ]);
-      if (_isDisposed || loadEpoch != _loadEpoch) {
-        _log(
-          'load abandoned user=${user.id ?? "-"} elapsedMs=${loadStopwatch.elapsedMilliseconds}',
-        );
-        return;
-      }
-      final users = results[0] as List<UserModel>;
-      final statuses = results[1] as List<Status>;
-      final bookings = results[2] as List<Booking>;
-      final chassis = results[3] as List<Chassis>;
+    busyMessage = 'Loading assigned bookings ...';
+    setBusy(!_hasLoadedOnce);
+    await _bookingsSubscription?.cancel();
+    await _chassisSubscription?.cancel();
+    if (!isCurrent()) return;
+    _ensureSupportingSubscriptions();
 
-      _usersById
-        ..clear()
-        ..addEntries(
-          users
-              .where((item) => (item.id ?? '').isNotEmpty)
-              .map((item) => MapEntry(item.id!, item)),
-        );
-      _statusesByKey
-        ..clear()
-        ..addEntries(
-          statuses
-              .where((item) => (item.key ?? '').isNotEmpty)
-              .map((item) => MapEntry(item.key!, item)),
-        );
+    var bookingsReady = false;
+    final needsChassis = normalizeRoleKey(user.role) == 'driver';
+    var chassisReady = !needsChassis;
+    var receivedBookingEvent = false;
+    var receivedChassisEvent = false;
 
-      currentUser = _usersById[user.id] ?? user;
-      await _bookingsSubscription?.cancel();
-      await _chassisSubscription?.cancel();
-      _latestBookings = List<Booking>.from(bookings);
-      _returnBookingIds = _returnBookingIdsFor(chassis, currentUser?.id);
-      _applyAssignedBookings(bookings);
-      _bookingsSubscription = _bookingRepository.watchBookings().listen((
-        liveBookings,
-      ) {
-        if (_isDisposed || loadEpoch != _loadEpoch) {
-          return;
-        }
-        _latestBookings = List<Booking>.from(liveBookings);
-        _applyAssignedBookings(liveBookings);
-        notifyListeners();
-      });
-      _chassisSubscription = ChassisRequest.instance.watchChassis().listen((
-        liveChassis,
-      ) {
-        if (_isDisposed || loadEpoch != _loadEpoch) {
-          return;
-        }
-        _returnBookingIds = _returnBookingIdsFor(liveChassis, currentUser?.id);
-        _applyAssignedBookings(_latestBookings);
-        notifyListeners();
-      });
-      _cachedCurrentUser = currentUser;
+    void publish() {
+      if (!isCurrent() || !bookingsReady || !chassisReady) return;
+      _hasPrimarySnapshot = true;
+      _applyAssignedBookings(_latestBookings);
+      errorMessage = null;
       _cachedErrorMessage = null;
-      _cachedUsersById = Map<String, UserModel>.from(_usersById);
-      _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
+      _cachedCurrentUser = currentUser;
+      if (!_hasLoadedOnce) setBusy(false);
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
-      _log(
-        'load success user=${currentUser?.id ?? user.id ?? "-"} role=${currentUser?.role ?? user.role ?? "-"} bookings=${assignedBookings.length} users=${_usersById.length} statuses=${_statusesByKey.length} elapsedMs=${loadStopwatch.elapsedMilliseconds}',
-      );
-      unawaited(_warmupService.warmUpForUser(currentUser));
-    } catch (error) {
-      if (_isDisposed || loadEpoch != _loadEpoch) {
-        _log(
-          'load error ignored user=${user.id ?? "-"} elapsedMs=${loadStopwatch.elapsedMilliseconds}',
-        );
-        return;
-      }
-      _log(
-        'load error user=${user.id ?? "-"} role=${user.role ?? "-"} error=$error',
-      );
+      if (!initialLoad.isCompleted) initialLoad.complete();
+      notifyListeners();
+    }
+
+    void fail(Object error) {
+      if (!isCurrent() || _hasPrimarySnapshot) return;
       errorMessage = userFacingErrorMessage(
         error,
         fallback: 'We could not load the assigned bookings right now.',
@@ -193,37 +138,99 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       _cachedErrorMessage = errorMessage;
       _hasLoadedOnce = true;
       _cachedHasLoadedOnce = true;
-    } finally {
-      if (!_isDisposed && loadEpoch == _loadEpoch) {
-        if (shouldShowLoadingState) {
-          setBusy(false);
-          _log('overlay hide section=assigned-home reason=load-finish');
-        }
-        _log(
-          'load finish user=${currentUser?.id ?? user.id ?? "-"} role=${currentUser?.role ?? user.role ?? "-"} busy=$isBusy bookings=${assignedBookings.length} error=${errorMessage ?? "-"} elapsedMs=${loadStopwatch.elapsedMilliseconds}',
-        );
-        notifyListeners();
-      }
+      setBusy(false);
+      if (!initialLoad.isCompleted) initialLoad.complete();
     }
+
+    // Subscribe before fetching: a valid realtime result can release startup
+    // even when the separate SDK get() is still pending.
+    try {
+      _bookingsSubscription = _bookingRepository.watchBookings().listen((
+        bookings,
+      ) {
+        if (!isCurrent()) return;
+        if (_bookingRepository is BookingRequest &&
+            !BookingRequest.hasAuthoritativeBookings) {
+          return;
+        }
+        receivedBookingEvent = true;
+        bookingsReady = true;
+        _latestBookings = List<Booking>.from(bookings);
+        publish();
+      }, onError: fail);
+      if (needsChassis) {
+        _chassisSubscription = _chassisRequest.watchChassis().listen((chassis) {
+          // watchChassis initially yields its memory, which may still be an
+          // unresolved empty list. It cannot confirm no return assignments.
+          if (!isCurrent() || !_chassisRequest.hasResolvedChassis) return;
+          receivedChassisEvent = true;
+          chassisReady = true;
+          _returnBookingIds = _returnBookingIdsFor(chassis, user.id);
+          publish();
+        }, onError: fail);
+        unawaited(() async {
+          try {
+            final chassis = await _chassisRequest.getChassis();
+            if (!isCurrent() || receivedChassisEvent) return;
+            chassisReady = true;
+            _returnBookingIds = _returnBookingIdsFor(chassis, user.id);
+            publish();
+          } catch (error) {
+            if (!chassisReady) fail(error);
+          }
+        }());
+      }
+      unawaited(() async {
+        try {
+          await _bookingRepository.initialize();
+          if (!isCurrent()) return;
+          final bookings = await _bookingRepository.getBookings();
+          if (!isCurrent() || receivedBookingEvent) return;
+          bookingsReady = true;
+          _latestBookings = List<Booking>.from(bookings);
+          publish();
+        } catch (error) {
+          if (!bookingsReady) fail(error);
+        }
+      }());
+    } catch (error) {
+      fail(error);
+    }
+
+    await initialLoad.future;
+    if (!isCurrent()) return;
+    // Labels and catalogs enrich a usable home; they do not gate assignments.
+    unawaited(_reloadSupportingData());
+    unawaited(_warmupService.warmUpForUser(user).catchError((_, _) {}));
+  }
+
+  void _completeInitialLoad() {
+    final pending = _initialLoad;
+    if (pending != null && !pending.isCompleted) pending.complete();
   }
 
   void _ensureSupportingSubscriptions() {
-    _usersCacheUpdatesSubscription ??= AuthRequest.instance
-        .watchUsersCacheUpdates()
-        .listen((_) {
-          unawaited(_reloadSupportingData());
-        });
-    _statusCacheUpdatesSubscription ??= StatusRequest.instance
-        .watchStatusCacheUpdates()
-        .listen((_) {
-          unawaited(_reloadSupportingData());
-        });
+    if (_authRepository is AuthRequest) {
+      _usersCacheUpdatesSubscription ??= _authRepository
+          .watchUsersCacheUpdates()
+          .listen((_) {
+            unawaited(_reloadSupportingData());
+          });
+    }
+    if (_statusRepository is StatusRequest) {
+      _statusCacheUpdatesSubscription ??= _statusRepository
+          .watchStatusCacheUpdates()
+          .listen((_) {
+            unawaited(_reloadSupportingData());
+          });
+    }
   }
 
   Future<void> _reloadSupportingData() async {
     if (_isRealtimeRefreshing || currentUser == null) {
       return;
     }
+    final loadEpoch = _loadEpoch;
     _isRealtimeRefreshing = true;
     _log(
       'realtime reload start user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"}',
@@ -233,6 +240,7 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
         _authRepository.getUsers(),
         _statusRepository.getStatuses(),
       ]);
+      if (_isDisposed || loadEpoch != _loadEpoch) return;
       final users = results[0] as List<UserModel>;
       final statuses = results[1] as List<Status>;
       _usersById
@@ -253,7 +261,7 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       _cachedCurrentUser = currentUser;
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedStatusesByKey = Map<String, Status>.from(_statusesByKey);
-      _applyAssignedBookings(_latestBookings);
+      if (_hasPrimarySnapshot) _applyAssignedBookings(_latestBookings);
       _log(
         'realtime reload done user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"} bookings=${assignedBookings.length}',
       );
@@ -262,6 +270,9 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       // Keep current visible state if live support data refresh fails.
     } finally {
       _isRealtimeRefreshing = false;
+      if (!_isDisposed && loadEpoch != _loadEpoch && _hasPrimarySnapshot) {
+        unawaited(_reloadSupportingData());
+      }
     }
   }
 
@@ -348,7 +359,7 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   }
 
   String clientName(Booking booking) =>
-      _userName(booking.client?.id, 'Unknown client');
+      _userName(booking.client?.id, 'Loading ...');
 
   String clientPhone(Booking booking) => _userPhone(booking.client?.id);
 
@@ -390,6 +401,7 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
   void dispose() {
     _isDisposed = true;
     _loadEpoch++;
+    _completeInitialLoad();
     _usersCacheUpdatesSubscription?.cancel();
     _statusCacheUpdatesSubscription?.cancel();
     _bookingsSubscription?.cancel();
@@ -406,10 +418,10 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
         .where(
           (item) =>
               item.currentStatus == Chassis.returning &&
-              item.currentDriverId?.toString() == normalizedUserId &&
-              item.currentBookingId != null,
+              item.driverReferenceId?.toString() == normalizedUserId &&
+              item.bookingReferenceId != null,
         )
-        .map((item) => item.currentBookingId.toString())
+        .map((item) => item.bookingReferenceId.toString())
         .toSet();
   }
 

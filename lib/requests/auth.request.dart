@@ -1,3 +1,4 @@
+import 'package:webapp/services/offline_reference_mapper.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -600,7 +601,9 @@ class AuthRequest implements AuthRepository {
       if (isCurrentUserUpdate) {
         _stagePendingSelfSessionSnapshot(saved);
       }
-      if (currentNetworkStatus()) {
+      if (currentNetworkStatus() &&
+          !nextId.startsWith('offline_') &&
+          !(saved.parentClientId?.startsWith('offline_') ?? false)) {
         try {
           await _writeUserDocumentOnline(nextId, document);
         } catch (error) {
@@ -992,7 +995,8 @@ class AuthRequest implements AuthRepository {
           await _getUserById(
             normalized,
           ).timeout(_startupTimeout, onTimeout: () => null);
-      if (currentNetworkStatus()) {
+      if (currentNetworkStatus() &&
+          !OfflineReferenceMapper.hasTemporaryReferences({'id': normalized})) {
         unawaited(
           _deleteLinkedClientMemberRecords(
             normalized,
@@ -1507,6 +1511,13 @@ class AuthRequest implements AuthRepository {
     String userId,
     Map<String, dynamic> document,
   ) async {
+    if (OfflineReferenceMapper.hasTemporaryReferences(document)) {
+      await _offlineMutationQueueService.queueUserUpsert(
+        userId: userId,
+        document: document,
+      );
+      return;
+    }
     if (kIsWeb) {
       try {
         final patched = await _firestorePublicDocumentFetcher
@@ -1531,9 +1542,16 @@ class AuthRequest implements AuthRepository {
       final sdkTimeout = kIsWeb
           ? const Duration(seconds: 8)
           : _remoteUserWriteTimeout;
-      await _usersCollection
-          .doc(userId)
-          .set(document)
+      await _firestore
+          .runTransaction((transaction) async {
+            final reference = _usersCollection.doc(userId);
+            final existing = await transaction.get(reference);
+            final receipts = existing.data()?['offline_photo_uploads'];
+            transaction.set(reference, {
+              ...document,
+              if (receipts is Map) 'offline_photo_uploads': receipts,
+            });
+          })
           .timeout(
             sdkTimeout,
             onTimeout: () => throw TimeoutException(

@@ -1,3 +1,5 @@
+import 'package:webapp/widgets/shared/paged_data_sliver.dart';
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -248,48 +250,67 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
         return AppPageLoadingOverlay(
           isVisible: showInitialLoading,
           message: vm.busyMessage,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AppRefreshStrip(isVisible: vm.isBusy),
-                _AdminDashboardToolbar(
-                  vm: vm,
-                  onExportPressed: _canExport(vm.currentUser)
-                      ? () => _exportBookings(
-                          context,
-                          vm,
-                          excludedBookingIds: _excludedExportBookingIds,
-                          onToggleExcludedSession:
-                              _toggleExportExcludedBookingId,
-                        )
-                      : null,
-                ),
-                const SizedBox(height: _toolbarSectionGap),
-                if (filteredBookings.isEmpty)
-                  AdminListItemCard(
-                    padding: const EdgeInsets.all(24),
-                    child: const AdminListStateText(
-                      message:
-                          'No completed bookings matched your current search.',
-                    ),
-                  )
-                else
-                  _AdminDashboardCompletedBookingsTable(
-                    bookings: filteredBookings,
+          child: PagedScrollObserver(
+            child: LazyDataScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+              child: SliverSection(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AppRefreshStrip(isVisible: vm.isBusy),
+                  _AdminDashboardToolbar(
                     vm: vm,
-                    onToggleBillingStatus: _canUpdateBilling(vm.currentUser)
-                        ? (booking) =>
-                              _toggleBillingStatus(context, vm, booking)
-                        : (_) {},
-                    onView: (booking) {
-                      setState(() {
-                        _selectedBooking = booking;
-                      });
-                    },
+                    onExportPressed: _canExport(vm.currentUser)
+                        ? () => _exportBookings(
+                            context,
+                            vm,
+                            excludedBookingIds: _excludedExportBookingIds,
+                            onToggleExcludedSession:
+                                _toggleExportExcludedBookingId,
+                          )
+                        : null,
                   ),
-              ],
+                  const SizedBox(height: _toolbarSectionGap),
+                  if (filteredBookings.isEmpty)
+                    AdminListItemCard(
+                      padding: const EdgeInsets.all(24),
+                      child: const AdminListStateText(
+                        message:
+                            'No completed bookings matched your current search.',
+                      ),
+                    )
+                  else
+                    PagedDataSliver<Booking>(
+                      storageId: 'admin_dashboard-page-window',
+                      items: filteredBookings,
+                      resetKey: (
+                        vm.searchQuery,
+                        vm.billingStatusFilter,
+                        vm.startDate,
+                        vm.endDate,
+                        vm.createdStartDate,
+                        vm.createdEndDate,
+                        vm.updatedStartDate,
+                        vm.updatedEndDate,
+                      ),
+                      builder: (context, visibleBookings) =>
+                          AdminDashboardCompletedBookingsSliver(
+                            bookings: visibleBookings,
+                            vm: vm,
+                            onToggleBillingStatus:
+                                _canUpdateBilling(vm.currentUser)
+                                ? (booking) =>
+                                      _toggleBillingStatus(context, vm, booking)
+                                : (_) {},
+                            onView: (booking) {
+                              setState(() {
+                                _selectedBooking = booking;
+                              });
+                            },
+                          ),
+                    ),
+                ],
+              ),
             ),
           ),
         );
@@ -1020,7 +1041,7 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
                   if (!widget.singleItem)
                     AdminModalFieldSlot(
                       bottomPadding: 20,
-                      child: _DashboardExportCandidateSection(
+                      child: DashboardExportCandidateList(
                         title: _candidateSectionTitle(
                           _sourceMode,
                           widget.singleItem,
@@ -1519,8 +1540,9 @@ class _DashboardExportSourceChip extends StatelessWidget {
   }
 }
 
-class _DashboardExportCandidateSection extends StatelessWidget {
-  const _DashboardExportCandidateSection({
+class DashboardExportCandidateList extends StatelessWidget {
+  const DashboardExportCandidateList({
+    super.key,
     required this.title,
     required this.bookings,
     required this.vm,
@@ -1540,50 +1562,59 @@ class _DashboardExportCandidateSection extends StatelessWidget {
       color: AppColors.textSecondary,
       height: 1.35,
     );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 2, bottom: 8),
-          child: Text(
-            title,
-            style: Theme.of(
-              context,
-            ).textTheme.bodyLarge?.copyWith(color: AppColors.textPrimary),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(left: 2, bottom: 10),
-          child: Text(
-            'Tick the checkbox to exclude a booking from this export session.',
-            style: helperStyle,
-          ),
-        ),
-        if (bookings.isEmpty)
-          const AdminListItemCard(
-            padding: EdgeInsets.all(20),
-            child: AdminListStateText(
-              message: 'No bookings are available for this export source.',
+    return SizedBox(
+      height: bookings.isEmpty ? 200 : 360,
+      child: LazyDataScrollView(
+        child: SliverSection(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 2, bottom: 8),
+              child: Text(
+                title,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyLarge?.copyWith(color: AppColors.textPrimary),
+              ),
             ),
-          )
-        else
-          ...bookings.asMap().entries.map((entry) {
-            final bookingId = normalizeId(entry.value.id);
-            final isExcluded =
-                bookingId != null && excludedBookingIds.contains(bookingId);
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: entry.key == bookings.length - 1 ? 0 : 10,
+            Padding(
+              padding: const EdgeInsets.only(left: 2, bottom: 10),
+              child: Text(
+                'Tick the checkbox to exclude a booking from this export session.',
+                style: helperStyle,
               ),
-              child: _DashboardExportCandidateRow(
-                booking: entry.value,
-                vm: vm,
-                isExcluded: isExcluded,
-                onToggleExcluded: () => onToggleExcluded(entry.value),
+            ),
+            if (bookings.isEmpty)
+              const AdminListItemCard(
+                padding: EdgeInsets.all(20),
+                child: AdminListStateText(
+                  message: 'No bookings are available for this export source.',
+                ),
+              )
+            else
+              LazySliverList(
+                items: bookings.asMap().entries,
+                itemBuilder: (context, entry) {
+                  final bookingId = normalizeId(entry.value.id);
+                  final isExcluded =
+                      bookingId != null &&
+                      excludedBookingIds.contains(bookingId);
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      bottom: entry.key == bookings.length - 1 ? 0 : 10,
+                    ),
+                    child: _DashboardExportCandidateRow(
+                      booking: entry.value,
+                      vm: vm,
+                      isExcluded: isExcluded,
+                      onToggleExcluded: () => onToggleExcluded(entry.value),
+                    ),
+                  );
+                },
               ),
-            );
-          }),
-      ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2233,8 +2264,10 @@ class _DashboardDateFilterState extends State<_DashboardDateFilter> {
   }
 }
 
-class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
-  const _AdminDashboardCompletedBookingsTable({
+class AdminDashboardCompletedBookingsSliver extends StatelessWidget
+    implements SliverContent {
+  const AdminDashboardCompletedBookingsSliver({
+    super.key,
     required this.bookings,
     required this.vm,
     required this.onToggleBillingStatus,
@@ -2259,8 +2292,6 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
       AdminListMeasurements.defaultTrailingPadding;
   static const _extraWidthAllowance = 18.0;
   static const _maxClientBasisWidth = 380.0;
-  static const _responsiveCardsBreakpoint = 980.0;
-  static const _wideLayoutOverflowTolerance = 48.0;
 
   final List<Booking> bookings;
   final AdminDashboardViewModel vm;
@@ -2269,7 +2300,7 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
+    return SliverWidthBuilder(
       builder: (context, constraints) {
         final textScaler = MediaQuery.textScalerOf(context);
         final resolvedDeliveryNumberWidth = _resolvedColumnWidth(
@@ -2391,136 +2422,121 @@ class _AdminDashboardCompletedBookingsTable extends StatelessWidget {
             resolvedActionWidth +
             40;
         final horizontalOverflow = totalMeasuredWidth - constraints.maxWidth;
-        final useResponsiveCards =
-            constraints.maxWidth < _responsiveCardsBreakpoint &&
-            horizontalOverflow > _wideLayoutOverflowTolerance;
+        final useResponsiveCards = horizontalOverflow > 0;
         if (useResponsiveCards) {
-          return Column(
-            children: bookings
-                .asMap()
-                .entries
-                .map(
-                  (entry) => Padding(
-                    padding: EdgeInsets.only(
-                      bottom: entry.key == bookings.length - 1 ? 0 : 12,
-                    ),
-                    child: _AdminDashboardResponsiveCard(
-                      booking: entry.value,
-                      vm: vm,
-                      clientName: vm.client(entry.value),
-                      dateValue: AdminDashboardViewModel.dropOffDateDisplay(
-                        entry.value,
-                      ),
-                      onToggleBillingStatus: () =>
-                          onToggleBillingStatus(entry.value),
-                      onViewPressed: () => onView(entry.value),
-                      onExportPressed: () => _exportBookings(
-                        context,
-                        vm,
-                        bookings: <Booking>[entry.value],
-                        singleItem: true,
-                        excludedBookingIds: const <String>{},
-                        onToggleExcludedSession: (_) {},
-                      ),
-                    ),
-                  ),
-                )
-                .toList(),
+          return LazySliverList(
+            items: bookings.asMap().entries,
+            itemBuilder: (context, entry) => Padding(
+              padding: EdgeInsets.only(
+                bottom: entry.key == bookings.length - 1 ? 0 : 12,
+              ),
+              child: _AdminDashboardResponsiveCard(
+                booking: entry.value,
+                vm: vm,
+                clientName: vm.client(entry.value),
+                dateValue: AdminDashboardViewModel.dropOffDateDisplay(
+                  entry.value,
+                ),
+                onToggleBillingStatus: () => onToggleBillingStatus(entry.value),
+                onViewPressed: () => onView(entry.value),
+                onExportPressed: () => _exportBookings(
+                  context,
+                  vm,
+                  bookings: <Booking>[entry.value],
+                  singleItem: true,
+                  excludedBookingIds: const <String>{},
+                  onToggleExcludedSession: (_) {},
+                ),
+              ),
+            ),
           );
         }
 
-        return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: SizedBox(
-            width: totalMeasuredWidth > constraints.maxWidth
-                ? totalMeasuredWidth
-                : constraints.maxWidth,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AdminListHeaderBar(
-                  minHeight: 52,
-                  borderRadius: 16,
-                  child: Row(
-                    children: [
-                      _DashboardFixedSlot(
-                        width: resolvedDeliveryNumberWidth,
-                        child: const _DashboardHeaderCell(label: 'Dr No.'),
-                      ),
-                      _DashboardFixedSlot(
-                        width: resolvedDateWidth,
-                        child: const _DashboardHeaderCell(label: 'Date'),
-                      ),
-                      _DashboardFixedSlot(
-                        width: resolvedWaybillWidth,
-                        child: const _DashboardHeaderCell(label: 'Waybill No.'),
-                      ),
-                      _DashboardFixedSlot(
-                        width: resolvedVanNumberWidth,
-                        child: const _DashboardHeaderCell(label: 'Van No.'),
-                      ),
-                      _DashboardFixedSlot(
-                        width: resolvedVanSizeWidth,
-                        child: const _DashboardHeaderCell(label: 'Van Size'),
-                      ),
-                      _DashboardFixedSlot(
-                        width: resolvedClientWidth,
-                        child: const _DashboardHeaderCell(label: 'Client'),
-                      ),
-                      _DashboardFixedSlot(
-                        width: resolvedAmountWidth,
-                        child: const _DashboardHeaderCell(label: 'Amount'),
-                      ),
-                      AdminListTrailingActionsLane(
-                        width: resolvedActionWidth,
-                        child: const _DashboardHeaderCell(
-                          label: 'Actions',
-                          trailingPadding: 0,
-                          alignment: Alignment.centerRight,
-                          textAlign: TextAlign.right,
-                        ),
-                      ),
-                    ],
+        return SliverSection(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AdminListHeaderBar(
+              minHeight: 52,
+              borderRadius: 16,
+              child: Row(
+                children: [
+                  _DashboardFixedSlot(
+                    width: resolvedDeliveryNumberWidth,
+                    child: const _DashboardHeaderCell(label: 'Dr No.'),
                   ),
-                ),
-                const SizedBox(height: _sectionGap),
-                ...bookings.asMap().entries.map(
-                  (entry) => Padding(
-                    padding: EdgeInsets.only(
-                      bottom: entry.key == bookings.length - 1 ? 0 : 12,
-                    ),
-                    child: _AdminDashboardWideRow(
-                      booking: entry.value,
-                      vm: vm,
-                      clientName: vm.client(entry.value),
-                      dateValue: AdminDashboardViewModel.dropOffDateDisplay(
-                        entry.value,
-                      ),
-                      resolvedDeliveryNumberWidth: resolvedDeliveryNumberWidth,
-                      resolvedDateWidth: resolvedDateWidth,
-                      resolvedWaybillWidth: resolvedWaybillWidth,
-                      resolvedVanNumberWidth: resolvedVanNumberWidth,
-                      resolvedVanSizeWidth: resolvedVanSizeWidth,
-                      resolvedClientWidth: resolvedClientWidth,
-                      resolvedAmountWidth: resolvedAmountWidth,
-                      resolvedActionWidth: resolvedActionWidth,
-                      onToggleBillingStatus: () =>
-                          onToggleBillingStatus(entry.value),
-                      onViewPressed: () => onView(entry.value),
-                      onExportPressed: () => _exportBookings(
-                        context,
-                        vm,
-                        bookings: <Booking>[entry.value],
-                        singleItem: true,
-                        excludedBookingIds: const <String>{},
-                        onToggleExcludedSession: (_) {},
-                      ),
+                  _DashboardFixedSlot(
+                    width: resolvedDateWidth,
+                    child: const _DashboardHeaderCell(label: 'Date'),
+                  ),
+                  _DashboardFixedSlot(
+                    width: resolvedWaybillWidth,
+                    child: const _DashboardHeaderCell(label: 'Waybill No.'),
+                  ),
+                  _DashboardFixedSlot(
+                    width: resolvedVanNumberWidth,
+                    child: const _DashboardHeaderCell(label: 'Van No.'),
+                  ),
+                  _DashboardFixedSlot(
+                    width: resolvedVanSizeWidth,
+                    child: const _DashboardHeaderCell(label: 'Van Size'),
+                  ),
+                  _DashboardFixedSlot(
+                    width: resolvedClientWidth,
+                    child: const _DashboardHeaderCell(label: 'Client'),
+                  ),
+                  _DashboardFixedSlot(
+                    width: resolvedAmountWidth,
+                    child: const _DashboardHeaderCell(label: 'Amount'),
+                  ),
+                  AdminListTrailingActionsLane(
+                    width: resolvedActionWidth,
+                    child: const _DashboardHeaderCell(
+                      label: 'Actions',
+                      trailingPadding: 0,
+                      alignment: Alignment.centerRight,
+                      textAlign: TextAlign.right,
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
+            const SizedBox(height: _sectionGap),
+            LazySliverList(
+              items: bookings.asMap().entries,
+              itemBuilder: (context, entry) => Padding(
+                padding: EdgeInsets.only(
+                  bottom: entry.key == bookings.length - 1 ? 0 : 12,
+                ),
+                child: _AdminDashboardWideRow(
+                  booking: entry.value,
+                  vm: vm,
+                  clientName: vm.client(entry.value),
+                  dateValue: AdminDashboardViewModel.dropOffDateDisplay(
+                    entry.value,
+                  ),
+                  resolvedDeliveryNumberWidth: resolvedDeliveryNumberWidth,
+                  resolvedDateWidth: resolvedDateWidth,
+                  resolvedWaybillWidth: resolvedWaybillWidth,
+                  resolvedVanNumberWidth: resolvedVanNumberWidth,
+                  resolvedVanSizeWidth: resolvedVanSizeWidth,
+                  resolvedClientWidth: resolvedClientWidth,
+                  resolvedAmountWidth: resolvedAmountWidth,
+                  resolvedActionWidth: resolvedActionWidth,
+                  onToggleBillingStatus: () =>
+                      onToggleBillingStatus(entry.value),
+                  onViewPressed: () => onView(entry.value),
+                  onExportPressed: () => _exportBookings(
+                    context,
+                    vm,
+                    bookings: <Booking>[entry.value],
+                    singleItem: true,
+                    excludedBookingIds: const <String>{},
+                    onToggleExcludedSession: (_) {},
+                  ),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -2714,7 +2730,7 @@ class _AdminDashboardWideRow extends StatelessWidget {
             child: _DashboardBodyCell(
               child: Text(
                 AdminDashboardViewModel.deliveryFormNumber(booking),
-                style: _AdminDashboardCompletedBookingsTable._valueStyle,
+                style: AdminDashboardCompletedBookingsSliver._valueStyle,
                 maxLines: 1,
                 softWrap: false,
               ),
@@ -2725,7 +2741,7 @@ class _AdminDashboardWideRow extends StatelessWidget {
             child: _DashboardBodyCell(
               child: Text(
                 dateValue,
-                style: _AdminDashboardCompletedBookingsTable._valueStyle,
+                style: AdminDashboardCompletedBookingsSliver._valueStyle,
                 maxLines: 1,
                 softWrap: false,
               ),
@@ -2738,7 +2754,7 @@ class _AdminDashboardWideRow extends StatelessWidget {
                 _dashboardDisplayWaybill(
                   AdminDashboardViewModel.waybillNumber(booking),
                 ),
-                style: _AdminDashboardCompletedBookingsTable._valueStyle,
+                style: AdminDashboardCompletedBookingsSliver._valueStyle,
                 maxLines: 1,
                 softWrap: false,
               ),
@@ -2749,7 +2765,7 @@ class _AdminDashboardWideRow extends StatelessWidget {
             child: _DashboardBodyCell(
               child: Text(
                 AdminDashboardViewModel.vanNumber(booking),
-                style: _AdminDashboardCompletedBookingsTable._valueStyle,
+                style: AdminDashboardCompletedBookingsSliver._valueStyle,
                 maxLines: 1,
                 softWrap: false,
               ),
@@ -2760,7 +2776,7 @@ class _AdminDashboardWideRow extends StatelessWidget {
             child: _DashboardBodyCell(
               child: Text(
                 vm.vanSize(booking),
-                style: _AdminDashboardCompletedBookingsTable._valueStyle,
+                style: AdminDashboardCompletedBookingsSliver._valueStyle,
                 maxLines: 1,
                 softWrap: false,
               ),
@@ -2770,10 +2786,10 @@ class _AdminDashboardWideRow extends StatelessWidget {
             width: resolvedClientWidth,
             child: _DashboardBodyCell(
               child: Text(
-                _AdminDashboardCompletedBookingsTable._displayClientName(
+                AdminDashboardCompletedBookingsSliver._displayClientName(
                   clientName,
                 ),
-                style: _AdminDashboardCompletedBookingsTable._valueStyle,
+                style: AdminDashboardCompletedBookingsSliver._valueStyle,
                 maxLines: 2,
                 softWrap: true,
               ),
@@ -2784,7 +2800,7 @@ class _AdminDashboardWideRow extends StatelessWidget {
             child: _DashboardBodyCell(
               child: Text(
                 AdminDashboardViewModel.amount(booking),
-                style: _AdminDashboardCompletedBookingsTable._valueStyle,
+                style: AdminDashboardCompletedBookingsSliver._valueStyle,
                 maxLines: 1,
                 softWrap: false,
               ),

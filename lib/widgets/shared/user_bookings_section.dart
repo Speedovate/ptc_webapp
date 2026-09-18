@@ -1,3 +1,5 @@
+import 'package:webapp/widgets/shared/paged_data_sliver.dart';
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -15,7 +17,7 @@ import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 
-class UserBookingsSection extends StatefulWidget {
+class UserBookingsSection extends StatefulWidget implements SliverContent {
   const UserBookingsSection({
     super.key,
     required this.user,
@@ -25,9 +27,13 @@ class UserBookingsSection extends StatefulWidget {
     this.onNewBooking,
     this.useAdminListStyle = false,
     this.forceWideLayout = false,
+    this.bookingRepository,
+    this.statusRepository,
   });
 
   final UserModel user;
+  final BookingRepository? bookingRepository;
+  final StatusFormRepository? statusRepository;
   final EdgeInsets padding;
   final Future<void> Function(Booking booking)? onViewBooking;
   final Future<void> Function(Booking booking)? onEditBooking;
@@ -41,12 +47,19 @@ class UserBookingsSection extends StatefulWidget {
 
 class _UserBookingsSectionState extends State<UserBookingsSection> {
   static final Map<String, _UserBookingsCacheState> _cacheByUserKey = {};
-  final BookingRepository _bookingRepository = BookingRequest.instance;
-  final StatusFormRepository _statusRepository = StatusRequest.instance;
+  late final BookingRepository _bookingRepository =
+      widget.bookingRepository ?? BookingRequest.instance;
+  late final StatusFormRepository _statusRepository =
+      widget.statusRepository ?? StatusRequest.instance;
 
   StreamSubscription<List<Booking>>? _bookingsSubscription;
   final Map<String, Status> _statusesByKey = {};
   List<Booking> _bookings = const [];
+  int _loadGeneration = 0;
+  Object? _filterCacheKey;
+  List<Booking> _filteredCache = const [];
+  List<String>? _statusOptionsCache;
+  int _statusRevision = 0;
   bool _isLoading = false;
   String? _errorMessage;
   String _searchQuery = '';
@@ -75,6 +88,17 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
     if (oldWidget.user.id != widget.user.id ||
         oldWidget.user.role != widget.user.role ||
         oldWidget.user.parentClientId != widget.user.parentClientId) {
+      final cached = _cacheByUserKey[_cacheKey];
+      _bookings = cached?.bookings ?? const [];
+      _statusesByKey
+        ..clear()
+        ..addAll(cached?.statusesByKey ?? {});
+      _statusOptionsCache = null;
+      _statusRevision++;
+      _searchQuery = '';
+      _statusFilter = 'All';
+      _startDate = null;
+      _endDate = null;
       _load();
     }
   }
@@ -91,54 +115,94 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
     normalizeId(widget.user.parentClientId) ?? 'no-parent',
   ].join('|');
 
-  Future<void> _load() async {
-    await _bookingsSubscription?.cancel();
-    if (mounted) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = null;
-      });
-    }
+  bool _isCurrentLoad(int generation) =>
+      mounted && generation == _loadGeneration;
+
+  Future<void> _loadStatuses(int generation) async {
     try {
-      await _bookingRepository.initialize();
       final statuses = await _statusRepository.getStatuses().timeout(
         const Duration(seconds: 6),
-        onTimeout: () => const <Status>[],
       );
-      _statusesByKey
-        ..clear()
-        ..addEntries(
-          statuses
-              .where((item) => (item.key ?? '').trim().isNotEmpty)
-              .map((item) => MapEntry(item.key!.trim(), item)),
-        );
-      _applyBookings(
-        await _bookingRepository.getBookings().timeout(
-          const Duration(seconds: 6),
-          onTimeout: () => const <Booking>[],
-        ),
-      );
-      _bookingsSubscription = _bookingRepository.watchBookings().listen((
-        items,
-      ) {
-        _applyBookings(items);
-      });
-    } catch (error) {
-      if (!mounted) {
+      if (!_isCurrentLoad(generation)) {
         return;
       }
       setState(() {
-        _errorMessage = userFacingErrorMessage(
-          error,
-          fallback: 'We could not load the bookings right now.',
-        );
+        _statusesByKey
+          ..clear()
+          ..addEntries(
+            statuses
+                .where((item) => (item.key ?? '').trim().isNotEmpty)
+                .map((item) => MapEntry(item.key!.trim(), item)),
+          );
+        _statusRevision++;
+        _statusOptionsCache = null;
       });
-    } finally {
       _cacheCurrentState();
-      if (mounted) {
+    } catch (_) {
+      // Status labels are optional; keep cached labels and booking access.
+    }
+  }
+
+  Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    final previousSubscription = _bookingsSubscription;
+    _bookingsSubscription = null;
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+    unawaited(_loadStatuses(generation));
+    var receivedStreamData = false;
+    try {
+      await previousSubscription?.cancel();
+      if (!_isCurrentLoad(generation)) {
+        return;
+      }
+      await _bookingRepository.initialize();
+      if (!_isCurrentLoad(generation)) {
+        return;
+      }
+      _bookingsSubscription = _bookingRepository.watchBookings().listen(
+        (items) {
+          if (!_isCurrentLoad(generation)) {
+            return;
+          }
+          receivedStreamData = true;
+          _applyBookings(items);
+        },
+        onError: (Object error) {
+          if (_isCurrentLoad(generation)) {
+            setState(() {
+              _isLoading = false;
+              _errorMessage = userFacingErrorMessage(
+                error,
+                fallback: 'We could not load the bookings right now.',
+              );
+            });
+          }
+        },
+      );
+      final items = await _bookingRepository.getBookings().timeout(
+        const Duration(seconds: 6),
+      );
+      if (_isCurrentLoad(generation) && !receivedStreamData) {
+        _applyBookings(items);
+      }
+    } catch (error) {
+      if (_isCurrentLoad(generation) && !receivedStreamData) {
+        setState(() {
+          _errorMessage = userFacingErrorMessage(
+            error,
+            fallback: 'We could not load the bookings right now.',
+          );
+        });
+      }
+    } finally {
+      if (_isCurrentLoad(generation)) {
         setState(() {
           _isLoading = false;
         });
+        _cacheCurrentState();
       }
     }
   }
@@ -175,6 +239,9 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
     }
     setState(() {
       _bookings = filtered;
+      _statusOptionsCache = null;
+      _isLoading = false;
+      _errorMessage = null;
     });
     _cacheCurrentState();
   }
@@ -246,6 +313,9 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
   }
 
   List<String> get _statusOptions {
+    if (_statusOptionsCache != null) {
+      return _statusOptionsCache!;
+    }
     final labels =
         _bookings
             .map(_headlineStatusLabel)
@@ -253,12 +323,24 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
             .toSet()
             .toList()
           ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return ['All', ...labels];
+    return _statusOptionsCache = ['All', ...labels];
   }
 
   List<Booking> get _filteredBookings {
     final query = _searchQuery.trim().toLowerCase();
-    return _bookings.where((booking) {
+    final key = (
+      _bookings,
+      _statusRevision,
+      query,
+      _statusFilter,
+      _startDate,
+      _endDate,
+    );
+    if (_filterCacheKey == key) {
+      return _filteredCache;
+    }
+    _filterCacheKey = key;
+    return _filteredCache = _bookings.where((booking) {
       final statusLabel = _headlineStatusLabel(booking);
       final matchesQuery =
           query.isEmpty ||
@@ -394,7 +476,7 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
     List<Booking> bookings, {
     required bool allowHorizontalScroll,
   }) {
-    return LayoutBuilder(
+    return SliverWidthBuilder(
       builder: (context, constraints) {
         const headerStyle = TextStyle(
           color: AppColors.textSecondary,
@@ -555,7 +637,7 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
           );
         }
 
-        final table = Column(
+        final table = SliverSection(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AdminListHeaderBar(
@@ -584,147 +666,145 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
               ),
             ),
             const SizedBox(height: 14),
-            ...bookings.asMap().entries.map((entry) {
-              final booking = entry.value;
-              return Padding(
-                padding: EdgeInsets.only(
-                  bottom: entry.key == bookings.length - 1 ? 0 : 12,
-                ),
-                child: AdminListItemCard(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 18,
+            LazySliverList(
+              items: bookings.asMap().entries,
+              itemBuilder: (context, entry) {
+                final booking = entry.value;
+                return Padding(
+                  padding: EdgeInsets.only(
+                    bottom: entry.key == bookings.length - 1 ? 0 : 12,
                   ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      fixedSlot(
-                        resolvedIdWidth,
-                        bodyCell(
-                          Text(
-                            booking.id ?? '-',
-                            style: valueStyle,
-                            softWrap: true,
+                  child: AdminListItemCard(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 18,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        fixedSlot(
+                          resolvedIdWidth,
+                          bodyCell(
+                            Text(
+                              booking.id ?? '-',
+                              style: valueStyle,
+                              softWrap: true,
+                            ),
                           ),
                         ),
-                      ),
-                      fixedSlot(
-                        resolvedWaybillWidth,
-                        bodyCell(
-                          Text(
-                            _waybillNumber(booking),
-                            style: valueStyle,
-                            softWrap: true,
+                        fixedSlot(
+                          resolvedWaybillWidth,
+                          bodyCell(
+                            Text(
+                              _waybillNumber(booking),
+                              style: valueStyle,
+                              softWrap: true,
+                            ),
                           ),
                         ),
-                      ),
-                      fixedSlot(
-                        resolvedVanNumberWidth,
-                        bodyCell(
-                          Text(
-                            _vanNumber(booking),
-                            style: valueStyle,
-                            softWrap: true,
+                        fixedSlot(
+                          resolvedVanNumberWidth,
+                          bodyCell(
+                            Text(
+                              _vanNumber(booking),
+                              style: valueStyle,
+                              softWrap: true,
+                            ),
                           ),
                         ),
-                      ),
-                      fixedSlot(
-                        resolvedVanSizeWidth,
-                        bodyCell(
-                          Text(
-                            _vanSize(booking),
-                            style: valueStyle,
-                            softWrap: true,
+                        fixedSlot(
+                          resolvedVanSizeWidth,
+                          bodyCell(
+                            Text(
+                              _vanSize(booking),
+                              style: valueStyle,
+                              softWrap: true,
+                            ),
                           ),
                         ),
-                      ),
-                      fixedSlot(
-                        resolvedAmountWidth,
-                        bodyCell(
-                          Text(
-                            _amount(booking),
-                            style: valueStyle,
-                            softWrap: true,
+                        fixedSlot(
+                          resolvedAmountWidth,
+                          bodyCell(
+                            Text(
+                              _amount(booking),
+                              style: valueStyle,
+                              softWrap: true,
+                            ),
                           ),
                         ),
-                      ),
-                      fixedSlot(
-                        resolvedStatusWidth,
-                        bodyCell(adminMetaPill(_headlineStatusLabel(booking))),
-                      ),
-                      fixedSlot(
-                        resolvedCreatedWidth,
-                        bodyCell(
-                          Text(
-                            _formatBookingDateTime(booking.createdAt),
-                            style: valueStyle,
-                            softWrap: true,
+                        fixedSlot(
+                          resolvedStatusWidth,
+                          bodyCell(
+                            adminMetaPill(_headlineStatusLabel(booking)),
                           ),
                         ),
-                      ),
-                      fixedSlot(
-                        resolvedUpdatedWidth,
-                        bodyCell(
-                          Text(
-                            _formatBookingDateTime(booking.updatedAt),
-                            style: valueStyle,
-                            softWrap: true,
+                        fixedSlot(
+                          resolvedCreatedWidth,
+                          bodyCell(
+                            Text(
+                              _formatBookingDateTime(booking.createdAt),
+                              style: valueStyle,
+                              softWrap: true,
+                            ),
                           ),
                         ),
-                      ),
-                      AdminListTrailingActionsLane(
-                        width: resolvedActionsWidth,
-                        child: bodyCell(
-                          Wrap(
-                            alignment: WrapAlignment.end,
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              if (widget.onViewBooking != null)
-                                AdminListActionButton(
-                                  icon: Icons.visibility_rounded,
-                                  backgroundColor: Colors.yellow.shade900,
-                                  onTap: () {
-                                    widget.onViewBooking!.call(booking);
-                                  },
-                                ),
-                              if (widget.onEditBooking != null)
-                                AdminListActionButton(
-                                  icon: Icons.edit_outlined,
-                                  onTap: () {
-                                    widget.onEditBooking!.call(booking);
-                                  },
-                                ),
-                            ],
+                        fixedSlot(
+                          resolvedUpdatedWidth,
+                          bodyCell(
+                            Text(
+                              _formatBookingDateTime(booking.updatedAt),
+                              style: valueStyle,
+                              softWrap: true,
+                            ),
                           ),
-                          trailingPadding: 0,
-                          alignment: Alignment.centerRight,
                         ),
-                      ),
-                    ],
+                        AdminListTrailingActionsLane(
+                          width: resolvedActionsWidth,
+                          child: bodyCell(
+                            Wrap(
+                              alignment: WrapAlignment.end,
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                if (widget.onViewBooking != null)
+                                  AdminListActionButton(
+                                    icon: Icons.visibility_rounded,
+                                    backgroundColor: Colors.yellow.shade900,
+                                    onTap: () {
+                                      widget.onViewBooking!.call(booking);
+                                    },
+                                  ),
+                                if (widget.onEditBooking != null)
+                                  AdminListActionButton(
+                                    icon: Icons.edit_outlined,
+                                    onTap: () {
+                                      widget.onEditBooking!.call(booking);
+                                    },
+                                  ),
+                              ],
+                            ),
+                            trailingPadding: 0,
+                            alignment: Alignment.centerRight,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              );
-            }),
+                );
+              },
+            ),
           ],
         );
 
-        if (useResponsiveCards) {
-          return Column(
-            children: [
-              for (var index = 0; index < bookings.length; index++) ...[
-                _buildAdminResponsiveCard(bookings[index]),
-                if (index != bookings.length - 1) const SizedBox(height: 12),
-              ],
-            ],
-          );
-        }
-
-        if (allowHorizontalScroll &&
-            totalMeasuredWidth > constraints.maxWidth) {
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SizedBox(width: totalMeasuredWidth, child: table),
+        if (useResponsiveCards || totalMeasuredWidth > constraints.maxWidth) {
+          return LazySliverList(
+            items: bookings.asMap().entries,
+            itemBuilder: (context, entry) => Padding(
+              padding: EdgeInsets.only(
+                bottom: entry.key == bookings.length - 1 ? 0 : 12,
+              ),
+              child: _buildAdminResponsiveCard(entry.value),
+            ),
           );
         }
 
@@ -807,7 +887,7 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
   @override
   Widget build(BuildContext context) {
     final filteredBookings = _filteredBookings;
-    final content = Column(
+    final content = SliverSection(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const AdminSectionTitle(title: 'Bookings'),
@@ -876,58 +956,65 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
             padding: const EdgeInsets.all(24),
             child: AdminListStateText(message: _buildEmptyMessage()),
           )
-        else if (widget.useAdminListStyle)
-          _buildAdminWideTable(
-            filteredBookings,
-            allowHorizontalScroll: widget.forceWideLayout,
-          )
         else
-          Column(
-            children: [
-              for (var index = 0; index < filteredBookings.length; index++) ...[
-                BookingRecordCard(
-                  booking: filteredBookings[index],
-                  onTap: widget.onViewBooking == null
-                      ? null
-                      : () {
-                          widget.onViewBooking!.call(filteredBookings[index]);
-                        },
-                  headlineStatusLabel: _headlineStatusLabel(
-                    filteredBookings[index],
+          PagedDataSliver<Booking>(
+            items: filteredBookings,
+            storageId: 'profile-bookings-$_cacheKey',
+            resetKey: (
+              _cacheKey,
+              _searchQuery,
+              _statusFilter,
+              _startDate,
+              _endDate,
+            ),
+            builder: (context, visibleBookings) => widget.useAdminListStyle
+                ? _buildAdminWideTable(
+                    visibleBookings,
+                    allowHorizontalScroll: widget.forceWideLayout,
+                  )
+                : LazySliverList(
+                    items: visibleBookings.asMap().entries,
+                    itemBuilder: (context, entry) => Padding(
+                      padding: EdgeInsets.only(
+                        bottom: entry.key == visibleBookings.length - 1
+                            ? 0
+                            : 12,
+                      ),
+                      child: BookingRecordCard(
+                        booking: entry.value,
+                        onTap: widget.onViewBooking == null
+                            ? null
+                            : () {
+                                widget.onViewBooking!.call(entry.value);
+                              },
+                        headlineStatusLabel: _headlineStatusLabel(entry.value),
+                        statusLabelForKey: _statusLabelForKey,
+                        showStatusSubmissions: false,
+                        clientName: _userName(entry.value.client),
+                        clientPhone: _userPhone(entry.value.client),
+                        driverName: _userName(entry.value.driver),
+                        driverPhone: _userPhone(entry.value.driver),
+                        helperName: _userName(entry.value.helper),
+                        helperPhone: _userPhone(entry.value.helper),
+                        trailingActions:
+                            widget.onViewBooking != null ||
+                                widget.onEditBooking != null
+                            ? BookingRecordCardActions(
+                                onViewTap: widget.onViewBooking == null
+                                    ? null
+                                    : () {
+                                        widget.onViewBooking!.call(entry.value);
+                                      },
+                                onEditTap: widget.onEditBooking == null
+                                    ? null
+                                    : () {
+                                        widget.onEditBooking!.call(entry.value);
+                                      },
+                              )
+                            : null,
+                      ),
+                    ),
                   ),
-                  statusLabelForKey: _statusLabelForKey,
-                  showStatusSubmissions: false,
-                  clientName: _userName(filteredBookings[index].client),
-                  clientPhone: _userPhone(filteredBookings[index].client),
-                  driverName: _userName(filteredBookings[index].driver),
-                  driverPhone: _userPhone(filteredBookings[index].driver),
-                  helperName: _userName(filteredBookings[index].helper),
-                  helperPhone: _userPhone(filteredBookings[index].helper),
-                  trailingActions:
-                      widget.onViewBooking != null ||
-                          widget.onEditBooking != null
-                      ? BookingRecordCardActions(
-                          onViewTap: widget.onViewBooking == null
-                              ? null
-                              : () {
-                                  widget.onViewBooking!.call(
-                                    filteredBookings[index],
-                                  );
-                                },
-                          onEditTap: widget.onEditBooking == null
-                              ? null
-                              : () {
-                                  widget.onEditBooking!.call(
-                                    filteredBookings[index],
-                                  );
-                                },
-                        )
-                      : null,
-                ),
-                if (index != filteredBookings.length - 1)
-                  const SizedBox(height: 12),
-              ],
-            ],
           ),
       ],
     );
@@ -935,7 +1022,7 @@ class _UserBookingsSectionState extends State<UserBookingsSection> {
     if (widget.padding == EdgeInsets.zero) {
       return content;
     }
-    return Padding(padding: widget.padding, child: content);
+    return SliverPadding(padding: widget.padding, sliver: content);
   }
 }
 

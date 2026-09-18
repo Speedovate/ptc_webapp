@@ -3,6 +3,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
@@ -16,63 +17,61 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('AuthRequest session anchors', () {
-    test('initialize remembers stored current and quick-login session ids', () async {
-      SharedPreferences.setMockInitialValues({
-        'paltranco_current_user_id': '7',
-        'paltranco_quick_login_source_user_id': '1',
-      });
+    test(
+      'initialize remembers stored current and quick-login session ids',
+      () async {
+        await _seedSession({
+          'paltranco_current_user_id': '7',
+          'paltranco_quick_login_source_user_id': '1',
+        });
 
-      final firestore = FakeFirebaseFirestore();
-      final mutationService = OfflineMutationQueueService(
-        firestore: firestore,
-        backend: _MemoryBookingStorageBackend(),
-      );
-      final bridgeService = FirebaseAuthBridgeService(
-        firestore: firestore,
-      );
-      final mediaService = OfflineMediaSyncService(
-        firestore: firestore,
-        backend: _MemoryBookingStorageBackend(),
-        photoStorageService: _FakeUserPhotoStorageService(),
-        supportStorageService: _FakeSupportStorageService(),
-      );
-      final request = AuthRequest(
-        firestore: firestore,
-        vehicleRequest: VehicleRequest(
+        final firestore = FakeFirebaseFirestore();
+        final mutationService = OfflineMutationQueueService(
           firestore: firestore,
+          backend: _MemoryBookingStorageBackend(),
+        );
+        final bridgeService = FirebaseAuthBridgeService(firestore: firestore);
+        final mediaService = OfflineMediaSyncService(
+          firestore: firestore,
+          backend: _MemoryBookingStorageBackend(),
+          photoStorageService: _FakeUserPhotoStorageService(),
+          supportStorageService: _FakeSupportStorageService(),
+        );
+        final request = AuthRequest(
+          firestore: firestore,
+          vehicleRequest: VehicleRequest(
+            firestore: firestore,
+            offlineMutationQueueService: mutationService,
+            offlineQueueInitializer: () async {},
+          ),
+          firebaseAuthBridgeService: bridgeService,
+          photoStorageService: _FakeUserPhotoStorageService(),
           offlineMutationQueueService: mutationService,
+          offlineMediaSyncService: mediaService,
           offlineQueueInitializer: () async {},
-        ),
-        firebaseAuthBridgeService: bridgeService,
-        photoStorageService: _FakeUserPhotoStorageService(),
-        offlineMutationQueueService: mutationService,
-        offlineMediaSyncService: mediaService,
-        offlineQueueInitializer: () async {},
-        offlineQueueFlusher: () async {},
-      );
+          offlineQueueFlusher: () async {},
+        );
 
-      await request.initialize();
+        await request.initialize();
 
-      final prefs = await SharedPreferences.getInstance();
-      expect(
-        prefs.getStringList('paltranco_known_session_user_ids'),
-        <String>['1', '7'],
-      );
-    });
+        final prefs = createAuthStorageBackend();
+        await prefs.initialize();
+        expect(
+          await prefs.readStringList('paltranco_known_session_user_ids'),
+          <String>['1', '7'],
+        );
+      },
+    );
 
     test('getCurrentUser remembers the active cached session id', () async {
-      SharedPreferences.setMockInitialValues({
-        'paltranco_current_user_id': '7',
-      });
+      await _seedSession({'paltranco_current_user_id': '7'});
 
       final firestore = FakeFirebaseFirestore();
       final mutationService = OfflineMutationQueueService(
         firestore: firestore,
         backend: _MemoryBookingStorageBackend(),
       );
-      final bridgeService = FirebaseAuthBridgeService(
-        firestore: firestore,
-      );
+      final bridgeService = FirebaseAuthBridgeService(firestore: firestore);
       final mediaService = OfflineMediaSyncService(
         firestore: firestore,
         backend: _MemoryBookingStorageBackend(),
@@ -108,71 +107,75 @@ void main() {
 
       expect(currentUser?.id, '7');
 
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = createAuthStorageBackend();
+      await prefs.initialize();
       expect(
-        prefs.getStringList('paltranco_known_session_user_ids'),
+        await prefs.readStringList('paltranco_known_session_user_ids'),
         contains('7'),
       );
       expect(
-        prefs.getString('paltranco_current_session_auth_snapshot'),
+        await prefs.readString('paltranco_current_session_auth_snapshot'),
         isNotEmpty,
       );
     });
 
-    test('loginAsUser keeps previous current user as quick-login source', () async {
-      SharedPreferences.setMockInitialValues({
-        'paltranco_current_user_id': '1',
-      });
+    test(
+      'loginAsUser keeps previous current user as quick-login source',
+      () async {
+        await _seedSession({'paltranco_current_user_id': '1'});
 
-      final firestore = FakeFirebaseFirestore();
-      final mutationService = OfflineMutationQueueService(
-        firestore: firestore,
-        backend: _MemoryBookingStorageBackend(),
-      );
-      final bridgeService = FirebaseAuthBridgeService(
-        firestore: firestore,
-      );
-      final mediaService = OfflineMediaSyncService(
-        firestore: firestore,
-        backend: _MemoryBookingStorageBackend(),
-        photoStorageService: _FakeUserPhotoStorageService(),
-        supportStorageService: _FakeSupportStorageService(),
-      );
-      await firestore.collection('users').doc('7').set({
-        'id': '7',
-        'role': 'dispatcher',
-        'name': 'Dispatcher User',
-        'email': 'dispatcher@example.com',
-        'phone': '09179990000',
-        'password': 'secret123',
-        'is_active': true,
-      });
-
-      final request = AuthRequest(
-        firestore: firestore,
-        vehicleRequest: VehicleRequest(
+        final firestore = FakeFirebaseFirestore();
+        final mutationService = OfflineMutationQueueService(
           firestore: firestore,
+          backend: _MemoryBookingStorageBackend(),
+        );
+        final bridgeService = FirebaseAuthBridgeService(firestore: firestore);
+        final mediaService = OfflineMediaSyncService(
+          firestore: firestore,
+          backend: _MemoryBookingStorageBackend(),
+          photoStorageService: _FakeUserPhotoStorageService(),
+          supportStorageService: _FakeSupportStorageService(),
+        );
+        await firestore.collection('users').doc('7').set({
+          'id': '7',
+          'role': 'dispatcher',
+          'name': 'Dispatcher User',
+          'email': 'dispatcher@example.com',
+          'phone': '09179990000',
+          'password': 'secret123',
+          'is_active': true,
+        });
+
+        final request = AuthRequest(
+          firestore: firestore,
+          vehicleRequest: VehicleRequest(
+            firestore: firestore,
+            offlineMutationQueueService: mutationService,
+            offlineQueueInitializer: () async {},
+          ),
+          firebaseAuthBridgeService: bridgeService,
+          photoStorageService: _FakeUserPhotoStorageService(),
           offlineMutationQueueService: mutationService,
+          offlineMediaSyncService: mediaService,
           offlineQueueInitializer: () async {},
-        ),
-        firebaseAuthBridgeService: bridgeService,
-        photoStorageService: _FakeUserPhotoStorageService(),
-        offlineMutationQueueService: mutationService,
-        offlineMediaSyncService: mediaService,
-        offlineQueueInitializer: () async {},
-        offlineQueueFlusher: () async {},
-      );
+          offlineQueueFlusher: () async {},
+        );
 
-      await request.loginAsUser('7');
+        await request.loginAsUser('7');
 
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('paltranco_current_user_id'), '7');
-      expect(prefs.getString('paltranco_quick_login_source_user_id'), '1');
-      expect(
-        prefs.getStringList('paltranco_known_session_user_ids'),
-        <String>['7', '1'],
-      );
-    });
+        final prefs = createAuthStorageBackend();
+        await prefs.initialize();
+        expect(await prefs.readString('paltranco_current_user_id'), '7');
+        expect(
+          await prefs.readString('paltranco_quick_login_source_user_id'),
+          '1',
+        );
+        expect(
+          await prefs.readStringList('paltranco_known_session_user_ids'),
+          <String>['7', '1'],
+        );
+      },
+    );
   });
 }
 
@@ -211,4 +214,27 @@ class _FakeUserPhotoStorageService extends PhotoStorageService {
 
 class _FakeSupportStorageService extends SupportStorageService {
   _FakeSupportStorageService() : super(storage: _FakeFirebaseStorage());
+}
+
+Future<void> _seedSession(Map<String, String> values) async {
+  SharedPreferences.setMockInitialValues({});
+  final storage = createAuthStorageBackend();
+  await storage.initialize();
+  const keys = [
+    'paltranco_current_user_id',
+    'paltranco_quick_login_source_user_id',
+    'paltranco_known_session_user_ids',
+    'paltranco_current_session_auth_snapshot',
+  ];
+  for (final key in keys) {
+    await storage.remove(key);
+  }
+  addTearDown(() async {
+    for (final key in keys) {
+      await storage.remove(key);
+    }
+  });
+  for (final entry in values.entries) {
+    await storage.writeString(entry.key, entry.value);
+  }
 }

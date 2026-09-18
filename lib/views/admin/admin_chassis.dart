@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -171,14 +172,16 @@ class _AdminChassisViewState extends State<AdminChassisView> {
           final sampleClient = visible
               .map(
                 (item) =>
-                    _clientContactForBooking(item.currentBookingId).display,
+                    _clientContactForBooking(item.bookingReferenceId).display,
               )
               .fold<String>('-', AdminListMeasurements.longerText);
           final sampleDriver = visible
-              .map((item) => _driverContactForId(item.currentDriverId).display)
+              .map(
+                (item) => _driverContactForId(item.driverReferenceId).display,
+              )
               .fold<String>('-', AdminListMeasurements.longerText);
           final sampleBooking = visible
-              .map((item) => item.currentBookingId?.toString() ?? '-')
+              .map((item) => item.bookingReferenceId?.toString() ?? '-')
               .fold<String>('-', AdminListMeasurements.longerText);
           final sampleLocation = visible
               .map((item) => item.location ?? '-')
@@ -267,9 +270,9 @@ class _AdminChassisViewState extends State<AdminChassisView> {
           return AppPageLoadingOverlay(
             isVisible: _isLoadingChassis && _items.isEmpty,
             message: 'Loading chassis ...',
-            child: SingleChildScrollView(
+            child: LazyDataScrollView(
               padding: const EdgeInsets.all(24),
-              child: Column(
+              child: SliverSection(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   AdminListToolbar(
@@ -339,46 +342,51 @@ class _AdminChassisViewState extends State<AdminChassisView> {
                         actionsWidth: actionsWidth,
                       ),
                     if (useWideTable) const SizedBox(height: 14),
-                    ...visible.asMap().entries.map((entry) {
-                      final client = _clientContactForBooking(
-                        entry.value.currentBookingId,
-                      );
-                      final driver = _driverContactForId(
-                        entry.value.currentDriverId,
-                      );
-                      return Padding(
-                        padding: EdgeInsets.only(
-                          bottom: entry.key == visible.length - 1 ? 0 : 12,
-                        ),
-                        child: useWideTable
-                            ? _ChassisDesktopRow(
-                                item: entry.value,
-                                client: client,
-                                driver: driver,
-                                idWidth: idWidth,
-                                nameWidth: nameWidth,
-                                clientWidth: clientWidth,
-                                driverWidth: driverWidth,
-                                bookingWidth: bookingWidth,
-                                locationWidth: locationWidth,
-                                statusWidth: statusWidth,
-                                createdWidth: createdWidth,
-                                updatedWidth: updatedWidth,
-                                actionsWidth: actionsWidth,
-                                actions: _chassisActions(entry.value),
-                                onOpenBooking: () =>
-                                    _openBooking(entry.value.currentBookingId),
-                              )
-                            : _ChassisResponsiveCard(
-                                item: entry.value,
-                                client: client,
-                                driver: driver,
-                                actions: _chassisActions(entry.value),
-                                onOpenBooking: () =>
-                                    _openBooking(entry.value.currentBookingId),
-                              ),
-                      );
-                    }),
+                    LazySliverList(
+                      items: visible.asMap().entries,
+                      itemBuilder: (context, entry) {
+                        final client = _clientContactForBooking(
+                          entry.value.bookingReferenceId,
+                        );
+                        final driver = _driverContactForId(
+                          entry.value.driverReferenceId,
+                        );
+                        return Padding(
+                          padding: EdgeInsets.only(
+                            bottom: entry.key == visible.length - 1 ? 0 : 12,
+                          ),
+                          child: useWideTable
+                              ? _ChassisDesktopRow(
+                                  item: entry.value,
+                                  client: client,
+                                  driver: driver,
+                                  idWidth: idWidth,
+                                  nameWidth: nameWidth,
+                                  clientWidth: clientWidth,
+                                  driverWidth: driverWidth,
+                                  bookingWidth: bookingWidth,
+                                  locationWidth: locationWidth,
+                                  statusWidth: statusWidth,
+                                  createdWidth: createdWidth,
+                                  updatedWidth: updatedWidth,
+                                  actionsWidth: actionsWidth,
+                                  actions: _chassisActions(entry.value),
+                                  onOpenBooking: () => _openBooking(
+                                    entry.value.bookingReferenceId,
+                                  ),
+                                )
+                              : _ChassisResponsiveCard(
+                                  item: entry.value,
+                                  client: client,
+                                  driver: driver,
+                                  actions: _chassisActions(entry.value),
+                                  onOpenBooking: () => _openBooking(
+                                    entry.value.bookingReferenceId,
+                                  ),
+                                ),
+                        );
+                      },
+                    ),
                   ],
                 ],
               ),
@@ -429,7 +437,7 @@ class _AdminChassisViewState extends State<AdminChassisView> {
         try {
           await ChassisRequest.instance.saveChassis(
             item.copyWith(isActive: willBeActive),
-            previousBookingId: item.currentBookingId,
+            previousBookingId: item.bookingReferenceId,
           );
           if (!mounted) return false;
           AppSnackbar.showSuccess(
@@ -476,8 +484,8 @@ class _AdminChassisViewState extends State<AdminChassisView> {
     final location = TextEditingController(text: item?.location ?? '');
     final isActive = ValueNotifier<bool>(item?.isActive ?? true);
     var selectedStatus = item?.currentStatus ?? Chassis.ready;
-    var selectedBookingId = item?.currentBookingId?.toString();
-    var selectedDriverId = item?.currentDriverId?.toString();
+    var selectedBookingId = item?.bookingReferenceId?.toString();
+    var selectedDriverId = item?.driverReferenceId?.toString();
     var isSaving = false;
     final saved = await showAppDialog<bool>(
       context: context,
@@ -522,11 +530,12 @@ class _AdminChassisViewState extends State<AdminChassisView> {
                             final now = DateTime.now();
                             final next = Chassis(
                               id: item?.id ?? 0,
+                              submissionKey: item?.submissionKey,
                               name: resolvedName,
                               isActive: isActive.value,
                               currentStatus: selectedStatus,
-                              currentBookingId: _optionalId(selectedBookingId),
-                              currentDriverId: _optionalId(selectedDriverId),
+                              bookingReferenceId: selectedBookingId,
+                              driverReferenceId: selectedDriverId,
                               location: location.text.trim().isEmpty
                                   ? null
                                   : location.text.trim(),
@@ -536,7 +545,8 @@ class _AdminChassisViewState extends State<AdminChassisView> {
                             try {
                               await ChassisRequest.instance.saveChassis(
                                 next,
-                                previousBookingId: item?.currentBookingId,
+                                previousBookingId: item?.bookingReferenceId,
+                                baseUpdatedAt: item?.updatedAt,
                               );
                               _traceOffline('modal save resolved; closing');
                               if (dialogContext.mounted) {
@@ -665,7 +675,7 @@ class _AdminChassisViewState extends State<AdminChassisView> {
     if (saved != true) return;
   }
 
-  Future<void> _openBooking(int? bookingId) async {
+  Future<void> _openBooking(String? bookingId) async {
     final bookingIdText = bookingId?.toString();
     if (bookingIdText == null) return;
     final booking = _bookingOptions.where((item) => item.id == bookingIdText);
@@ -674,11 +684,9 @@ class _AdminChassisViewState extends State<AdminChassisView> {
     BookingSectionNavigationScope.maybeOf(context)?.openBooking(booking.first);
   }
 
-  int? _optionalId(String? value) => int.tryParse(value?.trim() ?? '');
-
   void _traceOffline(String message) {}
 
-  _ChassisContact _clientContactForBooking(int? bookingId) {
+  _ChassisContact _clientContactForBooking(String? bookingId) {
     final bookingIdText = bookingId?.toString();
     for (final booking in _bookingOptions) {
       if (booking.id != bookingIdText) continue;
@@ -696,7 +704,7 @@ class _AdminChassisViewState extends State<AdminChassisView> {
     return const _ChassisContact.empty();
   }
 
-  _ChassisContact _driverContactForId(int? driverId) {
+  _ChassisContact _driverContactForId(String? driverId) {
     final driverIdText = driverId?.toString();
     for (final driver in _driverOptions) {
       if (driver.id == driverIdText) return _ChassisContact.fromUser(driver);
@@ -973,7 +981,7 @@ class _ChassisDesktopRow extends StatelessWidget {
             width: bookingWidth,
             child: AdminListBodyCell(
               child: _ChassisBookingLink(
-                bookingId: item.currentBookingId,
+                bookingId: item.bookingReferenceId,
                 onOpen: onOpenBooking,
               ),
             ),
@@ -1076,7 +1084,7 @@ class _ChassisResponsiveCard extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               _ChassisBookingLink(
-                bookingId: item.currentBookingId,
+                bookingId: item.bookingReferenceId,
                 onOpen: onOpenBooking,
                 showLabel: true,
               ),
@@ -1175,7 +1183,7 @@ class _ChassisBookingLink extends StatelessWidget {
     this.showLabel = false,
   });
 
-  final int? bookingId;
+  final String? bookingId;
   final VoidCallback onOpen;
   final bool showLabel;
 

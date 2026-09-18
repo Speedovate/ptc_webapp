@@ -922,10 +922,13 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
                   : const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          'Filters',
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontWeight: FontWeight.w700),
+                        Flexible(
+                          child: Text(
+                            'Filters',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
                         ),
                         SizedBox(width: 12),
                         Icon(Icons.filter_alt_rounded),
@@ -1080,6 +1083,7 @@ class AdminListResponsiveField extends StatelessWidget {
     required this.centered,
     this.isTitle = false,
     this.valueColor,
+    this.singleLine = false,
   });
 
   final String title;
@@ -1088,6 +1092,7 @@ class AdminListResponsiveField extends StatelessWidget {
   final bool centered;
   final bool isTitle;
   final Color? valueColor;
+  final bool singleLine;
 
   @override
   Widget build(BuildContext context) {
@@ -1105,15 +1110,29 @@ class AdminListResponsiveField extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          Text(
-            value,
-            softWrap: true,
-            textAlign: centered ? TextAlign.center : TextAlign.left,
-            style: TextStyle(
-              color: valueColor ?? AppColors.textPrimary,
-              fontWeight: isTitle ? FontWeight.w700 : FontWeight.w600,
+          if (singleLine)
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Text(
+                value,
+                maxLines: 1,
+                softWrap: false,
+                style: TextStyle(
+                  color: valueColor ?? AppColors.textPrimary,
+                  fontWeight: isTitle ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
+            )
+          else
+            Text(
+              value,
+              softWrap: true,
+              textAlign: centered ? TextAlign.center : TextAlign.left,
+              style: TextStyle(
+                color: valueColor ?? AppColors.textPrimary,
+                fontWeight: isTitle ? FontWeight.w700 : FontWeight.w600,
+              ),
             ),
-          ),
         ],
       ),
     );

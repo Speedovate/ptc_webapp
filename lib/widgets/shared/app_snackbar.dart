@@ -4,6 +4,22 @@ import 'package:webapp/utils/functions.dart';
 import 'package:webapp/constants/app_colors.dart';
 
 class AppSnackbar {
+  static final messengerKey = GlobalKey<ScaffoldMessengerState>();
+
+  static void showSupportNotification() {
+    final messenger = messengerKey.currentState;
+    if (messenger == null) {
+      return;
+    }
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('New support message. Open Support to read it.'),
+        duration: Duration(seconds: 5),
+      ),
+    );
+  }
+
   static const _errorColor = AppColors.danger;
   static const _successColor = Color(0xFF2EAD62);
 
