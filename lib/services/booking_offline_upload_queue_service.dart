@@ -1,3 +1,4 @@
+import 'package:webapp/models/offline_queue_item.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -61,6 +62,27 @@ class BookingOfflineUploadQueueService {
   Stream<OfflineQueueStatusSnapshot> get statusStream =>
       _statusController.stream;
   OfflineQueueStatusSnapshot get currentStatus => _currentStatus;
+
+  /// Inspect only the requested account's persisted queue without starting sync.
+  Future<List<OfflineQueueItem>> readPendingItems(String userId) async {
+    if (userId.trim().isEmpty) {
+      return const [];
+    }
+    await _backend.initialize();
+    final entries = await _readEntriesForStorageKey(
+      _storageKeyForUserId(userId),
+    );
+    return entries
+        .map(
+          (entry) => OfflineQueueItem(
+            title: 'Upload booking photo',
+            recordLabel: OfflineQueueItem.record('bookings', entry.bookingId),
+            createdAt: DateTime.tryParse(entry.createdAtIso),
+            hasError: entry.lastError?.isNotEmpty == true,
+          ),
+        )
+        .toList(growable: false);
+  }
 
   Future<Map<String, OfflineQueueStatusSnapshot>> readScopedStatuses({
     Iterable<String> userIds = const [],

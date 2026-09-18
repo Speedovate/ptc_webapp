@@ -298,3 +298,14 @@ existing offline_photo_uploads receipts inside their transactions. Web REST user
 patches already update only their listed fields. This prevents an account edit
 from erasing the proof required for later photo-batch acknowledgement recovery;
 other full-replacement field semantics are unchanged.
+
+### Queued action visibility
+
+Authenticated shells show offline/pending status above the page content at all
+widths, including when the navigation drawer is closed. View queued actions reads
+only the current account's four persisted queues on demand. The selectable dialog
+uses lazy rows, readable action/record labels and local saved times; temporary IDs
+are described as pending sync. Refresh is explicit, with no new polling or remote
+reads/writes. Queue inspection does not initialize sync, publish status events,
+modify payloads, or change resolver/replay behavior. The list is a local snapshot,
+not server acknowledgement. Existing conflict review controls remain available.

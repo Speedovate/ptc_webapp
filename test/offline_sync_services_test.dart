@@ -69,6 +69,42 @@ void main() {
     });
   }
 
+  test(
+    'queue inspection is scoped and never starts sync or publishes status',
+    () async {
+      final backend = _MemoryBookingStorageBackend();
+      final db = FakeFirebaseFirestore();
+      const key = 'offline_mutation_queue_v1::owner';
+      final raw = jsonEncode({
+        'id': 'inspect',
+        'kind': 'bookingCreate',
+        'target_id': 'offline_booking_inspect',
+        'collection_key': 'bookings',
+        'payload': {},
+        'created_at': '2026-09-19T02:30:00Z',
+        'retry_count': 0,
+        'is_blocked': false,
+      });
+      await backend.writeStringList(key, [raw]);
+      final service = OfflineMutationQueueService(
+        firestore: db,
+        backend: backend,
+      );
+      var events = 0;
+      final sub = service.statusStream.listen((_) => events++);
+      final items = await service.readPendingItems('owner');
+      expect(items, hasLength(1));
+      expect(items.single.title, 'Create booking');
+      expect(items.single.createdAt, DateTime.utc(2026, 9, 19, 2, 30));
+      expect(await service.readPendingItems('another-account'), isEmpty);
+      expect(await service.readPendingItems(''), isEmpty);
+      expect(await backend.readStringList(key), [raw]);
+      expect((await db.collection('bookings').get()).docs, isEmpty);
+      expect(events, 0);
+      await sub.cancel();
+    },
+  );
+
   for (final field in ['profile_photo', 'license_photo']) {
     test(
       'successive offline $field changes preserve newest photo and action time',

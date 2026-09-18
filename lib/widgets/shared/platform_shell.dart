@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/offline_queue_status_strip.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
@@ -118,7 +119,24 @@ class PlatformShell extends StatelessWidget {
                                     logoutLabel: logoutLabel,
                                   ),
                                 ),
-                                body: body,
+                                body: AnimatedBuilder(
+                                  animation: OfflineSyncStatusService.instance,
+                                  child: body,
+                                  builder: (context, child) => Column(
+                                    children: [
+                                      OfflineQueueStatusStrip(
+                                        snapshot: OfflineSyncStatusService
+                                            .instance
+                                            .snapshot,
+                                        onView: () => showOfflineQueueItems(
+                                          context,
+                                          user.id ?? '',
+                                        ),
+                                      ),
+                                      Expanded(child: child!),
+                                    ],
+                                  ),
+                                ),
                               ),
                             ),
                           ),

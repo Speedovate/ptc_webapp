@@ -1,3 +1,4 @@
+import 'package:webapp/models/offline_queue_item.dart';
 import 'package:webapp/services/offline_cleanup_queue_service.dart';
 import 'package:webapp/services/support_read_marker_writer.dart';
 import 'dart:async';
@@ -70,6 +71,39 @@ class OfflineMutationQueueService {
   Stream<OfflineQueueStatusSnapshot> get statusStream =>
       _statusController.stream;
   OfflineQueueStatusSnapshot get currentStatus => _currentStatus;
+
+  /// Inspect only the requested account's persisted queue without starting sync.
+  Future<List<OfflineQueueItem>> readPendingItems(String userId) async {
+    if (userId.trim().isEmpty) {
+      return const [];
+    }
+    await _backend.initialize();
+    final entries = await _readEntriesForStorageKey(
+      _storageKeyForUserId(userId),
+    );
+    return entries
+        .map(
+          (entry) => OfflineQueueItem(
+            title: OfflineQueueItem.action(entry.kind.name),
+            recordLabel:
+                entry.kind == _OfflineMutationKind.supportThreadReadMarkerUpsert
+                ? 'Support conversation'
+                : OfflineQueueItem.record(
+                    entry.collectionKey ??
+                        (entry.kind.name.startsWith('user')
+                            ? 'users'
+                            : entry.kind.name.startsWith('chassis')
+                            ? 'chassis'
+                            : 'bookings'),
+                    entry.targetId,
+                  ),
+            isBlocked: entry.isBlocked,
+            createdAt: DateTime.tryParse(entry.createdAtIso),
+            hasError: entry.lastError?.isNotEmpty == true,
+          ),
+        )
+        .toList(growable: false);
+  }
 
   Future<Map<String, OfflineQueueStatusSnapshot>> readScopedStatuses({
     Iterable<String> userIds = const [],
