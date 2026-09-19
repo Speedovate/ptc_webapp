@@ -6,12 +6,16 @@ class OfflineQueueItem {
     required this.createdAt,
     this.hasError = false,
     this.isBlocked = false,
+    this.errorMessage,
+    this.nextRetryAt,
   });
   final String title;
   final String recordLabel;
   final DateTime? createdAt;
   final bool hasError;
   final bool isBlocked;
+  final String? errorMessage;
+  final DateTime? nextRetryAt;
 
   String get statusLabel => isBlocked
       ? 'Needs review'
@@ -36,7 +40,8 @@ class OfflineQueueItem {
     if (id.startsWith('offline_') || id.startsWith('-')) {
       return 'New ${label.toLowerCase()} · ID pending sync';
     }
-    return id.isEmpty ? label : '$label #$id';
+    if (id.isEmpty) return label;
+    return collection == 'bookings' ? '$label $id' : '$label #$id';
   }
 
   static String action(String kind) => switch (kind) {

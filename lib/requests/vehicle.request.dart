@@ -162,11 +162,13 @@ class VehicleRequest implements VehicleCatalogRepository {
             if (sdkCachedMakes.isNotEmpty && !currentNetworkStatus()) {
               return sdkCachedMakes;
             }
-            final makesSnapshot = await _makesCollection.get().timeout(
-              _startupTimeout,
-              onTimeout: () =>
-                  throw TimeoutException('vehicle makes fetch timeout'),
-            );
+            final makesSnapshot = await _makesCollection
+                .get(const GetOptions(source: Source.server))
+                .timeout(
+                  _startupTimeout,
+                  onTimeout: () =>
+                      throw TimeoutException('vehicle makes fetch timeout'),
+                );
             return makesSnapshot.docs.map(documentData).toList(growable: false);
           },
         );
@@ -241,11 +243,13 @@ class VehicleRequest implements VehicleCatalogRepository {
             if (sdkCachedDocuments.isNotEmpty && !currentNetworkStatus()) {
               return sdkCachedDocuments;
             }
-            final snapshot = await _sizesCollection.get().timeout(
-              _startupTimeout,
-              onTimeout: () =>
-                  throw TimeoutException('vehicle sizes fetch timeout'),
-            );
+            final snapshot = await _sizesCollection
+                .get(const GetOptions(source: Source.server))
+                .timeout(
+                  _startupTimeout,
+                  onTimeout: () =>
+                      throw TimeoutException('vehicle sizes fetch timeout'),
+                );
             return snapshot.docs.map(documentData).toList(growable: false);
           },
         );
@@ -345,11 +349,13 @@ class VehicleRequest implements VehicleCatalogRepository {
             if (sdkCachedDocuments.isNotEmpty && !currentNetworkStatus()) {
               return sdkCachedDocuments;
             }
-            final snapshot = await _typesCollection.get().timeout(
-              _startupTimeout,
-              onTimeout: () =>
-                  throw TimeoutException('vehicle types fetch timeout'),
-            );
+            final snapshot = await _typesCollection
+                .get(const GetOptions(source: Source.server))
+                .timeout(
+                  _startupTimeout,
+                  onTimeout: () =>
+                      throw TimeoutException('vehicle types fetch timeout'),
+                );
             return snapshot.docs.map(documentData).toList(growable: false);
           },
         );
@@ -449,18 +455,18 @@ class VehicleRequest implements VehicleCatalogRepository {
 
   Future<void> _refreshVehicleCachesInBackground() async {
     try {
-      final makesSnapshot = await _makesCollection.get().timeout(
-        _startupTimeout,
-      );
-      final typesSnapshot = await _typesCollection.get().timeout(
-        _startupTimeout,
-      );
-      final sizesSnapshot = await _sizesCollection.get().timeout(
-        _startupTimeout,
-      );
-      final usersSnapshot = await _usersCollection.get().timeout(
-        _startupTimeout,
-      );
+      final makesSnapshot = await _makesCollection
+          .get(const GetOptions(source: Source.server))
+          .timeout(_startupTimeout);
+      final typesSnapshot = await _typesCollection
+          .get(const GetOptions(source: Source.server))
+          .timeout(_startupTimeout);
+      final sizesSnapshot = await _sizesCollection
+          .get(const GetOptions(source: Source.server))
+          .timeout(_startupTimeout);
+      final usersSnapshot = await _usersCollection
+          .get(const GetOptions(source: Source.server))
+          .timeout(_startupTimeout);
       await _cache.writeDocuments(
         resourceKey: _vehicleMakesResourceKey,
         documents: makesSnapshot.docs.map(documentData).toList(growable: false),

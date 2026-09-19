@@ -184,12 +184,14 @@ class AuthRequest implements AuthRepository {
         final rawDocuments = await _cache.getDocumentsVerifiedOnlineFirst(
           resourceKey: _usersResourceKey,
           fetchDocuments: () async {
-            final documents = await _usersCollection.get().timeout(
-              _startupTimeout,
-              onTimeout: () {
-                throw TimeoutException('users fetch timeout');
-              },
-            );
+            final documents = await _usersCollection
+                .get(const GetOptions(source: Source.server))
+                .timeout(
+                  _startupTimeout,
+                  onTimeout: () {
+                    throw TimeoutException('users fetch timeout');
+                  },
+                );
             return documents.docs.map(documentData).toList(growable: false);
           },
         );
@@ -1241,7 +1243,9 @@ class AuthRequest implements AuthRepository {
   Future<List<UserModel>> _getUsersFresh() async {
     final types = await _vehicleRequest.getTypes();
     final typeById = {for (final item in types) item.id ?? '': item};
-    final snapshot = await _usersCollection.get();
+    final snapshot = await _usersCollection.get(
+      const GetOptions(source: Source.server),
+    );
     final users = snapshot.docs
         .map((doc) => _userFromFirestoreMap(documentData(doc), typeById))
         .toList();
@@ -1934,12 +1938,14 @@ class AuthRequest implements AuthRepository {
     required bool isPhoneLogin,
   }) async {
     try {
-      final snapshot = await _usersCollection.get().timeout(
-        _loginLookupTimeout,
-        onTimeout: () {
-          throw TimeoutException('login users directory fetch timeout');
-        },
-      );
+      final snapshot = await _usersCollection
+          .get(const GetOptions(source: Source.server))
+          .timeout(
+            _loginLookupTimeout,
+            onTimeout: () {
+              throw TimeoutException('login users directory fetch timeout');
+            },
+          );
       final documents = snapshot.docs.map(documentData).toList(growable: false);
       await _writeUsersCacheLocally(documents);
       final users = documents.map(UserModel.fromMap).toList(growable: false);

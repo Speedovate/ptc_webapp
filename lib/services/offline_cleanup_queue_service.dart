@@ -63,6 +63,8 @@ class OfflineCleanupQueueService {
             recordLabel: 'File cleanup',
             createdAt: DateTime.tryParse(entry.createdAtIso),
             hasError: entry.lastError?.isNotEmpty == true,
+            errorMessage: entry.lastError,
+            nextRetryAt: entry.nextRetryAt,
           ),
         )
         .toList(growable: false);

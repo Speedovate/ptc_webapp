@@ -1,4 +1,6 @@
-/// Shared interpretation of booking workflow transitions that affect a chassis.
+/// Project the final booking stage onto its chassis. Queued edits can coalesce
+/// several transitions, and retries can start at the same stage. Never infer
+/// the physical state solely from the immediately preceding server stage.
 ///
 /// Booking status tracks the workflow, while chassis status tracks the physical
 /// asset. In particular, `check` is a booking-only status and leaves the
@@ -24,44 +26,41 @@ ChassisLifecycleInstruction? chassisLifecycleInstruction({
   required String? nextBookingStatus,
   required Map<String, dynamic> bookingDocument,
 }) {
-  final previous = previousBookingStatus?.trim().toLowerCase() ?? '';
   final next = nextBookingStatus?.trim().toLowerCase() ?? '';
-  final transition = '$previous->$next';
 
-  return switch (transition) {
-    'pending->assigned' => const ChassisLifecycleInstruction(
+  return switch (next) {
+    'assigned' => const ChassisLifecycleInstruction(
       status: 'ready',
       keepBookingLink: true,
       driverLink: ChassisDriverLink.deliveryDriver,
     ),
-    'assigned->ongoing' => const ChassisLifecycleInstruction(
+    'ongoing' => const ChassisLifecycleInstruction(
       status: 'loaded',
       keepBookingLink: true,
       driverLink: ChassisDriverLink.deliveryDriver,
     ),
-    'assigned->cancelled' => const ChassisLifecycleInstruction(
+    'cancelled' => const ChassisLifecycleInstruction(
       status: 'ready',
       keepBookingLink: false,
       driverLink: ChassisDriverLink.clear,
     ),
-    'ongoing->delivered' => const ChassisLifecycleInstruction(
+    'delivered' || 'check' => const ChassisLifecycleInstruction(
       status: 'loaded',
       keepBookingLink: true,
       driverLink: ChassisDriverLink.clear,
     ),
-    // `check` is intentionally omitted: it is a booking-only state.
-    'check->empty' => ChassisLifecycleInstruction(
+    'empty' => ChassisLifecycleInstruction(
       status: 'empty',
       keepBookingLink: true,
       driverLink: ChassisDriverLink.clear,
       location: _latestOutputField(bookingDocument, 'chassis_location'),
     ),
-    'empty->return' => const ChassisLifecycleInstruction(
+    'return' => const ChassisLifecycleInstruction(
       status: 'return',
       keepBookingLink: true,
       driverLink: ChassisDriverLink.returnDriver,
     ),
-    'return->confirm' => const ChassisLifecycleInstruction(
+    'confirm' => const ChassisLifecycleInstruction(
       status: 'ready',
       keepBookingLink: false,
       driverLink: ChassisDriverLink.clear,

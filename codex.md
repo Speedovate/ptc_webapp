@@ -895,3 +895,52 @@ reset on changed filter criteria. This is not server pagination: never limit the
 shared authoritative collection snapshot without separating partial-page cache
 semantics from complete offline/reconciliation snapshots. See
 `docs/booking-data-performance.md` for the remaining data-layer work.
+
+### Booking chassis replay safety
+
+Project chassis state from the final booking stage, not an exact prior-stage
+pair: offline updates coalesce and retries can repeat a stage. Delivered/Check
+clear the driver but retain the booking and loaded state. Confirm/Cancelled clear
+both links only when the chassis still belongs to that booking. Historical chassis
+references must never reclaim or release another booking's asset. Preserve queued
+action timestamps and existing identity/version conflict checks. The scheduled
+Delivered-to-Check write must transactionally recheck the live status and deadline
+so a stale query cannot overwrite a subsequent stage.
+
+### Failed support message recovery
+
+Queued Actions automatically attempts failed-chat recovery once when opened online
+for the active account. There is no manual retry button. Busy/offline opens skip
+recovery; repeated opens for the same account have a 30-second cooldown with no
+new timer or listener. Rebuilds and Refresh only read the queue. Empty/no-failure
+queues are not rewritten. Recovery only advances failed support-message deadlines,
+retaining message IDs, original
+action dates, payloads and normal transaction checks. Automatic retry backoff stays
+unchanged. Debug builds log the replay failure stack without logging message bodies.
+Queue modal text uses individual SelectableText cells rather than a shared
+SelectionArea over the changing lazy list. Status remains the wrapping column.
+The captured other[$forEach] replay stack fails in OfflineReferenceMapper's
+Map.from copy before sender-reference resolution. That path and the no-alias
+return now copy via keys/indexed access, as do support replay thread copies.
+The snapshot documentData conversion also avoids forEach. Preserve all values
+(including native Firestore values); never use an empty-map fallback or JSON
+round-trip. Regression fixtures explicitly fail forEach and exercise normal and
+temporary references. This removes the observed dispatch dependency, but is not
+a verified fix for the broader hot-restart runtime/shader failure. Never clear
+local storage as a recovery step.
+
+Queued Actions listens to the existing sync-status notifier only while mounted.
+On idle status changes it re-reads all four account-scoped queues and closes its
+current dialog route only when the read succeeds with no remaining actions.
+Failed/pending actions keep it open. Stale reads cannot close the route; the
+listener is removed on dispose. No polling timer or extra sync retry is added.
+
+The sidebar sync status is tappable for every signed-in role, including offline
+and non-failed pending work. It opens that account's Queued Actions; failed-action
+conflict review still requires sync.read. Do not gate read-only queue inspection
+on conflict-review permission or the presence of an error.
+
+The later runtime log also fails at rawData.keys and cloud_firestore_web's
+decodeMapData updateAll. The key-copy workaround is therefore not a complete
+fix for the reported runtime failure; avoid claiming otherwise or successively
+replacing SDK map operations without reproducing the underlying runtime issue.

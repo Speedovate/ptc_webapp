@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/retained_stream_builder.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
 
@@ -939,7 +940,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       );
     }
     final content = _isAdmin
-        ? StreamBuilder<List<SupportThread>>(
+        ? RetainedStreamBuilder<List<SupportThread>>(
             initialData: _initialSupportThreadsForCurrentUser(),
             stream: _supportRequest.watchAllThreads(),
             builder: (context, snapshot) {
@@ -971,7 +972,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
               );
             },
           )
-        : StreamBuilder<List<SupportThread>>(
+        : RetainedStreamBuilder<List<SupportThread>>(
             initialData: _initialSupportThreadsForCurrentUser(),
             stream: _supportRequest.watchThreadsForUser(widget.user.id ?? ''),
             builder: (context, snapshot) {
@@ -1150,15 +1151,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                 );
                 return AdminListItemCard(
                   padding: EdgeInsets.zero,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(18),
-                    topRight: Radius.circular(18),
-                  ),
+                  borderRadius: BorderRadius.zero,
                   child: ClipRRect(
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(18),
-                      topRight: Radius.circular(18),
-                    ),
+                    borderRadius: BorderRadius.zero,
                     child: _isAdmin
                         ? () {
                             final useMobileLayout = constraints.maxWidth < 760;
@@ -1752,10 +1747,6 @@ class _SupportUserThreadTile extends StatelessWidget {
         : _supportThreadListTimestamp(
             thread!.updatedAt ?? thread!.lastMessageAt ?? thread!.createdAt,
           );
-    final subtitleWithTimestamp = [
-      if (subtitle.trim().isNotEmpty) subtitle.trim(),
-      if (trailingTime?.trim().isNotEmpty == true) trailingTime!.trim(),
-    ].join(' • ');
     final titleStyle = TextStyle(
       color: AppColors.textPrimary,
       fontWeight: isUnread ? FontWeight.w800 : FontWeight.w600,
@@ -1813,12 +1804,21 @@ class _SupportUserThreadTile extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          subtitleWithTimestamp,
+                          subtitle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: subtitleStyle,
                         ),
                       ),
+                      if ((trailingTime ?? '').isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          trailingTime!,
+                          maxLines: 1,
+                          softWrap: false,
+                          style: subtitleStyle,
+                        ),
+                      ],
                     ],
                   ),
                 ],
@@ -1869,10 +1869,6 @@ class _SupportThreadTile extends StatelessWidget {
             thread.updatedAt ?? thread.lastMessageAt ?? thread.createdAt,
           )
         : '';
-    final subtitleWithTimestamp = [
-      if (subtitle.trim().isNotEmpty) subtitle.trim(),
-      if (trailingTime.trim().isNotEmpty) trailingTime.trim(),
-    ].join(' • ');
     final titleStyle = TextStyle(
       color: AppColors.textPrimary,
       fontWeight: isUnread ? FontWeight.w800 : FontWeight.w600,
@@ -1929,12 +1925,21 @@ class _SupportThreadTile extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          subtitleWithTimestamp,
+                          subtitle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: subtitleStyle,
                         ),
                       ),
+                      if (trailingTime.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          trailingTime,
+                          maxLines: 1,
+                          softWrap: false,
+                          style: subtitleStyle,
+                        ),
+                      ],
                     ],
                   ),
                 ],
@@ -1998,13 +2003,15 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
   int _lastScrollRequestTick = 0;
   String? _lastLatestMessageSignature;
   String? _lastReadNotificationSignature;
-  late bool _hasComposerContent;
+  late final ValueNotifier<bool> _hasComposerContent;
 
   @override
   void initState() {
     super.initState();
     _lastScrollRequestTick = widget.scrollRequestTick;
-    _hasComposerContent = widget.messageController.text.trim().isNotEmpty;
+    _hasComposerContent = ValueNotifier(
+      widget.messageController.text.trim().isNotEmpty,
+    );
     widget.messageController.addListener(_handleComposerChanged);
   }
 
@@ -2014,7 +2021,9 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
     if (oldWidget.messageController != widget.messageController) {
       oldWidget.messageController.removeListener(_handleComposerChanged);
       widget.messageController.addListener(_handleComposerChanged);
-      _hasComposerContent = widget.messageController.text.trim().isNotEmpty;
+      _hasComposerContent.value = widget.messageController.text
+          .trim()
+          .isNotEmpty;
     }
     if (widget.scrollRequestTick != _lastScrollRequestTick) {
       _lastScrollRequestTick = widget.scrollRequestTick;
@@ -2028,17 +2037,12 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
   @override
   void dispose() {
     widget.messageController.removeListener(_handleComposerChanged);
+    _hasComposerContent.dispose();
     super.dispose();
   }
 
   void _handleComposerChanged() {
-    final nextHasContent = widget.messageController.text.trim().isNotEmpty;
-    if (nextHasContent == _hasComposerContent) {
-      return;
-    }
-    setState(() {
-      _hasComposerContent = nextHasContent;
-    });
+    _hasComposerContent.value = widget.messageController.text.trim().isNotEmpty;
   }
 
   void _scheduleScrollToLatest() {
@@ -2070,9 +2074,6 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final canTriggerSend =
-        widget.canCompose &&
-        (_hasComposerContent || widget.pendingAttachments.isNotEmpty);
     if (widget.thread == null && widget.draftUser == null) {
       return const SizedBox.shrink();
     }
@@ -2176,7 +2177,7 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                       ),
                     ),
                   )
-                : StreamBuilder<List<SupportMessage>>(
+                : RetainedStreamBuilder<List<SupportMessage>>(
                     key: ValueKey('messages:${widget.thread!.id ?? ''}'),
                     initialData: widget.supportRequest.peekLastVisibleMessages(
                       widget.thread!.id ?? '',
@@ -2207,6 +2208,14 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                           }
                           widget.onMessagesVisible(messages);
                         });
+                      }
+                      if (snapshot.hasError && messages.isEmpty) {
+                        return const Center(
+                          child: AdminListStateText(
+                            message:
+                                'Messages could not be loaded. Reconnect to try again.',
+                          ),
+                        );
                       }
                       final threadHasKnownConversation =
                           widget.thread?.hasConversation == true;
@@ -2325,134 +2334,131 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                     },
                   ),
           ),
-          Container(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: AppColors.primaryBorder)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (widget.pendingAttachments.isNotEmpty) ...[
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: widget.pendingAttachments.asMap().entries.map((
-                      entry,
-                    ) {
-                      return _PendingAttachmentPreviewCard(
-                        attachment: entry.value,
-                        onRemove: () =>
-                            widget.onRemovePendingAttachment(entry.key),
-                      );
-                    }).toList(),
+          ValueListenableBuilder<bool>(
+            valueListenable: _hasComposerContent,
+            builder: (context, hasContent, _) {
+              final canTriggerSend =
+                  widget.canCompose &&
+                  (hasContent || widget.pendingAttachments.isNotEmpty);
+              return Container(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+                decoration: const BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: AppColors.primaryBorder),
                   ),
-                  const SizedBox(height: 12),
-                ],
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    IconButton(
-                      onPressed: widget.canCompose
-                          ? widget.onPickAttachments
-                          : null,
-                      icon: const Icon(Icons.attach_file_rounded),
-                      color: AppColors.primaryColor,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Focus(
-                        onKeyEvent: (node, event) {
-                          final isEnter =
-                              event.logicalKey == LogicalKeyboardKey.enter ||
-                              event.logicalKey ==
-                                  LogicalKeyboardKey.numpadEnter;
-                          if (event is KeyDownEvent) {}
-                          if (event is KeyDownEvent &&
-                              isEnter &&
-                              !HardwareKeyboard.instance.isShiftPressed) {
-                            if (widget.canCompose && canTriggerSend) {
-                              widget.onSend();
-                            }
-                            return KeyEventResult.handled;
-                          }
-                          return KeyEventResult.ignored;
-                        },
-                        child: TextField(
-                          controller: widget.messageController,
-                          onChanged: (_) {
-                            if (!mounted) {
-                              return;
-                            }
-                            final nextHasContent = widget.messageController.text
-                                .trim()
-                                .isNotEmpty;
-                            if (nextHasContent == _hasComposerContent) {
-                              return;
-                            }
-                            setState(() {
-                              _hasComposerContent = nextHasContent;
-                            });
+                    if (widget.pendingAttachments.isNotEmpty) ...[
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: widget.pendingAttachments.asMap().entries.map(
+                          (entry) {
+                            return _PendingAttachmentPreviewCard(
+                              attachment: entry.value,
+                              onRemove: () =>
+                                  widget.onRemovePendingAttachment(entry.key),
+                            );
                           },
-                          minLines: 1,
-                          maxLines: 4,
-                          enabled: widget.canCompose,
-                          decoration: InputDecoration(
-                            hintText: widget.canCompose
-                                ? 'Type your message'
-                                : 'Messaging is unavailable for this role',
-                            filled: true,
-                            fillColor: Colors.white,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(18),
-                              borderSide: const BorderSide(
-                                color: AppColors.primaryBorder,
+                        ).toList(),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          onPressed: widget.canCompose
+                              ? widget.onPickAttachments
+                              : null,
+                          icon: const Icon(Icons.attach_file_rounded),
+                          color: AppColors.primaryColor,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Focus(
+                            onKeyEvent: (node, event) {
+                              final isEnter =
+                                  event.logicalKey ==
+                                      LogicalKeyboardKey.enter ||
+                                  event.logicalKey ==
+                                      LogicalKeyboardKey.numpadEnter;
+                              if (event is KeyDownEvent) {}
+                              if (event is KeyDownEvent &&
+                                  isEnter &&
+                                  !HardwareKeyboard.instance.isShiftPressed) {
+                                if (widget.canCompose && canTriggerSend) {
+                                  widget.onSend();
+                                }
+                                return KeyEventResult.handled;
+                              }
+                              return KeyEventResult.ignored;
+                            },
+                            child: TextField(
+                              controller: widget.messageController,
+                              minLines: 1,
+                              maxLines: 4,
+                              enabled: widget.canCompose,
+                              decoration: InputDecoration(
+                                hintText: widget.canCompose
+                                    ? 'Type your message'
+                                    : 'Messaging is unavailable for this role',
+                                filled: true,
+                                fillColor: Colors.white,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                  borderSide: const BorderSide(
+                                    color: AppColors.primaryBorder,
+                                  ),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                  borderSide: const BorderSide(
+                                    color: AppColors.primaryBorder,
+                                  ),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                  borderSide: const BorderSide(
+                                    color: AppColors.primaryColor,
+                                  ),
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 16,
+                                ),
                               ),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(18),
-                              borderSide: const BorderSide(
-                                color: AppColors.primaryBorder,
-                              ),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(18),
-                              borderSide: const BorderSide(
-                                color: AppColors.primaryColor,
-                              ),
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 16,
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    FilledButton(
-                      onPressed: widget.canCompose && canTriggerSend
-                          ? () {
-                              widget.onSend();
-                            }
-                          : null,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 18,
+                        const SizedBox(width: 10),
+                        FilledButton(
+                          onPressed: widget.canCompose && canTriggerSend
+                              ? () {
+                                  widget.onSend();
+                                }
+                              : null,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.primaryColor,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 18,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                          ),
+                          child: const Text('Send'),
                         ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                      ),
-                      child: const Text('Send'),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
+              );
+            },
           ),
         ],
       ),
@@ -3185,9 +3191,9 @@ String _supportThreadListTimestamp(DateTime? value) {
     return _weekdayShortLabel(local.weekday);
   }
   if (local.year == now.year) {
-    return '${_monthLabel(local.month)} ${local.day.toString().padLeft(2, '0')}';
+    return '${_monthLabel(local.month)} ${local.day}';
   }
-  return '${_monthLabel(local.month)} ${local.day.toString().padLeft(2, '0')} ${local.year}';
+  return '${_monthLabel(local.month)} ${local.day} ${local.year}';
 }
 
 String _supportMessageTimestampForBubble(SupportMessage message) {

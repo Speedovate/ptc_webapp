@@ -1,3 +1,5 @@
+import 'package:webapp/utils/support_message_identity.dart';
+import 'package:webapp/utils/cached_snapshot_documents.dart';
 import 'package:webapp/services/support_read_marker_writer.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -61,9 +63,8 @@ class SupportRequest {
   final Map<String, StreamController<List<SupportMessage>>>
   _messageWatchControllersByThreadId =
       <String, StreamController<List<SupportMessage>>>{};
-  final Map<String, StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>
-  _messageRemoteSubscriptionsByThreadId =
-      <String, StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>{};
+  final Map<String, StreamSubscription<void>>
+  _messageRemoteSubscriptionsByThreadId = <String, StreamSubscription<void>>{};
   final Map<String, StreamSubscription<String>>
   _messageLocalSubscriptionsByThreadId = <String, StreamSubscription<String>>{};
   final Map<String, List<SupportMessage>> _lastVisibleMessagesByThreadId =
@@ -81,8 +82,7 @@ class SupportRequest {
         onListen: _startAllThreadsWatcher,
         onCancel: _stopAllThreadsWatcher,
       );
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
-  _allThreadsRemoteSubscription;
+  StreamSubscription<void>? _allThreadsRemoteSubscription;
   StreamSubscription<void>? _allThreadsLocalSubscription;
 
   CollectionReference<Map<String, dynamic>> get _supportCollection =>
@@ -480,10 +480,10 @@ class SupportRequest {
     }
     PerformanceTrace.event('support-threads', 'shared watcher start');
     unawaited(_emitAllThreadsFromCache());
-    _allThreadsRemoteSubscription = _supportCollection.snapshots().listen(
-      (snapshot) => unawaited(_applyAllThreadsSnapshot(snapshot)),
-      onError: _allThreadsUpdates.addError,
-    );
+    _allThreadsRemoteSubscription = _supportCollection
+        .snapshots(includeMetadataChanges: true)
+        .asyncMap(_applyAllThreadsSnapshot)
+        .listen((_) {}, onError: _allThreadsUpdates.addError);
     _allThreadsLocalSubscription = _threadCacheUpdates.stream.listen(
       (_) => unawaited(_emitAllThreadsFromCache()),
       onError: _allThreadsUpdates.addError,
@@ -528,7 +528,12 @@ class SupportRequest {
         await _cache.readDocuments(_supportThreadsResourceKey) ??
         const <Map<String, dynamic>>[];
     final mergedDocuments = _mergeVisibleThreadDocuments(
-      remoteDocuments: documents,
+      remoteDocuments: mergeCachedSnapshotDocuments(
+        remote: documents,
+        cached: cachedDocuments,
+        isFromCache: snapshot.metadata.isFromCache,
+        hasPendingWrites: snapshot.metadata.hasPendingWrites,
+      ),
       cachedDocuments: cachedDocuments,
     );
     await _cache.writeDocuments(
@@ -578,21 +583,38 @@ class SupportRequest {
 
       final remoteSubscription = _supportCollection
           .where('requester_user_id', isEqualTo: normalizedUserId)
-          .snapshots()
-          .listen((snapshot) async {
+          .snapshots(includeMetadataChanges: true)
+          .asyncMap<void>((snapshot) async {
             final documents = snapshot.docs.map(documentData).toList();
             final cachedDocuments =
                 await _cache.readDocuments(_supportThreadsResourceKey) ??
                 const <Map<String, dynamic>>[];
             final mergedDocuments = _mergeVisibleThreadDocuments(
-              remoteDocuments: documents,
+              remoteDocuments: mergeCachedSnapshotDocuments(
+                remote: documents,
+                cached: cachedDocuments
+                    .where(
+                      (doc) =>
+                          normalizeId(doc['requester_user_id']) ==
+                          normalizedUserId,
+                    )
+                    .toList(),
+                isFromCache: snapshot.metadata.isFromCache,
+                hasPendingWrites: snapshot.metadata.hasPendingWrites,
+              ),
               cachedDocuments: cachedDocuments,
             );
             await _mergeThreadsIntoCache(mergedDocuments);
             if (controller.isClosed) {
               return;
             }
-            final threads = mergedDocuments.map(SupportThread.fromMap).toList();
+            final threads = mergedDocuments
+                .map(SupportThread.fromMap)
+                .where(
+                  (thread) =>
+                      normalizeId(thread.requesterUserId) == normalizedUserId,
+                )
+                .toList();
             threads.sort(_compareThreadsNewestFirst);
             final cachedAllThreads = _hydratedAllThreadsSnapshot;
             if (cachedAllThreads.isEmpty) {
@@ -618,7 +640,8 @@ class SupportRequest {
               _storeHydratedAllThreads(mergedAllThreads);
             }
             controller.add(threads);
-          }, onError: controller.addError);
+          })
+          .listen((_) {}, onError: controller.addError);
 
       final localSubscription = _threadCacheUpdates.stream.listen((_) {
         unawaited(emitCachedThreads());
@@ -698,14 +721,19 @@ class SupportRequest {
     final remoteSubscription = _supportCollection
         .doc(normalizedThreadId)
         .collection('messages')
-        .snapshots()
-        .listen((snapshot) async {
+        .snapshots(includeMetadataChanges: true)
+        .asyncMap<void>((snapshot) async {
           final documents = snapshot.docs.map(documentData).toList();
           final cachedDocuments = await _readVisibleMessageDocuments(
             normalizedThreadId,
           );
           final mergedDocuments = _mergeVisibleMessageDocuments(
-            remoteDocuments: documents,
+            remoteDocuments: mergeCachedSnapshotDocuments(
+              remote: documents,
+              cached: cachedDocuments,
+              isFromCache: snapshot.metadata.isFromCache,
+              hasPendingWrites: snapshot.metadata.hasPendingWrites,
+            ),
             cachedDocuments: cachedDocuments,
           );
           final queuedDocuments = await _readQueuedSupportMessageDocumentsSafe(
@@ -727,7 +755,8 @@ class SupportRequest {
             visibleDocuments,
           );
           controller.add(messages);
-        }, onError: controller.addError);
+        })
+        .listen((_) {}, onError: controller.addError);
     _messageRemoteSubscriptionsByThreadId[normalizedThreadId] =
         remoteSubscription;
 
@@ -747,8 +776,9 @@ class SupportRequest {
     String threadId,
     List<Map<String, dynamic>> documents,
   ) {
-    final messages = documents.map(SupportMessage.fromMap).toList()
-      ..sort(_compareMessagesOldestFirst);
+    final messages = reconcileSupportMessageDocuments(
+      documents,
+    ).map(SupportMessage.fromMap).toList()..sort(_compareMessagesOldestFirst);
     _lastVisibleMessagesByThreadId[threadId] = List<SupportMessage>.from(
       messages,
     );
@@ -1749,55 +1779,7 @@ class SupportRequest {
   bool _matchesPendingSupportMessage({
     required SupportMessage pendingMessage,
     required SupportMessage remoteMessage,
-  }) {
-    if (remoteMessage.isPendingUpload) {
-      return false;
-    }
-    if (normalizeId(pendingMessage.senderUserId) !=
-        normalizeId(remoteMessage.senderUserId)) {
-      return false;
-    }
-    if ((pendingMessage.text ?? '').trim() !=
-        (remoteMessage.text ?? '').trim()) {
-      return false;
-    }
-    if (!_supportAttachmentsRoughlyMatch(
-      pendingMessage.attachments,
-      remoteMessage.attachments,
-    )) {
-      return false;
-    }
-    final pendingCreatedAt =
-        pendingMessage.createdAt ?? pendingMessage.updatedAt;
-    final remoteCreatedAt = remoteMessage.createdAt ?? remoteMessage.updatedAt;
-    if (pendingCreatedAt == null || remoteCreatedAt == null) {
-      return true;
-    }
-    final difference = remoteCreatedAt.difference(pendingCreatedAt).inMinutes;
-    return difference >= 0 && difference <= 15;
-  }
-
-  bool _supportAttachmentsRoughlyMatch(
-    List<SupportAttachment> pendingAttachments,
-    List<SupportAttachment> remoteAttachments,
-  ) {
-    if (pendingAttachments.length != remoteAttachments.length) {
-      return false;
-    }
-    for (var index = 0; index < pendingAttachments.length; index++) {
-      final pendingAttachment = pendingAttachments[index];
-      final remoteAttachment = remoteAttachments[index];
-      if ((pendingAttachment.name ?? '').trim() !=
-          (remoteAttachment.name ?? '').trim()) {
-        return false;
-      }
-      if ((pendingAttachment.mimeType ?? '').trim() !=
-          (remoteAttachment.mimeType ?? '').trim()) {
-        return false;
-      }
-    }
-    return true;
-  }
+  }) => sameSupportMessage(pendingMessage, remoteMessage);
 
   static DateTime? _supportMessageSortDate(SupportMessage message) {
     return message.createdAt ?? message.updatedAt;
@@ -1823,7 +1805,7 @@ class SupportRequest {
     required List<Map<String, dynamic>> existingDocuments,
     required List<Map<String, dynamic>> queuedDocuments,
   }) {
-    final merged = existingDocuments
+    final merged = reconcileSupportMessageDocuments(existingDocuments)
         .map((document) => Map<String, dynamic>.from(document))
         .toList(growable: true);
     final visibleMessages = merged.map(SupportMessage.fromMap).toList();

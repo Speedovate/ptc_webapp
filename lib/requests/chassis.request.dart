@@ -1,3 +1,4 @@
+import 'package:webapp/utils/cached_snapshot_documents.dart';
 import 'package:webapp/services/offline_reference_mapper.dart';
 import 'dart:async';
 
@@ -81,21 +82,26 @@ class ChassisRequest {
     if (_initialized) return;
     _initialized = true;
     unawaited(_queueInitializer().catchError((_) {}));
-    _subscription = _collection.snapshots(includeMetadataChanges: true).listen((
-      snapshot,
-    ) {
-      if (!currentNetworkStatus() && snapshot.metadata.isFromCache) return;
-      // An online listener's provisional empty cache is not confirmation that
-      // this driver has no return assignments. Wait for cache data or server.
-      if (currentNetworkStatus() &&
-          snapshot.metadata.isFromCache &&
-          snapshot.docs.isEmpty) {
-        return;
-      }
-      // Preserve the Firestore document ID when legacy/manual records do not
-      // also store an `id` field. This matches the other catalog requests.
-      unawaited(_applyRemoteDocuments(snapshot.docs.map(documentData)));
-    }, onError: (_, _) {});
+    _subscription = _collection
+        .snapshots(includeMetadataChanges: true)
+        .asyncMap((snapshot) async {
+          final documents = mergeCachedSnapshotDocuments(
+            remote: snapshot.docs.map(documentData).toList(),
+            cached:
+                snapshot.metadata.isFromCache ||
+                    snapshot.metadata.hasPendingWrites
+                ? await _cache.readDocuments(resourceKey) ?? const []
+                : const [],
+            isFromCache: snapshot.metadata.isFromCache,
+            hasPendingWrites: snapshot.metadata.hasPendingWrites,
+          );
+          if (snapshot.metadata.isFromCache && documents.isEmpty) {
+            return snapshot;
+          }
+          await _applyRemoteDocuments(documents);
+          return snapshot;
+        })
+        .listen((_) {}, onError: (_, _) {});
     _versionSubscription = _cache.watchResourceVersion(resourceKey).listen((
       version,
     ) {
@@ -133,7 +139,9 @@ class ChassisRequest {
       resourceKey: resourceKey,
       fetchDocuments: () async {
         final snapshot = currentNetworkStatus()
-            ? await _collection.get().timeout(_readTimeout)
+            ? await _collection
+                  .get(const GetOptions(source: Source.server))
+                  .timeout(_readTimeout)
             : await _collection
                   .get(const GetOptions(source: Source.cache))
                   .timeout(_readTimeout);

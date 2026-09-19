@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/offline_queue_status_strip.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
@@ -142,8 +143,7 @@ class _SyncStatusPill extends StatelessWidget {
       leadingIcon = Icons.error_outline_rounded;
       title =
           '${snapshot.failedActions} sync issue${snapshot.failedActions == 1 ? '' : 's'} need review';
-      subtitle =
-          'Some offline changes were held back to avoid overwriting newer data.';
+      subtitle = 'Some saved actions could not sync. Review the details.';
     } else if (syncing) {
       backgroundColor = const Color(0xFFFFFAEC);
       borderColor = const Color(0xFFF4D27A);
@@ -277,21 +277,35 @@ class _SyncStatusPill extends StatelessWidget {
   }
 
   Future<void> _showConflictReviewSheet(BuildContext context) =>
-      showOfflineConflictReviewSheet(context);
+      showOfflineConflictReviewSheet(context, userId: currentUser?.id);
 }
 
-Future<void> showOfflineConflictReviewSheet(BuildContext context) {
+Future<void> showOfflineConflictReviewSheet(
+  BuildContext context, {
+  String? userId,
+}) async {
+  if (userId?.trim().isNotEmpty == true) {
+    final conflicts = await OfflineMutationQueueService.instance
+        .getBlockedConflicts();
+    if (!context.mounted) return;
+    if (conflicts.isEmpty) {
+      await showOfflineQueueItems(context, userId!);
+      return;
+    }
+  }
   return showModalBottomSheet<void>(
     context: context,
     useRootNavigator: true,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (context) => const SelectionArea(child: _ConflictReviewSheet()),
+    builder: (context) =>
+        SelectionArea(child: _ConflictReviewSheet(userId: userId)),
   );
 }
 
 class _ConflictReviewSheet extends StatefulWidget {
-  const _ConflictReviewSheet();
+  const _ConflictReviewSheet({this.userId});
+  final String? userId;
 
   @override
   State<_ConflictReviewSheet> createState() => _ConflictReviewSheetState();
@@ -414,6 +428,12 @@ class _ConflictReviewSheetState extends State<_ConflictReviewSheet> {
                       ],
                     ),
                     const SizedBox(height: 16),
+                    if (widget.userId?.isNotEmpty == true)
+                      TextButton(
+                        onPressed: () =>
+                            showOfflineQueueItems(context, widget.userId!),
+                        child: const Text('View all queued actions'),
+                      ),
                     if (_actionError != null) ...[
                       Text(
                         _actionError!,
@@ -623,6 +643,8 @@ _SyncActionPresentation _syncActionPresentation(
   final collection = _syncCollectionLabel(conflict.collectionKey);
   final recordLabel = conflict.targetId.trim().isEmpty
       ? '$collection record'
+      : collection == 'Booking'
+      ? '$collection ${conflict.targetId}'
       : '$collection #${conflict.targetId}';
 
   switch (conflict.kind) {

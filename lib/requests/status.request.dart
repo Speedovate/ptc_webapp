@@ -200,11 +200,13 @@ class StatusRequest implements StatusFormRepository {
             if (sdkCachedDocuments.isNotEmpty && !currentNetworkStatus()) {
               return sdkCachedDocuments;
             }
-            final snapshot = await _fieldsCollection.get().timeout(
-              _startupTimeout,
-              onTimeout: () =>
-                  throw TimeoutException('status fields fetch timeout'),
-            );
+            final snapshot = await _fieldsCollection
+                .get(const GetOptions(source: Source.server))
+                .timeout(
+                  _startupTimeout,
+                  onTimeout: () =>
+                      throw TimeoutException('status fields fetch timeout'),
+                );
             return snapshot.docs.map(documentData).toList(growable: false);
           },
         );
@@ -258,10 +260,13 @@ class StatusRequest implements StatusFormRepository {
             if (sdkCachedDocuments.isNotEmpty && !currentNetworkStatus()) {
               return sdkCachedDocuments;
             }
-            final snapshot = await _statusesCollection.get().timeout(
-              _startupTimeout,
-              onTimeout: () => throw TimeoutException('statuses fetch timeout'),
-            );
+            final snapshot = await _statusesCollection
+                .get(const GetOptions(source: Source.server))
+                .timeout(
+                  _startupTimeout,
+                  onTimeout: () =>
+                      throw TimeoutException('statuses fetch timeout'),
+                );
             return snapshot.docs.map(documentData).toList(growable: false);
           },
         );
@@ -972,11 +977,13 @@ class StatusRequest implements StatusFormRepository {
             if (sdkCachedForms.isNotEmpty && !currentNetworkStatus()) {
               return sdkCachedForms;
             }
-            final formsSnapshot = await _formsCollection.get().timeout(
-              _startupTimeout,
-              onTimeout: () =>
-                  throw TimeoutException('status forms fetch timeout'),
-            );
+            final formsSnapshot = await _formsCollection
+                .get(const GetOptions(source: Source.server))
+                .timeout(
+                  _startupTimeout,
+                  onTimeout: () =>
+                      throw TimeoutException('status forms fetch timeout'),
+                );
             return formsSnapshot.docs.map(documentData).toList(growable: false);
           },
         ),
@@ -989,11 +996,13 @@ class StatusRequest implements StatusFormRepository {
             if (sdkCachedFields.isNotEmpty && !currentNetworkStatus()) {
               return sdkCachedFields;
             }
-            final fieldsSnapshot = await _fieldsCollection.get().timeout(
-              _startupTimeout,
-              onTimeout: () =>
-                  throw TimeoutException('status fields fetch timeout'),
-            );
+            final fieldsSnapshot = await _fieldsCollection
+                .get(const GetOptions(source: Source.server))
+                .timeout(
+                  _startupTimeout,
+                  onTimeout: () =>
+                      throw TimeoutException('status fields fetch timeout'),
+                );
             return fieldsSnapshot.docs
                 .map(documentData)
                 .toList(growable: false);
@@ -1084,9 +1093,15 @@ class StatusRequest implements StatusFormRepository {
   Future<void> _refreshStatusCachesFromSourceOfTruth() async {
     try {
       final results = await Future.wait([
-        _formsCollection.get().timeout(_startupTimeout),
-        _fieldsCollection.get().timeout(_startupTimeout),
-        _statusesCollection.get().timeout(_startupTimeout),
+        _formsCollection
+            .get(const GetOptions(source: Source.server))
+            .timeout(_startupTimeout),
+        _fieldsCollection
+            .get(const GetOptions(source: Source.server))
+            .timeout(_startupTimeout),
+        _statusesCollection
+            .get(const GetOptions(source: Source.server))
+            .timeout(_startupTimeout),
       ]);
       final formsSnapshot = results[0];
       final fieldsSnapshot = results[1];

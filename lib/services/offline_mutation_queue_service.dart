@@ -1,3 +1,4 @@
+import 'package:webapp/utils/copy_document_fields.dart';
 import 'package:webapp/models/offline_queue_item.dart';
 import 'package:webapp/services/offline_cleanup_queue_service.dart';
 import 'package:webapp/services/support_read_marker_writer.dart';
@@ -100,6 +101,7 @@ class OfflineMutationQueueService {
             isBlocked: entry.isBlocked,
             createdAt: DateTime.tryParse(entry.createdAtIso),
             hasError: entry.lastError?.isNotEmpty == true,
+            errorMessage: entry.lastError,
           ),
         )
         .toList(growable: false);
@@ -1341,13 +1343,17 @@ class OfflineMutationQueueService {
             nextChassis = await transaction.get(
               _firestore.collection('chassis').doc(nextChassisId),
             );
-            if (!nextChassis.exists) {
+            if (!nextChassis.exists && lifecycle?.keepBookingLink != false) {
               throw StateError('The selected chassis no longer exists.');
             }
             final displacedBookingId = normalizeId(
               nextChassis.data()?['current_booking_id']?.toString(),
             );
-            if (displacedBookingId != null &&
+            if (lifecycle?.keepBookingLink == false &&
+                displacedBookingId != entry.targetId) {
+              // A retry/edit of a released booking cannot touch its next owner.
+              nextChassis = null;
+            } else if (displacedBookingId != null &&
                 displacedBookingId != entry.targetId) {
               throw StateError(
                 'Sync conflict: chassis was assigned to another booking while offline.',
@@ -2366,7 +2372,7 @@ class OfflineMutationQueueService {
     required String scope,
   }) async {
     if (!OfflineReferenceMapper.hasTemporaryReferences(document)) {
-      return Map<String, dynamic>.from(document);
+      return copyDocumentFields(document);
     }
     await _authStorage.initialize();
     final aliases = await _readResolvedIdAliases('$_storageKey::$scope');

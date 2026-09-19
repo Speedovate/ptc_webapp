@@ -8,15 +8,17 @@ import 'package:webapp/requests/firestore_cache_persistence.dart';
 import 'package:webapp/services/network_status_events.dart';
 
 class FirestoreCacheStore {
-  FirestoreCacheStore._();
+  FirestoreCacheStore({FirestoreCachePersistence? persistence})
+    : _persistentStore = persistence ?? createFirestoreCachePersistence();
 
-  static final FirestoreCacheStore instance = FirestoreCacheStore._();
+  static final FirestoreCacheStore instance = FirestoreCacheStore();
   static const _dataPrefix = 'firestore_cache_data_';
   static const _versionPrefix = 'firestore_cache_version_';
 
   SharedPreferences? _prefs;
-  final FirestoreCachePersistence _persistentStore =
-      createFirestoreCachePersistence();
+  final FirestoreCachePersistence _persistentStore;
+  final Map<String, Object> _resourceRevisions = {};
+  int _clearGeneration = 0;
   final Map<String, List<Map<String, dynamic>>> _documentMemoryCache = {};
   final Map<String, String> _versionMemoryCache = {};
 
@@ -33,9 +35,17 @@ class FirestoreCacheStore {
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
     }
+    final revision = _resourceRevisions[resourceKey];
+    final clearGeneration = _clearGeneration;
     await _ensurePrefs();
     final key = _dataKey(resourceKey);
     var raw = await _readPersistentValue(key);
+    if (clearGeneration != _clearGeneration ||
+        !identical(revision, _resourceRevisions[resourceKey])) {
+      return _documentMemoryCache[resourceKey]
+          ?.map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    }
     // Migrate caches made by earlier releases on their first successful read.
     raw ??= _decodePreferenceValue(_prefs!.getString(key));
     if (raw != null && _persistentStore.isAvailable) {
@@ -61,6 +71,7 @@ class FirestoreCacheStore {
     String resourceKey,
     List<Map<String, dynamic>> documents,
   ) async {
+    _resourceRevisions[resourceKey] = Object();
     final serializableDocuments = _toSerializableDocuments(documents);
     _documentMemoryCache[resourceKey] = serializableDocuments
         .map((item) => Map<String, dynamic>.from(item))
@@ -76,9 +87,15 @@ class FirestoreCacheStore {
     if (memoryValue != null) {
       return memoryValue;
     }
+    final revision = _resourceRevisions[resourceKey];
+    final clearGeneration = _clearGeneration;
     await _ensurePrefs();
     final key = _versionKey(resourceKey);
     var value = await _readPersistentValue(key);
+    if (clearGeneration != _clearGeneration ||
+        !identical(revision, _resourceRevisions[resourceKey])) {
+      return _versionMemoryCache[resourceKey];
+    }
     value ??= _decodePreferenceValue(_prefs!.getString(key));
     if (value != null && _persistentStore.isAvailable) {
       unawaited(_persistentStore.write(key, value).catchError((_) {}));
@@ -90,12 +107,14 @@ class FirestoreCacheStore {
   }
 
   Future<void> writeVersion(String resourceKey, String version) async {
+    _resourceRevisions[resourceKey] = Object();
     _versionMemoryCache[resourceKey] = version;
     await _ensurePrefs();
     await _writePersistentValue(_versionKey(resourceKey), version);
   }
 
   Future<void> clearResource(String resourceKey) async {
+    _resourceRevisions[resourceKey] = Object();
     _documentMemoryCache.remove(resourceKey);
     _versionMemoryCache.remove(resourceKey);
     await _ensurePrefs();
@@ -106,6 +125,8 @@ class FirestoreCacheStore {
   }
 
   Future<void> clearAll() async {
+    _clearGeneration++;
+    _resourceRevisions.clear();
     _documentMemoryCache.clear();
     _versionMemoryCache.clear();
     await _ensurePrefs();
@@ -495,6 +516,10 @@ class FirestoreCollectionCache {
     required Future<List<Map<String, dynamic>>> Function() fetchDocuments,
     required String? cachedVersion,
   }) async {
+    // A durable full collection must not be replaced by a partial SDK cache.
+    if (!currentNetworkStatus()) {
+      return;
+    }
     try {
       final remoteVersion = await _tryReadRemoteVersion(resourceKey);
       if (cachedVersion != null &&
@@ -504,6 +529,9 @@ class FirestoreCollectionCache {
       }
 
       final freshDocuments = await fetchDocuments();
+      if (!currentNetworkStatus()) {
+        return;
+      }
       final resolvedVersion =
           remoteVersion ?? _bootstrapVersion(freshDocuments);
 

@@ -309,3 +309,142 @@ are described as pending sync. Refresh is explicit, with no new polling or remot
 reads/writes. Queue inspection does not initialize sync, publish status events,
 modify payloads, or change resolver/replay behavior. The list is a local snapshot,
 not server acknowledgement. Existing conflict review controls remain available.
+
+### Support cache and persisted image recovery
+
+Support thread/message listeners now distinguish incomplete SDK cache or pending
+snapshots from authoritative server snapshots. Missing durable records survive
+incomplete snapshots; confirmed server deletions retain their existing semantics.
+Metadata changes are observed so server confirmation is processed even when the
+SDK document set is unchanged, and remote snapshot processing is sequential.
+User-scoped thread streams filter cached fallback records by requester.
+
+Web image recovery no longer preserves a failed network image over successfully
+loaded persistent bytes. Offline mounts also allow the persisted image immediately.
+Successful online images retain the existing no-flash behavior. This cannot restore
+history already removed from storage, or images whose bytes were never cached;
+those require a successful online load first.
+
+### Wider cache snapshot audit
+
+The same incomplete-snapshot protection now covers booking realtime/direct reads
+and chassis realtime updates. The snapshot merge helper is shared with Support.
+Confirmed server snapshots still replace the collection so confirmed removals are
+not permanently resurrected. Chassis processes snapshots sequentially and does
+not wait for a cache read on its authoritative server-update path.
+
+Users, vehicle catalogs and status/form/field catalog collection refreshes request
+server results explicitly instead of accepting the SDK's default cache fallback
+as a complete replacement. Their existing durable-cache fallback paths remain.
+Shared collection background refresh skips offline work and refuses to commit
+if connectivity has switched offline during its fetch. This does not prefetch
+uncached records or image bytes, change ID allocation, or certify every live
+browser/account reconnection scenario.
+
+### Delayed cache hydration and role access refresh
+
+Role Access collection refreshes now require server results, retaining the existing
+offline cache fallback instead of treating an SDK cache fallback as authoritative.
+FirestoreCacheStore tracks resource invalidation during reads. A late persisted
+read cannot overwrite a newer in-memory write, repopulate a cleared resource, or
+schedule migration of the stale value back into persistence. The same guard covers
+version reads and clear-all. Six controlled delayed-read regressions exercise both
+documents and versions against write, clear-resource and clear-all operations.
+These are targeted hydration protections, not a claim that all possible cache
+read/write races or every offline screen interaction have been eliminated.
+
+### Support pending-to-confirmed bubble handoff
+
+Support now reconciles duplicate local/cache/queue representations by document ID
+or the existing local_order_key, scoped to conversation and sender. Confirmed
+representations win over pending ones regardless of arrival order. Reconciliation
+runs before messages reach the UI and when queue overlays are merged. Matching
+no longer guesses identity from equal text/attachments within a 15-minute window;
+separate repeated messages stay separate. No server IDs or stored message contents
+are rewritten. Legacy copies without a shared identity key are deliberately not
+collapsed by text, so their transient duplicate cannot safely be inferred away.
+
+### Booking/chassis lifecycle replay (2026-09-19)
+
+Chassis projection now uses the final booking stage, including same-stage edits
+and retries. Coalescing several offline booking updates no longer skips physical
+state changes or restores the delivery driver via the default assignment patch.
+Delivered/Check keep the booking and loaded chassis but clear its driver; Empty
+keeps the booking and clears the driver; Return assigns the return driver;
+Confirm/Cancelled release both links and mark the owned chassis ready. Original
+queued action timestamps remain the chassis update timestamps.
+
+Direct and queued transactions skip a completed booking's historical chassis
+reference when that chassis no longer belongs to it. Detaching a previous chassis
+also checks ownership. Post-delivery updates cannot take another booking's chassis.
+The scheduler rechecks the current booking status and delivery deadline inside a
+transaction before advancing Delivered to Check, avoiding a stale query overwriting
+a later stage. The existing four-hour deadline and five-minute schedule remain.
+
+Regression coverage includes coalesced updates, same-stage replay, reassigned
+chassis protection and scheduler stale-state checks. These use fake Firestore and
+Node test fixtures, not authenticated production end-to-end tests. Scheduler
+changes require a separate deployment of maintainChassisWorkflow; this change does
+not backfill already inconsistent production records or verify deployed logs.
+
+The save-to-replay integration audit subsequently reproduced a workflow completion
+cycle: `whenComplete(() => _pendingActionSaves.remove(key))` returned the very
+Future being completed. A successfully persisted driver/helper action could
+therefore remain loading until its 15-second UI timeout. Cleanup now uses a void
+block, preserving single-flight deduplication without awaiting itself. New tests
+exercise actual BookingRequest saves across lifecycle stages and driver/helper
+view-model submissions through persisted queue replay. Global startup listeners
+are disabled in this fixture and Firestore is simulated; production rules,
+scheduler deployment and authenticated UI interactions remain unverified.
+
+Validation for that completion fix: 270 native Flutter tests, 18 focused Chrome
+workflow/lifecycle tests, and 6 scheduler tests passed. Analyzer reported no issues.
+The queue-reopen fixture reuses persisted entries in a memory storage backend; it
+does not simulate terminating a real browser or real Firestore network traffic.
+
+Offline completion action matrix: both driver and helper were exercised through
+BookingWorkflowViewModel -> BookingRequest -> persisted queue -> replay for
+finish, finished, complete, completed and delivered next-status keys. The focused
+suite passed 19 native and 19 Chrome tests, checking loading release, all three
+booking status fields, submitted_at/updated_at preservation, form answers and
+queue acknowledgement. These are simulated connectivity/Firestore tests.
+Custom finish/complete keys are persisted as configured, not treated as aliases
+of delivered; only the delivered lifecycle stage clears the chassis delivery
+driver. Production form configuration must be verified separately.
+
+### Chassis actions history and elapsed time
+
+Vehicles > Chassis > View now shows a lazy, selectable recorded booking-action
+history. List rows/cards and the dialog use the same read-only projection of
+status_outputs submitted_at and delivered_at. Waiting starts at Delivered and
+continues through Check/Empty; the first Return action after that delivery records
+the claim and freezes its hours/minutes duration (for example, 2h 3m). Each recorded claim also shows its
+historical duration. No sync timestamps are substituted for action timestamps.
+Missing legacy actions, deleted booking records, and manual chassis edits without
+booking action logs cannot be reconstructed by this view.
+
+The page reuses the shared booking stream and cached/offline data. A single clock
+updates elapsed text only while waiting records exist; it stops when the page is
+hidden or the app backgrounds and is disposed with the page. History adds no
+Firestore writes, resolver retries, or per-row timers. Existing edit/delete and
+booking navigation actions are preserved.
+
+The history Location column prefers each action's recorded location. If absent,
+it displays the chassis's current location with a `(current)` label. This is a
+presentation fallback only; historical actions are not rewritten or backfilled.
+
+### Support sync failure review visibility
+
+Sync issue counts include media/support failures, but the previous Review route
+loaded only blocked mutation conflicts. Authenticated Review now opens the
+account's queued actions when no blocked mutation exists; conflict review also
+links to all queued actions. Queue presentation exposes the persisted normalized
+error and retry deadline where supported, without starting a flush or changing
+payloads/backoff. Media errors deemed non-transient currently wait 20 minutes;
+this can look stuck while the previous review screen showed no issue.
+
+The attached 2026-09-19 hot-restart log contains support snapshot rawData.forEach
+interop failures and inactive selection/rendering errors. It does not include the
+persisted chat queue's last_error, so it does not establish the actual replay
+failure. No SDK payload conversion, deletion of pending chat, automatic reload,
+or bypass of identity/permission checks was introduced.

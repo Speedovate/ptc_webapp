@@ -27,6 +27,7 @@ class PlatformShell extends StatelessWidget {
     required this.onProfile,
     required this.onLogout,
     this.logoutLabel = 'Logout',
+    this.squareTopCorners = false,
   });
 
   final GlobalKey<ScaffoldState> scaffoldKey;
@@ -40,6 +41,7 @@ class PlatformShell extends StatelessWidget {
   final VoidCallback onProfile;
   final VoidCallback onLogout;
   final String logoutLabel;
+  final bool squareTopCorners;
 
   static const double sidebarHeaderHeight = 72;
 
@@ -80,8 +82,23 @@ class PlatformShell extends StatelessWidget {
                           child: Container(
                             decoration: BoxDecoration(
                               color: AppColors.primarySurfaceAlt,
-                              borderRadius: BorderRadius.circular(
-                                expandMainContent ? 0 : 32,
+                              borderRadius: BorderRadius.only(
+                                topLeft: Radius.circular(
+                                  expandMainContent || squareTopCorners
+                                      ? 0
+                                      : 32,
+                                ),
+                                topRight: Radius.circular(
+                                  expandMainContent || squareTopCorners
+                                      ? 0
+                                      : 32,
+                                ),
+                                bottomLeft: Radius.circular(
+                                  expandMainContent ? 0 : 32,
+                                ),
+                                bottomRight: Radius.circular(
+                                  expandMainContent ? 0 : 32,
+                                ),
                               ),
                               boxShadow: expandMainContent
                                   ? null
@@ -94,8 +111,23 @@ class PlatformShell extends StatelessWidget {
                                     ],
                             ),
                             child: ClipRRect(
-                              borderRadius: BorderRadius.circular(
-                                expandMainContent ? 0 : 32,
+                              borderRadius: BorderRadius.only(
+                                topLeft: Radius.circular(
+                                  expandMainContent || squareTopCorners
+                                      ? 0
+                                      : 32,
+                                ),
+                                topRight: Radius.circular(
+                                  expandMainContent || squareTopCorners
+                                      ? 0
+                                      : 32,
+                                ),
+                                bottomLeft: Radius.circular(
+                                  expandMainContent ? 0 : 32,
+                                ),
+                                bottomRight: Radius.circular(
+                                  expandMainContent ? 0 : 32,
+                                ),
                               ),
                               child: Scaffold(
                                 backgroundColor: Colors.white,
@@ -307,6 +339,7 @@ class _PlatformSidebarFooter extends StatelessWidget {
                   key: const ValueKey('sidebar-sync-status'),
                   snapshot: snapshot,
                   canReviewSync: canReviewSync,
+                  userId: currentUser.id,
                 )
               : const _PlatformInstallAppButton(
                   key: ValueKey('sidebar-install'),
@@ -329,10 +362,12 @@ class _PlatformSyncStatusButton extends StatelessWidget {
     super.key,
     required this.snapshot,
     required this.canReviewSync,
+    required this.userId,
   });
 
   final OfflineSyncStatusSnapshot snapshot;
   final bool canReviewSync;
+  final String? userId;
 
   @override
   Widget build(BuildContext context) {
@@ -373,10 +408,16 @@ class _PlatformSyncStatusButton extends StatelessWidget {
         : Colors.white.withValues(alpha: 0.16);
 
     return AppMousePressable(
-      // Keep the side-panel action consistent with the auth sync banner.
-      // A review is useful only for a blocked conflict, not normal queued work.
-      onTap: canReviewSync && hasIssue
-          ? () => showOfflineConflictReviewSheet(context)
+      // Every signed-in role can inspect its own durable queue offline.
+      // Conflict resolution retains its existing permission check.
+      onTap: userId?.trim().isNotEmpty == true
+          ? () {
+              if (canReviewSync && hasIssue) {
+                showOfflineConflictReviewSheet(context, userId: userId);
+              } else {
+                showOfflineQueueItems(context, userId!);
+              }
+            }
           : null,
       borderRadius: BorderRadius.circular(16),
       child: Container(

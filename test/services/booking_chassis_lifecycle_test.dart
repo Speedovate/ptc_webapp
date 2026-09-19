@@ -9,7 +9,9 @@ void main() {
       bookingDocument: const {},
     );
 
-    expect(instruction, isNull);
+    expect(instruction?.status, 'loaded');
+    expect(instruction?.driverLink, ChassisDriverLink.clear);
+    expect(instruction?.keepBookingLink, isTrue);
   });
 
   test('applies the agreed physical chassis lifecycle', () {

@@ -17,6 +17,7 @@ class AppModalGuard {
     required BuildContext context,
     required WidgetBuilder builder,
     bool barrierDismissible = true,
+    bool wrapInSelectionArea = true,
     Color? barrierColor,
     String? barrierLabel,
     bool useSafeArea = true,
@@ -54,7 +55,9 @@ class AppModalGuard {
 
     final future = material.showDialog<T>(
       context: context,
-      builder: (context) => SelectionArea(child: builder(context)),
+      builder: (context) => wrapInSelectionArea
+          ? SelectionArea(child: builder(context))
+          : builder(context),
       barrierDismissible: barrierDismissible,
       barrierColor: barrierColor,
       barrierLabel: barrierLabel,
@@ -182,6 +185,7 @@ Future<T?> showAppDialog<T>({
   required BuildContext context,
   required WidgetBuilder builder,
   bool barrierDismissible = true,
+  bool wrapInSelectionArea = true,
   Color? barrierColor,
   String? barrierLabel,
   bool useSafeArea = true,
@@ -196,6 +200,7 @@ Future<T?> showAppDialog<T>({
     context: context,
     builder: builder,
     barrierDismissible: barrierDismissible,
+    wrapInSelectionArea: wrapInSelectionArea,
     barrierColor: barrierColor,
     barrierLabel: barrierLabel,
     useSafeArea: useSafeArea,

@@ -79,6 +79,7 @@ class BookingOfflineUploadQueueService {
             recordLabel: OfflineQueueItem.record('bookings', entry.bookingId),
             createdAt: DateTime.tryParse(entry.createdAtIso),
             hasError: entry.lastError?.isNotEmpty == true,
+            errorMessage: entry.lastError,
           ),
         )
         .toList(growable: false);

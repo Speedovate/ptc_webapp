@@ -83,7 +83,7 @@ class BookingConflictReviewViewModel extends ChangeNotifier {
       choice = null;
       acknowledged = false;
       success =
-          'Booking #${selected.targetId} reconciled. The temporary copy and both original versions were archived.';
+          'Booking ${selected.targetId} reconciled. The temporary copy and both original versions were archived.';
     } catch (e) {
       error = e.toString();
       acknowledged = false;

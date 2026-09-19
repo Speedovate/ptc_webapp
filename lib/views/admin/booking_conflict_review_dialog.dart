@@ -86,7 +86,7 @@ class _BookingConflictReviewDialogState
                 if (preview != null) ...[
                   const Divider(),
                   Text(
-                    'Temporary copy → Booking #${preview.targetId ?? "unverified"}',
+                    'Temporary copy → Booking ${preview.targetId ?? "unverified"}',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   Text(preview.reason),

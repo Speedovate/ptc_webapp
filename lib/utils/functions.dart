@@ -7,9 +7,9 @@ Map<String, dynamic> documentData(DocumentSnapshot<Map<String, dynamic>> doc) {
   final rawData = doc.data();
   final data = <String, dynamic>{};
   if (rawData != null) {
-    rawData.forEach((key, value) {
-      data[key.toString()] = value;
-    });
+    for (final key in rawData.keys) {
+      data[key] = rawData[key];
+    }
   }
   return <String, dynamic>{
     if (!data.containsKey('id') && doc.id.trim().isNotEmpty) 'id': doc.id,

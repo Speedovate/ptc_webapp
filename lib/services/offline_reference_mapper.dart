@@ -1,3 +1,5 @@
+import 'package:webapp/utils/copy_document_fields.dart';
+
 /// Remaps schema-owned references only. User-entered strings are never IDs.
 class OfflineReferenceMapper {
   static bool hasTemporaryReferences(Map<String, dynamic> document) {
@@ -29,7 +31,7 @@ class OfflineReferenceMapper {
       return value;
     }
 
-    final result = Map<String, dynamic>.from(document);
+    final result = copyDocumentFields(document);
     for (final key in [
       if (mapId) 'id',
       'client_id',
@@ -65,7 +67,7 @@ class OfflineReferenceMapper {
     for (final key in ['chassis', 'document']) {
       if (result[key] is Map) {
         result[key] = mapDocument(
-          Map<String, dynamic>.from(result[key] as Map),
+          copyDocumentFields(result[key] as Map),
           aliases,
           mapId: key == 'chassis' ? false : mapId,
         );

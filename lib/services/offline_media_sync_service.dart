@@ -1,3 +1,4 @@
+import 'package:webapp/utils/copy_document_fields.dart';
 import 'package:webapp/models/offline_queue_item.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'dart:async';
@@ -93,9 +94,86 @@ class OfflineMediaSyncService {
                 : 'User profile',
             createdAt: DateTime.tryParse(entry.createdAtIso),
             hasError: entry.lastError?.isNotEmpty == true,
+            errorMessage: entry.lastError,
+            nextRetryAt: entry.nextRetryAt,
           ),
         )
         .toList(growable: false);
+  }
+
+  bool _manualChatRetryRunning = false;
+
+  String? _lastAutomaticChatRetryUser;
+  DateTime? _lastAutomaticChatRetryAt;
+
+  /// One bounded attempt on opening the queue; no listener or retry timer.
+  Future<void> retryFailedSupportMessagesOnOpen(String userId) async {
+    if (!_isOnline() || _isFlushing || _manualChatRetryRunning) {
+      return;
+    }
+    final now = DateTime.now();
+    if (_lastAutomaticChatRetryUser == userId &&
+        _lastAutomaticChatRetryAt != null &&
+        now.difference(_lastAutomaticChatRetryAt!) <
+            const Duration(seconds: 30)) {
+      return;
+    }
+    _lastAutomaticChatRetryUser = userId;
+    _lastAutomaticChatRetryAt = now;
+    await retryFailedSupportMessages(userId);
+  }
+
+  /// Preserve identity, payload and original dates.
+  Future<void> retryFailedSupportMessages(String userId) async {
+    if (_manualChatRetryRunning || _isFlushing) {
+      throw StateError(
+        'Sync is already running. Please wait for it to finish.',
+      );
+    }
+    if (!_isOnline()) {
+      throw StateError('Connect to the internet before retrying.');
+    }
+    _manualChatRetryRunning = true;
+    try {
+      await _authStorage.initialize();
+      if (normalizeId(await _authStorage.readString(_currentUserIdKey)) !=
+              normalizeId(userId) ||
+          userId.trim().isEmpty) {
+        throw StateError('Open queued actions from the active account.');
+      }
+      final storageKey = _storageKeyForUserId(userId);
+      final hasFailedChat = await _serializeQueueMutation(() async {
+        final entries = await _readEntriesForStorageKey(storageKey);
+        if (!entries.any(
+          (entry) =>
+              entry.kind == _OfflineMediaQueueKind.supportMessage &&
+              entry.lastError != null,
+        )) {
+          return false;
+        }
+        final updated = entries
+            .map(
+              (entry) =>
+                  entry.kind == _OfflineMediaQueueKind.supportMessage &&
+                      entry.lastError != null
+                  ? entry.copyWith(
+                      nextRetryAt: DateTime.fromMillisecondsSinceEpoch(
+                        0,
+                        isUtc: true,
+                      ),
+                    )
+                  : entry,
+            )
+            .toList();
+        await _writeEntriesForStorageKey(storageKey, updated);
+        return true;
+      });
+      if (hasFailedChat) {
+        await flushPendingOperations();
+      }
+    } finally {
+      _manualChatRetryRunning = false;
+    }
   }
 
   Future<Map<String, OfflineQueueStatusSnapshot>> readScopedStatuses({
@@ -488,7 +566,7 @@ class OfflineMediaSyncService {
     final threadDoc = _supportCollection.doc(threadId);
     final threadDocument = entry.threadDocument == null
         ? null
-        : Map<String, dynamic>.from(entry.threadDocument!);
+        : copyDocumentFields(entry.threadDocument!);
     if (threadDocument != null) {
       final originalId = threadDocument['booking_id']?.toString();
       if (BookingIdResolver.isTemporary(originalId)) {
@@ -502,11 +580,13 @@ class OfflineMediaSyncService {
         }
         threadDocument['booking_id'] = finalId;
       }
-      final originalReferences = Map<String, dynamic>.from(threadDocument);
+      final originalReferences = copyDocumentFields(threadDocument);
       final linkedDocument = await OfflineMutationQueueService(
         firestore: _firestore,
       ).resolveResourceReferences(threadDocument, scope: scope);
-      threadDocument.addAll(linkedDocument);
+      for (final key in linkedDocument.keys) {
+        threadDocument[key] = linkedDocument[key];
+      }
       await _firestore.runTransaction((transaction) async {
         final existing = await transaction.get(threadDoc);
         final existingId = existing.data()?['booking_id']?.toString();
@@ -779,7 +859,14 @@ class OfflineMediaSyncService {
             storageKey.substring('$_storageKey::'.length),
           );
         }
-      } catch (error) {
+      } catch (error, stackTrace) {
+        if (kDebugMode && entry.kind == _OfflineMediaQueueKind.supportMessage) {
+          debugPrint('[Support sync] ${entry.id}: $error');
+          debugPrintStack(
+            label: '[Support sync] replay failure',
+            stackTrace: stackTrace,
+          );
+        }
         final normalizedError = normalizeUserErrorText(
           error.toString(),
           fallback: 'Something went wrong. Please try again.',

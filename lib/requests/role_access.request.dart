@@ -110,12 +110,14 @@ class RoleAccessRequest {
           if (sdkCachedDocuments.isNotEmpty && !currentNetworkStatus()) {
             return sdkCachedDocuments;
           }
-          final snapshot = await _roleAccessCollection.get().timeout(
-            _startupTimeout,
-            onTimeout: () {
-              throw TimeoutException('role_access fetch timeout');
-            },
-          );
+          final snapshot = await _roleAccessCollection
+              .get(const GetOptions(source: Source.server))
+              .timeout(
+                _startupTimeout,
+                onTimeout: () {
+                  throw TimeoutException('role_access fetch timeout');
+                },
+              );
           return snapshot.docs
               .map((doc) => {'id': doc.id, ...doc.data()})
               .toList(growable: false);
@@ -187,10 +189,13 @@ class RoleAccessRequest {
   }
 
   Future<void> _refreshRoleAccessFromSourceOfTruth() async {
-    final snapshot = await _roleAccessCollection.get().timeout(
-      _startupTimeout,
-      onTimeout: () => throw TimeoutException('role_access refresh timeout'),
-    );
+    final snapshot = await _roleAccessCollection
+        .get(const GetOptions(source: Source.server))
+        .timeout(
+          _startupTimeout,
+          onTimeout: () =>
+              throw TimeoutException('role_access refresh timeout'),
+        );
     final documents = snapshot.docs
         .map((doc) => {'id': doc.id, ...doc.data()})
         .toList(growable: false);

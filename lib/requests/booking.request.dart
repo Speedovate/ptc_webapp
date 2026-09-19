@@ -1,3 +1,4 @@
+import 'package:webapp/utils/cached_snapshot_documents.dart';
 import 'package:webapp/services/offline_reference_mapper.dart';
 import 'package:webapp/services/foreground_refresh_gate.dart';
 import 'dart:async';
@@ -458,9 +459,11 @@ class BookingRequest implements BookingRepository {
     final key =
         '${booking.id ?? booking.submissionKey}:${actionAt.microsecondsSinceEpoch}';
     final pending = _pendingActionSaves.putIfAbsent(key, () {
-      return _saveBooking(
-        booking,
-      ).whenComplete(() => _pendingActionSaves.remove(key));
+      return _saveBooking(booking).whenComplete(() {
+        // Do not return remove(): its value is this same pending Future.
+        // Returning it makes completion wait on itself after the save succeeds.
+        _pendingActionSaves.remove(key);
+      });
     });
     return pending.timeout(
       const Duration(seconds: 15),
@@ -1207,25 +1210,49 @@ class BookingRequest implements BookingRepository {
 
     DocumentSnapshot<Map<String, dynamic>>? nextChassis;
     DocumentSnapshot<Map<String, dynamic>>? displacedBooking;
+    DocumentSnapshot<Map<String, dynamic>>? previousChassis;
+    if (previousChassisId != null && previousChassisId != nextChassisId) {
+      previousChassis = await transaction.get(
+        _firestore.collection('chassis').doc(previousChassisId),
+      );
+    }
     if (nextChassisId != null) {
       nextChassis = await transaction.get(
         _firestore.collection('chassis').doc(nextChassisId),
       );
-      if (!nextChassis.exists) {
+      if (!nextChassis.exists && lifecycle?.keepBookingLink != false) {
         throw StateError('The selected chassis no longer exists.');
       }
       final displacedBookingId = normalizeId(
         nextChassis.data()?['current_booking_id']?.toString(),
       );
-      if (displacedBookingId != null && displacedBookingId != bookingId) {
+      if (lifecycle?.keepBookingLink == false &&
+          displacedBookingId != bookingId) {
+        // A historical completed/cancelled booking no longer owns this asset.
+        nextChassis = null;
+      } else if (displacedBookingId != null &&
+          displacedBookingId != bookingId) {
+        if (lifecycle != null &&
+            lifecycle.driverLink != ChassisDriverLink.deliveryDriver) {
+          throw StateError(
+            'Sync conflict: chassis is assigned to another booking.',
+          );
+        }
         displacedBooking = await transaction.get(
           _bookingsCollection.doc(displacedBookingId),
         );
       }
     }
 
-    final now = DateTime.now().toUtc().toIso8601String();
-    if (previousChassisId != null && previousChassisId != nextChassisId) {
+    final now =
+        document['updated_at']?.toString() ??
+        DateTime.now().toUtc().toIso8601String();
+    if (previousChassisId != null &&
+        previousChassisId != nextChassisId &&
+        normalizeId(
+              previousChassis?.data()?['current_booking_id']?.toString(),
+            ) ==
+            bookingId) {
       transaction.set(_firestore.collection('chassis').doc(previousChassisId), {
         'current_booking_id': FieldValue.delete(),
         'current_driver_id': FieldValue.delete(),
@@ -1592,7 +1619,12 @@ class BookingRequest implements BookingRepository {
     if (!shouldApply) {
       return;
     }
-    final documents = snapshot.docs.map(documentData).toList(growable: false);
+    final documents = mergeCachedSnapshotDocuments(
+      remote: snapshot.docs.map(documentData).toList(growable: false),
+      cached: await _cache.readDocuments(_bookingsResourceKey) ?? const [],
+      isFromCache: fromCache,
+      hasPendingWrites: hasPendingWrites,
+    );
     _log(
       () =>
           'realtime sync documentData mapped docs=${documents.length} elapsedMs=${eventStopwatch.elapsedMilliseconds}',
@@ -1684,7 +1716,12 @@ class BookingRequest implements BookingRepository {
           _log(() => 'refresh background skip pending local booking write');
           return;
         }
-        documents = snapshot.docs.map(documentData).toList(growable: false);
+        documents = mergeCachedSnapshotDocuments(
+          remote: snapshot.docs.map(documentData).toList(growable: false),
+          cached: await _cache.readDocuments(_bookingsResourceKey) ?? const [],
+          isFromCache: snapshot.metadata.isFromCache,
+          hasPendingWrites: snapshot.metadata.hasPendingWrites,
+        );
         _log(
           () =>
               'refresh background sdk get done docs=${snapshot.docs.length} fromCache=${snapshot.metadata.isFromCache} pendingWrites=${snapshot.metadata.hasPendingWrites} elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
@@ -1741,12 +1778,12 @@ class BookingRequest implements BookingRepository {
 
   Future<QuerySnapshot<Map<String, dynamic>>>
   _fetchAuthoritativeBookingsSnapshot({bool forceServer = false}) {
-    final options = forceServer && currentNetworkStatus()
+    final options = currentNetworkStatus()
         ? const GetOptions(source: Source.server)
-        : null;
+        : const GetOptions(source: Source.cache);
     _log(
       () =>
-          'authoritative snapshot request start forceServer=$forceServer online=${currentNetworkStatus()} source=${options?.source ?? "default"}',
+          'authoritative snapshot request start forceServer=$forceServer online=${currentNetworkStatus()} source=${options.source}',
     );
     return _bookingsCollection.get(options);
   }
@@ -1780,9 +1817,14 @@ class BookingRequest implements BookingRepository {
     );
     if (currentNetworkStatus() && snapshot.metadata.hasPendingWrites) {
       _log(() => 'getBookings sdk-only skip pending local booking write');
-      return const <Map<String, dynamic>>[];
+      return await _cache.readDocuments(_bookingsResourceKey) ?? const [];
     }
-    final documents = snapshot.docs.map(documentData).toList(growable: false);
+    final documents = mergeCachedSnapshotDocuments(
+      remote: snapshot.docs.map(documentData).toList(growable: false),
+      cached: await _cache.readDocuments(_bookingsResourceKey) ?? const [],
+      isFromCache: snapshot.metadata.isFromCache,
+      hasPendingWrites: snapshot.metadata.hasPendingWrites,
+    );
     _log(
       () =>
           'getBookings sdk-only documentData mapped docs=${documents.length} elapsedMs=${fetchStopwatch.elapsedMilliseconds}',

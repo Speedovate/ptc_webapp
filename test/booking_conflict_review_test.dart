@@ -231,7 +231,7 @@ void main() {
     await vm.apply();
     expect(vm.preview, isNull);
     expect(vm.conflicts, isEmpty);
-    expect(vm.success, contains('#84'));
+    expect(vm.success, contains('Booking 84'));
     vm.dispose();
   });
   testWidgets('dialog displays comparison and starts with apply disabled', (
@@ -250,7 +250,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Review $temp'));
     await tester.pumpAndSettle();
-    expect(find.text('Temporary copy → Booking #84'), findsOneWidget);
+    expect(find.text('Temporary copy → Booking 84'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('client status'),
       150,

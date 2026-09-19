@@ -8,6 +8,7 @@ import 'package:flutter/scheduler.dart';
 
 import 'app_cached_network_image_online_listener.dart';
 import '../../services/persistent_image_cache_service.dart';
+import '../../services/network_status_events.dart';
 import '../../utils/performance_trace.dart';
 
 class AppCachedNetworkImage extends StatefulWidget {
@@ -224,7 +225,11 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
     if (!mounted || requestSerial != _webImageLoadSerial) {
       return;
     }
-    if (_keepsInitialNetworkImage && !forceRefresh) {
+    if (_keepsInitialNetworkImage &&
+        !forceRefresh &&
+        !_hasError &&
+        !_isRecoveringCachedImage &&
+        currentNetworkStatus()) {
       // Let the first browser image remain visible while its bytes are saved
       // for the next mount. Swapping it to a data URL mid-render causes the
       // white flash seen when selecting support users.

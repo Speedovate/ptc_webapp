@@ -1,3 +1,4 @@
+const {advanceDeliveredBooking} = require('./chassis-workflow');
 const {onSchedule} = require('firebase-functions/v2/scheduler');
 const {onDocumentCreated, onDocumentUpdated} = require('firebase-functions/v2/firestore');
 const {initializeApp} = require('firebase-admin/app');
@@ -52,7 +53,7 @@ exports.notifyPendingBooking = onDocumentCreated(
         notificationId: `booking-pending-${bookingId}`,
         bookingId,
         title: 'New Booking',
-        body: `Booking #${bookingId} is waiting for assignment.`,
+        body: `Booking ${bookingId} is waiting for assignment.`,
         url: 'https://paltranco.vercel.app/',
       },
       webpush: {
@@ -120,7 +121,7 @@ exports.notifyChassisCheck = onDocumentUpdated(
         bookingId,
         chassisId,
         title: 'Check Chassis',
-        body: `Booking #${bookingId}: chassis #${chassisId} needs client confirmation.`,
+        body: `Booking ${bookingId}: chassis #${chassisId} needs client confirmation.`,
         url: 'https://paltranco.vercel.app/',
       },
       webpush: {
@@ -166,8 +167,8 @@ exports.notifyBookingAssignment = onDocumentUpdated(
       if (tokens.length === 0) return;
 
       const body = role === 'client'
-        ? `Your booking #${bookingId} has been assigned to a driver and helper.`
-        : `You have been assigned to booking #${bookingId}.`;
+        ? `Your booking ${bookingId} has been assigned to a driver and helper.`
+        : `You have been assigned to booking ${bookingId}.`;
       await getMessaging().sendEachForMulticast({
         tokens,
         data: {
@@ -195,20 +196,10 @@ async function advanceDueDeliveredBookings() {
     .get();
   if (snapshot.empty) return;
 
-  const batch = db.batch();
   const now = new Date().toISOString();
   for (const document of snapshot.docs) {
-    // The query filters these already; retain this guard for malformed legacy data.
-    const chassisId = String(document.data().chassis_id || '').trim();
-    if (!chassisId) continue;
-    batch.set(document.ref, {
-      client_status: 'check',
-      driver_status: 'check',
-      helper_status: 'check',
-      updated_at: now,
-    }, {merge: true});
+    await advanceDeliveredBooking(db, document.ref, dueAt, now);
   }
-  await batch.commit();
 }
 
 function normalize(value) {

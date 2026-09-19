@@ -1,3 +1,5 @@
+import 'package:webapp/models/chassis_action_history.dart';
+import 'package:webapp/widgets/shared/chassis_action_history_dialog.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
 
@@ -31,7 +33,8 @@ class AdminChassisView extends StatefulWidget {
   State<AdminChassisView> createState() => _AdminChassisViewState();
 }
 
-class _AdminChassisViewState extends State<AdminChassisView> {
+class _AdminChassisViewState extends State<AdminChassisView>
+    with WidgetsBindingObserver {
   static const _headerStyle = TextStyle(
     color: AppColors.textSecondary,
     fontWeight: FontWeight.w700,
@@ -51,9 +54,67 @@ class _AdminChassisViewState extends State<AdminChassisView> {
   DateTime? _updatedEndDate;
   List<Chassis> _items = const <Chassis>[];
   List<Booking> _bookingOptions = const <Booking>[];
+  Map<String, UserModel> _historyUsers = const {};
   List<UserModel> _driverOptions = const <UserModel>[];
   Future<void>? _editorOptionsFuture;
   StreamSubscription<List<Chassis>>? _chassisSubscription;
+  final _histories = ValueNotifier<Map<int, ChassisActionHistory>>({});
+  final _historyClock = ValueNotifier<DateTime>(DateTime.now());
+  StreamSubscription<List<Booking>>? _bookingSubscription;
+  Timer? _historyTimer;
+  bool _pageVisible = true;
+  bool _appVisible = true;
+
+  void _refreshHistories() {
+    final byChassis = <String, List<Booking>>{};
+    final byId = <String?, Booking>{};
+    for (final booking in _bookingOptions) {
+      byId[booking.id] = booking;
+      if (booking.chassisId != null) {
+        byChassis.putIfAbsent(booking.chassisId!, () => []).add(booking);
+      }
+    }
+    _histories.value = {
+      for (final item in _items)
+        item.id: ChassisActionHistory.fromBookings(item, {
+          ...?byChassis['${item.id}'],
+          if (item.bookingReferenceId != null &&
+              byId[item.bookingReferenceId] != null)
+            byId[item.bookingReferenceId]!,
+        }),
+    };
+    _updateHistoryTimer();
+  }
+
+  void _updateHistoryTimer() {
+    final needed =
+        _pageVisible &&
+        _appVisible &&
+        _histories.value.values.any((history) => history.waiting);
+    if (!needed) {
+      _historyTimer?.cancel();
+      _historyTimer = null;
+    } else {
+      _historyClock.value = DateTime.now();
+      _historyTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        _historyClock.value = DateTime.now();
+      });
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _pageVisible = TickerMode.valuesOf(context).enabled;
+    _updateHistoryTimer();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appVisible = state == AppLifecycleState.resumed;
+    _updateHistoryTimer();
+  }
+
   bool _isLoadingChassis = true;
   String? _chassisLoadError;
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
@@ -68,6 +129,16 @@ class _AdminChassisViewState extends State<AdminChassisView> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _bookingSubscription = BookingRequest.instance.watchBookings().listen((
+      bookings,
+    ) {
+      if (!mounted) return;
+      setState(() {
+        _bookingOptions = bookings;
+        _refreshHistories();
+      });
+    }, onError: (_) {});
     _editorOptionsFuture = _loadEditorOptions();
     unawaited(_editorOptionsFuture!);
     _chassisSubscription = ChassisRequest.instance.watchChassis().listen((
@@ -76,6 +147,7 @@ class _AdminChassisViewState extends State<AdminChassisView> {
       if (!mounted || !ChassisRequest.instance.hasResolvedChassis) return;
       setState(() {
         _items = items;
+        _refreshHistories();
         _isLoadingChassis = false;
         _chassisLoadError = null;
       });
@@ -85,6 +157,11 @@ class _AdminChassisViewState extends State<AdminChassisView> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _historyTimer?.cancel();
+    _bookingSubscription?.cancel();
+    _histories.dispose();
+    _historyClock.dispose();
     _chassisSubscription?.cancel();
     super.dispose();
   }
@@ -101,6 +178,7 @@ class _AdminChassisViewState extends State<AdminChassisView> {
       if (!mounted) return;
       setState(() {
         _items = items;
+        _refreshHistories();
         _isLoadingChassis = false;
       });
     } catch (_) {
@@ -123,6 +201,11 @@ class _AdminChassisViewState extends State<AdminChassisView> {
       final users = results[1] as List<UserModel>;
       setState(() {
         _bookingOptions = bookings;
+        _refreshHistories();
+        _historyUsers = {
+          for (final user in users)
+            if (user.id != null) user.id!: user,
+        };
         _driverOptions = users
             .where((user) => user.role?.trim().toLowerCase() == 'driver')
             .toList();
@@ -187,7 +270,13 @@ class _AdminChassisViewState extends State<AdminChassisView> {
               .map((item) => item.location ?? '-')
               .fold<String>('-', AdminListMeasurements.longerText);
           final sampleStatus = visible
-              .map((item) => chassisStatusLabel(item.currentStatus))
+              .map(
+                (item) =>
+                    _histories.value[item.id]?.elapsedLabel(
+                      _historyClock.value,
+                    ) ??
+                    chassisStatusLabel(item.currentStatus),
+              )
               .fold<String>('-', AdminListMeasurements.longerText);
           final sampleCreated = visible
               .map((item) => AdminUsersView.formatCreatedAt(item.createdAt))
@@ -358,6 +447,12 @@ class _AdminChassisViewState extends State<AdminChassisView> {
                           child: useWideTable
                               ? _ChassisDesktopRow(
                                   item: entry.value,
+                                  elapsed: ChassisElapsedText(
+                                    history:
+                                        _histories.value[entry.value.id] ??
+                                        ChassisActionHistory([]),
+                                    clock: _historyClock,
+                                  ),
                                   client: client,
                                   driver: driver,
                                   idWidth: idWidth,
@@ -377,6 +472,12 @@ class _AdminChassisViewState extends State<AdminChassisView> {
                                 )
                               : _ChassisResponsiveCard(
                                   item: entry.value,
+                                  elapsed: ChassisElapsedText(
+                                    history:
+                                        _histories.value[entry.value.id] ??
+                                        ChassisActionHistory([]),
+                                    clock: _historyClock,
+                                  ),
                                   client: client,
                                   driver: driver,
                                   actions: _chassisActions(entry.value),
@@ -401,7 +502,7 @@ class _AdminChassisViewState extends State<AdminChassisView> {
     AdminListActionButton(
       icon: Icons.visibility_rounded,
       backgroundColor: Colors.yellow.shade900,
-      onTap: () => _openEditor(item: item, readOnly: true),
+      onTap: () => _openHistory(item),
     ),
     if (_canUpdateChassis)
       AdminListActionButton(
@@ -423,6 +524,26 @@ class _AdminChassisViewState extends State<AdminChassisView> {
         onTap: () => _deleteChassis(item),
       ),
   ];
+
+  Future<void> _openHistory(Chassis item) async {
+    await (_editorOptionsFuture ??= _loadEditorOptions());
+    if (!mounted) return;
+    await showAppDialog<void>(
+      context: context,
+      wrapInSelectionArea: false,
+      barrierDismissible: true,
+      builder: (context) =>
+          ValueListenableBuilder<Map<int, ChassisActionHistory>>(
+            valueListenable: _histories,
+            builder: (context, histories, child) => ChassisActionHistoryDialog(
+              name: item.name,
+              usersById: _historyUsers,
+              history: histories[item.id] ?? ChassisActionHistory([]),
+              clock: _historyClock,
+            ),
+          ),
+    );
+  }
 
   Future<void> _toggleActive(Chassis item) async {
     if (!_canUpdateChassis) return;
@@ -916,6 +1037,7 @@ class _ChassisHeaderRow extends StatelessWidget {
 class _ChassisDesktopRow extends StatelessWidget {
   const _ChassisDesktopRow({
     required this.item,
+    required this.elapsed,
     required this.client,
     required this.driver,
     required this.idWidth,
@@ -933,6 +1055,7 @@ class _ChassisDesktopRow extends StatelessWidget {
   });
 
   final Chassis item;
+  final Widget elapsed;
   final _ChassisContact client;
   final _ChassisContact driver;
   final double idWidth;
@@ -995,7 +1118,13 @@ class _ChassisDesktopRow extends StatelessWidget {
           AdminListFixedSlot(
             width: statusWidth,
             child: AdminListBodyCell(
-              child: ChassisStatusPill(status: item.currentStatus),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ChassisStatusPill(status: item.currentStatus),
+                  elapsed,
+                ],
+              ),
             ),
           ),
           AdminListFixedSlot(
@@ -1045,6 +1174,7 @@ class _ChassisDesktopRow extends StatelessWidget {
 class _ChassisResponsiveCard extends StatelessWidget {
   const _ChassisResponsiveCard({
     required this.item,
+    required this.elapsed,
     required this.client,
     required this.driver,
     required this.actions,
@@ -1052,6 +1182,7 @@ class _ChassisResponsiveCard extends StatelessWidget {
   });
 
   final Chassis item;
+  final Widget elapsed;
   final _ChassisContact client;
   final _ChassisContact driver;
   final List<Widget> actions;
@@ -1122,6 +1253,7 @@ class _ChassisResponsiveCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 6),
                         ChassisStatusPill(status: item.currentStatus),
+                        elapsed,
                       ],
                     ),
                   ),

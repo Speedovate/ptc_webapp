@@ -33,3 +33,20 @@ login page rendered after restart. Headless Chrome reported CPU-only rendering;
 hardware GPU and authenticated background/resume stress remain unverified.
 
 200 native tests pass, including removal/replacement/secondary-view cases. Eight focused Chrome lifecycle tests also pass.
+
+## Offline Support typing after hot restart
+
+The later user log also contains repeated shader compilation failures and
+`TypeError: rawData[$forEach] is not a function` through documentData in Support
+and Chassis. The user confirmed this occurs after hot restart, not a fresh run.
+That identifies the trigger but does not prove a GPU driver or Firestore SDK root
+cause. Do not rewrite document payloads, clear offline storage, or swallow these
+errors as a supposed repair.
+
+Support's composer now observes its content state locally so typing/clearing does
+not rebuild the message history. Its outer PlatformShell opts into square top
+corners; previously the parent's clipping rounded the already-square panels.
+These UI changes are not a verified shader/runtime fix. Use a fresh debug session
+for comparison; an optional CPU-only CanvasKit run can isolate the WebGL path:
+`flutter run -d chrome --web-port=3000 --dart-define=FLUTTER_WEB_CANVASKIT_FORCE_CPU_ONLY=true`.
+This diagnostic may render more slowly and does not change release defaults.

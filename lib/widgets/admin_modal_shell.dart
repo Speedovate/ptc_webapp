@@ -14,6 +14,7 @@ class AdminModalShell extends StatelessWidget {
     this.maxWidth = 560,
     this.maxHeightFactor = 0.82,
     this.flexibleBody = false,
+    this.selectable = false,
     this.bodyHandlesScrolling = false,
     this.actions,
     this.contentInset = const EdgeInsets.fromLTRB(0, 16, 0, 24),
@@ -30,6 +31,10 @@ class AdminModalShell extends StatelessWidget {
   final double maxWidth;
   final double maxHeightFactor;
   final bool flexibleBody;
+  final bool selectable;
+
+  Widget _selectableContent(Widget child) =>
+      selectable ? SelectionArea(child: child) : child;
 
   /// Use a bounded body for a child that provides its own lazy viewport.
   final bool bodyHandlesScrolling;
@@ -89,77 +94,79 @@ class AdminModalShell extends StatelessWidget {
           horizontal: horizontalInset,
           vertical: verticalInset,
         ),
-        child: Stack(
-          children: [
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: availableWidth,
-                maxHeight: mediaSize.height * maxHeightFactor,
-              ),
-              child: SizedBox(
-                width: availableWidth,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-                      child: Text(title, style: theme.textTheme.titleLarge),
-                    ),
-                    if (flexibleBody)
-                      Flexible(
-                        child: bodyHandlesScrolling
-                            ? Padding(padding: contentInset, child: child)
-                            : SingleChildScrollView(
-                                primary: false,
-                                child: Padding(
-                                  padding: contentInset,
-                                  child: child,
-                                ),
-                              ),
-                      )
-                    else
-                      ConstrainedBox(
-                        constraints: BoxConstraints(maxHeight: bodyMaxHeight),
-                        child: bodyHandlesScrolling
-                            ? Padding(padding: contentInset, child: child)
-                            : SingleChildScrollView(
-                                primary: false,
-                                child: Padding(
-                                  padding: contentInset,
-                                  child: child,
-                                ),
-                              ),
-                      ),
-                    if (hasActions)
-                      Padding(
-                        padding: actionsInset,
-                        child: Wrap(
-                          alignment: WrapAlignment.end,
-                          spacing: 12,
-                          runSpacing: 8,
-                          children: actions!,
-                        ),
-                      ),
-                  ],
+        child: _selectableContent(
+          Stack(
+            children: [
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: availableWidth,
+                  maxHeight: mediaSize.height * maxHeightFactor,
                 ),
-              ),
-            ),
-            if (isLoading)
-              Positioned.fill(
-                child: ColoredBox(
-                  color: Colors.white.withValues(alpha: loadingOpacity),
-                  child: Align(
-                    alignment: Alignment(0, loadingAlignmentY),
-                    child: AppPageLoading(
-                      message: loadingMessage,
-                      compact: true,
-                      padding: loadingPadding,
-                    ),
+                child: SizedBox(
+                  width: availableWidth,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                        child: Text(title, style: theme.textTheme.titleLarge),
+                      ),
+                      if (flexibleBody)
+                        Flexible(
+                          child: bodyHandlesScrolling
+                              ? Padding(padding: contentInset, child: child)
+                              : SingleChildScrollView(
+                                  primary: false,
+                                  child: Padding(
+                                    padding: contentInset,
+                                    child: child,
+                                  ),
+                                ),
+                        )
+                      else
+                        ConstrainedBox(
+                          constraints: BoxConstraints(maxHeight: bodyMaxHeight),
+                          child: bodyHandlesScrolling
+                              ? Padding(padding: contentInset, child: child)
+                              : SingleChildScrollView(
+                                  primary: false,
+                                  child: Padding(
+                                    padding: contentInset,
+                                    child: child,
+                                  ),
+                                ),
+                        ),
+                      if (hasActions)
+                        Padding(
+                          padding: actionsInset,
+                          child: Wrap(
+                            alignment: WrapAlignment.end,
+                            spacing: 12,
+                            runSpacing: 8,
+                            children: actions!,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ),
-          ],
+              if (isLoading)
+                Positioned.fill(
+                  child: ColoredBox(
+                    color: Colors.white.withValues(alpha: loadingOpacity),
+                    child: Align(
+                      alignment: Alignment(0, loadingAlignmentY),
+                      child: AppPageLoading(
+                        message: loadingMessage,
+                        compact: true,
+                        padding: loadingPadding,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
