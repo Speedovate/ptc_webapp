@@ -1,3 +1,4 @@
+import 'package:webapp/services/field_type_history_service.dart';
 import 'dart:async';
 
 import 'package:webapp/services/pending_booking_submission.dart';
@@ -498,7 +499,19 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         submittedByUserId: submittedByUserId,
         submittedByUserRole: submittedByUserRole,
       );
+      final historyValues = FieldTypeHistoryService.valuesFor(
+        fieldsForForm(activeForm, answers: normalizedAnswers),
+        normalizedAnswers,
+      );
+      final actionAt = nextBooking.createdAt ?? DateTime.now();
       final saved = await _bookingRepository.saveBooking(nextBooking);
+      unawaited(
+        FieldTypeHistoryService.instance.record(
+          submittedByUserId,
+          historyValues,
+          actionAt,
+        ),
+      );
       _pendingSubmission.clear();
       return saved;
     } catch (error) {
@@ -550,7 +563,19 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         submittedByUserId: submittedByUserId,
         submittedByUserRole: submittedByUserRole,
       );
+      final historyValues = FieldTypeHistoryService.valuesFor(
+        fields,
+        normalizedAnswers,
+      );
+      final actionAt = nextBooking.createdAt ?? DateTime.now();
       final savedBooking = await _bookingRepository.saveBooking(nextBooking);
+      unawaited(
+        FieldTypeHistoryService.instance.record(
+          submittedByUserId,
+          historyValues,
+          actionAt,
+        ),
+      );
       answers = {};
       errors = {};
       resetTick += 1;

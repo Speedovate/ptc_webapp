@@ -1,3 +1,5 @@
+import 'package:webapp/services/field_type_history_service.dart';
+import 'package:webapp/widgets/shared/type_history_input.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -648,56 +650,66 @@ class _TextFieldInputState extends State<_TextFieldInput> {
         ? adminEnterPlaceholder(fieldLabel)
         : 'Optional';
 
-    return TextField(
+    return TypeHistoryInput(
       controller: _controller,
-      focusNode: _focusNode,
-      keyboardType: _isPhoneField ? TextInputType.phone : widget.keyboardType,
-      textInputAction: widget.nextFocusNode != null
-          ? TextInputAction.next
-          : TextInputAction.done,
-      textCapitalization: _textCapitalization,
+      historyKey: FieldTypeHistoryService.fieldKey(widget.field),
+      options: widget.field.options,
       inputFormatters: _isPhoneField
           ? const [PhilippinesPhoneInputFormatter()]
           : _textCaseInputFormatters,
-      onSubmitted: (_) {
-        final nextFocusNode = widget.nextFocusNode;
-        if (nextFocusNode != null) {
-          _focusAndMaybeActivateNext(nextFocusNode);
-        } else {
-          FocusScope.of(context).unfocus();
-        }
-      },
-      scrollPadding: EdgeInsets.zero,
-      onTapOutside: _unfocusWithoutScroll,
-      style: adminFieldValueTextStyle,
-      cursorColor: palette.accent,
-      decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
-        isDense: true,
-        filled: false,
-        contentPadding: const EdgeInsets.only(
-          left: 2,
-          right: 2,
-          top: 14,
-          bottom: 10,
-        ),
-        enabledBorder: UnderlineInputBorder(
-          borderSide: BorderSide(color: palette.border),
-        ),
-        focusedBorder: UnderlineInputBorder(
-          borderSide: BorderSide(color: palette.accent, width: 2),
-        ),
-        errorBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: AppColors.danger),
-        ),
-        focusedErrorBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: AppColors.danger, width: 2),
-        ),
-        errorText: widget.errorText,
-        helperText: _constraintHint(widget.field),
-        helperStyle: adminFieldHelperTextStyle.copyWith(
-          color: palette.accentMuted,
+      child: TextField(
+        controller: _controller,
+        focusNode: _focusNode,
+        keyboardType: _isPhoneField ? TextInputType.phone : widget.keyboardType,
+        textInputAction: widget.nextFocusNode != null
+            ? TextInputAction.next
+            : TextInputAction.done,
+        textCapitalization: _textCapitalization,
+        inputFormatters: _isPhoneField
+            ? const [PhilippinesPhoneInputFormatter()]
+            : _textCaseInputFormatters,
+        onSubmitted: (_) {
+          final nextFocusNode = widget.nextFocusNode;
+          if (nextFocusNode != null) {
+            _focusAndMaybeActivateNext(nextFocusNode);
+          } else {
+            FocusScope.of(context).unfocus();
+          }
+        },
+        scrollPadding: EdgeInsets.zero,
+        onTapOutside: _unfocusWithoutScroll,
+        style: adminFieldValueTextStyle,
+        cursorColor: palette.accent,
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: adminFieldHintTextStyle.copyWith(
+            color: palette.accentMuted,
+          ),
+          isDense: true,
+          filled: false,
+          contentPadding: const EdgeInsets.only(
+            left: 2,
+            right: 2,
+            top: 14,
+            bottom: 10,
+          ),
+          enabledBorder: UnderlineInputBorder(
+            borderSide: BorderSide(color: palette.border),
+          ),
+          focusedBorder: UnderlineInputBorder(
+            borderSide: BorderSide(color: palette.accent, width: 2),
+          ),
+          errorBorder: const UnderlineInputBorder(
+            borderSide: BorderSide(color: AppColors.danger),
+          ),
+          focusedErrorBorder: const UnderlineInputBorder(
+            borderSide: BorderSide(color: AppColors.danger, width: 2),
+          ),
+          errorText: widget.errorText,
+          helperText: _constraintHint(widget.field),
+          helperStyle: adminFieldHelperTextStyle.copyWith(
+            color: palette.accentMuted,
+          ),
         ),
       ),
     );

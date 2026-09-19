@@ -14,7 +14,7 @@ class AdminModalShell extends StatelessWidget {
     this.maxWidth = 560,
     this.maxHeightFactor = 0.82,
     this.flexibleBody = false,
-    this.selectable = false,
+    this.selectable = true,
     this.bodyHandlesScrolling = false,
     this.actions,
     this.contentInset = const EdgeInsets.fromLTRB(0, 16, 0, 24),

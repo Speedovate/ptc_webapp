@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_dialog.dart';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -32,7 +33,7 @@ Future<void> showAppImageViewer(
         'image-viewer:${title.trim()}:${resolvedImageUrl ?? (hasMemoryImage ? "memory" : "none")}',
     barrierColor: Colors.black.withValues(alpha: 0.78),
     builder: (dialogContext) {
-      return Dialog(
+      return AppSelectableDialog(
         insetPadding: const EdgeInsets.all(24),
         backgroundColor: const Color(0xFF121212),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),

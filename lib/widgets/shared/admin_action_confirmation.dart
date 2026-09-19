@@ -92,15 +92,18 @@ class _AdminActionConfirmationDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.title),
+      title: SelectableText(widget.title),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(widget.message),
+          SelectableText(widget.message),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            Text(_error!, style: const TextStyle(color: AppColors.danger)),
+            SelectableText(
+              _error!,
+              style: const TextStyle(color: AppColors.danger),
+            ),
           ],
         ],
       ),

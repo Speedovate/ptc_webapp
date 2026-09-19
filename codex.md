@@ -944,3 +944,33 @@ The later runtime log also fails at rawData.keys and cloud_firestore_web's
 decodeMapData updateAll. The key-copy workaround is therefore not a complete
 fix for the reported runtime failure; avoid claiming otherwise or successively
 replacing SDK map operations without reproducing the underlying runtime issue.
+
+### Optional field type history
+
+Flow text/email/phone/number inputs and chassis name/location use the additive
+TypeHistoryInput wrapper. Preserve the underlying controllers, validators, phone/
+casing formatters, and save behavior. History is written only after a successful
+business save; failures must remain isolated. No typing-time Firestore query or
+write is introduced. See `docs/field-type-history.md` for bounds, exclusions, and
+the pending security/scope decision that prevents private Firestore history from
+being enabled under the current allow-all rules. Existing schema options work.
+
+Search dropdown pickers keep SelectionArea inside the bounded Dialog child,
+not around the entire route. Outside taps dismiss only the picker, preserve the
+prior value, and never invoke onChanged. Keep the local navigator for nested
+forms. Reproduced at 375/1200 widths before the fix; regression checks also cover
+filtering and selecting after dismissal.
+
+All current dialogs and bottom sheets support outside-tap dismissal. Shared
+showAppDialog defaults to no route-wide SelectionArea; AdminModalShell selects
+inside its own Dialog by default. Standalone image/camera/user dialogs use
+AppSelectableDialog, while alert text is individually selectable. Keep selection
+inside modal surfaces. Booking-conflict review allows dismissal while busy; its
+view-model disposal guard protects late notifications. Dismissal does not cancel
+a business operation already in flight. Tests cover forms, confirmations, custom
+dialogs, sheets, nested search, selection, and late confirmation completion.
+
+Chassis history status pills use the shared booking-to-chassis lifecycle
+projection (Delivered/Check = Loaded), not raw booking stages. Unknown stages
+show no inferred chassis state. Waiting/claim durations omit a zero-hour prefix
+(e.g. 5m); durations of an hour or more retain hours and minutes.

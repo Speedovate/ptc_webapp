@@ -436,20 +436,17 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
                                     ),
                                     onPressed: () => showDialog<void>(
                                       context: context,
-                                      barrierDismissible: false,
-                                      builder: (_) => SelectionArea(
-                                        child: BookingConflictReviewDialog(
-                                          viewModel:
-                                              BookingConflictReviewViewModel(
-                                                service:
-                                                    BookingConflictReviewService(
-                                                      firestore:
-                                                          FirebaseFirestore
-                                                              .instance,
-                                                    ),
-                                                adminId: widget.user.id ?? '',
-                                              ),
-                                        ),
+                                      barrierDismissible: true,
+                                      builder: (_) => BookingConflictReviewDialog(
+                                        viewModel:
+                                            BookingConflictReviewViewModel(
+                                              service:
+                                                  BookingConflictReviewService(
+                                                    firestore: FirebaseFirestore
+                                                        .instance,
+                                                  ),
+                                              adminId: widget.user.id ?? '',
+                                            ),
                                       ),
                                     ),
                                   ),

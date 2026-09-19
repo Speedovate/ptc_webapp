@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -103,7 +104,7 @@ Future<AuthPickedImage?> _captureCameraImage(
         var isCapturing = false;
         return StatefulBuilder(
           builder: (context, setModalState) {
-            return Dialog(
+            return AppSelectableDialog(
               insetPadding: const EdgeInsets.symmetric(
                 horizontal: 24,
                 vertical: 24,

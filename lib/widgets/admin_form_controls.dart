@@ -696,12 +696,11 @@ class _AdminSearchSelectFormFieldState
       selected = await showDialog<String>(
         context: context,
         useRootNavigator: false,
-        builder: (context) => SelectionArea(
-          child: _AdminSearchSelectDialog(
-            title: _resolvedDialogTitle(widget.dialogTitle, widget.decoration),
-            options: widget.options,
-            initialQuery: _controller.text.trim(),
-          ),
+        barrierDismissible: true,
+        builder: (context) => _AdminSearchSelectDialog(
+          title: _resolvedDialogTitle(widget.dialogTitle, widget.decoration),
+          options: widget.options,
+          initialQuery: _controller.text.trim(),
         ),
       );
     } finally {
@@ -883,77 +882,84 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.white,
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 640),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                widget.title,
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
+      // Keep text selection inside the dialog's bounds so outside taps reach
+      // the modal barrier instead of a route-wide selection gesture region.
+      child: SelectionArea(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520, maxHeight: 640),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.title,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: _controller,
-                decoration:
-                    adminFormInputDecoration(
-                      '',
-                      hintText: 'Search location',
-                    ).copyWith(
-                      labelText: null,
-                      floatingLabelBehavior: FloatingLabelBehavior.never,
-                      prefixIcon: const Icon(Icons.search_rounded),
-                      suffixIcon: _controller.text.isEmpty
-                          ? null
-                          : IconButton(
-                              tooltip: 'Clear search',
-                              onPressed: _controller.clear,
-                              icon: const Icon(Icons.close_rounded),
-                            ),
-                      fillColor: Colors.white,
-                    ),
-              ),
-              Expanded(
-                child: filtered.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No matching locations found.',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      )
-                    : ListView.separated(
-                        padding: EdgeInsets.zero,
-                        itemCount: filtered.length,
-                        separatorBuilder: (_, _) => const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          final item = filtered[index];
-                          return ListTile(
-                            tileColor: Colors.white,
-                            hoverColor: Colors.white,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                            ),
-                            minVerticalPadding: 0,
-                            visualDensity: const VisualDensity(
-                              horizontal: 0,
-                              vertical: -2,
-                            ),
-                            title: Text(item, style: adminFieldValueTextStyle),
-                            onTap: () => Navigator.of(context).pop(item),
-                          );
-                        },
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _controller,
+                  decoration:
+                      adminFormInputDecoration(
+                        '',
+                        hintText: 'Search location',
+                      ).copyWith(
+                        labelText: null,
+                        floatingLabelBehavior: FloatingLabelBehavior.never,
+                        prefixIcon: const Icon(Icons.search_rounded),
+                        suffixIcon: _controller.text.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: 'Clear search',
+                                onPressed: _controller.clear,
+                                icon: const Icon(Icons.close_rounded),
+                              ),
+                        fillColor: Colors.white,
                       ),
-              ),
-            ],
+                ),
+                Expanded(
+                  child: filtered.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'No matching locations found.',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: EdgeInsets.zero,
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final item = filtered[index];
+                            return ListTile(
+                              tileColor: Colors.white,
+                              hoverColor: Colors.white,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              minVerticalPadding: 0,
+                              visualDensity: const VisualDensity(
+                                horizontal: 0,
+                                vertical: -2,
+                              ),
+                              title: Text(
+                                item,
+                                style: adminFieldValueTextStyle,
+                              ),
+                              onTap: () => Navigator.of(context).pop(item),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -1,3 +1,4 @@
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -106,14 +107,18 @@ class ChassisActionHistoryDialog extends StatelessWidget {
                     },
                     columnExtraWidths: const {0: 26},
                     cellBuilder: (row, column) => column == 0
-                        ? ChassisStatusPill(status: history.events[row].stage)
+                        ? ChassisStatusPill(
+                            status: history.events[row].chassisStatus ?? '',
+                          )
                         : null,
                     valuesAt: (index) {
                       final event = history.events[index];
-                      final stage = chassisStatusLabel(event.stage);
+                      final stage = chassisStatusLabel(
+                        event.chassisStatus ?? '',
+                      );
                       final details = <String>[
-                        if (history.claimLabel(event) case final String label)
-                          label,
+                        history.claimLabel(event) ??
+                            humanizeDropdownValue(event.stage),
                         if (event.actor != null)
                           _userLabel(
                             event.actor!,

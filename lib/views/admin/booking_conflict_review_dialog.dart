@@ -34,7 +34,7 @@ class _BookingConflictReviewDialogState
     builder: (context, _) {
       final preview = vm.preview;
       return PopScope(
-        canPop: !vm.busy,
+        canPop: true,
         child: AdminModalShell(
           title: 'Booking ID conflicts',
           maxWidth: 1000,

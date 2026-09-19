@@ -1,3 +1,5 @@
+import 'package:webapp/services/field_type_history_service.dart';
+import 'package:webapp/widgets/shared/type_history_input.dart';
 import 'package:webapp/models/chassis_action_history.dart';
 import 'package:webapp/widgets/shared/chassis_action_history_dialog.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
@@ -601,6 +603,9 @@ class _AdminChassisViewState extends State<AdminChassisView>
   Future<void> _openEditor({Chassis? item, bool readOnly = false}) async {
     await (_editorOptionsFuture ??= _loadEditorOptions());
     if (!mounted) return;
+    final historyAccount = await FieldTypeHistoryService.instance
+        .currentAccount();
+    if (!mounted) return;
     final name = TextEditingController(text: item?.name ?? '');
     final location = TextEditingController(text: item?.location ?? '');
     final isActive = ValueNotifier<bool>(item?.isActive ?? true);
@@ -669,6 +674,13 @@ class _AdminChassisViewState extends State<AdminChassisView>
                                 previousBookingId: item?.bookingReferenceId,
                                 baseUpdatedAt: item?.updatedAt,
                               );
+                              unawaited(
+                                FieldTypeHistoryService.instance
+                                    .record(historyAccount, {
+                                      'chassis:name': next.name,
+                                      'chassis:location': next.location ?? '',
+                                    }, now),
+                              );
                               _traceOffline('modal save resolved; closing');
                               if (dialogContext.mounted) {
                                 Navigator.of(dialogContext).pop(true);
@@ -703,11 +715,18 @@ class _AdminChassisViewState extends State<AdminChassisView>
               children: [
                 AdminModalFieldsSection(
                   children: [
-                    AdminModalTextField(
+                    TypeHistoryInput(
                       controller: name,
-                      label: 'Name',
-                      textInputAction: TextInputAction.next,
+                      historyKey: readOnly ? null : 'chassis:name',
+                      inputFormatters: const [NameCaseTextInputFormatter()],
+                      child: AdminModalTextField(
+                        controller: name,
+                        label: 'Name',
+                        bottomPadding: 0,
+                        textInputAction: TextInputAction.next,
+                      ),
                     ),
+                    const SizedBox(height: 6),
                     AdminDropdownFormField<String>(
                       initialValue: item == null ? null : selectedStatus,
                       iconEnabledColor: AppColors.primaryColor,
@@ -761,11 +780,15 @@ class _AdminChassisViewState extends State<AdminChassisView>
                           value == _noDriverOptionValue ? null : value,
                     ),
                     const SizedBox(height: 6),
-                    AdminModalTextField(
+                    TypeHistoryInput(
                       controller: location,
-                      label: 'Location',
-                      bottomPadding: 0,
-                      textInputAction: TextInputAction.done,
+                      historyKey: readOnly ? null : 'chassis:location',
+                      child: AdminModalTextField(
+                        controller: location,
+                        label: 'Location',
+                        bottomPadding: 0,
+                        textInputAction: TextInputAction.done,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     ValueListenableBuilder<bool>(

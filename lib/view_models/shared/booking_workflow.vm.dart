@@ -1,3 +1,4 @@
+import 'package:webapp/services/field_type_history_service.dart';
 import 'package:webapp/services/pending_booking_submission.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'dart:async';
@@ -1340,7 +1341,18 @@ class BookingWorkflowViewModel extends BaseViewModel {
           formAnswers: formAnswers,
         ),
       );
+      final historyValues = FieldTypeHistoryService.valuesFor(
+        actionFields,
+        formAnswers,
+      );
       final saved = await _bookingRepository.saveBooking(nextBooking);
+      unawaited(
+        FieldTypeHistoryService.instance.record(
+          currentUser.id,
+          historyValues,
+          nextBooking.updatedAt ?? actionAt,
+        ),
+      );
       _pendingAction.clear();
       booking = saved;
       if (cancelling) {

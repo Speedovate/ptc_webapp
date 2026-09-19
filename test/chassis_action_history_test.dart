@@ -35,6 +35,43 @@ Booking booking(String stage, {DateTime? claim}) => Booking(
   },
 );
 void main() {
+  test('history uses the same chassis status mapping as lifecycle writes', () {
+    final expected = {
+      'assigned': 'ready',
+      'ongoing': 'loaded',
+      'delivered': 'loaded',
+      'check': 'loaded',
+      'empty': 'empty',
+      'return': 'return',
+      'confirm': 'ready',
+      'cancelled': 'ready',
+      'pending': null,
+    };
+    for (final entry in expected.entries) {
+      expect(
+        ChassisActionEvent(
+          bookingId: '7',
+          stage: entry.key,
+          at: DateTime(2026),
+        ).chassisStatus,
+        entry.value,
+      );
+    }
+  });
+  test('duration omits zero hours but retains hour and day durations', () {
+    final start = DateTime.utc(2026);
+    final history = ChassisActionHistory([], deliveredAt: start, waiting: true);
+    expect(history.elapsedLabel(start), 'Waiting for 0m');
+    expect(
+      history.elapsedLabel(start.add(const Duration(minutes: 59))),
+      'Waiting for 59m',
+    );
+    expect(
+      history.elapsedLabel(start.add(const Duration(hours: 1))),
+      'Waiting for 1h 0m',
+    );
+  });
+
   for (final stage in ['delivered', 'check', 'empty']) {
     test('$stage waits from actual delivery time, not sync time', () {
       final history = ChassisActionHistory.fromBookings(chassis, [
@@ -56,7 +93,7 @@ void main() {
     ]);
     expect(
       history.elapsedLabel(delivered.add(const Duration(days: 3))),
-      'Claimed in 0h 5m',
+      'Claimed in 5m',
     );
     expect(history.waiting, isFalse);
     expect(history.events, hasLength(2));
@@ -178,12 +215,15 @@ void main() {
       expect(find.text('Location'), findsWidgets);
       expect(find.text('Depot'), findsOneWidget);
       expect(find.byType(ChassisStatusPill), findsOneWidget);
-      expect(find.textContaining('Driver 7 | Juan Dela Cruz'), findsOneWidget);
+      expect(
+        find.textContaining('Delivered\nDriver 7 | Juan Dela Cruz'),
+        findsOneWidget,
+      );
       expect(find.textContaining('By user #'), findsNothing);
-      expect(find.text('Waiting for 0h 1m'), findsOneWidget);
+      expect(find.text('Waiting for 1m'), findsOneWidget);
       clock.value = clock.value.add(const Duration(minutes: 1));
       await tester.pump();
-      expect(find.text('Waiting for 0h 2m'), findsOneWidget);
+      expect(find.text('Waiting for 2m'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }

@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_dialog.dart';
 import 'package:webapp/widgets/shared/paged_data_sliver.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'package:flutter/material.dart';
@@ -2221,7 +2222,7 @@ class _AdminUserDetailDialog extends StatelessWidget {
     final size = MediaQuery.of(context).size;
     final dialogWidth = size.width > 1280 ? 1160.0 : size.width - 48;
     final dialogHeight = size.height > 940 ? 860.0 : size.height - 48;
-    return Dialog(
+    return AppSelectableDialog(
       insetPadding: const EdgeInsets.all(24),
       clipBehavior: Clip.antiAlias,
       child: SizedBox(

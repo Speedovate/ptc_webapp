@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -60,7 +61,8 @@ void main() {
                       showAppDialog<void>(
                         context: context,
                         modalKey: 'selection-dialog',
-                        builder: (context) => Dialog(child: content(context)),
+                        builder: (context) =>
+                            AppSelectableDialog(child: content(context)),
                       );
                     }
                   },

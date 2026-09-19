@@ -1,3 +1,4 @@
+import 'package:webapp/services/booking_chassis_lifecycle.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/chassis.dart';
 
@@ -18,6 +19,13 @@ class ChassisActionEvent {
   final String? actorRole;
   final String? driverId;
   final String? location;
+
+  /// Use the same projection as actual chassis updates, not the booking label.
+  String? get chassisStatus => chassisLifecycleInstruction(
+    previousBookingStatus: null,
+    nextBookingStatus: stage,
+    bookingDocument: const {},
+  )?.status;
 }
 
 /// Read-only projection of recorded workflow actions; never use sync/update time
@@ -50,7 +58,8 @@ class ChassisActionHistory {
     if (elapsed.isNegative) return 'Timing unavailable';
     final hours = elapsed.inHours;
     final minutes = (elapsed.inMinutes % 60);
-    return '${claimedAt == null ? 'Waiting for' : 'Claimed in'} ${hours}h ${minutes}m';
+    final duration = hours == 0 ? '${minutes}m' : '${hours}h ${minutes}m';
+    return '${claimedAt == null ? 'Waiting for' : 'Claimed in'} $duration';
   }
 
   String? claimLabel(ChassisActionEvent event) {

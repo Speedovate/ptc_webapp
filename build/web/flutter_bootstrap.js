@@ -44,7 +44,7 @@ _flutter.buildConfig = {"engineRevision":"06a2e2a110089dff50fe635cffd2a61e1b24fb
 (function () {
   const deployVersion = '2026-09-04-offline-shell-assets-1';
   const flutterServiceWorkerVersion =
-    "4079441089" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
+    "1878295873" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */ || String(Date.now());
   const serviceWorkerVersion =
     `${deployVersion}-${flutterServiceWorkerVersion}`;
   const swVersionKey = 'paltranco_sw_version';
