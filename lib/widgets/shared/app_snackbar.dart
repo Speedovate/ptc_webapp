@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -24,6 +26,16 @@ class AppSnackbar {
   static const _successColor = Color(0xFF2EAD62);
 
   static void showError(BuildContext context, String message) {
+    unawaited(
+      SyncErrorLogService.instance.report(
+        message,
+        StackTrace.current,
+        source: 'app_snackbar.dart',
+        operation: 'display error',
+        kind: 'displayed_error',
+      ),
+    );
+
     final normalized = normalizeUserErrorText(message, fallback: '').trim();
     final resolved = normalized.isNotEmpty
         ? normalized

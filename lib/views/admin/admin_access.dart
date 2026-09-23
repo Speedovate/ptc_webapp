@@ -1337,6 +1337,16 @@ const TextStyle _checkboxLabelStyle = TextStyle(
 );
 
 const Map<String, String> _permissionDisplayLabels = {
+  DispatcherAccessCapability.pmKpiRead: 'view-pm-kpi',
+  DispatcherAccessCapability.pmKpiUpdate: 'update-pm-kpi',
+  DispatcherAccessCapability.fuelLedgerRead: 'view-fuel-ledger',
+  DispatcherAccessCapability.fuelLedgerUpdate: 'update-fuel-ledger',
+  DispatcherAccessCapability.tripIncomeRead: 'view-driver-helper-income',
+  DispatcherAccessCapability.operationsCatalogRead:
+      'view-locations-trip-shares',
+  DispatcherAccessCapability.operationsCatalogUpdate:
+      'update-locations-trip-shares',
+
   DispatcherAccessCapability.dashboardRead: 'view-dashboard',
   DispatcherAccessCapability.dashboardUpdateBilling: 'manage-billing',
   DispatcherAccessCapability.dashboardExport: 'view-summary-report',
@@ -1443,6 +1453,28 @@ final List<_AccessOption> _allAccessOptions = [
   const _AccessOption(
     DispatcherAccessCapability.usersImpersonate,
     'manage-user-login',
+  ),
+  const _AccessOption(DispatcherAccessCapability.pmKpiRead, 'view-pm-kpi'),
+  const _AccessOption(DispatcherAccessCapability.pmKpiUpdate, 'update-pm-kpi'),
+  const _AccessOption(
+    DispatcherAccessCapability.fuelLedgerRead,
+    'view-fuel-ledger',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.fuelLedgerUpdate,
+    'update-fuel-ledger',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.tripIncomeRead,
+    'view-driver-helper-income',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.operationsCatalogRead,
+    'view-locations-trip-shares',
+  ),
+  const _AccessOption(
+    DispatcherAccessCapability.operationsCatalogUpdate,
+    'update-locations-trip-shares',
   ),
   const _AccessOption(
     DispatcherAccessCapability.vehicleMakesCreate,

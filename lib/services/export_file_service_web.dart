@@ -19,17 +19,18 @@ Future<ExportFileResult> exportFiles(
     await downloadBytes(
       fileName: entry.key,
       bytes: entry.value,
-      mimeType: exportDocxMimeType,
+      mimeType: entry.key.endsWith('.xlsx')
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : entry.key.endsWith('.pdf')
+          ? 'application/pdf'
+          : exportDocxMimeType,
     );
     return const ExportFileResult(
       message: 'Your document has been downloaded.',
     );
   }
 
-  await downloadZip(
-    fileName: bundleFileName,
-    files: files,
-  );
+  await downloadZip(fileName: bundleFileName, files: files);
   return ExportFileResult(
     message: '${files.length} documents have been downloaded as a ZIP file.',
   );

@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/record_text_link.dart';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -383,6 +384,23 @@ class BookingRecordCard extends StatelessWidget {
     return _displayValueForField(fieldKey, rawValue);
   }
 
+  static DateTime? pickupDateTime(Map<String, dynamic>? outputs) {
+    final date = _toDateTime(
+      outputFieldValue(outputs, 'pick_up_date'),
+    )?.toLocal();
+    if (date == null) {
+      return null;
+    }
+    final time = _parseScheduleTime(outputFieldValue(outputs, 'pick_up_time'));
+    return DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time?.$1 ?? 0,
+      time?.$2 ?? 0,
+    );
+  }
+
   static dynamic outputFieldValue(
     Map<String, dynamic>? outputs,
     String fieldKey,
@@ -392,6 +410,34 @@ class BookingRecordCard extends StatelessWidget {
     }
 
     final orderedSections = _extractOutputSections(outputs);
+
+    if (fieldKey == 'waybill_photo' || fieldKey == 'delivery_form_photo') {
+      for (final section in orderedSections) {
+        if (section.fields.containsKey(fieldKey)) {
+          // The newest explicit photo value includes a saved removal (null).
+          return section.fields[fieldKey];
+        }
+      }
+      return null;
+    }
+
+    // Location edits are appended under the booking's current workflow stage.
+    // A later Delivered edit must win over the original Pending location.
+    if (const {
+      'origin',
+      'origin_barangay',
+      'destination',
+      'destination_barangay',
+    }.contains(fieldKey)) {
+      for (final section in orderedSections) {
+        for (final candidateKey in _candidateFieldKeys(fieldKey)) {
+          if (section.fields.containsKey(candidateKey)) {
+            return section.fields[candidateKey];
+          }
+        }
+      }
+      return null;
+    }
 
     for (final candidateKey in _candidateFieldKeys(fieldKey)) {
       for (final section in orderedSections) {
@@ -996,34 +1042,10 @@ class _BookingLinkedUserValue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Flexible(child: Text(label, style: _bookingItemValueTextStyle)),
-        if (onTap != null) ...[
-          const SizedBox(width: 4),
-          AppMousePressable(
-            borderRadius: BorderRadius.circular(999),
-            onTap: onTap,
-            child: Builder(
-              builder: (context) => Container(
-                padding: const EdgeInsets.all(2),
-                decoration: BoxDecoration(
-                  color: appPressableActive(context)
-                      ? AppColors.primarySurfaceAlt.withValues(alpha: 0.34)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Icon(
-                  Icons.visibility_outlined,
-                  size: 18,
-                  color: AppColors.primaryColor,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ],
+    return RecordTextLink(
+      label: label,
+      onTap: onTap,
+      style: _bookingItemValueTextStyle,
     );
   }
 }

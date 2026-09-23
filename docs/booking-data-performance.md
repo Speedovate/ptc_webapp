@@ -1,3 +1,9 @@
+> September 23 follow-up: the full logical collection is now fetched in bounded
+> ID pages with bounded live ranges, cooperative cache processing and reused
+> hydrated models. See `performance-followup-2026-09-23.md`. The historical
+> description below predates this change; it remains correct that UI paging alone
+> does not limit the full dataset needed by global consumers.
+
 # Booking data performance follow-up
 
 ## Findings from the current code

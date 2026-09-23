@@ -1,3 +1,5 @@
+import 'package:webapp/utils/booking_party_search.dart';
+import 'package:webapp/widgets/shared/booking_record_card.dart';
 import 'dart:async';
 
 import 'package:stacked/stacked.dart';
@@ -262,6 +264,7 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
     }
 
     final values = <String>[
+      ...bookingPartySearchTerms(booking, _usersById),
       booking.id ?? '',
       booking.clientStatus ?? '',
       booking.driverStatus ?? '',
@@ -371,9 +374,9 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
     return '$month/$day/${value.year}';
   }
 
-  List<Booking> filteredBookings() {
+  List<Booking> filteredBookings({String? role}) {
     final query = _searchQuery.trim().toLowerCase();
-    return bookings.where((booking) {
+    final filtered = bookings.where((booking) {
       final matchesStatus =
           _statusFilter == 'All' ||
           statusLabelForRole(null, booking) == _statusFilter;
@@ -411,6 +414,30 @@ class ClientBookingHistoryViewModel extends BaseViewModel {
       }
       return matchesBooking(booking, query);
     }).toList();
+    final normalizedRole = normalizeRoleKey(role);
+    if (normalizedRole == 'driver' || normalizedRole == 'helper') {
+      final pickups = {
+        for (final booking in filtered)
+          booking: BookingRecordCard.pickupDateTime(booking.statusOutputs),
+      };
+      filtered.sort((a, b) {
+        final left = pickups[a];
+        final right = pickups[b];
+        if (left == null && right != null) {
+          return 1;
+        }
+        if (right == null && left != null) {
+          return -1;
+        }
+        final comparison = left != null && right != null
+            ? left.compareTo(right)
+            : 0;
+        return comparison != 0
+            ? comparison
+            : (a.id ?? '').compareTo(b.id ?? '');
+      });
+    }
+    return filtered;
   }
 
   String _userName(String? userId, String fallback) {

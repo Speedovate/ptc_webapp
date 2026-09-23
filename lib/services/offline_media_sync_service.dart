@@ -1,3 +1,4 @@
+import 'package:webapp/services/offline_error_diagnostics.dart';
 import 'package:webapp/utils/copy_document_fields.dart';
 import 'package:webapp/models/offline_queue_item.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
@@ -95,6 +96,7 @@ class OfflineMediaSyncService {
             createdAt: DateTime.tryParse(entry.createdAtIso),
             hasError: entry.lastError?.isNotEmpty == true,
             errorMessage: entry.lastError,
+            diagnostics: entry.diagnostics,
             nextRetryAt: entry.nextRetryAt,
           ),
         )
@@ -880,6 +882,24 @@ class OfflineMediaSyncService {
           entry.copyWith(
             retryCount: entry.retryCount + 1,
             lastError: normalizedError,
+            diagnostics: await offlineErrorDiagnostics(
+              error: error,
+              stack: stackTrace,
+              source: 'offline_media_sync_service.dart',
+              operation: entry.kind.name,
+              entryId: entry.id,
+              target:
+                  '${entry.threadId ?? entry.userId ?? entry.id}/${entry.fieldKey ?? ''}',
+              attempt: entry.retryCount + 1,
+              owner: storageKey.substring('$_storageKey::'.length),
+              actionAt: entry.createdAtIso,
+              context: {
+                'sender_role': entry.senderRole,
+                'field_key': entry.fieldKey,
+                'media_size': entry.size,
+                'next_retry_delay_seconds': delaySeconds,
+              },
+            ),
             nextRetryAt: DateTime.now().toUtc().add(
               Duration(seconds: delaySeconds),
             ),
@@ -1070,6 +1090,7 @@ class _OfflineMediaQueueEntry {
     required this.retryCount,
     this.localOrderKey,
     this.lastError,
+    this.diagnostics,
     this.nextRetryAt,
     this.userId,
     this.fieldKey,
@@ -1155,6 +1176,7 @@ class _OfflineMediaQueueEntry {
   final int retryCount;
   final String? localOrderKey;
   final String? lastError;
+  final String? diagnostics;
   final DateTime? nextRetryAt;
   final String? userId;
   final String? fieldKey;
@@ -1176,6 +1198,7 @@ class _OfflineMediaQueueEntry {
   _OfflineMediaQueueEntry copyWith({
     int? retryCount,
     String? lastError,
+    String? diagnostics,
     DateTime? nextRetryAt,
     String? previousUploadId,
   }) {
@@ -1186,6 +1209,7 @@ class _OfflineMediaQueueEntry {
       retryCount: retryCount ?? this.retryCount,
       localOrderKey: localOrderKey,
       lastError: lastError ?? this.lastError,
+      diagnostics: diagnostics ?? this.diagnostics,
       nextRetryAt: nextRetryAt ?? this.nextRetryAt,
       userId: userId,
       fieldKey: fieldKey,
@@ -1216,6 +1240,7 @@ class _OfflineMediaQueueEntry {
       'retry_count': retryCount,
       'local_order_key': localOrderKey,
       'last_error': lastError,
+      if (diagnostics != null) 'error_diagnostics': diagnostics,
       'next_retry_at': nextRetryAt?.toIso8601String(),
       'user_id': userId,
       'field_key': fieldKey,
@@ -1249,6 +1274,7 @@ class _OfflineMediaQueueEntry {
           : int.tryParse(map['retry_count']?.toString() ?? '') ?? 0,
       localOrderKey: map['local_order_key']?.toString(),
       lastError: map['last_error']?.toString(),
+      diagnostics: map['error_diagnostics']?.toString(),
       nextRetryAt: DateTime.tryParse(map['next_retry_at']?.toString() ?? ''),
       userId: map['user_id']?.toString(),
       fieldKey: map['field_key']?.toString(),

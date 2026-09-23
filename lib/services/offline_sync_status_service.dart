@@ -1,3 +1,4 @@
+import 'package:webapp/services/sync_error_log_service.dart';
 import 'dart:async';
 import 'package:webapp/utils/latest_value_worker.dart';
 import 'dart:math';
@@ -134,11 +135,13 @@ class OfflineSyncStatusService extends ChangeNotifier {
   OfflineSyncStatusSnapshot get knownSessionSnapshot => _knownSessionSnapshot;
 
   Future<void> initialize() async {
+    unawaited(SyncErrorLogService.instance.flush());
     if (_isInitialized) {
       return;
     }
     await _authStorage.initialize();
     _isInitialized = true;
+    unawaited(SyncErrorLogService.instance.start());
     _bookingStatus = BookingOfflineUploadQueueService.instance.currentStatus;
     _mediaStatus = OfflineMediaSyncService.instance.currentStatus;
     _mutationStatus = OfflineMutationQueueService.instance.currentStatus;
@@ -335,6 +338,24 @@ class OfflineSyncStatusService extends ChangeNotifier {
   }
 
   void _recompute() {
+    final logger = SyncErrorLogService.instance;
+    for (final entry in {
+      'booking_offline_upload_queue_service.dart': _bookingStatus,
+      'offline_media_sync_service.dart': _mediaStatus,
+      'offline_mutation_queue_service.dart': _mutationStatus,
+      'offline_cleanup_queue_service.dart': _cleanupStatus,
+    }.entries) {
+      final state = entry.value;
+      logger.observeQueue(
+        entry.key,
+        pending: state.pendingCount,
+        failed: state.failedCount,
+        syncing: state.isSyncing,
+        processed: state.processedInBatch,
+        total: state.totalInBatch,
+      );
+    }
+    unawaited(SyncErrorLogService.instance.flush());
     final next = _mergeStatuses(
       isOnline: _isOnline,
       bookingStatus: _bookingStatus,
@@ -344,6 +365,33 @@ class OfflineSyncStatusService extends ChangeNotifier {
     );
     if (_sameSnapshot(_snapshot, next)) {
       return;
+    }
+    if (next.isOnline &&
+        next.isSyncing &&
+        (!_snapshot.isOnline || !_snapshot.isSyncing)) {
+      unawaited(
+        SyncErrorLogService.instance.capture(
+          source: 'offline_sync_status_service.dart',
+          operation: 'onlineQueueActivity',
+          entryId: 'online-${DateTime.now().millisecondsSinceEpoch ~/ 60000}',
+          target: 'sync_status',
+          error: 'Queue syncing while network reports online',
+          stack: StackTrace.current.toString(),
+          attempt: 1,
+          kind: 'online_queue_activity',
+          details: {
+            'pending_actions': next.pendingActions,
+            'failed_actions': next.failedActions,
+            'previous_online': _snapshot.isOnline,
+            'booking_syncing': _bookingStatus.isSyncing,
+            'media_syncing': _mediaStatus.isSyncing,
+            'mutation_syncing': _mutationStatus.isSyncing,
+            'cleanup_syncing': _cleanupStatus.isSyncing,
+            'note':
+                'May be expected reconnect replay; inspect associated queue failures.',
+          },
+        ),
+      );
     }
     _snapshot = next;
     notifyListeners();
@@ -366,6 +414,39 @@ class OfflineSyncStatusService extends ChangeNotifier {
     if (_sameSnapshot(_knownSessionSnapshot, nextSnapshot)) {
       return;
     }
+    if (nextSnapshot.isOnline &&
+        nextSnapshot.isSyncing &&
+        (!_knownSessionSnapshot.isOnline || !_knownSessionSnapshot.isSyncing) &&
+        !_snapshot.isSyncing) {
+      unawaited(
+        SyncErrorLogService.instance.capture(
+          source: 'offline_sync_status_service.dart',
+          operation: 'savedAccountOnlineQueueActivity',
+          entryId: 'online-${DateTime.now().millisecondsSinceEpoch ~/ 60000}',
+          target: 'known_session_sync_status',
+          error: 'Saved account queue syncing while network reports online',
+          stack: StackTrace.current.toString(),
+          attempt: 1,
+          kind: 'online_queue_activity',
+          details: {
+            'pending_actions': nextSnapshot.pendingActions,
+            'failed_actions': nextSnapshot.failedActions,
+            'previous_online': _knownSessionSnapshot.isOnline,
+            'scope': 'all_saved_accounts',
+            'note':
+                'Aggregate observation; use queue failure user_id for the affected account.',
+          },
+        ),
+      );
+    }
+    SyncErrorLogService.instance.observeQueue(
+      'saved_account_queues',
+      pending: nextSnapshot.pendingActions,
+      failed: nextSnapshot.failedActions,
+      syncing: nextSnapshot.isSyncing,
+      processed: nextSnapshot.processedActions,
+      total: nextSnapshot.totalActionsInBatch,
+    );
     _knownSessionSnapshot = nextSnapshot;
     notifyListeners();
   }

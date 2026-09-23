@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/booking_record_card.dart';
 import 'dart:async';
 
 import 'package:stacked/stacked.dart';
@@ -314,6 +315,34 @@ class RoleAssignedHomeViewModel extends BaseViewModel {
       return (left.id ?? '').compareTo(right.id ?? '');
     });
     _cachedAssignedBookings = List<Booking>.from(assignedBookings);
+  }
+
+  /// Home uses the pickup schedule; history and assignment state stay complete.
+  List<Booking> bookingsForToday({DateTime? now}) {
+    final today = (now ?? DateTime.now()).toLocal();
+    final scheduled = assignedBookings
+        .map(
+          (booking) => (
+            booking: booking,
+            pickup: BookingRecordCard.pickupDateTime(booking.statusOutputs),
+          ),
+        )
+        .where((entry) {
+          final pickup = entry.pickup;
+          return pickup != null &&
+              pickup.year == today.year &&
+              pickup.month == today.month &&
+              pickup.day == today.day;
+        })
+        .toList();
+    scheduled.sort((a, b) {
+      final comparison = a.pickup!.compareTo(b.pickup!);
+      if (comparison != 0) {
+        return comparison;
+      }
+      return (a.booking.id ?? '').compareTo(b.booking.id ?? '');
+    });
+    return scheduled.map((entry) => entry.booking).toList(growable: false);
   }
 
   Future<UserModel?> setOnline(bool isOnline) async {

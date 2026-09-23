@@ -1,0 +1,647 @@
+import 'sync_diagnostic_outbox.dart';
+import 'sync_error_environment.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:webapp/repositories/local/auth_storage_backend.dart';
+import 'package:webapp/repositories/local/booking_storage_backend.dart';
+import 'package:webapp/requests/firestore_cache_store.dart';
+import 'package:webapp/services/network_status_events.dart';
+
+/// Independent diagnostic outbox. Never uses a business queue, never deletes
+/// remote logs. A single maintenance timer retries diagnostics and checks stalls.
+class SyncErrorLogService {
+  SyncErrorLogService({
+    BookingStorageBackend? backend,
+    Future<void> Function(String id, Map<String, dynamic> data)? writer,
+    Future<Map<String, dynamic>> Function(String? owner)? metadata,
+    bool Function()? online,
+    DateTime Function()? now,
+    this.automaticMaintenance = false,
+    this.localPersistenceTimeout = const Duration(seconds: 2),
+    this.uploadTimeout = const Duration(seconds: 30),
+    this.stallAfter = const Duration(seconds: 90),
+  }) : _backend = backend ?? createBookingStorageBackend(),
+       _writer = writer ?? _write,
+       _metadata = metadata ?? _context,
+       _online = online ?? currentNetworkStatus,
+       _now = now ?? DateTime.now;
+  static final instance = SyncErrorLogService(automaticMaintenance: true);
+  static const collection = 'sync_error_logs';
+  static const storageKey = 'sync_error_log_outbox_v1';
+  final BookingStorageBackend _backend;
+  final Future<void> Function(String, Map<String, dynamic>) _writer;
+  final Future<Map<String, dynamic>> Function(String?) _metadata;
+  final bool Function() _online;
+  final DateTime Function() _now;
+  final bool automaticMaintenance;
+  final Duration uploadTimeout, stallAfter, localPersistenceTimeout;
+  Timer? _maintenance;
+  StreamSubscription<bool>? _networkSubscription;
+  final Map<String, _QueueProgress> _progress = {};
+  final List<Map<String, dynamic>> _transitions = [];
+  Future<void>? _starting;
+  bool? _lastOnline;
+  Future<void> _serial = Future.value();
+  Future<void>? _flushing;
+  DateTime? _retryAfter;
+  bool _enabled = false;
+  static Future<PackageInfo>? _package;
+  late final _outbox = SyncDiagnosticOutbox(_backend);
+  bool _migrated = false;
+
+  Future<void> _prepareOutbox() async {
+    if (_migrated) return;
+    await _backend.initialize();
+    for (final row in await _readLegacy()) {
+      final existing = await _outbox.get(row['fingerprint'] as String);
+      if (existing == null || existing['occurrences'] < row['occurrences']) {
+        await _outbox.put(row);
+      }
+      await Future<void>.delayed(Duration.zero);
+    }
+    // Only discard the legacy container once every valid report is durable.
+    await _backend.writeStringList(storageKey, []);
+    _migrated = true;
+  }
+
+  static Future<void> _write(String id, Map<String, dynamic> data) =>
+      FirebaseFirestore.instance.collection(collection).doc(id).set({
+        ...data,
+        'received_at': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+  static Future<Map<String, dynamic>> _context(String? owner) async {
+    final auth = createAuthStorageBackend();
+    await auth.initialize();
+    final session = await auth.readString('paltranco_current_user_id');
+    final userId = owner ?? session;
+    final users =
+        await FirestoreCacheStore.instance.readDocumentMaps('users') ?? [];
+    final user = users.where((u) => '${u['id']}' == userId).firstOrNull;
+    String? version;
+    String? build;
+    try {
+      final info = await (_package ??= PackageInfo.fromPlatform());
+      version = info.version;
+      build = info.buildNumber;
+    } catch (_) {
+      /* Metadata availability must not lose the error. */
+    }
+    return {
+      'user_id': userId,
+      'role': user?['role']?.toString() ?? 'unknown',
+      'session_user_id': session,
+      'app_version': version,
+      'build_number': build,
+      'platform': kIsWeb ? 'web' : defaultTargetPlatform.name,
+      'environment': syncErrorEnvironment(),
+      'build_commit': const String.fromEnvironment(
+        'APP_BUILD_COMMIT',
+        defaultValue: 'not supplied',
+      ),
+      'build_mode': kReleaseMode
+          ? 'release'
+          : kProfileMode
+          ? 'profile'
+          : 'debug',
+      'app_origin': kIsWeb ? Uri.base.origin : null,
+    };
+  }
+
+  Future<T> _locked<T>(Future<T> Function() action) {
+    final result = _serial.then((_) => action());
+    _serial = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    // Bound callers, but retain the actual lock until storage settles. A late
+    // write must never overwrite a newer outbox snapshot.
+    return result.timeout(localPersistenceTimeout);
+  }
+
+  Future<List<Map<String, dynamic>>> _readLegacy() async {
+    await _backend.initialize();
+    final rows = <Map<String, dynamic>>[];
+    final corrupt = <String>[];
+    for (final raw in await _backend.readStringList(storageKey)) {
+      try {
+        final row = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+        if (row['id'] is! String ||
+            !RegExp(r'^[a-f0-9]{64}$').hasMatch('${row['fingerprint']}') ||
+            row['occurrences'] is! int ||
+            row['occurrences'] < 0) {
+          throw const FormatException('Invalid diagnostic row');
+        }
+        rows.add(row);
+      } catch (_) {
+        corrupt.add(raw);
+      }
+    }
+    if (corrupt.isNotEmpty) {
+      // Quarantine is best effort; damaged data cannot reject healthy reports.
+      try {
+        await _backend.writeStringList(
+          '${storageKey}_quarantine',
+          corrupt
+              .take(100)
+              .map(
+                (raw) => sanitize(
+                  raw.length > 64000 ? raw.substring(0, 64000) : raw,
+                ),
+              )
+              .toList(),
+        );
+      } catch (error) {
+        debugPrint(
+          '[Sync error log] Quarantine unavailable: ${sanitize('$error')}',
+        );
+      }
+    }
+    return rows;
+  }
+
+  /// Credentials are redacted even when a SDK embeds a URL in its exception.
+  static String sanitize(String value) => value
+      .replaceAllMapped(
+        RegExp(
+          r'''(token|password|authorization|api[_-]?key|secret)(["'\s]*[=:]["'\s]*)([^\s&,}"']+)''',
+          caseSensitive: false,
+        ),
+        (m) => '${m[1]}${m[2]}[REDACTED]',
+      )
+      .replaceAll(
+        RegExp(r'Bearer\s+[^\s,]+', caseSensitive: false),
+        'Bearer [REDACTED]',
+      );
+
+  Future<void> start() => _starting ??= _start();
+
+  Future<void> _start() async {
+    _enabled = true;
+    _lastOnline = _online();
+    if (automaticMaintenance) {
+      _networkSubscription ??= networkStatusEvents().listen(observeNetwork);
+      _maintenance ??= Timer.periodic(const Duration(seconds: 30), (_) {
+        unawaited(checkForStalls());
+        unawaited(flush());
+      });
+    }
+    await _backfill();
+    await flush();
+  }
+
+  Future<void> report(
+    Object error,
+    StackTrace stack, {
+    required String source,
+    required String operation,
+    String target = '',
+    String? owner,
+    String kind = 'foreground_failure',
+    Map<String, dynamic> details = const {},
+  }) => capture(
+    source: source,
+    operation: operation,
+    entryId: target.isEmpty ? operation : target,
+    target: target,
+    owner: owner,
+    error: error.toString(),
+    stack: stack.toString(),
+    attempt: _now().microsecondsSinceEpoch,
+    kind: kind,
+    details: {
+      ...details,
+      'error_type': error.runtimeType.toString(),
+      'suspected_layer': classify(error),
+      if (error is FirebaseException) 'firebase_code': error.code,
+      if (error is FirebaseException) 'firebase_plugin': error.plugin,
+    },
+  );
+
+  static String classify(Object error) {
+    if (error is TimeoutException) return 'timeout_or_network';
+    if (error is FirebaseException) return error.plugin;
+    if (error is FormatException || error is TypeError) return 'data_structure';
+    if ('$error'.toLowerCase().contains('sync conflict')) {
+      return 'version_or_assignment_conflict';
+    }
+    return 'frontend_or_unknown';
+  }
+
+  void observeNetwork(bool online) {
+    final previous = _lastOnline;
+    _lastOnline = online;
+    if (previous == online) return;
+    final transition = {
+      'from_online': previous,
+      'to_online': online,
+      'at': _now().toUtc().toIso8601String(),
+    };
+    _transitions.add(transition);
+    if (_transitions.length > 12) _transitions.removeAt(0);
+    // Reconnection starts a fresh observation window, not a false instant stall.
+    for (final state in _progress.values) {
+      state.since = _now();
+      state.reportedAt = null;
+    }
+    unawaited(
+      capture(
+        source: 'network_status_events_web.dart',
+        operation: 'connection transition',
+        entryId: '${transition['at']}',
+        target: 'connectivity',
+        error: 'Network connection state changed',
+        stack: '',
+        attempt: 1,
+        kind: 'network_transition',
+        details: transition,
+      ),
+    );
+    if (online) {
+      _retryAfter = null;
+      unawaited(flush());
+    }
+  }
+
+  void observeQueue(
+    String source, {
+    required int pending,
+    required int failed,
+    required bool syncing,
+    required int processed,
+    required int total,
+  }) {
+    final previous = _progress[source];
+    if (pending == 0 && !syncing) {
+      if (previous?.reportedAt != null) {
+        unawaited(
+          capture(
+            source: source,
+            operation: 'queue recovered',
+            entryId: previous!.since.toIso8601String(),
+            target: source,
+            error: 'Previously stalled queue has completed',
+            stack: '',
+            attempt: 1,
+            kind: 'queue_recovered',
+          ),
+        );
+      }
+      _progress.remove(source);
+      return;
+    }
+    final state = previous ?? _QueueProgress(_now());
+    if (previous != null &&
+        (pending < state.pending || processed > state.processed)) {
+      state.since = _now();
+      state.reportedAt = null;
+    }
+    state.pending = pending;
+    state.failed = failed;
+    state.syncing = syncing;
+    state.processed = processed;
+    state.total = total;
+    _progress[source] = state;
+  }
+
+  Future<void> checkForStalls() async {
+    if (!_online()) return;
+    final now = _now();
+    for (final entry in _progress.entries.toList()) {
+      final state = entry.value;
+      if (now.difference(state.since) < stallAfter ||
+          (state.reportedAt != null &&
+              now.difference(state.reportedAt!) < const Duration(minutes: 5))) {
+        continue;
+      }
+      state.reportedAt = now;
+      await capture(
+        source: entry.key,
+        operation: 'queue progress watchdog',
+        entryId: state.since.toUtc().toIso8601String(),
+        target: entry.key,
+        error: 'Queue has no observed progress while browser reports online',
+        stack: '',
+        attempt: now.millisecondsSinceEpoch,
+        kind: 'queue_stalled',
+        details: {
+          'pending': state.pending,
+          'failed': state.failed,
+          'syncing': state.syncing,
+          'processed': state.processed,
+          'total': state.total,
+          'no_progress_seconds': now.difference(state.since).inSeconds,
+          'note':
+              'Observation, not a confirmed cause. Check errors, retry deadlines and connectivity.',
+        },
+      );
+    }
+  }
+
+  void dispose() {
+    _maintenance?.cancel();
+    _networkSubscription?.cancel();
+  }
+
+  Future<void> _backfill() async {
+    try {
+      await _backend.initialize();
+      final auth = createAuthStorageBackend();
+      await auth.initialize();
+      final scopes = <String>{
+        'signed_out',
+        ...await auth.readStringList('paltranco_known_session_user_ids'),
+        if (await auth.readString('paltranco_current_user_id')
+            case final String id)
+          id,
+      };
+      for (final prefix in [
+        'offline_mutation_queue_v1',
+        'offline_media_sync_queue_v1',
+        'offline_cleanup_queue_v1',
+        'booking_pending_upload_queue_v1',
+      ]) {
+        for (final owner in scopes) {
+          for (final raw in await _backend.readStringList('$prefix::$owner')) {
+            try {
+              final entry = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+              if ('${entry['last_error'] ?? ''}'.isEmpty) continue;
+              await capture(
+                source: prefix,
+                operation: '${entry['kind'] ?? 'bookingPhotoUpload'}',
+                entryId: '${entry['id']}',
+                target:
+                    '${entry['collection_key'] ?? ''}/${entry['target_id'] ?? entry['booking_id'] ?? entry['thread_id'] ?? entry['target_path'] ?? ''}',
+                owner: owner,
+                actionAt: entry['created_at']?.toString(),
+                error: '${entry['last_error']}',
+                stack:
+                    '${entry['error_diagnostics'] ?? 'Original stack trace was not recorded by this app version.'}',
+                attempt: (entry['retry_count'] as num?)?.toInt() ?? 0,
+                failedAt: RegExp(
+                  r'Failed at \(UTC\): ([^\n]+)',
+                ).firstMatch('${entry['error_diagnostics'] ?? ''}')?.group(1),
+                kind: 'persisted_queue_failure',
+                details: {
+                  'blocked': entry['is_blocked'],
+                  'next_retry_at': entry['next_retry_at'],
+                  'recovered_from_device': true,
+                },
+              );
+            } catch (_) {
+              /* Skip only malformed legacy entries, never delete them. */
+            }
+          }
+        }
+      }
+    } catch (_) {
+      /* Live failures are still captured if legacy scanning fails. */
+    }
+  }
+
+  Future<void> capture({
+    required String source,
+    required String operation,
+    required String entryId,
+    required String target,
+    required String error,
+    required String stack,
+    required int attempt,
+    String? owner,
+    String? actionAt,
+    String? failedAt,
+    String kind = 'queue_failure',
+    Map<String, dynamic> details = const {},
+  }) async {
+    try {
+      Map<String, dynamic> metadata;
+      try {
+        metadata = await _metadata(owner).timeout(const Duration(seconds: 2));
+      } catch (_) {
+        metadata = {'user_id': owner, 'role': 'unknown'};
+      }
+      if (const {
+        'online_queue_activity',
+        'queue_stalled',
+        'network_transition',
+      }.contains(kind)) {
+        try {
+          final baseDetails = details;
+          details = await (() async {
+            final scope =
+                owner ?? metadata['user_id']?.toString() ?? 'signed_out';
+            final queued = <Map<String, dynamic>>[];
+            final scopes = <String>{scope, 'signed_out'};
+            final auth = createAuthStorageBackend();
+            await auth.initialize();
+            scopes.addAll(
+              await auth.readStringList('paltranco_known_session_user_ids'),
+            );
+            await _backend.initialize();
+            for (final prefix in [
+              'offline_mutation_queue_v1',
+              'offline_media_sync_queue_v1',
+              'offline_cleanup_queue_v1',
+              'booking_pending_upload_queue_v1',
+            ]) {
+              for (final queueOwner in scopes) {
+                for (final raw in await _backend.readStringList(
+                  '$prefix::$queueOwner',
+                )) {
+                  try {
+                    final q = jsonDecode(raw) as Map;
+                    queued.add({
+                      'queue': prefix,
+                      'owner': queueOwner,
+                      'last_error': sanitize('${q['last_error'] ?? ''}'),
+                      'next_retry_at': q['next_retry_at'],
+                      'entry_id': q['id'],
+                      'operation': q['kind'],
+                      'target_id':
+                          q['target_id'] ?? q['booking_id'] ?? q['thread_id'],
+                      'collection': q['collection_key'],
+                      'action_at': q['created_at'],
+                      'retry_count': q['retry_count'],
+                      'blocked': q['is_blocked'],
+                    });
+                  } catch (_) {
+                    /* A malformed item cannot prevent other logs. */
+                  }
+                }
+              }
+            }
+            return {
+              ...baseDetails,
+              'queue_items': queued.take(100).toList(),
+              'queue_item_count': queued.length,
+              'queue_snapshot_truncated': queued.length > 100,
+            };
+          })().timeout(localPersistenceTimeout);
+        } catch (error) {
+          details = {...details, 'queue_snapshot_error': sanitize('$error')};
+        }
+      }
+      final safeError = sanitize(error);
+      final safeStack = sanitize(stack);
+      final fingerprint = sha256
+          .convert(
+            utf8.encode(
+              jsonEncode([
+                owner ?? metadata['user_id'],
+                source,
+                operation,
+                entryId,
+                safeError,
+                safeStack,
+              ]),
+            ),
+          )
+          .toString();
+      await _locked(() async {
+        await _prepareOutbox();
+        final time = failedAt ?? _now().toUtc().toIso8601String();
+        var row = await _outbox.get(fingerprint);
+        if (row != null && row['last_attempt'] == attempt) return;
+        if (row == null) {
+          final installation = await _backend.readStringList(
+            '${storageKey}_device',
+          );
+          final device = installation.isNotEmpty
+              ? installation.first
+              : '${_now().microsecondsSinceEpoch}-${Random.secure().nextInt(0x7fffffff)}';
+          if (installation.isEmpty) {
+            await _backend.writeStringList('${storageKey}_device', [device]);
+          }
+          row = {
+            'id': '${device}_$fingerprint',
+            'fingerprint': fingerprint,
+            'device_id': device,
+            'first_failed_at': time,
+            'occurrences': 0,
+          };
+        }
+        row.addAll({
+          ...metadata,
+          'schema_version': 1,
+          'kind': kind,
+          'source': source,
+          'operation': operation,
+          'queue_entry_id': entryId,
+          'target': sanitize(target),
+          'action_at': actionAt,
+          'last_failed_at': time,
+          'captured_at': _now().toUtc().toIso8601String(),
+          'last_attempt': attempt,
+          'occurrences': (row['occurrences'] as int) + 1,
+          'error': safeError.length > 16000
+              ? safeError.substring(0, 16000)
+              : safeError,
+          'stack_trace': safeStack.length > 48000
+              ? safeStack.substring(0, 48000)
+              : safeStack,
+          'diagnostic_truncated':
+              safeError.length > 16000 || safeStack.length > 48000,
+          'online_at_failure': _online(),
+          'details': _safeDetails({
+            ...details,
+            'recent_network_transitions': List.of(_transitions),
+          }),
+          'dirty': true,
+        });
+        await _outbox.put(row);
+      });
+      unawaited(flush());
+    } catch (error) {
+      // Diagnostic storage failures must not change the original queue outcome.
+      debugPrint(
+        '[Sync error log] Local persistence failed: ${sanitize('$error')}',
+      );
+    }
+  }
+
+  static Map<String, dynamic> _safeDetails(Map<String, dynamic> details) {
+    Object? clean(Object? value) {
+      if (value is Map) {
+        return {
+          for (final e in value.entries)
+            e.key.toString():
+                RegExp(
+                  r'password|authorization|token|secret|api.?key',
+                  caseSensitive: false,
+                ).hasMatch('${e.key}')
+                ? '[REDACTED]'
+                : clean(e.value),
+        };
+      }
+      if (value is Iterable) return value.map(clean).toList();
+      if (value is String) return sanitize(value);
+      if (value == null || value is num || value is bool) return value;
+      return sanitize('$value');
+    }
+
+    final safe = clean(details) as Map<String, dynamic>;
+    final encoded = jsonEncode(safe);
+    return encoded.length <= 32000
+        ? safe
+        : {'details_truncated': true, 'summary': encoded.substring(0, 32000)};
+  }
+
+  Future<void> flush() {
+    if (!_enabled || !_online() || (_retryAfter?.isAfter(_now()) ?? false)) {
+      return Future.value();
+    }
+    if (_flushing != null) return _flushing!;
+    final future = _flush();
+    _flushing = future;
+    return future.whenComplete(() {
+      if (identical(_flushing, future)) _flushing = null;
+    });
+  }
+
+  Future<void> _flush() async {
+    try {
+      while (_online()) {
+        final ready = await _locked(() async {
+          await _prepareOutbox();
+          return _outbox.ready(_now());
+        });
+        if (ready.isEmpty) break;
+        for (final row in ready) {
+          if (!_online()) return;
+          final data = Map<String, dynamic>.from(row)
+            ..remove('dirty')
+            ..remove('last_uploaded_at');
+          data['copy_report'] = const JsonEncoder.withIndent(
+            '  ',
+          ).convert(data);
+          await _writer(row['id'] as String, data).timeout(uploadTimeout);
+          await _locked(() async {
+            final saved = await _outbox.get(row['fingerprint'] as String);
+            if (saved != null) {
+              saved['last_uploaded_at'] = _now().toUtc().toIso8601String();
+              if (saved['occurrences'] == row['occurrences']) {
+                saved['dirty'] = false;
+              }
+            }
+            if (saved != null) await _outbox.put(saved);
+          });
+        }
+        await Future<void>.delayed(Duration.zero);
+      }
+    } catch (error) {
+      debugPrint('[Sync error log] Upload deferred: ${sanitize('$error')}');
+      _retryAfter = _now().add(const Duration(minutes: 1));
+      // Never report logger failures back through itself or a business queue.
+    }
+  }
+}
+
+class _QueueProgress {
+  _QueueProgress(this.since);
+  DateTime since;
+  DateTime? reportedAt;
+  int pending = 0, failed = 0, processed = 0, total = 0;
+  bool syncing = false;
+}

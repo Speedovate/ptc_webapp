@@ -1,3 +1,5 @@
+import 'package:webapp/widgets/shared/user_session_actions_scope.dart';
+import 'package:webapp/widgets/shared/inline_detail_host.dart';
 import 'package:webapp/widgets/shared/paged_data_sliver.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'package:webapp/widgets/shared/retained_section_stack.dart';
@@ -275,11 +277,11 @@ class _AdminHomeState extends State<AdminHome> {
     }).length;
   }
 
-  Widget? _sidebarBadge(int count) {
+  Widget? _sidebarBadge(int count, {bool showActualCount = false}) {
     if (count <= 0) {
       return null;
     }
-    final label = count > 99 ? '99+' : '$count';
+    final label = !showActualCount && count > 99 ? '99+' : '$count';
     return Container(
       constraints: const BoxConstraints(minWidth: 24),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -290,6 +292,8 @@ class _AdminHomeState extends State<AdminHome> {
       alignment: Alignment.center,
       child: Text(
         label,
+        maxLines: 1,
+        softWrap: false,
         style: const TextStyle(
           color: Colors.white,
           fontSize: 12,
@@ -585,7 +589,10 @@ class _AdminHomeState extends State<AdminHome> {
             label: AdminSection.dashboard.title,
             icon: _menuIcon(AdminSection.dashboard),
             isSelected: vm.selectedSection == AdminSection.dashboard,
-            trailing: _sidebarBadge(_unbilledBookingsBadgeCount),
+            trailing: _sidebarBadge(
+              _unbilledBookingsBadgeCount,
+              showActualCount: true,
+            ),
             onTap: () {
               vm.selectSection(AdminSection.dashboard);
               if (isCompact) {
@@ -894,6 +901,24 @@ class _AdminHomeState extends State<AdminHome> {
     };
   }
 
+  Widget _withRelatedDetails(Widget child) => UserSessionActionsScope(
+    onUserUpdated: widget.onUserUpdated,
+    onLogout: widget.onLogout,
+    isQuickLoggedIn: widget.isQuickLoggedIn,
+    child: InlineDetailHost(
+      child: Builder(
+        builder: (detailContext) => BookingSectionNavigationScope(
+          onOpenBooking: (booking) => AdminBookingsView.openDetailPage(
+            detailContext,
+            currentUser: _shellUser,
+            booking: booking,
+          ),
+          child: child,
+        ),
+      ),
+    ),
+  );
+
   Widget _buildRetainedSection(AdminSection section) {
     // Keep the frequently revisited pages alive, but bound inactive page
     // memory. Recreating every page on a sidebar tap was the main navigation
@@ -918,30 +943,34 @@ class _AdminHomeState extends State<AdminHome> {
       children: [
         KeyedSubtree(
           key: PageStorageKey<String>(_scrollStorageKey('dashboard')),
-          child: _retainedDashboardSection ??= AdminDashboardView(
-            key: const PageStorageKey<String>('admin-dashboard-section'),
-            user: _shellUser,
+          child: _withRelatedDetails(
+            _retainedDashboardSection ??= AdminDashboardView(
+              key: const PageStorageKey<String>('admin-dashboard-section'),
+              user: _shellUser,
+            ),
           ),
         ),
         KeyedSubtree(
           key: PageStorageKey<String>(_scrollStorageKey('bookings')),
-          child: _hasVisitedBookings
-              ? (_retainedBookingsSection ??= AdminBookingsView(
-                  key: const PageStorageKey<String>('admin-bookings-section'),
-                  user: _shellUser,
-                  initialBooking: _bookingInitialSelection,
-                  onInitialBookingHandled: () {
-                    if (mounted) {
-                      setState(() => _bookingInitialSelection = null);
-                    }
-                  },
-                ))
-              : const SizedBox.shrink(),
+          child: _withRelatedDetails(
+            _hasVisitedBookings
+                ? (_retainedBookingsSection ??= AdminBookingsView(
+                    key: const PageStorageKey<String>('admin-bookings-section'),
+                    user: _shellUser,
+                    initialBooking: _bookingInitialSelection,
+                    onInitialBookingHandled: () {
+                      if (mounted) {
+                        setState(() => _bookingInitialSelection = null);
+                      }
+                    },
+                  ))
+                : const SizedBox.shrink(),
+          ),
         ),
         ...secondaryKeys.map(
           (key) => KeyedSubtree(
             key: PageStorageKey<String>(_scrollStorageKey(key)),
-            child: _retainedSecondarySections[key]!,
+            child: _withRelatedDetails(_retainedSecondarySections[key]!),
           ),
         ),
       ],

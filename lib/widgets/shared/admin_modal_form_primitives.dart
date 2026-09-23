@@ -85,6 +85,7 @@ class AdminModalTextField extends StatefulWidget {
     this.textCapitalization = TextCapitalization.none,
     this.inputFormatters,
     this.bottomPadding = 6,
+    this.minHeight = adminModalFieldMinHeight,
     this.minLines = 1,
     this.maxLines = 1,
     this.keyboardType,
@@ -103,6 +104,7 @@ class AdminModalTextField extends StatefulWidget {
   final TextCapitalization textCapitalization;
   final List<TextInputFormatter>? inputFormatters;
   final double bottomPadding;
+  final double minHeight;
   final int? minLines;
   final int? maxLines;
   final TextInputType? keyboardType;
@@ -212,6 +214,7 @@ class _AdminModalTextFieldState extends State<AdminModalTextField> {
             decoration:
                 adminFormInputDecoration(
                   widget.label,
+                  minHeight: widget.minHeight,
                   hintText: adminEnterPlaceholder(
                     widget.label,
                     override: widget.hintText,

@@ -1,3 +1,4 @@
+import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/services/offline_reference_mapper.dart';
 import 'dart:async';
 
@@ -940,6 +941,7 @@ class VehicleRequest implements VehicleCatalogRepository {
       'code': make.code,
       'type_id': make.type?.id,
       'driver_id': make.driver?.id,
+      'helper_id': make.helper?.id,
       'is_active': make.isActive,
       'created_at': make.createdAt?.toIso8601String(),
       'updated_at': make.updatedAt?.toIso8601String(),
@@ -955,7 +957,16 @@ class VehicleRequest implements VehicleCatalogRepository {
       id: map['id']?.toString(),
       code: map['code']?.toString(),
       type: typeById[map['type_id']?.toString()],
-      driver: userById[map['driver_id']?.toString()],
+      driver:
+          userById[map['driver_id']?.toString()] ??
+          (normalizeId(map['driver_id']?.toString()) == null
+              ? null
+              : UserModel(id: map['driver_id'].toString(), role: 'driver')),
+      helper:
+          userById[map['helper_id']?.toString()] ??
+          (normalizeId(map['helper_id']?.toString()) == null
+              ? null
+              : UserModel(id: map['helper_id'].toString(), role: 'helper')),
       isActive: map['is_active'] as bool?,
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),
@@ -1052,9 +1063,15 @@ class VehicleRequest implements VehicleCatalogRepository {
   }) async {
     try {
       return await action();
-    } on FirebaseException catch (error) {
-      throw Exception(userFacingErrorMessage(error, fallback: fallback));
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'vehicle.request.dart',
+          operation: fallback,
+        ),
+      );
       throw Exception(userFacingErrorMessage(error, fallback: fallback));
     }
   }

@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/user_session_actions_scope.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:stacked/stacked.dart';
@@ -15,7 +16,8 @@ import 'package:webapp/widgets/shared/in_app_browser_guard.dart';
 class AppShell extends StatelessWidget {
   const AppShell({super.key});
 
-  static final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  static final RoleAccessService _roleAccessService =
+      RoleAccessService.instance;
   static bool _hasDismissedStartupSplash = false;
 
   @override
@@ -102,17 +104,27 @@ class AppShell extends StatelessWidget {
     required VoidCallback onLogout,
   }) {
     if (_roleAccessService.usesAdminShell(role: user.role)) {
-      return AdminHome(
-        user: user,
-        isQuickLoggedIn: isQuickLoggedIn,
+      return UserSessionActionsScope(
         onUserUpdated: onUserUpdated,
         onLogout: onLogout,
+        isQuickLoggedIn: isQuickLoggedIn,
+        child: AdminHome(
+          user: user,
+          isQuickLoggedIn: isQuickLoggedIn,
+          onUserUpdated: onUserUpdated,
+          onLogout: onLogout,
+        ),
       );
     }
-    return ClientHome(
-      user: user,
+    return UserSessionActionsScope(
+      onUserUpdated: onUserUpdated,
       onLogout: onLogout,
       isQuickLoggedIn: isQuickLoggedIn,
+      child: ClientHome(
+        user: user,
+        onLogout: onLogout,
+        isQuickLoggedIn: isQuickLoggedIn,
+      ),
     );
   }
 }

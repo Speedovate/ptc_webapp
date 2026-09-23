@@ -124,7 +124,8 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
 
         return LayoutBuilder(
           builder: (context, constraints) {
-            final useWideTable = constraints.maxWidth >= 940;
+            const pagePadding = EdgeInsets.all(24);
+            final contentWidth = constraints.maxWidth - pagePadding.horizontal;
             final textScaler = MediaQuery.textScalerOf(context);
             final sampleId = filteredTypes
                 .map((item) => item.id ?? '-')
@@ -236,12 +237,22 @@ class _AdminVehicleTypesViewState extends State<AdminVehicleTypesView> {
                   extraWidthAllowance: _extraWidthAllowance,
                 );
             final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
+            final tableWidth =
+                resolvedIdWidth +
+                resolvedNameWidth +
+                resolvedSlugWidth +
+                resolvedActiveWidth +
+                resolvedCreatedWidth +
+                resolvedUpdatedWidth +
+                resolvedActionsWidth +
+                34;
+            final useWideTable = tableWidth <= contentWidth;
 
             return AppPageLoadingOverlay(
               isVisible: vm.showBlockingLoading,
               message: vm.busyMessage,
               child: LazyDataScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                padding: pagePadding,
                 child: SliverSection(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

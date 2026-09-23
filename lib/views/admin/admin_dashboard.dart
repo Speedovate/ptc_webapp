@@ -303,9 +303,14 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                                       _toggleBillingStatus(context, vm, booking)
                                 : (_) {},
                             onView: (booking) {
-                              setState(() {
-                                _selectedBooking = booking;
-                              });
+                              final currentUser = vm.currentUser;
+                              if (currentUser != null) {
+                                AdminBookingsView.openDetailPage(
+                                  context,
+                                  currentUser: currentUser,
+                                  booking: booking,
+                                );
+                              }
                             },
                           ),
                     ),
@@ -2367,7 +2372,7 @@ class AdminDashboardCompletedBookingsSliver extends StatelessWidget
             _longerText('Van Size', _longestText(bookings.map(vm.vanSize))),
           ),
         );
-        final resolvedClientWidth =
+        var resolvedClientWidth =
             _resolvedColumnWidth(
               _cappedBasisWidth(
                 _maxTextWidth(
@@ -2421,8 +2426,31 @@ class AdminDashboardCompletedBookingsSliver extends StatelessWidget
             resolvedAmountWidth +
             resolvedActionWidth +
             40;
-        final horizontalOverflow = totalMeasuredWidth - constraints.maxWidth;
-        final useResponsiveCards = horizontalOverflow > 0;
+        // Client names can wrap; identifiers and actions must retain their
+        // measured widths. Do not switch the whole list to cards before using
+        // the available width for this flexible column.
+        final minimumClientWidth = _resolvedColumnWidth(
+          _maxValue(
+            160,
+            AdminListMeasurements.measureTextWidth(
+              context,
+              textScaler,
+              'Client',
+              _headerStyle,
+            ),
+          ),
+        );
+        final availableClientWidth =
+            constraints.maxWidth - (totalMeasuredWidth - resolvedClientWidth);
+        if (availableClientWidth >= minimumClientWidth &&
+            availableClientWidth < resolvedClientWidth) {
+          resolvedClientWidth = availableClientWidth;
+        }
+        final useResponsiveCards =
+            availableClientWidth <
+            (resolvedClientWidth < minimumClientWidth
+                ? resolvedClientWidth
+                : minimumClientWidth);
         if (useResponsiveCards) {
           return LazySliverList(
             items: bookings.asMap().entries,
@@ -2790,7 +2818,6 @@ class _AdminDashboardWideRow extends StatelessWidget {
                   clientName,
                 ),
                 style: AdminDashboardCompletedBookingsSliver._valueStyle,
-                maxLines: 2,
                 softWrap: true,
               ),
             ),

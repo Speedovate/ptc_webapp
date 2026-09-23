@@ -34,36 +34,44 @@ ChassisLifecycleInstruction? chassisLifecycleInstruction({
       keepBookingLink: true,
       driverLink: ChassisDriverLink.deliveryDriver,
     ),
-    'ongoing' => const ChassisLifecycleInstruction(
+    'ongoing' => ChassisLifecycleInstruction(
       status: 'loaded',
       keepBookingLink: true,
       driverLink: ChassisDriverLink.deliveryDriver,
+      location: _bookingLocation(bookingDocument, 'origin'),
     ),
     'cancelled' => const ChassisLifecycleInstruction(
       status: 'ready',
       keepBookingLink: false,
       driverLink: ChassisDriverLink.clear,
     ),
-    'delivered' || 'check' => const ChassisLifecycleInstruction(
+    'delivered' || 'check' => ChassisLifecycleInstruction(
       status: 'loaded',
       keepBookingLink: true,
       driverLink: ChassisDriverLink.clear,
+      location: _bookingLocation(bookingDocument, 'destination'),
     ),
     'empty' => ChassisLifecycleInstruction(
       status: 'empty',
       keepBookingLink: true,
       driverLink: ChassisDriverLink.clear,
-      location: _latestOutputField(bookingDocument, 'chassis_location'),
+      location:
+          _latestOutputField(bookingDocument, 'chassis_location') ??
+          _bookingLocation(bookingDocument, 'destination'),
     ),
-    'return' => const ChassisLifecycleInstruction(
+    'return' => ChassisLifecycleInstruction(
       status: 'return',
       keepBookingLink: true,
       driverLink: ChassisDriverLink.returnDriver,
+      location:
+          _latestOutputField(bookingDocument, 'chassis_location') ??
+          _bookingLocation(bookingDocument, 'destination'),
     ),
     'confirm' => const ChassisLifecycleInstruction(
       status: 'ready',
       keepBookingLink: false,
       driverLink: ChassisDriverLink.clear,
+      location: 'Garage',
     ),
     _ => null,
   };
@@ -95,4 +103,77 @@ String? _latestOutputField(Map<String, dynamic> bookingDocument, String key) {
   }
   final value = latest?[key]?.toString().trim();
   return value == null || value.isEmpty ? null : value;
+}
+
+String? _bookingLocation(Map<String, dynamic> document, String key) {
+  String? clean(String? value) {
+    final text = value
+        ?.replaceFirst(RegExp(r'\s*\|\s*(CP|OT)$', caseSensitive: false), '')
+        .trim();
+    return text == null || text.isEmpty || text == '-' || text == '—'
+        ? null
+        : text;
+  }
+
+  final place = clean(_latestOutputField(document, key));
+  final barangay = clean(_latestOutputField(document, '${key}_barangay'));
+  if (barangay == null) return place;
+  if (place == null || place.toLowerCase() == barangay.toLowerCase()) {
+    return barangay;
+  }
+  return '$barangay, $place';
+}
+
+/// Advance reservations live on booking.chassis_id. They do not acquire the
+/// physical chassis. Old ready/assigned pointers remain readable and can be
+/// replaced when a reserved booking actually starts.
+bool isChassisReservation(String? status) =>
+    const {'pending', 'assigned'}.contains(status?.trim().toLowerCase());
+
+bool shouldProjectBookingOntoChassis({
+  required String bookingId,
+  required Map<String, dynamic> booking,
+  required Map<String, dynamic> chassis,
+  Map<String, dynamic>? ownerBooking,
+}) {
+  final owner = chassis['current_booking_id']?.toString();
+  final status = booking['client_status']?.toString();
+  if (isChassisReservation(status)) {
+    // Compatibility with existing ready assignments, without displacing one.
+    return owner == bookingId && chassis['current_status'] == 'ready';
+  }
+  final lifecycle = chassisLifecycleInstruction(
+    previousBookingStatus: null,
+    nextBookingStatus: status,
+    bookingDocument: booking,
+  );
+  if (lifecycle?.keepBookingLink == false && owner != bookingId) return false;
+  if (owner == null || owner.isEmpty || owner == bookingId) return true;
+  if (chassis['current_status'] == 'ready' &&
+      isChassisReservation(ownerBooking?['client_status']?.toString())) {
+    return true;
+  }
+  throw StateError(
+    'Sync conflict: chassis is active on another booking. Its advance reservation is preserved; release the active booking before starting this one.',
+  );
+}
+
+void preserveChassisPhysicalAssignment(
+  Map<String, dynamic> document,
+  Map<String, dynamic> current,
+) {
+  for (final key in [
+    'current_booking_id',
+    'current_driver_id',
+    'current_status',
+    'location',
+  ]) {
+    if (current.containsKey(key)) {
+      document[key] = current[key];
+    } else if (key == 'current_status') {
+      document[key] = 'ready';
+    } else {
+      document.remove(key);
+    }
+  }
 }

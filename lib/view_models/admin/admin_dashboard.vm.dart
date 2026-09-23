@@ -1,3 +1,4 @@
+import 'package:webapp/utils/booking_party_search.dart';
 import 'dart:async';
 
 import 'package:stacked/stacked.dart';
@@ -530,6 +531,7 @@ class AdminDashboardViewModel extends BaseViewModel {
       }
 
       final values = <String>[
+        ...bookingPartySearchTerms(booking, _usersById),
         booking.id ?? '',
         deliveryFormNumber(booking),
         waybillNumber(booking),

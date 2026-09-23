@@ -1530,6 +1530,9 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
           createdAt: now,
           updatedAt: now,
         );
+    if (_field.isChassisLocationInput) {
+      _field = _normalizeFieldPlaceholder(_field);
+    }
     _handleDraftChanged();
   }
 
@@ -1619,6 +1622,9 @@ class _FieldEditorDialogState extends State<_FieldEditorDialog> {
   }
 
   StatusField _normalizeFieldPlaceholder(StatusField field) {
+    if (field.isChassisLocationInput) {
+      return field.copyWith(placeholder: 'Enter location');
+    }
     final fieldType = (field.type ?? '').trim();
     final isRequired = field.required ?? false;
     final currentPlaceholder = field.placeholder?.trim() ?? '';

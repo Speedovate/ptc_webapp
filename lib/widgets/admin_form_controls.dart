@@ -1,3 +1,7 @@
+import 'package:webapp/utils/location_display.dart';
+import 'package:webapp/services/field_type_history_service.dart';
+import 'package:webapp/services/kpi/location_option_registry.dart';
+import 'package:webapp/services/kpi/operations_catalog_store.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -194,6 +198,7 @@ class AdminDropdownFormField<T> extends StatefulWidget {
   const AdminDropdownFormField({
     super.key,
     this.initialValue,
+    this.expands = false,
     this.focusNode,
     this.onFocusChanged,
     this.unfocusOnDismissWithoutSelection = true,
@@ -209,6 +214,9 @@ class AdminDropdownFormField<T> extends StatefulWidget {
   });
 
   final T? initialValue;
+
+  /// Fill a bounded control height instead of using the intrinsic border height.
+  final bool expands;
   final FocusNode? focusNode;
   final ValueChanged<bool>? onFocusChanged;
   final bool unfocusOnDismissWithoutSelection;
@@ -458,6 +466,7 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
                   },
             child: InputDecorator(
               key: _fieldKey,
+              expands: widget.expands,
               isFocused: _focusNode.hasFocus,
               isEmpty: !hasSelectedLabel,
               decoration: fieldDecoration.copyWith(
@@ -610,9 +619,17 @@ class AdminSearchSelectFormField extends StatefulWidget {
     this.decoration,
     this.enabled = true,
     this.dialogTitle,
+    this.locationOptionKey,
+    this.allowCustomValue = false,
+    this.historyKey,
+    this.selectedDisplayFormatter,
   });
 
   final List<String> options;
+  final String? locationOptionKey;
+  final bool allowCustomValue;
+  final String? historyKey;
+  final String Function(String value)? selectedDisplayFormatter;
   final ValueChanged<String?> onChanged;
   final String? initialValue;
   final FocusNode? focusNode;
@@ -633,10 +650,25 @@ class _AdminSearchSelectFormFieldState
   late final TextEditingController _controller;
   String? _selectedValue;
   bool _isOpeningPicker = false;
+  List<String> get _options =>
+      LocationOptionRegistry.supports(widget.locationOptionKey)
+      ? LocationOptionRegistry.options(widget.locationOptionKey, widget.options)
+      : widget.options;
+  void _catalogChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    if (LocationOptionRegistry.supports(widget.locationOptionKey)) {
+      LocationOptionRegistry.revision.addListener(_catalogChanged);
+      OperationsCatalogStore.instance.load().catchError(
+        (Object _) => OperationsCatalogStore.instance.current,
+      );
+    }
     _ownsFocusNode = widget.focusNode == null;
     _focusNode = widget.focusNode ?? FocusNode();
     _selectedValue = _resolvedSelectedValue(widget.initialValue);
@@ -647,6 +679,15 @@ class _AdminSearchSelectFormFieldState
   @override
   void didUpdateWidget(covariant AdminSearchSelectFormField oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.locationOptionKey != widget.locationOptionKey) {
+      LocationOptionRegistry.revision.removeListener(_catalogChanged);
+      if (LocationOptionRegistry.supports(widget.locationOptionKey)) {
+        LocationOptionRegistry.revision.addListener(_catalogChanged);
+        OperationsCatalogStore.instance.load().catchError(
+          (Object _) => OperationsCatalogStore.instance.current,
+        );
+      }
+    }
     final nextSelected = _resolvedSelectedValue(widget.initialValue);
     if (oldWidget.initialValue != widget.initialValue ||
         oldWidget.options.join('|') != widget.options.join('|')) {
@@ -660,6 +701,7 @@ class _AdminSearchSelectFormFieldState
 
   @override
   void dispose() {
+    LocationOptionRegistry.revision.removeListener(_catalogChanged);
     _focusNode.removeListener(_handleFocusChanged);
     if (_ownsFocusNode) {
       _focusNode.dispose();
@@ -673,7 +715,7 @@ class _AdminSearchSelectFormFieldState
     if (trimmed == null || trimmed.isEmpty) {
       return null;
     }
-    return widget.options.firstWhere(
+    return _options.firstWhere(
       (item) => item.toLowerCase() == trimmed.toLowerCase(),
       orElse: () => trimmed,
     );
@@ -684,7 +726,9 @@ class _AdminSearchSelectFormFieldState
   }
 
   Future<void> _openPicker() async {
-    if (!widget.enabled || widget.options.isEmpty || _isOpeningPicker) {
+    if (!widget.enabled ||
+        (_options.isEmpty && !widget.allowCustomValue) ||
+        _isOpeningPicker) {
       return;
     }
 
@@ -699,8 +743,11 @@ class _AdminSearchSelectFormFieldState
         barrierDismissible: true,
         builder: (context) => _AdminSearchSelectDialog(
           title: _resolvedDialogTitle(widget.dialogTitle, widget.decoration),
-          options: widget.options,
-          initialQuery: _controller.text.trim(),
+          options: _options,
+          locationOptionKey: widget.locationOptionKey,
+          initialQuery: widget.allowCustomValue ? '' : _controller.text.trim(),
+          allowCustomValue: widget.allowCustomValue,
+          historyKey: widget.historyKey,
         ),
       );
     } finally {
@@ -767,7 +814,10 @@ class _AdminSearchSelectFormFieldState
     ).copyWith(helperStyle: const TextStyle(fontSize: 0, height: 0));
     final hasSelection = (_selectedValue?.trim().isNotEmpty ?? false);
     final displayText = hasSelection
-        ? _selectedValue!.trim()
+        ? (widget.selectedDisplayFormatter?.call(_selectedValue!.trim()) ??
+              (LocationOptionRegistry.supports(widget.locationOptionKey)
+                  ? locationDisplayLabel(_selectedValue!)
+                  : _selectedValue!.trim()))
         : (fieldDecoration.hintText?.trim() ?? '');
     final displayStyle = hasSelection
         ? adminFieldValueTextStyle
@@ -839,11 +889,17 @@ class _AdminSearchSelectDialog extends StatefulWidget {
     required this.title,
     required this.options,
     this.initialQuery = '',
+    this.locationOptionKey,
+    this.allowCustomValue = false,
+    this.historyKey,
   });
 
   final String title;
   final List<String> options;
   final String initialQuery;
+  final String? locationOptionKey;
+  final bool allowCustomValue;
+  final String? historyKey;
 
   @override
   State<_AdminSearchSelectDialog> createState() =>
@@ -852,12 +908,19 @@ class _AdminSearchSelectDialog extends StatefulWidget {
 
 class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
   late final TextEditingController _controller;
+  List<String> _history = const [];
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialQuery);
     _controller.addListener(_handleChanged);
+    final key = widget.historyKey;
+    if (key != null) {
+      FieldTypeHistoryService.instance.suggestions(key, '').then((values) {
+        if (mounted) setState(() => _history = values);
+      });
+    }
   }
 
   @override
@@ -874,8 +937,12 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
   @override
   Widget build(BuildContext context) {
     final query = _controller.text.trim().toLowerCase();
-    final filtered = widget.options.where((item) {
-      return query.isEmpty || item.toLowerCase().contains(query);
+    final filtered = {...widget.options, ..._history}.where((item) {
+      return query.isEmpty ||
+          LocationOptionRegistry.label(
+            widget.locationOptionKey,
+            item,
+          ).toLowerCase().contains(query);
     }).toList();
 
     return Dialog(
@@ -921,6 +988,20 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
                         fillColor: Colors.white,
                       ),
                 ),
+                if (widget.allowCustomValue &&
+                    query.isNotEmpty &&
+                    !{
+                      ...widget.options,
+                      ..._history,
+                    }.any((item) => item.trim().toLowerCase() == query))
+                  ListTile(
+                    title: Text(
+                      'Use "${_controller.text.trim()}"',
+                      style: adminFieldValueTextStyle,
+                    ),
+                    onTap: () =>
+                        Navigator.of(context).pop(_controller.text.trim()),
+                  ),
                 Expanded(
                   child: filtered.isEmpty
                       ? const Center(
@@ -950,7 +1031,10 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
                                 vertical: -2,
                               ),
                               title: Text(
-                                item,
+                                LocationOptionRegistry.label(
+                                  widget.locationOptionKey,
+                                  item,
+                                ),
                                 style: adminFieldValueTextStyle,
                               ),
                               onTap: () => Navigator.of(context).pop(item),

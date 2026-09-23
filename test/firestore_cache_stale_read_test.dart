@@ -39,6 +39,47 @@ class _PausedPersistence extends Fake implements FirestoreCachePersistence {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  test(
+    'parallel document and version persistence retains the complete batch',
+    () async {
+      final store = FirestoreCacheStore();
+      final rows = List.generate(
+        500,
+        (i) => {'id': '$i', 'notes': 'Booking $i'},
+      );
+      await Future.wait([
+        store.writeDocumentMaps('bookings', rows),
+        store.writeVersion('bookings', 'v1'),
+      ]);
+      final reopened = FirestoreCacheStore();
+      expect(await reopened.readDocumentMaps('bookings'), rows);
+      expect(await reopened.readVersion('bookings'), 'v1');
+    },
+  );
+  test(
+    'superseded chunked writes cannot replace a later write or clear',
+    () async {
+      final store = FirestoreCacheStore();
+      final slow = store.writeDocumentMaps(
+        'bookings',
+        List.generate(1000, (i) => {'id': '$i'}),
+      );
+      await store.writeDocumentMaps('bookings', [
+        {'id': 'new'},
+      ]);
+      await slow;
+      expect(await FirestoreCacheStore().readDocumentMaps('bookings'), [
+        {'id': 'new'},
+      ]);
+      final cleared = store.writeDocumentMaps(
+        'bookings',
+        List.generate(1000, (i) => {'id': '$i'}),
+      );
+      await store.clearResource('bookings');
+      await cleared;
+      expect(await FirestoreCacheStore().readDocumentMaps('bookings'), isNull);
+    },
+  );
   for (final version in [false, true]) {
     for (final operation in ['write', 'clear', 'clearAll']) {
       test(

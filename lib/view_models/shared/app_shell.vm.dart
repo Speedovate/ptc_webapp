@@ -170,7 +170,13 @@ class AppShellViewModel extends BaseViewModel {
     await _sessionInvalidationSubscription?.cancel();
     _sessionInvalidationSubscription = null;
     try {
-      currentUser = await _repository.returnToQuickLoginSource();
+      final restoredUser = await _repository.returnToQuickLoginSource();
+      if (restoredUser == null) {
+        throw StateError(
+          'Could not restore the original account. Please try again.',
+        );
+      }
+      currentUser = restoredUser;
       _roleAccessService.setCurrentUser(currentUser);
       unawaited(_chassisCheckAlertService.startForUser(currentUser));
       unawaited(_bookingChatAlertService.startForUser(currentUser));

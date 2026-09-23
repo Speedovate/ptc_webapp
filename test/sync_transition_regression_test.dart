@@ -1,0 +1,247 @@
+// Fault-injection doubles deliberately implement the sealed query interface.
+// ignore_for_file: subtype_of_sealed_class, depend_on_referenced_packages
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:webapp/services/paged_booking_source.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:webapp/requests/firestore_cache_store.dart';
+import 'package:webapp/requests/firestore_cache_persistence.dart';
+import 'package:webapp/repositories/local/booking_storage_backend.dart';
+import 'package:webapp/services/sync_diagnostic_outbox.dart';
+
+class _Prefs extends InMemorySharedPreferencesStore {
+  _Prefs() : super.withData({});
+  bool first = true;
+  @override
+  Future<bool> setValue(String type, String key, Object value) async {
+    if (first) {
+      first = false;
+      return false;
+    }
+    return super.setValue(type, key, value);
+  }
+}
+
+class _Disk extends FirestoreCachePersistence {
+  final started = Completer<void>(), release = Completer<void>();
+  final values = <String, String>{};
+  bool first = true;
+  @override
+  bool get isAvailable => true;
+  @override
+  Future<String?> read(String key) async => values[key];
+  Future<void> tail = Future.value();
+  @override
+  Future<void> write(String key, String value) {
+    final task = tail.then((_) async {
+      if (first) {
+        first = false;
+        started.complete();
+        await release.future;
+      }
+      // Match the real backend's serial ordering; fail the best-effort backup
+      // of the newer value after its localStorage mirror already succeeded.
+      if (value.contains('new')) {
+        throw StateError('Injected IndexedDB quota failure');
+      }
+      values[key] = value;
+    });
+    tail = task.then<void>((_) {}, onError: (Object error) {});
+    return task;
+  }
+
+  @override
+  Future<void> remove(String key) async => values.remove(key);
+  @override
+  Future<void> removeWhere(bool Function(String) predicate) async =>
+      values.removeWhere((k, v) => predicate(k));
+}
+
+class _Logs implements BookingStorageBackend {
+  final values = <String, List<String>>{};
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<List<String>> readStringList(String key) async =>
+      List.of(values[key] ?? []);
+  @override
+  Future<void> writeStringList(String key, List<String> value) async {
+    values[key] = List.of(value);
+  }
+}
+
+class _Gate {
+  bool fail = true;
+  int gets = 0;
+  int watches = 0;
+}
+
+class _Ref implements CollectionReference<Map<String, dynamic>> {
+  _Ref(this.ref, this.gate);
+  final CollectionReference<Map<String, dynamic>> ref;
+  final _Gate gate;
+  @override
+  Query<Map<String, dynamic>> orderBy(
+    Object field, {
+    bool descending = false,
+  }) => _Query(ref.orderBy(field, descending: descending), gate);
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _Query implements Query<Map<String, dynamic>> {
+  _Query(this.query, this.gate);
+  final Query<Map<String, dynamic>> query;
+  final _Gate gate;
+  @override
+  Query<Map<String, dynamic>> limit(int count) =>
+      _Query(query.limit(count), gate);
+  @override
+  Future<QuerySnapshot<Map<String, dynamic>>> get([GetOptions? options]) {
+    gate.gets++;
+    if (gate.fail) {
+      gate.fail = false;
+      throw FirebaseException(plugin: 'cloud_firestore', code: 'unavailable');
+    }
+    return query.get(options);
+  }
+
+  @override
+  Stream<QuerySnapshot<Map<String, dynamic>>> snapshots({
+    bool includeMetadataChanges = false,
+    ListenSource source = ListenSource.defaultSource,
+  }) {
+    gate.watches++;
+    return query.snapshots(
+      includeMetadataChanges: includeMetadataChanges,
+      source: source,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test('late fallback preserves the newer cache mirror', () async {
+    SharedPreferences.setMockInitialValues({});
+    SharedPreferencesStorePlatform.instance = _Prefs();
+    final disk = _Disk();
+    final store = FirestoreCacheStore(persistence: disk);
+    final old = store.writeDocumentMaps('bookings', [
+      {'id': 'old'},
+    ]);
+    await disk.started.future;
+    await store.writeDocumentMaps('bookings', [
+      {'id': 'new'},
+    ]);
+    disk.release.complete();
+    await old;
+    final reopened = FirestoreCacheStore(persistence: disk);
+    expect(await reopened.readDocumentMaps('bookings'), [
+      {'id': 'new'},
+    ]);
+  });
+  test('concurrent outbox writers retain both same-shard reports', () async {
+    final backend = _Logs();
+    final buckets = <int, String>{};
+    late String a, b;
+    for (var i = 0; ; i++) {
+      final fingerprint = sha256.convert(utf8.encode('$i')).toString();
+      final bucket = int.parse(fingerprint.substring(0, 2), radix: 16) % 64;
+      if (buckets.containsKey(bucket)) {
+        a = buckets[bucket]!;
+        b = fingerprint;
+        break;
+      }
+      buckets[bucket] = fingerprint;
+    }
+    Map<String, dynamic> row(String fp) => {
+      'id': fp,
+      'fingerprint': fp,
+      'occurrences': 1,
+      'dirty': true,
+      'error': 'test',
+    };
+    await Future.wait([
+      SyncDiagnosticOutbox(backend).put(row(a)),
+      SyncDiagnosticOutbox(backend).put(row(b)),
+    ]);
+    final outbox = SyncDiagnosticOutbox(backend);
+    expect(await outbox.get(a), isNotNull);
+    expect(await outbox.get(b), isNotNull);
+    expect(await outbox.ready(DateTime.now()), hasLength(2));
+  });
+  test(
+    'successful read re-arms live subscription after bootstrap failure',
+    () async {
+      final ref = FakeFirebaseFirestore().collection('bookings');
+      await ref.doc('1').set({'id': '1'});
+      final gate = _Gate();
+      final source = PagedBookingSource(_Ref(ref, gate), online: () => true);
+      final received = <BookingDataSnapshot>[];
+      final errorSeen = Completer<void>();
+      final sub = source.watch().listen(
+        received.add,
+        onError: (Object error) {
+          if (!errorSeen.isCompleted) errorSeen.complete();
+        },
+      );
+      addTearDown(sub.cancel);
+      await errorSeen.future;
+      final recovered = await source.read(
+        const GetOptions(source: Source.server),
+      );
+      expect(recovered.docs.length, 1);
+      await ref.doc('1').update({'amount': 99});
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(gate.watches, greaterThan(0));
+      expect(received.last.docs.single.data()['amount'], 99);
+    },
+  );
+  test(
+    'bootstrap recovers automatically without a connectivity event',
+    () async {
+      final ref = FakeFirebaseFirestore().collection('bookings');
+      await ref.doc('1').set({'amount': 1});
+      final gate = _Gate();
+      final source = PagedBookingSource(_Ref(ref, gate), online: () => true);
+      final received = <BookingDataSnapshot>[];
+      final sub = source.watch().listen(received.add, onError: (Object _) {});
+      addTearDown(sub.cancel);
+      await Future<void>.delayed(const Duration(milliseconds: 1250));
+      expect(gate.watches, 1);
+      await ref.doc('1').update({'amount': 55});
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(received.last.docs.single.data()['amount'], 55);
+      final reads = gate.gets;
+      await sub.cancel();
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+      expect(gate.gets, reads);
+    },
+  );
+
+  test('cancelling failed watch cancels its pending recovery', () async {
+    final ref = FakeFirebaseFirestore().collection('bookings');
+    final gate = _Gate();
+    final source = PagedBookingSource(_Ref(ref, gate), online: () => true);
+    final failed = Completer<void>();
+    final sub = source.watch().listen(
+      (_) {},
+      onError: (Object _) {
+        failed.complete();
+      },
+    );
+    await failed.future;
+    await sub.cancel();
+    await Future<void>.delayed(const Duration(milliseconds: 1150));
+    expect(gate.gets, 1);
+    expect(gate.watches, 0);
+  });
+}

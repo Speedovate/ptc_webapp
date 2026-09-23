@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/inline_detail_host.dart';
 import 'package:webapp/widgets/shared/paged_data_sliver.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'package:webapp/widgets/shared/retained_section_stack.dart';
@@ -368,7 +369,9 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
               key: PageStorageKey<String>(
                 'role-scroll:${_shellUser.id ?? 'guest'}:${candidate.name}',
               ),
-              child: _retainedSections[candidate] ?? const SizedBox.shrink(),
+              child: InlineDetailHost(
+                child: _retainedSections[candidate] ?? const SizedBox.shrink(),
+              ),
             ),
           )
           .toList(growable: false),
@@ -407,6 +410,7 @@ class _RoleAssignedHomeSection extends StatelessWidget {
             }
 
             final currentUser = vm.currentUser ?? user;
+            final todayBookings = vm.bookingsForToday();
             final roleLabel = RoleAccessService.instance
                 .assignedBookingRoleLabel(currentUser.role);
             final showOnlineAvailability = RoleAccessService.instance
@@ -513,13 +517,13 @@ class _RoleAssignedHomeSection extends StatelessWidget {
                           child: AdminListStateText(message: vm.errorMessage!),
                         ),
                       ),
-                    if (vm.assignedBookings.isEmpty &&
+                    if (todayBookings.isEmpty &&
                         vm.hasResolvedInitialBookings &&
                         vm.errorMessage == null)
                       AdminListItemCard(
                         padding: const EdgeInsets.all(24),
                         child: Text(
-                          'No active assigned bookings now.',
+                          'No active assigned bookings for today.',
                           style: TextStyle(
                             color: AppColors.primaryColor.withValues(
                               alpha: 0.72,
@@ -528,12 +532,12 @@ class _RoleAssignedHomeSection extends StatelessWidget {
                           ),
                         ),
                       )
-                    else if (vm.assignedBookings.isNotEmpty)
+                    else if (todayBookings.isNotEmpty)
                       LazySliverList(
-                        items: vm.assignedBookings.asMap().entries,
+                        items: todayBookings.asMap().entries,
                         itemBuilder: (context, entry) => Padding(
                           padding: EdgeInsets.only(
-                            bottom: entry.key == vm.assignedBookings.length - 1
+                            bottom: entry.key == todayBookings.length - 1
                                 ? 0
                                 : 12,
                           ),

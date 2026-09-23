@@ -1,3 +1,4 @@
+import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/services/offline_reference_mapper.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -204,7 +205,15 @@ class AuthRequest implements AuthRepository {
         _hasResolvedUsers = true;
         _hydratedUsersSnapshot = List<UserModel>.from(users);
         return users;
-      } catch (error) {
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'auth.request.dart',
+            operation: 'request failure',
+          ),
+        );
         final lateCachedUsers = await _getUsersCachedOnly();
         if (lateCachedUsers.isNotEmpty) {
           _hasResolvedUsers = true;
@@ -362,7 +371,15 @@ class AuthRequest implements AuthRepository {
       return await _completeLogin(user);
     } on AuthFailure {
       rethrow;
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       throw AuthFailure(error.toString());
     }
   }
@@ -413,7 +430,15 @@ class AuthRequest implements AuthRepository {
             _startupTimeout,
             onTimeout: () => const <UserModel>[],
           );
-        } catch (error) {
+        } catch (error, stack) {
+          unawaited(
+            SyncErrorLogService.instance.report(
+              error,
+              stack,
+              source: 'auth.request.dart',
+              operation: 'request failure',
+            ),
+          );
           // Best-effort remote refresh only; local cache path continues.
         }
       } else if (currentNetworkStatus()) {
@@ -466,7 +491,15 @@ class AuthRequest implements AuthRepository {
       if (currentNetworkStatus()) {
         try {
           await _writeUserDocumentOnline(savedUser.id!, document);
-        } catch (error) {
+        } catch (error, stack) {
+          unawaited(
+            SyncErrorLogService.instance.report(
+              error,
+              stack,
+              source: 'auth.request.dart',
+              operation: 'request failure',
+            ),
+          );
           throw AuthFailure(
             userFacingErrorMessage(
               error,
@@ -505,7 +538,15 @@ class AuthRequest implements AuthRepository {
         bridgedUser = await _firebaseAuthBridgeService
             .syncSessionForUser(savedUser)
             .timeout(_loginFallbackLookupTimeout, onTimeout: () => savedUser);
-      } catch (error) {
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'auth.request.dart',
+            operation: 'request failure',
+          ),
+        );
         // Session bridge is best-effort only for compatibility with older data.
       }
       await _storage
@@ -608,7 +649,15 @@ class AuthRequest implements AuthRepository {
           !(saved.parentClientId?.startsWith('offline_') ?? false)) {
         try {
           await _writeUserDocumentOnline(nextId, document);
-        } catch (error) {
+        } catch (error, stack) {
+          unawaited(
+            SyncErrorLogService.instance.report(
+              error,
+              stack,
+              source: 'auth.request.dart',
+              operation: 'request failure',
+            ),
+          );
           await _offlineMutationQueueService
               .queueUserUpsert(
                 userId: nextId,
@@ -780,7 +829,15 @@ class AuthRequest implements AuthRepository {
           'hasPhoto=${savedUser.photo?.trim().isNotEmpty == true}',
         );
         return savedUser;
-      } catch (error) {
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'auth.request.dart',
+            operation: 'request failure',
+          ),
+        );
         final normalizedError = normalizeUserErrorText(
           error.toString(),
           fallback: '',
@@ -891,7 +948,15 @@ class AuthRequest implements AuthRepository {
             updatedAt: DateTime.now(),
           ),
         );
-      } catch (error) {
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'auth.request.dart',
+            operation: 'request failure',
+          ),
+        );
         final normalizedError = normalizeUserErrorText(
           error.toString(),
           fallback: '',
@@ -1059,7 +1124,12 @@ class AuthRequest implements AuthRepository {
         throw const AuthFailure('No account found for that user.');
       }
       final currentUserId = await _storage.readString(_currentUserIdKey);
-      if (normalizeId(currentUserId) != null && currentUserId != normalized) {
+      final originalSourceId = normalizeId(
+        await _storage.readString(_quickLoginSourceUserIdKey),
+      );
+      if (originalSourceId == null &&
+          normalizeId(currentUserId) != null &&
+          currentUserId != normalized) {
         final currentSnapshot = await _readCurrentSessionSnapshot();
         final currentSourceUser = currentSnapshot != null
             ? _userFromSessionSnapshot(currentSnapshot)
@@ -1133,9 +1203,9 @@ class AuthRequest implements AuthRepository {
         sourceUser = null;
       }
       if (sourceUser == null) {
-        await _storage.remove(_quickLoginSourceUserIdKey);
-        await _storage.remove(_quickLoginSourceSnapshotKey);
-        return activeSessionFallbackUser;
+        throw const AuthFailure(
+          'We could not restore your original account. Your current session is still active. Please try Go Back again.',
+        );
       }
       final bridgedSourceUser = await _firebaseAuthBridgeService
           .syncSessionForUser(sourceUser);
@@ -1290,7 +1360,15 @@ class AuthRequest implements AuthRepository {
       await _writeUsersCacheLocally(documents);
       _hasResolvedUsers = true;
       _hydratedUsersSnapshot = List<UserModel>.from(users);
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       // Background cache refresh must never block startup or interactive flows.
     }
   }
@@ -1334,7 +1412,15 @@ class AuthRequest implements AuthRepository {
         return null;
       }
       return await _inflateUser(snapshot);
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       if (!currentNetworkStatus()) {
         return null;
       }
@@ -1392,7 +1478,15 @@ class AuthRequest implements AuthRepository {
             },
           );
       return validatedUser;
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       final cachedUser = await _getCachedUserById(currentUserId);
       return cachedUser;
     }
@@ -1407,7 +1501,15 @@ class AuthRequest implements AuthRepository {
       if (validatedUser == null) {
         await _clearStoredSessionPreservingState();
       }
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       // Background validation is intentionally silent to avoid disrupting active sessions.
     }
   }
@@ -1563,7 +1665,15 @@ class AuthRequest implements AuthRepository {
             ),
           );
       return;
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       if (!kIsWeb) {
         rethrow;
       }
@@ -1616,7 +1726,15 @@ class AuthRequest implements AuthRepository {
             ),
           );
       return;
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       if (!kIsWeb) {
         rethrow;
       }
@@ -1927,7 +2045,15 @@ class AuthRequest implements AuthRepository {
         return const _LoginLookupResult(definitiveMiss: true);
       }
       return _LoginLookupResult(user: await _inflateUser(matches.docs.first));
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       return _LoginLookupResult(error: error);
     }
   }
@@ -1964,7 +2090,15 @@ class AuthRequest implements AuthRepository {
         }
       }
       return const _LoginLookupResult(definitiveMiss: true);
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       return _LoginLookupResult(error: error);
     }
   }
@@ -2003,7 +2137,15 @@ class AuthRequest implements AuthRepository {
         }
       }
       return const _LoginLookupResult(definitiveMiss: true);
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       return _LoginLookupResult(error: error);
     }
   }
@@ -2282,7 +2424,15 @@ class AuthRequest implements AuthRepository {
             ),
           );
       return;
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       if (!kIsWeb) {
         rethrow;
       }
@@ -2346,9 +2496,25 @@ class AuthRequest implements AuthRepository {
       return await action();
     } on AuthFailure {
       rethrow;
-    } on FirebaseException catch (error) {
+    } on FirebaseException catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       throw AuthFailure(exactUserErrorMessage(error));
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'auth.request.dart',
+          operation: 'request failure',
+        ),
+      );
       throw AuthFailure(exactUserErrorMessage(error));
     }
   }

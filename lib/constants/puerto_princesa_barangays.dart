@@ -1,4 +1,6 @@
-const puertoPrincesaBarangayOptions = <String>[
+import 'package:webapp/services/kpi/location_option_registry.dart';
+
+const defaultPuertoPrincesaBarangayOptions = <String>[
   'Babuyan',
   'Bacungan',
   'Bagong Bayan',
@@ -52,3 +54,12 @@ const puertoPrincesaBarangayOptions = <String>[
   'Tanglaw',
   'Tiniguiban',
 ];
+
+List<String> get puertoPrincesaBarangayOptions =>
+    LocationOptionRegistry.options(
+      'origin_barangay',
+      defaultPuertoPrincesaBarangayOptions,
+    );
+
+List<String> barangayOptionsFor(String key) =>
+    LocationOptionRegistry.options(key, defaultPuertoPrincesaBarangayOptions);

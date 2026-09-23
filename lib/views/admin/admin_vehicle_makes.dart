@@ -1,3 +1,7 @@
+import 'package:webapp/models/dispatcher_access_config.dart';
+import 'package:webapp/services/role_access_service.dart';
+import 'package:webapp/views/admin/operations_catalog_dialog.dart';
+import 'package:webapp/views/admin/pm_kpi_dialog.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
@@ -16,6 +20,18 @@ import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
+
+String _makeCrewLabel(UserModel? user) {
+  if (user == null) {
+    return '-';
+  }
+  final id = user.id?.trim() ?? '';
+  final name = user.name?.trim() ?? '';
+  if (id.isEmpty) {
+    return name.isEmpty ? '-' : name;
+  }
+  return '$id | ${name.isEmpty ? 'Loading ...' : name}';
+}
 
 String _formatCatalogFilterDateValue(DateTime? value) {
   if (value == null) {
@@ -76,7 +92,12 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
       AdminListMeasurements.defaultExtraWidthAllowance;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: RoleAccessService.instance,
+    builder: (context, _) => _buildContent(context),
+  );
+
+  Widget _buildContent(BuildContext context) {
     return ViewModelBuilder<AdminVehicleMakesViewModel>.reactive(
       viewModelBuilder: AdminVehicleMakesViewModel.new,
       onViewModelReady: (vm) => vm.load(),
@@ -90,7 +111,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                       '${item.type?.slug ?? ''} '
                       '${item.driver?.name ?? ''} '
                       '${item.driver?.email ?? ''} '
-                      '${item.driver?.phone ?? ''}'
+                      '${item.driver?.phone ?? ''} ${item.helper?.name ?? ''} ${item.helper?.email ?? ''} ${item.helper?.phone ?? ''}'
                   .toLowerCase();
           final matchesSearch =
               _searchQuery.trim().isEmpty ||
@@ -132,7 +153,6 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
 
         return LayoutBuilder(
           builder: (context, constraints) {
-            final useWideTable = constraints.maxWidth >= 1080;
             final textScaler = MediaQuery.textScalerOf(context);
             final sampleId = filteredMakes
                 .map((item) => item.id ?? '-')
@@ -152,11 +172,10 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                 )
                 .fold<String>('-', AdminListMeasurements.longerText);
             final sampleDriver = filteredMakes
-                .map(
-                  (item) => item.driver?.name?.trim().isNotEmpty == true
-                      ? item.driver!.name!.trim()
-                      : '-',
-                )
+                .map((item) => _makeCrewLabel(item.driver))
+                .fold<String>('-', AdminListMeasurements.longerText);
+            final sampleHelper = filteredMakes
+                .map((item) => _makeCrewLabel(item.helper))
                 .fold<String>('-', AdminListMeasurements.longerText);
             final sampleActive = filteredMakes
                 .map((item) => (item.isActive ?? false) ? 'Active' : 'Inactive')
@@ -197,6 +216,14 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
               'Driver',
               _headerStyle,
               sampleDriver,
+              _valueStyle,
+            );
+            final helperWidth = AdminListMeasurements.maxTextWidth(
+              context,
+              textScaler,
+              'Helper',
+              _headerStyle,
+              sampleHelper,
               _valueStyle,
             );
             final activeWidth = AdminListMeasurements.maxTextWidth(
@@ -253,6 +280,12 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                   trailingPadding: _defaultTrailingPadding,
                   extraWidthAllowance: _extraWidthAllowance,
                 );
+            final resolvedHelperWidth =
+                AdminListMeasurements.resolvedColumnWidth(
+                  helperWidth,
+                  trailingPadding: _defaultTrailingPadding,
+                  extraWidthAllowance: _extraWidthAllowance,
+                );
             final resolvedActiveWidth =
                 AdminListMeasurements.resolvedColumnWidth(
                   activeWidth,
@@ -274,15 +307,46 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                 );
             final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
 
+            final tableWidth =
+                resolvedIdWidth +
+                resolvedCodeWidth +
+                resolvedTypeWidth +
+                resolvedDriverWidth +
+                resolvedHelperWidth +
+                resolvedActiveWidth +
+                resolvedCreatedWidth +
+                resolvedUpdatedWidth +
+                resolvedActionsWidth +
+                34;
+            const pagePadding = EdgeInsets.all(24);
+            final contentWidth = constraints.maxWidth - pagePadding.horizontal;
+            final useWideTable = tableWidth <= contentWidth;
+
             return AppPageLoadingOverlay(
               isVisible: vm.showBlockingLoading,
               message: vm.busyMessage,
               child: LazyDataScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                padding: pagePadding,
                 child: SliverSection(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     AppRefreshStrip(isVisible: vm.showBlockingLoading),
+                    // Catalog-only roles retain their existing authorized entry.
+                    // KPI users manage it inside the selected PM's KPI workspace.
+                    if (RoleAccessService.instance.canAccess(
+                          DispatcherAccessCapability.operationsCatalogRead,
+                        ) &&
+                        !RoleAccessService.instance.canAccess(
+                          DispatcherAccessCapability.pmKpiRead,
+                        ))
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () => showOperationsCatalog(context),
+                          icon: const Icon(Icons.edit_location_alt_outlined),
+                          label: const Text('Trip Rates'),
+                        ),
+                      ),
                     AdminListToolbar(
                       controlHeight: _toolbarControlHeight,
                       surfaceRadius: 16,
@@ -383,6 +447,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                           codeWidth: resolvedCodeWidth,
                           typeWidth: resolvedTypeWidth,
                           driverWidth: resolvedDriverWidth,
+                          helperWidth: resolvedHelperWidth,
                           activeWidth: resolvedActiveWidth,
                           createdWidth: resolvedCreatedWidth,
                           updatedWidth: resolvedUpdatedWidth,
@@ -404,6 +469,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                                   codeWidth: resolvedCodeWidth,
                                   typeWidth: resolvedTypeWidth,
                                   driverWidth: resolvedDriverWidth,
+                                  helperWidth: resolvedHelperWidth,
                                   activeWidth: resolvedActiveWidth,
                                   createdWidth: resolvedCreatedWidth,
                                   updatedWidth: resolvedUpdatedWidth,
@@ -424,11 +490,12 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
   }
 
   Future<void> _handleNew(AdminVehicleMakesViewModel vm) async {
-    final created = await _showMakeDialog(
+    final created = await showVehicleMakeDialog(
       context,
       title: 'New Make',
       types: vm.types,
       drivers: vm.drivers,
+      helpers: vm.helpers,
       onSaveAsync: (item) => vm.saveMake(item),
     );
     if (created == null || !mounted) {
@@ -438,14 +505,21 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
   }
 
   Future<void> _handlePreview(VehicleMake item) async {
-    await _showMakeDialog(
-      context,
-      title: 'Make ${item.id ?? '-'}',
-      initialItem: item,
-      types: _vm?.types ?? const [],
-      drivers: _vm?.drivers ?? const [],
-      readOnly: true,
-    );
+    if (RoleAccessService.instance.canAccess(
+      DispatcherAccessCapability.pmKpiRead,
+    )) {
+      await showPmKpiDialog(context, item);
+    } else {
+      await showVehicleMakeDialog(
+        context,
+        title: 'Make ${item.id ?? "-"}',
+        initialItem: item,
+        types: _vm?.types ?? const [],
+        drivers: _vm?.drivers ?? const [],
+        helpers: _vm?.helpers ?? const [],
+        readOnly: true,
+      );
+    }
   }
 
   Future<void> _handleEdit(
@@ -455,12 +529,13 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
     if (!vm.canUpdateMakes) {
       return;
     }
-    final edited = await _showMakeDialog(
+    final edited = await showVehicleMakeDialog(
       context,
       title: 'Edit Make',
       initialItem: item,
       types: vm.types,
       drivers: vm.drivers,
+      helpers: vm.helpers,
       onSaveAsync: (value) => vm.saveMake(value.copyWith(id: item.id)),
     );
     if (edited == null || !mounted) {
@@ -554,6 +629,7 @@ class _VehicleMakeHeaderRow extends StatelessWidget {
     required this.codeWidth,
     required this.typeWidth,
     required this.driverWidth,
+    required this.helperWidth,
     required this.activeWidth,
     required this.createdWidth,
     required this.updatedWidth,
@@ -564,6 +640,7 @@ class _VehicleMakeHeaderRow extends StatelessWidget {
   final double codeWidth;
   final double typeWidth;
   final double driverWidth;
+  final double helperWidth;
   final double activeWidth;
   final double createdWidth;
   final double updatedWidth;
@@ -592,6 +669,10 @@ class _VehicleMakeHeaderRow extends StatelessWidget {
           AdminListFixedSlot(
             width: driverWidth,
             child: const AdminListHeaderCell(label: 'Driver'),
+          ),
+          AdminListFixedSlot(
+            width: helperWidth,
+            child: const AdminListHeaderCell(label: 'Helper'),
           ),
           AdminListFixedSlot(
             width: activeWidth,
@@ -627,6 +708,7 @@ class _VehicleMakeDesktopRow extends StatelessWidget {
     required this.codeWidth,
     required this.typeWidth,
     required this.driverWidth,
+    required this.helperWidth,
     required this.activeWidth,
     required this.createdWidth,
     required this.updatedWidth,
@@ -638,6 +720,7 @@ class _VehicleMakeDesktopRow extends StatelessWidget {
   final double codeWidth;
   final double typeWidth;
   final double driverWidth;
+  final double helperWidth;
   final double activeWidth;
   final double createdWidth;
   final double updatedWidth;
@@ -678,10 +761,21 @@ class _VehicleMakeDesktopRow extends StatelessWidget {
             width: driverWidth,
             child: AdminListBodyCell(
               child: Text(
-                item.driver?.name?.trim().isNotEmpty == true
-                    ? item.driver!.name!.trim()
-                    : '-',
-                style: _VehicleMakeStyles.valueStyle,
+                _makeCrewLabel(item.driver),
+                style: _makeCrewLabel(item.driver) == '-'
+                    ? _VehicleMakeStyles.valueStyle
+                    : _VehicleMakeStyles.crewStyle,
+              ),
+            ),
+          ),
+          AdminListFixedSlot(
+            width: helperWidth,
+            child: AdminListBodyCell(
+              child: Text(
+                _makeCrewLabel(item.helper),
+                style: _makeCrewLabel(item.helper) == '-'
+                    ? _VehicleMakeStyles.valueStyle
+                    : _VehicleMakeStyles.crewStyle,
               ),
             ),
           ),
@@ -758,12 +852,8 @@ class _VehicleMakeResponsiveCard extends StatelessWidget {
                   ? item.type!.name!.trim()
                   : '-',
             ),
-            (
-              'Driver',
-              item.driver?.name?.trim().isNotEmpty == true
-                  ? item.driver!.name!.trim()
-                  : '-',
-            ),
+            ('Driver', _makeCrewLabel(item.driver)),
+            ('Helper', _makeCrewLabel(item.helper)),
             ('Created', AdminUsersView.formatUpdatedAt(item.createdAt)),
             ('Updated', AdminUsersView.formatUpdatedAt(item.updatedAt)),
           ];
@@ -810,6 +900,7 @@ class _VehicleMakeResponsiveCard extends StatelessWidget {
                           label: field.$1,
                           value: field.$2,
                           isTitle: field.$1 == 'Type',
+                          isCrew: field.$1 == 'Driver' || field.$1 == 'Helper',
                           centered: useSingleColumn,
                         ),
                       ),
@@ -838,12 +929,14 @@ class _VehicleMakeMetaColumn extends StatelessWidget {
     required this.label,
     required this.value,
     this.isTitle = false,
+    this.isCrew = false,
     this.centered = false,
   });
 
   final String label;
   final String value;
   final bool isTitle;
+  final bool isCrew;
   final bool centered;
 
   @override
@@ -863,11 +956,13 @@ class _VehicleMakeMetaColumn extends StatelessWidget {
         Text(
           value,
           textAlign: centered ? TextAlign.center : TextAlign.left,
-          style: TextStyle(
-            color: AppColors.textPrimary,
-            fontWeight: isTitle ? FontWeight.w700 : FontWeight.w600,
-            height: 1.2,
-          ),
+          style: isCrew && value != '-'
+              ? _VehicleMakeStyles.crewStyle
+              : TextStyle(
+                  color: AppColors.textPrimary,
+                  fontWeight: isTitle ? FontWeight.w700 : FontWeight.w600,
+                  height: 1.2,
+                ),
           softWrap: true,
         ),
       ],
@@ -876,6 +971,14 @@ class _VehicleMakeMetaColumn extends StatelessWidget {
 }
 
 class _VehicleMakeStyles {
+  static const crewStyle = TextStyle(
+    color: AppColors.primaryColor,
+    fontWeight: FontWeight.w700,
+    decoration: TextDecoration.underline,
+    decorationColor: AppColors.primaryColor,
+    height: 1.2,
+  );
+
   static const titleStyle = TextStyle(
     color: AppColors.textPrimary,
     fontWeight: FontWeight.w700,
@@ -1352,12 +1455,13 @@ class _CatalogDateFilterState extends State<_CatalogDateFilter> {
   }
 }
 
-Future<VehicleMake?> _showMakeDialog(
+Future<VehicleMake?> showVehicleMakeDialog(
   BuildContext context, {
   required String title,
   VehicleMake? initialItem,
   required List<VehicleCatalogItem> types,
   required List<UserModel> drivers,
+  List<UserModel> helpers = const [],
   bool readOnly = false,
   Future<void> Function(VehicleMake item)? onSaveAsync,
 }) async {
@@ -1365,6 +1469,7 @@ Future<VehicleMake?> _showMakeDialog(
   final codeFocusNode = FocusNode();
   String? typeId = initialItem?.type?.id;
   String? driverId = initialItem?.driver?.id;
+  String? helperId = initialItem?.helper?.id;
   var isActive = initialItem?.isActive ?? true;
   var isSubmitting = false;
   void Function(VoidCallback fn)? dialogSetState;
@@ -1437,6 +1542,29 @@ Future<VehicleMake?> _showMakeDialog(
     return items;
   }
 
+  List<DropdownMenuItem<String>> buildHelperItems() {
+    final users = <String, UserModel>{
+      if (initialItem?.helper?.id != null)
+        initialItem!.helper!.id!: initialItem.helper!,
+      for (final user in helpers)
+        if (user.id?.isNotEmpty == true) user.id!: user,
+    };
+    return [
+      const DropdownMenuItem(
+        value: '',
+        child: Text('Not assigned', style: adminDropdownDisplayTextStyle),
+      ),
+      for (final user in users.values)
+        DropdownMenuItem(
+          value: user.id,
+          child: Text(
+            'Helper ${user.id} | ${user.name?.trim().isNotEmpty == true ? user.name : "—"}',
+            style: adminDropdownDisplayTextStyle,
+          ),
+        ),
+    ];
+  }
+
   Future<void> submit() async {
     final selectedType = types
         .where((item) => item.id == typeId)
@@ -1466,6 +1594,12 @@ Future<VehicleMake?> _showMakeDialog(
       code: code,
       type: selectedType,
       driver: selectedDriver,
+      helper: helperId == null || helperId!.isEmpty
+          ? null
+          : helpers.where((u) => u.id == helperId).firstOrNull ??
+                (initialItem?.helper?.id == helperId
+                    ? initialItem?.helper
+                    : null),
       isActive: isActive,
       createdAt: initialItem?.createdAt,
       updatedAt: DateTime.now(),
@@ -1560,11 +1694,19 @@ Future<VehicleMake?> _showMakeDialog(
                 AdminModalDropdownField<String>(
                   label: 'Driver',
                   initialValue: driverId,
-                  bottomPadding: 0,
+                  bottomPadding: 6,
                   iconEnabledColor: AppColors.primaryColor,
                   disabledTapMessage: 'No online drivers available.',
                   items: buildDriverItems(),
                   onChanged: (value) => setState(() => driverId = value),
+                ),
+                AdminModalDropdownField<String>(
+                  label: 'Helper',
+                  initialValue: helperId ?? '',
+                  bottomPadding: 0,
+                  iconEnabledColor: AppColors.primaryColor,
+                  items: buildHelperItems(),
+                  onChanged: (value) => setState(() => helperId = value),
                 ),
               ],
             ),

@@ -631,6 +631,7 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
     final fileName = _photo?['name']?.toString().trim();
     final hasFileName = fileName?.isNotEmpty == true;
     final hasImage = previewBytes != null || (previewUrl?.isNotEmpty == true);
+    final hasPhoto = hasImage || (_photo?.isNotEmpty ?? false);
     final processingLabel = _isSelectingPhoto
         ? 'Preparing photo ...'
         : 'Processing photo ...';
@@ -773,7 +774,11 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                     height: 32,
                     child: FilledButton.icon(
                       focusNode: _focusNode,
-                      onPressed: _isProcessing ? null : _pickPhoto,
+                      onPressed: _isProcessing
+                          ? null
+                          : hasPhoto
+                          ? _removePhoto
+                          : _pickPhoto,
                       style: FilledButton.styleFrom(
                         backgroundColor: widget.palette.accent,
                         foregroundColor: Colors.white,
@@ -795,22 +800,22 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                                 ),
                               ),
                             )
-                          : const Icon(Icons.upload_rounded, size: 18),
+                          : Icon(
+                              hasPhoto
+                                  ? Icons.close_rounded
+                                  : Icons.upload_rounded,
+                              size: 18,
+                            ),
                       label: Text(
                         _isProcessing
                             ? (_isSelectingPhoto
                                   ? 'Preparing ...'
                                   : 'Processing ...')
-                            : (_photo == null ? 'Choose File' : 'Replace File'),
+                            : (hasPhoto ? 'Remove Image' : 'Choose File'),
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
                   ),
-                  if (widget.showRemoveAction && _photo != null)
-                    TextButton(
-                      onPressed: _isProcessing ? null : _removePhoto,
-                      child: const Text('Remove'),
-                    ),
                 ],
               ),
             ],

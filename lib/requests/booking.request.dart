@@ -1,3 +1,8 @@
+import 'package:crypto/crypto.dart';
+import 'package:webapp/services/paged_booking_source.dart';
+import 'package:webapp/services/booking_photo_cleanup.dart';
+import 'package:webapp/services/sync_error_log_service.dart';
+import 'package:webapp/services/booking_pm_assignment.dart';
 import 'package:webapp/utils/cached_snapshot_documents.dart';
 import 'package:webapp/services/offline_reference_mapper.dart';
 import 'package:webapp/services/foreground_refresh_gate.dart';
@@ -24,18 +29,21 @@ import 'package:webapp/services/firestore_public_document_fetcher.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/offline_queue_coordinator_service.dart';
-import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/utils/functions.dart';
 
 class BookingRequest implements BookingRepository {
   BookingRequest({
     FirebaseFirestore? firestore,
     AuthRequest? authRequest,
+    BookingOfflineUploadQueueService? offlineUploadQueueService,
     VehicleRequest? vehicleRequest,
     OfflineMutationQueueService? offlineMutationQueueService,
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
   }) : _providedFirestore = firestore,
        _authRequest = authRequest ?? AuthRequest.instance,
+       _offlineUploadQueueService =
+           offlineUploadQueueService ??
+           BookingOfflineUploadQueueService.instance,
        _vehicleRequest = vehicleRequest ?? VehicleRequest.instance,
        _offlineMutationQueueService =
            offlineMutationQueueService ?? OfflineMutationQueueService.instance,
@@ -48,7 +56,6 @@ class BookingRequest implements BookingRepository {
   static const Duration _startupTimeout = Duration(seconds: 30);
   static const Duration _queuedReadTimeout = Duration(seconds: 1);
   static const Duration _remoteSaveTimeout = Duration(seconds: 30);
-  static const Duration _photoUploadTimeout = Duration(minutes: 1);
   static const Duration _webSingleDocumentTimeout = Duration(seconds: 30);
   static const Duration _webMutationTimeout = Duration(seconds: 30);
   static const Duration _webNextIdTimeout = Duration(seconds: 30);
@@ -66,8 +73,7 @@ class BookingRequest implements BookingRepository {
   final Map<String, Stopwatch> _pendingBookingWriteTraces =
       <String, Stopwatch>{};
   StreamSubscription<String?>? _bookingsVersionSignalSubscription;
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
-  _bookingsRealtimeSubscription;
+  StreamSubscription<BookingDataSnapshot>? _bookingsRealtimeSubscription;
   Completer<void>? _initialRealtimeSyncCompleter;
 
   late final _legacyRepair = LegacyBookingRepairService(firestore: _firestore);
@@ -91,7 +97,15 @@ class BookingRequest implements BookingRepository {
         documents,
         onResult: (result) => debugPrint('[Booking ID repair] $result'),
       );
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'booking.request.dart',
+          operation: 'booking operation failure',
+        ),
+      );
       debugPrint('[Booking ID repair] Deferred: $error');
     } finally {
       _legacyRepairDispatchRunning = false;
@@ -119,9 +133,7 @@ class BookingRequest implements BookingRepository {
   final AuthRequest _authRequest;
   final VehicleRequest _vehicleRequest;
   final FirestorePublicDocumentFetcher _firestorePublicDocumentFetcher;
-  final PhotoStorageService _photoStorageService = PhotoStorageService.instance;
-  final BookingOfflineUploadQueueService _offlineUploadQueueService =
-      BookingOfflineUploadQueueService.instance;
+  final BookingOfflineUploadQueueService _offlineUploadQueueService;
   final OfflineMutationQueueService _offlineMutationQueueService;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
@@ -260,7 +272,15 @@ class BookingRequest implements BookingRepository {
         documents = await _fetchBookingsViaSdkOnly();
         _log(() => 'getBookings sdk-only resolved docs=${documents.length}');
         _bookingCacheUpdates.add(null);
-      } catch (error) {
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'booking.request.dart',
+            operation: 'booking operation failure',
+          ),
+        );
         _log(() => 'getBookings sdk-only fetch error error=$error');
         final lateCachedDocuments = await _cache.readDocuments(
           _bookingsResourceKey,
@@ -475,9 +495,30 @@ class BookingRequest implements BookingRepository {
     );
   }
 
-  Future<Booking> _saveBooking(Booking booking) async {
+  Future<Booking> _saveBooking(Booking booking) => _offlineMutationQueueService
+      .withAccountScope(() => _saveBookingInScope(booking));
+
+  Future<Booking> _saveBookingInScope(Booking booking) async {
     return _runRequest(() async {
       await initialize();
+      // Capture the fixed bundle in this normal save; no migration writes.
+      if (booking.vehicleMake?.id == null) {
+        final cached = await _cache.readDocuments('vehicle_makes');
+        final makes = cached == null
+            ? VehicleRequest.hydratedMakesSnapshot
+            : cached.map(
+                (data) => VehicleMake.fromMap({
+                  ...data,
+                  if (data['driver'] == null && data['driver_id'] != null)
+                    'driver': {'id': data['driver_id'].toString()},
+                  if (data['helper'] == null && data['helper_id'] != null)
+                    'helper': {'id': data['helper_id'].toString()},
+                }),
+              );
+        booking = booking.copyWith(
+          vehicleMake: resolveBookingPm(booking, makes),
+        );
+      }
       var normalizedId = normalizeId(booking.id);
       final wasTemporary = BookingIdResolver.isTemporary(normalizedId);
       if (wasTemporary &&
@@ -550,10 +591,6 @@ class BookingRequest implements BookingRepository {
       final persistedStatusOutputs = await _persistPhotoFields(
         booking.statusOutputs,
         bookingId: nextId,
-        queueUploads: booking.pendingActionAt != null,
-        existingStatusOutputs: _statusOutputsFromFirestoreMap(
-          existingBookingData,
-        ),
       );
       _log(() => 'save media ready id=$nextId');
       var saved = booking.copyWith(
@@ -574,7 +611,27 @@ class BookingRequest implements BookingRepository {
                 ?.toIso8601String()
           : booking.pendingBaseUpdatedAt?.toIso8601String() ??
                 existingBookingData?['updated_at']?.toString();
-      if (!queueRemoteWrite) {
+      var savedForeground = false;
+      if (queueRemoteWrite &&
+          booking.pendingActionAt != null &&
+          !wasTemporary &&
+          !isCreatingBooking &&
+          currentNetworkStatus()) {
+        savedForeground = await _offlineMutationQueueService
+            .tryWriteCollectionDocumentOnline(
+              collectionKey: _bookingsResourceKey,
+              documentId: nextId,
+              document: document,
+              baseUpdatedAt: baseUpdatedAtIso,
+            );
+        if (savedForeground) {
+          queueRemoteWrite = false;
+          saved = saved.copyWith(localSyncStatus: null);
+          document = _toFirestoreMap(saved);
+          cacheDocument = _toCacheDocument(saved);
+        }
+      }
+      if (!queueRemoteWrite && !savedForeground) {
         _log(() => 'save firestore set start id=$nextId');
         try {
           await _writeBookingOnline(
@@ -588,7 +645,15 @@ class BookingRequest implements BookingRepository {
             ),
           );
           _log(() => 'save firestore set done id=$nextId');
-        } catch (error) {
+        } catch (error, stack) {
+          unawaited(
+            SyncErrorLogService.instance.report(
+              error,
+              stack,
+              source: 'booking.request.dart',
+              operation: 'booking operation failure',
+            ),
+          );
           if (!_isQueueableBookingWriteError(error)) {
             rethrow;
           }
@@ -667,7 +732,15 @@ class BookingRequest implements BookingRepository {
           await _writeBillingStatusesOnline({
             normalizedId: normalizedBillingStatus,
           });
-        } catch (error) {
+        } catch (error, stack) {
+          unawaited(
+            SyncErrorLogService.instance.report(
+              error,
+              stack,
+              source: 'booking.request.dart',
+              operation: 'booking operation failure',
+            ),
+          );
           if (!_isQueueableBookingWriteError(error)) {
             rethrow;
           }
@@ -742,7 +815,15 @@ class BookingRequest implements BookingRepository {
       if (!queued) {
         try {
           await _writeBillingStatusesOnline(normalizedStatusesByBookingId);
-        } catch (error) {
+        } catch (error, stack) {
+          unawaited(
+            SyncErrorLogService.instance.report(
+              error,
+              stack,
+              source: 'booking.request.dart',
+              operation: 'booking operation failure',
+            ),
+          );
           if (!_isQueueableBookingWriteError(error)) {
             rethrow;
           }
@@ -820,7 +901,15 @@ class BookingRequest implements BookingRepository {
         return cached;
       }
       return documentData(snapshot);
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'booking.request.dart',
+          operation: 'booking operation failure',
+        ),
+      );
       return cached;
     }
   }
@@ -834,16 +923,6 @@ class BookingRequest implements BookingRepository {
       if (normalizeId(document['id']?.toString()) == bookingId) {
         return Map<String, dynamic>.from(document);
       }
-    }
-    return null;
-  }
-
-  Map<String, dynamic>? _statusOutputsFromFirestoreMap(
-    Map<String, dynamic>? bookingData,
-  ) {
-    final rawValue = bookingData?['status_outputs'];
-    if (rawValue is Map) {
-      return Map<String, dynamic>.from(rawValue);
     }
     return null;
   }
@@ -913,7 +992,15 @@ class BookingRequest implements BookingRepository {
               ),
             );
         successCount += 1;
-      } catch (error) {
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'booking.request.dart',
+            operation: 'booking operation failure',
+          ),
+        );
         lastError = error;
       }
     }
@@ -1007,7 +1094,15 @@ class BookingRequest implements BookingRepository {
             );
           }
           return true;
-        } catch (error) {
+        } catch (error, stack) {
+          unawaited(
+            SyncErrorLogService.instance.report(
+              error,
+              stack,
+              source: 'booking.request.dart',
+              operation: 'booking operation failure',
+            ),
+          );
           return false;
         }
       }),
@@ -1019,16 +1114,8 @@ class BookingRequest implements BookingRepository {
   Future<Map<String, dynamic>?> _persistPhotoFields(
     Map<String, dynamic>? statusOutputs, {
     required String bookingId,
-    required Map<String, dynamic>? existingStatusOutputs,
-    bool queueUploads = false,
   }) async {
     if (statusOutputs == null) {
-      if (existingStatusOutputs != null) {
-        await _deleteObsoletePhotos(
-          previousStatusOutputs: existingStatusOutputs,
-          nextStatusOutputs: null,
-        );
-      }
       return null;
     }
 
@@ -1046,7 +1133,6 @@ class BookingRequest implements BookingRepository {
         for (final fieldEntry in fieldsValue.entries) {
           nextFields[fieldEntry.key.toString()] = await _persistPhotoValue(
             fieldEntry.value,
-            forceQueue: queueUploads,
             bookingId: bookingId,
             statusKey: sectionEntry.key,
             fieldKey: fieldEntry.key.toString(),
@@ -1057,12 +1143,6 @@ class BookingRequest implements BookingRepository {
       nextStatusOutputs[sectionEntry.key] = nextSection;
     }
 
-    if (!queueUploads) {
-      await _deleteObsoletePhotos(
-        previousStatusOutputs: existingStatusOutputs,
-        nextStatusOutputs: nextStatusOutputs,
-      );
-    }
     return nextStatusOutputs;
   }
 
@@ -1071,7 +1151,6 @@ class BookingRequest implements BookingRepository {
     required String bookingId,
     required String statusKey,
     required String fieldKey,
-    bool forceQueue = false,
   }) async {
     final mapValue = value is Map<String, dynamic>
         ? Map<String, dynamic>.from(value)
@@ -1086,55 +1165,16 @@ class BookingRequest implements BookingRepository {
     final mimeType = mapValue['mime_type']?.toString().trim();
     final size = _toInt(mapValue['size']) ?? bytes.length;
     final resolvedFileName = fileName?.isNotEmpty == true ? fileName! : 'photo';
-    if (forceQueue || !currentNetworkStatus()) {
-      final queuedValue = await _offlineUploadQueueService.enqueueBookingPhoto(
-        bytes: bytes,
-        bookingId: bookingId,
-        statusKey: statusKey.trim(),
-        fieldKey: fieldKey.trim(),
-        fileName: resolvedFileName,
-        mimeType: mimeType?.isNotEmpty == true ? mimeType : null,
-        size: size,
-      );
-      return queuedValue;
-    }
-    try {
-      final uploaded = await _photoStorageService
-          .uploadBookingPhoto(
-            bytes: bytes,
-            bookingId: bookingId,
-            statusKey: statusKey.trim(),
-            fieldKey: fieldKey.trim(),
-            fileName: resolvedFileName,
-            mimeType: mimeType?.isNotEmpty == true ? mimeType : null,
-            size: size,
-          )
-          .timeout(
-            _photoUploadTimeout,
-            onTimeout: () => throw TimeoutException(
-              'booking photo upload timeout for $bookingId/$statusKey/$fieldKey',
-            ),
-          );
-      return uploaded;
-    } catch (error) {
-      final normalizedError = normalizeUserErrorText(
-        error.toString(),
-        fallback: '',
-      ).toLowerCase();
-      if (!_isQueueableUploadError(normalizedError)) {
-        rethrow;
-      }
-      final queuedValue = await _offlineUploadQueueService.enqueueBookingPhoto(
-        bytes: bytes,
-        bookingId: bookingId,
-        statusKey: statusKey.trim(),
-        fieldKey: fieldKey.trim(),
-        fileName: resolvedFileName,
-        mimeType: mimeType?.isNotEmpty == true ? mimeType : null,
-        size: size,
-      );
-      return queuedValue;
-    }
+    return _offlineUploadQueueService.enqueueBookingPhoto(
+      waitForBookingCommit: true,
+      bytes: bytes,
+      bookingId: bookingId,
+      statusKey: statusKey.trim(),
+      fieldKey: fieldKey.trim(),
+      fileName: resolvedFileName,
+      mimeType: mimeType?.isNotEmpty == true ? mimeType : null,
+      size: size,
+    );
   }
 
   Future<void> _writeBookingOnline(
@@ -1170,11 +1210,20 @@ class BookingRequest implements BookingRepository {
               'booking remote write timeout for $bookingId',
             ),
           );
+      BookingPhotoCleanup.schedule(bookingId, document);
       _writeTrace(
         () =>
             'sdk set acknowledged id=$bookingId elapsedMs=${stopwatch.elapsedMilliseconds}',
       );
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'booking.request.dart',
+          operation: 'booking operation failure',
+        ),
+      );
       _writeTrace(
         () =>
             'sdk set error id=$bookingId elapsedMs=${stopwatch.elapsedMilliseconds} error=$error',
@@ -1209,7 +1258,6 @@ class BookingRequest implements BookingRepository {
     );
 
     DocumentSnapshot<Map<String, dynamic>>? nextChassis;
-    DocumentSnapshot<Map<String, dynamic>>? displacedBooking;
     DocumentSnapshot<Map<String, dynamic>>? previousChassis;
     if (previousChassisId != null && previousChassisId != nextChassisId) {
       previousChassis = await transaction.get(
@@ -1223,24 +1271,19 @@ class BookingRequest implements BookingRepository {
       if (!nextChassis.exists && lifecycle?.keepBookingLink != false) {
         throw StateError('The selected chassis no longer exists.');
       }
-      final displacedBookingId = normalizeId(
+      final ownerId = normalizeId(
         nextChassis.data()?['current_booking_id']?.toString(),
       );
-      if (lifecycle?.keepBookingLink == false &&
-          displacedBookingId != bookingId) {
-        // A historical completed/cancelled booking no longer owns this asset.
+      final ownerBooking = ownerId != null && ownerId != bookingId
+          ? (await transaction.get(_bookingsCollection.doc(ownerId))).data()
+          : null;
+      if (!shouldProjectBookingOntoChassis(
+        bookingId: bookingId,
+        booking: document,
+        chassis: nextChassis.data() ?? {},
+        ownerBooking: ownerBooking,
+      )) {
         nextChassis = null;
-      } else if (displacedBookingId != null &&
-          displacedBookingId != bookingId) {
-        if (lifecycle != null &&
-            lifecycle.driverLink != ChassisDriverLink.deliveryDriver) {
-          throw StateError(
-            'Sync conflict: chassis is assigned to another booking.',
-          );
-        }
-        displacedBooking = await transaction.get(
-          _bookingsCollection.doc(displacedBookingId),
-        );
       }
     }
 
@@ -1257,12 +1300,6 @@ class BookingRequest implements BookingRepository {
         'current_booking_id': FieldValue.delete(),
         'current_driver_id': FieldValue.delete(),
         'current_status': 'ready',
-        'updated_at': now,
-      }, SetOptions(merge: true));
-    }
-    if (displacedBooking?.exists == true) {
-      transaction.set(displacedBooking!.reference, {
-        'chassis_id': FieldValue.delete(),
         'updated_at': now,
       }, SetOptions(merge: true));
     }
@@ -1284,6 +1321,7 @@ class BookingRequest implements BookingRepository {
         SetOptions(merge: true),
       );
     }
+    BookingPhotoCleanup.prepare(document, existingBooking.data());
     transaction.set(bookingRef, document);
   }
 
@@ -1347,51 +1385,22 @@ class BookingRequest implements BookingRepository {
     return _isQueueableUploadError(normalizedError);
   }
 
-  Future<void> _deleteObsoletePhotos({
-    required Map<String, dynamic>? previousStatusOutputs,
-    required Map<String, dynamic>? nextStatusOutputs,
-  }) async {
-    final previousPaths = _collectPhotoStoragePaths(previousStatusOutputs);
-    final nextPaths = _collectPhotoStoragePaths(nextStatusOutputs);
-    for (final entry in previousPaths.entries) {
-      if (nextPaths[entry.key] == entry.value) {
-        continue;
-      }
-      await _photoStorageService.deleteByPath(entry.value);
-    }
-  }
-
-  Map<String, String> _collectPhotoStoragePaths(
-    Map<String, dynamic>? statusOutputs,
-  ) {
-    final paths = <String, String>{};
-    if (statusOutputs == null) {
-      return paths;
-    }
-    for (final sectionEntry in statusOutputs.entries) {
-      final section = sectionEntry.value;
-      if (section is! Map) {
-        continue;
-      }
-      final fields = section['fields'];
-      if (fields is! Map) {
-        continue;
-      }
-      for (final fieldEntry in fields.entries) {
-        final storagePath = photoStoragePath(fieldEntry.value);
-        if (storagePath == null) {
-          continue;
-        }
-        paths['${sectionEntry.key}/${fieldEntry.key}'] = storagePath;
-      }
-    }
-    return paths;
-  }
+  final _inflatedById = <String, ({String input, Booking value})>{};
+  String? _inflationRelations;
+  String _hydrationFingerprint(Object value) => sha256
+      .convert(
+        utf8.encode(jsonEncode(value, toEncodable: (item) => item.toString())),
+      )
+      .toString();
 
   Future<List<Booking>> _inflateBookings(
     List<Map<String, dynamic>> documents,
   ) async {
     documents = BookingIdResolver.reconcileCopies(documents);
+    for (final document in documents) {
+      final id = document['id']?.toString();
+      if (id != null) BookingPhotoCleanup.schedule(id, document);
+    }
     _log(
       () =>
           'inflate start sourceDocs=${documents.length} ids=${documents.map((doc) => normalizeId(doc["id"]?.toString()) ?? "-").join(",")}',
@@ -1460,15 +1469,37 @@ class BookingRequest implements BookingRepository {
                   ?.toMap(),
           }),
     };
-    final bookings = documents
-        .map(
-          (doc) => _bookingFromFirestoreMap(
-            doc,
-            userById: userById,
-            makeById: makeById,
-          ),
-        )
-        .toList();
+    final relations = _hydrationFingerprint([
+      cachedUserDocuments,
+      cachedMakeDocuments,
+      cachedTypeDocuments,
+    ]);
+    if (_inflationRelations != relations) {
+      _inflationRelations = relations;
+      _inflatedById.clear();
+    }
+    final bookings = <Booking>[];
+    final retained = <String>{};
+    for (var index = 0; index < documents.length; index++) {
+      final doc = documents[index];
+      final id = doc['id']?.toString() ?? '';
+      final input = _hydrationFingerprint(doc);
+      final cached = _inflatedById[id];
+      final booking = cached?.input == input
+          ? cached!.value
+          : _bookingFromFirestoreMap(
+              doc,
+              userById: userById,
+              makeById: makeById,
+            );
+      if (id.isNotEmpty) {
+        retained.add(id);
+        _inflatedById[id] = (input: input, value: booking);
+      }
+      bookings.add(booking);
+      if (index % 75 == 74) await Future<void>.delayed(Duration.zero);
+    }
+    _inflatedById.removeWhere((id, _) => !retained.contains(id));
     _log(
       () =>
           'inflate mapped count=${bookings.length} ids=${bookings.map((booking) => normalizeId(booking.id) ?? "-").join(",")} clientIds=${bookings.map((booking) => normalizeId(booking.client?.id) ?? "-").join(",")}',
@@ -1494,13 +1525,12 @@ class BookingRequest implements BookingRepository {
     ),
   );
 
-  late final _snapshotWorker =
-      LatestValueWorker<QuerySnapshot<Map<String, dynamic>>>(
-        apply: _handleRealtimeSnapshot,
-        onError: (error, stack) {
-          _log(() => 'realtime apply failed error=$error');
-        },
-      );
+  late final _snapshotWorker = LatestValueWorker<BookingDataSnapshot>(
+    apply: _handleRealtimeSnapshot,
+    onError: (error, stack) {
+      _log(() => 'realtime apply failed error=$error');
+    },
+  );
 
   void _ensureBookingsRealtimeSync() {
     if (_bookingsRealtimeSubscription != null) {
@@ -1508,30 +1538,28 @@ class BookingRequest implements BookingRepository {
     }
     _initialRealtimeSyncCompleter ??= Completer<void>();
     _log(() => 'realtime sync subscribe includeMetadataChanges=true');
-    _bookingsRealtimeSubscription = _bookingsCollection
-        .snapshots(includeMetadataChanges: true)
-        .listen(
-          (snapshot) {
-            // Do not let a provisional/pending snapshot replace a confirmed
-            // snapshot waiting in the worker. These are full collection states.
-            if (currentNetworkStatus() &&
-                (snapshot.metadata.isFromCache ||
-                    snapshot.metadata.hasPendingWrites)) {
-              return;
-            }
-            if (!snapshot.metadata.isFromCache &&
-                !snapshot.metadata.hasPendingWrites) {
-              _foregroundRefresh.confirmedSnapshot();
-            }
-            _snapshotWorker.add(snapshot);
-          },
-          onError: (error, stackTrace) {
-            _log(() => 'realtime sync error error=$error');
-            if (!(_initialRealtimeSyncCompleter?.isCompleted ?? true)) {
-              _initialRealtimeSyncCompleter?.complete();
-            }
-          },
-        );
+    _bookingsRealtimeSubscription = _pagedSource.watch().listen(
+      (snapshot) {
+        // Do not let a provisional/pending snapshot replace a confirmed
+        // snapshot waiting in the worker. These are full collection states.
+        if (currentNetworkStatus() &&
+            (snapshot.metadata.isFromCache ||
+                snapshot.metadata.hasPendingWrites)) {
+          return;
+        }
+        if (!snapshot.metadata.isFromCache &&
+            !snapshot.metadata.hasPendingWrites) {
+          _foregroundRefresh.confirmedSnapshot();
+        }
+        _snapshotWorker.add(snapshot);
+      },
+      onError: (error, stackTrace) {
+        _log(() => 'realtime sync error error=$error');
+        if (!(_initialRealtimeSyncCompleter?.isCompleted ?? true)) {
+          _initialRealtimeSyncCompleter?.complete();
+        }
+      },
+    );
   }
 
   Future<void> _syncPersistedCacheTrustFromMetaSignal() async {
@@ -1592,9 +1620,7 @@ class BookingRequest implements BookingRepository {
     } catch (_) {}
   }
 
-  Future<void> _handleRealtimeSnapshot(
-    QuerySnapshot<Map<String, dynamic>> snapshot,
-  ) async {
+  Future<void> _handleRealtimeSnapshot(BookingDataSnapshot snapshot) async {
     final eventStopwatch = Stopwatch()..start();
     final online = currentNetworkStatus();
     final fromCache = snapshot.metadata.isFromCache;
@@ -1738,7 +1764,15 @@ class BookingRequest implements BookingRepository {
           _hasAuthoritativeOnlineSync = true;
           _isPersistedCacheTrustedOnline = true;
         }
-      } catch (error) {
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'booking.request.dart',
+            operation: 'booking operation failure',
+          ),
+        );
         _log(
           () =>
               'refresh background sdk fetch error error=$error elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
@@ -1759,7 +1793,15 @@ class BookingRequest implements BookingRepository {
             'refresh background applied memory=${_memoryBookings.length} elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
       );
       _bookingCacheUpdates.add(null);
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'booking.request.dart',
+          operation: 'booking operation failure',
+        ),
+      );
       _log(
         () =>
             'refresh background error error=$error elapsedMs=${refreshStopwatch.elapsedMilliseconds}',
@@ -1776,8 +1818,11 @@ class BookingRequest implements BookingRepository {
     }
   }
 
-  Future<QuerySnapshot<Map<String, dynamic>>>
-  _fetchAuthoritativeBookingsSnapshot({bool forceServer = false}) {
+  late final _pagedSource = PagedBookingSource(_bookingsCollection);
+
+  Future<BookingDataSnapshot> _fetchAuthoritativeBookingsSnapshot({
+    bool forceServer = false,
+  }) {
     final options = currentNetworkStatus()
         ? const GetOptions(source: Source.server)
         : const GetOptions(source: Source.cache);
@@ -1785,7 +1830,7 @@ class BookingRequest implements BookingRepository {
       () =>
           'authoritative snapshot request start forceServer=$forceServer online=${currentNetworkStatus()} source=${options.source}',
     );
-    return _bookingsCollection.get(options);
+    return _pagedSource.read(options);
   }
 
   Future<List<Map<String, dynamic>>> _fetchBookingsViaSdkOnly() async {
@@ -1918,7 +1963,15 @@ class BookingRequest implements BookingRepository {
           );
       _log(() => 'queued documents read count=${queued.length}');
       return queued;
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'booking.request.dart',
+          operation: 'booking operation failure',
+        ),
+      );
       _log(() => 'queued documents read error error=$error');
       return const <Map<String, dynamic>>[];
     }
@@ -1966,9 +2019,21 @@ class BookingRequest implements BookingRepository {
       ),
       driverStatus: map['driver_status']?.toString(),
       helperStatus: map['helper_status']?.toString(),
-      vehicleMake: makeById[map['vehicle_make_id']?.toString()],
-      driver: userById[map['driver_id']?.toString()],
-      helper: userById[map['helper_id']?.toString()],
+      vehicleMake:
+          makeById[map['vehicle_make_id']?.toString()] ??
+          (normalizeId(map['vehicle_make_id']?.toString()) == null
+              ? null
+              : VehicleMake(id: map['vehicle_make_id'].toString())),
+      driver:
+          userById[map['driver_id']?.toString()] ??
+          (normalizeId(map['driver_id']?.toString()) == null
+              ? null
+              : UserModel(id: map['driver_id'].toString())),
+      helper:
+          userById[map['helper_id']?.toString()] ??
+          (normalizeId(map['helper_id']?.toString()) == null
+              ? null
+              : UserModel(id: map['helper_id'].toString())),
       chassisId: map['chassis_id']?.toString(),
       statusOutputs: map['status_outputs'] is Map
           ? Map<String, dynamic>.from(map['status_outputs'] as Map)
@@ -2015,7 +2080,15 @@ class BookingRequest implements BookingRepository {
           .map((doc) => int.tryParse(documentData(doc)['id']?.toString() ?? ''))
           .whereType<int>()
           .fold<int>(0, (max, value) => value > max ? value : max);
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'booking.request.dart',
+          operation: 'booking operation failure',
+        ),
+      );
       // Keep the cached highest id when remote lookup is unavailable.
     }
     final highest = remoteHighest > cachedHighest
@@ -2160,7 +2233,15 @@ class BookingRequest implements BookingRepository {
             'sdk cache-only read done path=${collection.path} docs=${documents.length}',
       );
       return documents;
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'booking.request.dart',
+          operation: 'booking operation failure',
+        ),
+      );
       _log(
         () => 'sdk cache-only read error path=${collection.path} error=$error',
       );
@@ -2263,9 +2344,15 @@ class BookingRequest implements BookingRepository {
   }) async {
     try {
       return await action();
-    } on FirebaseException catch (error) {
-      throw Exception(userFacingErrorMessage(error, fallback: fallback));
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'booking.request.dart',
+          operation: fallback,
+        ),
+      );
       throw Exception(userFacingErrorMessage(error, fallback: fallback));
     }
   }

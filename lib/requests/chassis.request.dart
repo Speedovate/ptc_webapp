@@ -1,3 +1,5 @@
+import 'package:webapp/services/booking_chassis_lifecycle.dart';
+import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/utils/cached_snapshot_documents.dart';
 import 'package:webapp/services/offline_reference_mapper.dart';
 import 'dart:async';
@@ -207,6 +209,16 @@ class ChassisRequest {
       );
       _trace('online write done id=$id');
     } else {
+      final target = BookingRequest.hydratedBookingsSnapshot
+          .where((booking) => booking.id == saved.bookingReferenceId)
+          .firstOrNull;
+      if (isChassisReservation(target?.clientStatus)) {
+        final current = _memory.where((item) => item.id == id).firstOrNull;
+        preserveChassisPhysicalAssignment(
+          document,
+          current?.toMap() ?? {'current_status': 'ready'},
+        );
+      }
       _trace('offline queue start provisionalId=$id');
       await _offlineMutationQueueService.queueChassisAssignment(
         documentId: '$id',
@@ -221,13 +233,14 @@ class ChassisRequest {
       );
       _trace('offline queue persisted provisionalId=$id');
     }
-    _upsertMemory(saved);
+    final result = Chassis.fromMap(document);
+    _upsertMemory(result);
     _trace('local publish done id=$id queued=${!online}');
     // The queue is already durable at this point. Never hold the editor open
     // for a best-effort cache mirror, especially while the browser is moving
     // from offline back to online.
     _persistChassisCacheInBackground(document, queued: !online);
-    return saved;
+    return result;
   }
 
   void _persistChassisCacheInBackground(
@@ -241,7 +254,15 @@ class ChassisRequest {
           document: document,
         );
         _trace('cache mirror saved id=${document['id']} queued=$queued');
-      } catch (error) {
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'chassis.request.dart',
+            operation: 'request failure',
+          ),
+        );
         // The mutation queue remains the durable source for offline saves.
         _trace(
           'cache mirror deferred id=${document['id']} queued=$queued error=$error',
@@ -307,7 +328,15 @@ class ChassisRequest {
           resourceKey: resourceKey,
           documentId: '$id',
         );
-      } catch (error) {
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'chassis.request.dart',
+            operation: 'request failure',
+          ),
+        );
         _trace('cache remove deferred id=$id error=$error');
       }
     }());
@@ -319,8 +348,20 @@ class ChassisRequest {
     required String? previousBookingId,
   }) async {
     final now = DateTime.now().toUtc().toIso8601String();
-    await _firestore
-        .runTransaction<void>((transaction) async {
+    final savedDocument = await _firestore
+        .runTransaction<Map<String, dynamic>>((transaction) async {
+          final writeDocument = Map<String, dynamic>.from(document);
+          final currentChassis = await transaction.get(
+            _collection.doc('${chassis.id}'),
+          );
+          if (chassis.bookingReferenceId == null &&
+              currentChassis.data()?['current_booking_id'] != null &&
+              currentChassis.data()?['current_booking_id']?.toString() !=
+                  previousBookingId) {
+            throw StateError(
+              'Sync conflict: chassis now belongs to another booking.',
+            );
+          }
           DocumentSnapshot<Map<String, dynamic>>? priorChassisSnapshot;
           if (chassis.bookingReferenceId != null) {
             final targetBooking = _firestore
@@ -330,6 +371,26 @@ class ChassisRequest {
             if (!targetSnapshot.exists) {
               throw StateError('The selected booking no longer exists.');
             }
+            final ownerId = currentChassis
+                .data()?['current_booking_id']
+                ?.toString();
+            final ownerBooking =
+                ownerId != null && ownerId != chassis.bookingReferenceId
+                ? (await transaction.get(
+                    _firestore.collection('bookings').doc(ownerId),
+                  )).data()
+                : null;
+            if (!shouldProjectBookingOntoChassis(
+              bookingId: chassis.bookingReferenceId!,
+              booking: targetSnapshot.data()!,
+              chassis: currentChassis.data() ?? {},
+              ownerBooking: ownerBooking,
+            )) {
+              preserveChassisPhysicalAssignment(
+                writeDocument,
+                currentChassis.data() ?? {},
+              );
+            }
             final priorChassisId = int.tryParse(
               targetSnapshot.data()?['chassis_id']?.toString() ?? '',
             );
@@ -338,14 +399,6 @@ class ChassisRequest {
                 _collection.doc('$priorChassisId'),
               );
             }
-          }
-          if (previousBookingId != null &&
-              previousBookingId != chassis.bookingReferenceId) {
-            transaction.set(
-              _firestore.collection('bookings').doc(previousBookingId),
-              {'chassis_id': FieldValue.delete(), 'updated_at': now},
-              SetOptions(merge: true),
-            );
           }
           if (chassis.bookingReferenceId != null) {
             transaction.set(
@@ -359,15 +412,17 @@ class ChassisRequest {
               SetOptions(merge: true),
             );
           }
-          if (priorChassisSnapshot?.exists == true) {
-            transaction.set(priorChassisSnapshot!.reference, {
+          if (priorChassisSnapshot?.exists == true &&
+              priorChassisSnapshot!.data()?['current_booking_id']?.toString() ==
+                  chassis.bookingReferenceId) {
+            transaction.set(priorChassisSnapshot.reference, {
               'current_booking_id': FieldValue.delete(),
               'current_driver_id': FieldValue.delete(),
               'current_status': Chassis.ready,
               'updated_at': now,
             }, SetOptions(merge: true));
           }
-          transaction.set(_collection.doc('${chassis.id}'), document);
+          transaction.set(_collection.doc('${chassis.id}'), writeDocument);
           transaction.set(
             _firestore.collection('manage_cache').doc(resourceKey),
             {'version': now, 'updated_at': now},
@@ -381,8 +436,12 @@ class ChassisRequest {
               SetOptions(merge: true),
             );
           }
+          return writeDocument;
         })
         .timeout(_writeTimeout);
+    document
+      ..clear()
+      ..addAll(savedDocument);
   }
 
   Future<List<Chassis>> _applyRemoteDocuments(
@@ -409,7 +468,15 @@ class ChassisRequest {
           resourceKey: resourceKey,
           documents: documents,
         );
-      } catch (error) {
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'chassis.request.dart',
+            operation: 'request failure',
+          ),
+        );
         _trace('realtime cache persistence deferred error=$error');
       }
     }());

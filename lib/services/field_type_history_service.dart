@@ -31,7 +31,8 @@ class FieldTypeHistoryService {
   }
 
   static String? fieldKey(StatusField field) {
-    if (!['text', 'email', 'phone', 'number'].contains(field.type ?? 'text') ||
+    if ((!['text', 'email', 'phone', 'number'].contains(field.type ?? 'text') &&
+            !field.isChassisLocationInput) ||
         excluded('${field.key} ${field.title}') ||
         (field.key ?? '').endsWith('_id')) {
       return null;

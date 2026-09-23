@@ -9,6 +9,7 @@ class VehicleMake {
     this.code,
     this.type,
     this.driver,
+    this.helper,
     this.isActive,
     this.createdAt,
     this.updatedAt,
@@ -18,6 +19,7 @@ class VehicleMake {
   final String? code;
   final VehicleCatalogItem? type;
   final UserModel? driver;
+  final UserModel? helper;
   final bool? isActive;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -27,6 +29,8 @@ class VehicleMake {
     String? code,
     VehicleCatalogItem? type,
     UserModel? driver,
+    UserModel? helper,
+    bool clearHelper = false,
     bool? isActive,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -36,6 +40,7 @@ class VehicleMake {
       code: code ?? this.code,
       type: type ?? this.type,
       driver: driver ?? this.driver,
+      helper: clearHelper ? null : helper ?? this.helper,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -48,6 +53,7 @@ class VehicleMake {
       'code': code,
       'type': type?.toMap(),
       'driver': driver?.toMap(),
+      'helper': helper?.toMap(),
       'is_active': isActive,
       'created_at': createdAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
@@ -65,6 +71,9 @@ class VehicleMake {
           : null,
       driver: map['driver'] is Map
           ? UserModel.fromMap(Map<String, dynamic>.from(map['driver'] as Map))
+          : null,
+      helper: map['helper'] is Map
+          ? UserModel.fromMap(Map<String, dynamic>.from(map['helper'] as Map))
           : null,
       isActive: map['is_active'] as bool?,
       createdAt: _toDateTime(map['created_at']),

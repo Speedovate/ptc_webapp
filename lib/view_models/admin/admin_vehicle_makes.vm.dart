@@ -22,6 +22,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
        _authRepository = authRepository ?? AuthRequest.instance {
     _makes = List<VehicleMake>.from(_cachedMakes);
     _drivers = List<UserModel>.from(_cachedDrivers);
+    _helpers = List<UserModel>.from(_cachedHelpers);
     _types = List<VehicleCatalogItem>.from(_cachedTypes);
     _errorMessage = _cachedErrorMessage;
     _hasLoadedOnce = _cachedHasLoadedOnce;
@@ -34,6 +35,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   StreamSubscription<void>? _catalogCacheUpdatesSubscription;
   static List<VehicleMake> _cachedMakes = const [];
   static List<UserModel> _cachedDrivers = const [];
+  static List<UserModel> _cachedHelpers = const [];
   static List<VehicleCatalogItem> _cachedTypes = const [];
   static String? _cachedErrorMessage;
   static bool _cachedHasLoadedOnce = false;
@@ -41,6 +43,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   static void clearCachedState() {
     _cachedMakes = const [];
     _cachedDrivers = const [];
+    _cachedHelpers = const [];
     _cachedTypes = const [];
     _cachedErrorMessage = null;
     _cachedHasLoadedOnce = false;
@@ -48,6 +51,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
 
   List<VehicleMake> _makes = const [];
   List<UserModel> _drivers = const [];
+  List<UserModel> _helpers = const [];
   List<VehicleCatalogItem> _types = const [];
   String? _errorMessage;
   String _busyMessage = 'Loading, please wait ...';
@@ -57,14 +61,14 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
 
   List<VehicleMake> get makes => _makes;
   List<UserModel> get drivers => _drivers;
+  List<UserModel> get helpers => _helpers;
   List<VehicleCatalogItem> get types => _types;
   String? get errorMessage => _errorMessage;
   String get busyMessage => _busyMessage;
   bool get showBlockingLoading =>
       isBusy && !_hasLoadedOnce && _makes.isEmpty && _cachedMakes.isEmpty;
-  bool get canReadMakes => _roleAccessService.canAccess(
-    DispatcherAccessCapability.vehicleMakesRead,
-  );
+  bool get canReadMakes =>
+      _roleAccessService.canAccess(DispatcherAccessCapability.vehicleMakesRead);
   bool get canCreateMakes => _roleAccessService.canAccess(
     DispatcherAccessCapability.vehicleMakesCreate,
   );
@@ -158,13 +162,21 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
         _warmupService.warmUsers(),
       ]);
       final types = await _repository.getTypes();
+      final users = await _authRepository.getUsers();
+      final helpers =
+          users
+              .where((user) => normalizeRoleKey(user.role) == 'helper')
+              .toList()
+            ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
       final drivers =
-          (await _authRepository.getUsers())
+          users
               .where((user) => normalizeRoleKey(user.role) == 'driver')
               .toList()
             ..sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
       _types = types;
       _drivers = drivers;
+      _helpers = helpers;
+      _cachedHelpers = List<UserModel>.from(helpers);
       _cachedTypes = List<VehicleCatalogItem>.from(_types);
       _cachedDrivers = List<UserModel>.from(_drivers);
       notifyListeners();
@@ -204,9 +216,7 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   Future<VehicleMake> saveMake(VehicleMake make) async {
     final isExisting = (make.id ?? '').trim().isNotEmpty;
     if (isExisting ? !canUpdateMakes : !canCreateMakes) {
-      throw const AuthFailure(
-        'You do not have access to save vehicle makes.',
-      );
+      throw const AuthFailure('You do not have access to save vehicle makes.');
     }
     _busyMessage = 'Saving vehicle make ...';
     setBusy(true);

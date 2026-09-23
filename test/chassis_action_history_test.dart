@@ -35,9 +35,78 @@ Booking booking(String stage, {DateTime? claim}) => Booking(
   },
 );
 void main() {
+  test(
+    'includes every linked advance booking without affecting live timing',
+    () {
+      final active = booking('delivered');
+      const advance = Booking(
+        id: '11',
+        chassisId: '3',
+        clientStatus: 'pending',
+      );
+      final history = ChassisActionHistory.fromBookings(chassis, [
+        active,
+        advance,
+        const Booking(id: '12', chassisId: '4'),
+      ]);
+      expect(history.assignments.map((booking) => booking.id), ['10', '11']);
+      expect(history.events, hasLength(1));
+      expect(history.waiting, isTrue);
+      expect(history.deliveredAt, delivered);
+    },
+  );
+  test(
+    'Garage default only applies to unused ready chassis without history',
+    () {
+      const idle = Chassis(
+        id: 1,
+        name: 'Idle',
+        isActive: true,
+        currentStatus: 'ready',
+      );
+      expect(
+        ChassisActionHistory.fromBookings(idle, []).currentLocation,
+        'Garage',
+      );
+      expect(
+        ChassisActionHistory.fromBookings(chassis, []).currentLocation,
+        '—',
+      );
+      expect(
+        ChassisActionHistory.fromBookings(
+          idle.copyWith(currentBookingId: 10),
+          [],
+        ).currentLocation,
+        '—',
+      );
+    },
+  );
+  test(
+    'legacy loaded chassis resolves destination from its current booking',
+    () {
+      final b = booking('delivered').copyWith(
+        statusOutputs: {
+          'pending': {
+            'fields': {'destination': 'Roxas'},
+          },
+        },
+      );
+      expect(
+        ChassisActionHistory.fromBookings(chassis, [b]).currentLocation,
+        'Roxas',
+      );
+      expect(
+        ChassisActionHistory.fromBookings(chassis.copyWith(location: 'Depot'), [
+          b,
+        ]).currentLocation,
+        'Depot',
+      );
+    },
+  );
+
   test('history uses the same chassis status mapping as lifecycle writes', () {
     final expected = {
-      'assigned': 'ready',
+      'assigned': null,
       'ongoing': 'loaded',
       'delivered': 'loaded',
       'check': 'loaded',
@@ -128,7 +197,7 @@ void main() {
           ),
         ],
       );
-      expect(legacy.locationLabel(legacy.events.single), 'garage (current)');
+      expect(legacy.locationLabel(legacy.events.single), 'garage');
       expect(legacy.events.single.location, isNull);
     },
   );
@@ -224,6 +293,56 @@ void main() {
       clock.value = clock.value.add(const Duration(minutes: 1));
       await tester.pump();
       expect(find.text('Waiting for 2m'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets('advance assignments show booking crew at width $width', (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final clock = ValueNotifier(delivered);
+      addTearDown(clock.dispose);
+      final history = ChassisActionHistory.fromBookings(chassis, const [
+        Booking(
+          id: '11',
+          chassisId: '3',
+          clientStatus: 'pending',
+          driver: UserModel(id: '21', name: 'Advance Driver'),
+          helper: UserModel(id: '22', name: 'Advance Helper'),
+        ),
+        Booking(id: '12', chassisId: '3', clientStatus: 'pending'),
+      ]);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChassisActionHistoryDialog(
+              name: 'Trailer 3',
+              history: history,
+              clock: clock,
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Booking assignments'));
+      await tester.pumpAndSettle();
+      expect(find.text('Booking 11'), findsOneWidget);
+      expect(find.text('Driver 21 | Advance Driver'), findsOneWidget);
+      expect(find.text('Helper 22 | Advance Helper'), findsOneWidget);
+      expect(find.text('Reserved'), findsWidgets);
+      await tester.scrollUntilVisible(
+        find.text('Booking 12'),
+        160,
+        scrollable: find
+            .byWidgetPredicate(
+              (widget) =>
+                  widget is Scrollable &&
+                  widget.axisDirection == AxisDirection.down,
+            )
+            .last,
+      );
+      expect(find.text('Booking 12'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }

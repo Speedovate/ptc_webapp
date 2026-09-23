@@ -1,4 +1,12 @@
 class DispatcherAccessCapability {
+  static const pmKpiRead = 'pm_kpi.read';
+  static const pmKpiUpdate = 'pm_kpi.update';
+  static const fuelLedgerRead = 'fuel_ledger.read';
+  static const fuelLedgerUpdate = 'fuel_ledger.update';
+  static const tripIncomeRead = 'trip_income.read';
+  static const operationsCatalogRead = 'operations_catalog.read';
+  static const operationsCatalogUpdate = 'operations_catalog.update';
+
   static const dashboardRead = 'dashboard.read';
   static const dashboardUpdateBilling = 'dashboard.update_billing';
   static const dashboardExport = 'dashboard.export';
@@ -62,6 +70,14 @@ class DispatcherAccessCapability {
   static const syncUpdate = 'sync.update';
 
   static const values = <String>[
+    pmKpiRead,
+    pmKpiUpdate,
+    fuelLedgerRead,
+    fuelLedgerUpdate,
+    tripIncomeRead,
+    operationsCatalogRead,
+    operationsCatalogUpdate,
+
     dashboardRead,
     dashboardUpdateBilling,
     dashboardExport,

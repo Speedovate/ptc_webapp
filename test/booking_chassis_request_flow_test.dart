@@ -30,6 +30,36 @@ void main() {
     await FirestoreCacheStore.instance.writeDocumentMaps('bookings', []);
   });
 
+  test(
+    'normal save records PM from locally persisted fixed crew bundle',
+    () async {
+      final db = MergeAwareFirestore();
+      final queue = OfflineMutationQueueService(
+        firestore: db,
+        backend: MemoryBackend(),
+        isOnline: () => false,
+      );
+      final request = _Request(db, queue);
+      await FirestoreCacheStore.instance.writeDocumentMaps('vehicle_makes', [
+        {'id': '4', 'code': 'PM7', 'driver_id': '13', 'helper_id': '18'},
+      ]);
+      final saved = await request.saveBooking(
+        Booking(
+          id: '104',
+          driver: const UserModel(id: '13'),
+          helper: const UserModel(id: '18'),
+          clientStatus: 'pending',
+          createdAt: DateTime.utc(2026, 9, 18),
+          updatedAt: DateTime.utc(2026, 9, 18),
+        ),
+      );
+      expect(saved.vehicleMake?.id, '4');
+      final remote = (await db.collection('bookings').doc('104').get()).data();
+      expect(remote?['vehicle_make_id'], '4');
+      await FirestoreCacheStore.instance.writeDocumentMaps('vehicle_makes', []);
+    },
+  );
+
   Future<Booking> seed(MergeAwareFirestore db) async {
     final booking = Booking(
       id: '10',
@@ -82,7 +112,13 @@ void main() {
           statusOutputs: {
             'return': {
               'submitted_at': '2026-09-19T01:00:00Z',
-              'fields': {'return_driver_id': '8', 'chassis_location': 'Depot'},
+              'fields': {
+                'return_driver_id': '8',
+                'chassis_location': 'Depot',
+                'origin': 'Puerto Princesa City',
+                'origin_barangay': 'Bagong Pag-asa',
+                'destination': 'Roxas',
+              },
             },
           },
         );
@@ -107,7 +143,16 @@ void main() {
           expect(stored['client_status'], entry.key);
           expect(stored['driver_status'], entry.key);
           expect(stored['helper_status'], entry.key);
-          if (entry.key == 'empty') expect(chassis['location'], 'Depot');
+          if (entry.key == 'ongoing') {
+            expect(chassis['location'], 'Bagong Pag-asa, Puerto Princesa City');
+          }
+          if (entry.key == 'delivered' || entry.key == 'check') {
+            expect(chassis['location'], 'Roxas');
+          }
+          if (entry.key == 'empty' || entry.key == 'return') {
+            expect(chassis['location'], 'Depot');
+          }
+          if (entry.key == 'confirm') expect(chassis['location'], 'Garage');
         }
       }
       final reassigned = {
@@ -144,7 +189,14 @@ void main() {
             isOnline: () => false,
           );
           final request = _Request(db, queue);
-          final booking = (await seed(db)).copyWith(clientStatus: 'ongoing');
+          final booking = (await seed(db)).copyWith(
+            clientStatus: 'ongoing',
+            statusOutputs: {
+              'pending': {
+                'fields': {'destination': 'Roxas'},
+              },
+            },
+          );
           await db.collection('bookings').doc('10').set(booking.toMap());
           await FirestoreCacheStore.instance.writeDocumentMaps('bookings', [
             booking.toMap(),
@@ -201,8 +253,13 @@ void main() {
             expect(stored[field], stage);
           }
           final outputs = stored['status_outputs'] as Map;
-          expect(outputs, hasLength(1));
-          final action = outputs.values.single as Map;
+          expect(outputs, hasLength(2));
+          expect(outputs['pending']['fields']['destination'], 'Roxas');
+          final action =
+              outputs.entries
+                      .firstWhere((entry) => entry.key != 'pending')
+                      .value
+                  as Map;
           expect(
             DateTime.parse(action['submitted_at']).toUtc(),
             saved.updatedAt!.toUtc(),
@@ -224,6 +281,7 @@ void main() {
             chassis['current_status'],
             stage == 'delivered' ? 'loaded' : 'ready',
           );
+          if (stage == 'delivered') expect(chassis['location'], 'Roxas');
           expect(chassis['current_booking_id'], 10);
           expect(chassis['current_driver_id'], stage == 'delivered' ? null : 7);
           expect(

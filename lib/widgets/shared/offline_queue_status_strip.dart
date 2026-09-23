@@ -1,3 +1,7 @@
+import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/services/role_access_service.dart';
+import 'package:flutter/services.dart';
+import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/widgets/shared/admin_modal_record_list.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +12,8 @@ import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/services/booking_offline_upload_queue_service.dart';
 import 'package:webapp/services/offline_cleanup_queue_service.dart';
+import 'package:webapp/widgets/shared/catalog_conflict_review_dialog.dart';
+import 'package:webapp/services/offline_error_diagnostics.dart';
 
 Future<List<OfflineQueueItem>> readOfflineQueueItems(String userId) async {
   final batches = await Future.wait([
@@ -25,17 +31,61 @@ Future<List<OfflineQueueItem>> readOfflineQueueItems(String userId) async {
   return items;
 }
 
-Future<void> showOfflineQueueItems(BuildContext context, String userId) =>
-    showDialog<void>(
-      context: context,
-      builder: (_) => OfflineQueueDialog(
-        load: () => readOfflineQueueItems(userId),
-        syncChanges: OfflineSyncStatusService.instance,
-        isSyncing: () => OfflineSyncStatusService.instance.snapshot.isSyncing,
-        retryFailedChat: () => OfflineMediaSyncService.instance
-            .retryFailedSupportMessagesOnOpen(userId),
-      ),
-    );
+Future<void> showOfflineQueueItems(
+  BuildContext context,
+  String userId,
+) => showDialog<void>(
+  context: context,
+  builder: (_) => OfflineQueueDialog(
+    load: () => readOfflineQueueItems(userId),
+    resolveConflict: (id, keepLocal) async {
+      final user = await AuthRequest.instance.getCurrentUser();
+      if (user?.id != userId) {
+        throw StateError('The active account has changed. Reopen the queue.');
+      }
+      if (!RoleAccessService.instance.canAccess('sync.read')) {
+        throw StateError('You do not have access to resolve sync conflicts.');
+      }
+      if (keepLocal) {
+        await OfflineMutationQueueService.instance.retryBlockedConflict(id);
+      } else {
+        await OfflineMutationQueueService.instance.dismissBlockedConflict(id);
+      }
+    },
+    canResolveConflicts: () =>
+        RoleAccessService.instance.canAccess('sync.read'),
+    reviewConflict: (id) async {
+      Future<void> checkAccess() async {
+        if ((await AuthRequest.instance.getCurrentUser())?.id != userId ||
+            !RoleAccessService.instance.canAccess('sync.read') ||
+            !RoleAccessService.instance.canAccess(
+              'operations_catalog.update',
+            )) {
+          throw StateError('You do not have access to apply these settings.');
+        }
+      }
+
+      await checkAccess();
+      final service = OfflineMutationQueueService.instance;
+      final review = await service.reviewCatalogConflict(id);
+      if (!context.mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => CatalogConflictReviewDialog(
+          review: review,
+          onApply: () async {
+            await checkAccess();
+            await service.applyReviewedCatalogConflict(review);
+          },
+        ),
+      );
+    },
+    syncChanges: OfflineSyncStatusService.instance,
+    isSyncing: () => OfflineSyncStatusService.instance.snapshot.isSyncing,
+    retryFailedChat: () => OfflineMediaSyncService.instance
+        .retryFailedSupportMessagesOnOpen(userId),
+  ),
+);
 
 /// Uses the existing status notifier; queue payloads are read only on demand.
 class OfflineQueueStatusStrip extends StatelessWidget {
@@ -105,11 +155,17 @@ class OfflineQueueDialog extends StatefulWidget {
     this.retryFailedChat,
     this.syncChanges,
     this.isSyncing,
+    this.resolveConflict,
+    this.canResolveConflicts,
+    this.reviewConflict,
   });
   final Future<List<OfflineQueueItem>> Function() load;
   final Future<void> Function()? retryFailedChat;
   final Listenable? syncChanges;
   final bool Function()? isSyncing;
+  final Future<void> Function(String id, bool keepLocal)? resolveConflict;
+  final bool Function()? canResolveConflicts;
+  final Future<void> Function(String id)? reviewConflict;
   @override
   State<OfflineQueueDialog> createState() => _OfflineQueueDialogState();
 }
@@ -118,15 +174,21 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
   late Future<List<OfflineQueueItem>> _items = _readItems();
   int _readGeneration = 0;
   bool _refreshScheduled = false;
+  bool _hadItems = false;
+  bool _resolving = false;
 
   Future<List<OfflineQueueItem>> _readItems() async {
     final generation = ++_readGeneration;
     final items = await widget.load();
-    if (mounted && items.isEmpty) {
+    if (items.isNotEmpty) {
+      _hadItems = true;
+    }
+    if (mounted && items.isEmpty && _hadItems) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted ||
             generation != _readGeneration ||
             _retrying ||
+            _resolving ||
             widget.isSyncing?.call() == true) {
           return;
         }
@@ -173,6 +235,48 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
     }
   }
 
+  static List<String> _valuesForItem(OfflineQueueItem item) => [
+    item.title,
+    item.recordLabel,
+    AdminUsersView.formatCreatedAt(item.createdAt?.toLocal()),
+    [
+      item.statusLabel,
+      if (item.errorMessage?.trim().isNotEmpty == true)
+        item.errorMessage!.trim(),
+      if (item.diagnostics?.isNotEmpty == true)
+        item.diagnostics!
+      else if (item.hasError || item.isBlocked)
+        'Stack trace: Not captured for this older failure.',
+      if (item.nextRetryAt != null)
+        'Next retry after ${AdminUsersView.formatCreatedAtSingleLine(item.nextRetryAt!.toLocal())}',
+    ].join('\n'),
+  ];
+
+  Future<void> _copyItems(List<OfflineQueueItem> items) async {
+    const labels = ['Action', 'Record', 'DateTime', 'Status'];
+    final text = [
+      'Queued Actions',
+      for (final item in items)
+        _valuesForItem(
+          item,
+        ).indexed.map((entry) => '${labels[entry.$1]}: ${entry.$2}').join('\n'),
+      ?_retryError,
+    ].join('\n\n');
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+      if (mounted) {
+        AppSnackbar.showSuccess(context, 'Queued actions copied.');
+      }
+    } catch (_) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          'Could not copy. Select the text to copy manually.',
+        );
+      }
+    }
+  }
+
   bool _retrying = false;
   String? _retryError;
   @override
@@ -187,7 +291,9 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
   }
 
   Future<void> _retryChat() async {
-    if (_retrying) return;
+    if (_retrying) {
+      return;
+    }
     setState(() {
       _retrying = true;
       _retryError = null;
@@ -204,6 +310,49 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
       if (mounted) {
         setState(() {
           _retrying = false;
+          _items = _readItems();
+        });
+      }
+    }
+  }
+
+  Future<void> _resolveConflict(OfflineQueueItem item, bool keepLocal) async {
+    if (_resolving || widget.canResolveConflicts?.call() != true) {
+      return;
+    }
+    setState(() {
+      _resolving = true;
+      _retryError = null;
+    });
+    try {
+      if (keepLocal &&
+          item.collectionKey == 'operations_catalog' &&
+          widget.reviewConflict != null) {
+        await widget.reviewConflict!(item.conflictId!);
+      } else {
+        await widget.resolveConflict!(item.conflictId!, keepLocal);
+      }
+    } catch (error, stack) {
+      final diagnostics = await offlineErrorDiagnostics(
+        error: error,
+        stack: stack,
+        source: 'offline_queue_status_strip.dart',
+        operation: keepLocal
+            ? 'review/apply queued change'
+            : 'discard queued change',
+        entryId: item.conflictId ?? '',
+        target: item.recordLabel,
+        attempt: 1,
+      );
+      if (mounted) {
+        setState(() {
+          _retryError = diagnostics;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _resolving = false;
           _items = _readItems();
         });
       }
@@ -257,23 +406,43 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
                     wrappingColumn: 3,
                     selectableCells: true,
                     itemCount: items.length,
-                    valuesAt: (index) {
-                      final item = items[index];
-                      final date = AdminUsersView.formatCreatedAt(
-                        item.createdAt?.toLocal(),
+                    valuesAt: (index) => _valuesForItem(items[index]),
+                    cellBuilder: (row, column) {
+                      final item = items[row];
+                      if (column != 3 ||
+                          !item.isBlocked ||
+                          item.conflictId == null ||
+                          widget.resolveConflict == null ||
+                          widget.canResolveConflicts?.call() != true) {
+                        return null;
+                      }
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SelectableText(_valuesForItem(item)[3]),
+                          Wrap(
+                            spacing: 8,
+                            children: [
+                              TextButton(
+                                onPressed: _resolving
+                                    ? null
+                                    : () => _resolveConflict(item, false),
+                                child: const Text('Discard local change'),
+                              ),
+                              TextButton(
+                                onPressed: _resolving
+                                    ? null
+                                    : () => _resolveConflict(item, true),
+                                child: Text(
+                                  item.collectionKey == 'operations_catalog'
+                                      ? 'Compare changes'
+                                      : 'Keep local change',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       );
-                      return [
-                        item.title,
-                        item.recordLabel,
-                        date,
-                        [
-                          item.statusLabel,
-                          if (item.errorMessage?.trim().isNotEmpty == true)
-                            item.errorMessage!.trim(),
-                          if (item.nextRetryAt != null)
-                            'Next retry after ${AdminUsersView.formatCreatedAtSingleLine(item.nextRetryAt!.toLocal())}',
-                        ].join('\n'),
-                      ];
                     },
                   );
                 },
@@ -285,13 +454,32 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
                 style: const TextStyle(color: AppColors.danger),
               ),
             if (_retrying) const Text('Syncing queued chat…'),
-            TextButton(
-              onPressed: _retrying
-                  ? null
-                  : () => setState(() {
-                      _items = _readItems();
-                    }),
-              child: const Text('Refresh'),
+            Wrap(
+              spacing: 12,
+              alignment: WrapAlignment.end,
+              children: [
+                FutureBuilder<List<OfflineQueueItem>>(
+                  future: _items,
+                  builder: (context, snapshot) => TextButton.icon(
+                    icon: const Icon(Icons.copy_outlined, size: 18),
+                    label: const Text('Copy'),
+                    onPressed:
+                        snapshot.connectionState == ConnectionState.done &&
+                            !snapshot.hasError &&
+                            (snapshot.data?.isNotEmpty ?? false)
+                        ? () => _copyItems(snapshot.data!)
+                        : null,
+                  ),
+                ),
+                TextButton(
+                  onPressed: _retrying
+                      ? null
+                      : () => setState(() {
+                          _items = _readItems();
+                        }),
+                  child: const Text('Refresh'),
+                ),
+              ],
             ),
           ],
         ),

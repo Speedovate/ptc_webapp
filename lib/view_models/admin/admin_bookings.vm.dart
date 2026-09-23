@@ -1,3 +1,4 @@
+import 'package:webapp/utils/booking_party_search.dart';
 import 'dart:async';
 
 import 'package:stacked/stacked.dart';
@@ -552,6 +553,7 @@ class AdminBookingsViewModel extends BaseViewModel {
       }
       final client = _usersById[booking.client?.id];
       final values = <String>[
+        ...bookingPartySearchTerms(booking, _usersById),
         booking.id ?? '',
         booking.client?.id ?? '',
         booking.clientStatus ?? '',

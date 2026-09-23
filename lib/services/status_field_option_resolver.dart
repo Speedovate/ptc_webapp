@@ -1,3 +1,5 @@
+import 'package:webapp/services/kpi/location_option_registry.dart';
+import 'package:webapp/services/kpi/operations_catalog_store.dart';
 import 'package:webapp/constants/puerto_princesa_barangays.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/status_form.dart';
@@ -68,6 +70,18 @@ class StatusFieldOptionResolver {
   }
 
   Future<List<StatusField>> hydrateFields(List<StatusField> fields) async {
+    if (fields.any(
+      (f) => LocationOptionRegistry.supports(f.key) || f.isChassisLocationInput,
+    )) {
+      try {
+        await OperationsCatalogStore.instance.restore();
+        OperationsCatalogStore.instance.load().catchError(
+          (Object _) => OperationsCatalogStore.instance.current,
+        );
+      } catch (_) {
+        /* Keep existing offline/default choices. */
+      }
+    }
     final sourceKeys = fields
         .map(_resolvedOptionSourceKey)
         .whereType<String>()
@@ -318,6 +332,13 @@ class StatusFieldOptionResolver {
           puertoPrincesaBarangayOptionsResolved,
         _ => field.options,
       };
+      if (LocationOptionRegistry.supports(field.key)) {
+        return field.copyWith(
+          // Historical values remain valid through Registry.accepts(), but
+          // must never reappear as active choices in new booking fields.
+          options: LocationOptionRegistry.options(field.key, resolvedOptions),
+        );
+      }
       return field.copyWith(options: resolvedOptions);
     }).toList();
     return resolved;

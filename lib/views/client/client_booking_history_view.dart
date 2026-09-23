@@ -122,7 +122,7 @@ class _ClientBookingHistoryViewState extends State<ClientBookingHistoryView> {
           );
         }
 
-        final filteredBookings = vm.filteredBookings();
+        final filteredBookings = vm.filteredBookings(role: widget.user.role);
 
         if (vm.errorMessage != null) {
           return AppPageLoadingOverlay(

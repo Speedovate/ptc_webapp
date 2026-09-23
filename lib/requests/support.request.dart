@@ -1,3 +1,4 @@
+import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/utils/support_message_identity.dart';
 import 'package:webapp/utils/cached_snapshot_documents.dart';
 import 'package:webapp/services/support_read_marker_writer.dart';
@@ -120,7 +121,15 @@ class SupportRequest {
             throw TimeoutException('support threads fetch timeout'),
       );
       documents = snapshot.docs.map(documentData).toList(growable: false);
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'support.request.dart',
+          operation: 'request failure',
+        ),
+      );
       documents = await _fetchCollectionDocumentsViaPublicRest('support');
       if (documents.isEmpty) {
         rethrow;
@@ -171,7 +180,15 @@ class SupportRequest {
                 throw TimeoutException('support user threads fetch timeout'),
           );
       documents = snapshot.docs.map(documentData).toList(growable: false);
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'support.request.dart',
+          operation: 'request failure',
+        ),
+      );
       final allDocuments = await _fetchCollectionDocumentsViaPublicRest(
         'support',
       );
@@ -238,7 +255,15 @@ class SupportRequest {
                 throw TimeoutException('support messages fetch timeout'),
           );
       documents = snapshot.docs.map(documentData).toList(growable: false);
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'support.request.dart',
+          operation: 'request failure',
+        ),
+      );
       documents = await _fetchCollectionDocumentsViaPublicRest(
         'support/$normalizedThreadId/messages',
       );
@@ -1128,7 +1153,15 @@ class SupportRequest {
         actionAt: localQueuedMessage?.createdAt,
       );
       return false;
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'support.request.dart',
+          operation: 'request failure',
+        ),
+      );
       final normalizedError = normalizeUserErrorText(
         error.toString(),
         fallback: '',
@@ -1884,7 +1917,15 @@ class SupportRequest {
           .timeout(_queuedSupportReadTimeout);
     } on TimeoutException {
       return const <Map<String, dynamic>>[];
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'support.request.dart',
+          operation: 'request failure',
+        ),
+      );
       return const <Map<String, dynamic>>[];
     }
   }

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +16,8 @@ class TypeHistoryInput extends StatefulWidget {
     this.inputFormatters,
     this.service,
     this.options = const [],
+    this.optionsBottomSpacing = 6,
+    this.browseOptionsOnFocus = false,
   });
   final TextEditingController controller;
   final String? historyKey;
@@ -24,6 +27,10 @@ class TypeHistoryInput extends StatefulWidget {
 
   /// Existing field options already loaded with the Firestore form schema.
   final List<String> options;
+  final double optionsBottomSpacing;
+
+  /// Show supplied choices immediately when focusing a prefilled field.
+  final bool browseOptionsOnFocus;
   @override
   State<TypeHistoryInput> createState() => _TypeHistoryInputState();
 }
@@ -32,57 +39,77 @@ class _TypeHistoryInputState extends State<TypeHistoryInput> {
   Timer? _debounce;
   int _generation = 0;
   bool _focused = false;
+  late TextEditingValue _lastValue;
   bool _selecting = false;
   List<String> _options = const [];
 
   @override
   void initState() {
     super.initState();
-    widget.controller.addListener(_changed);
+    _lastValue = widget.controller.value;
+    widget.controller.addListener(_controllerChanged);
   }
 
   @override
   void didUpdateWidget(covariant TypeHistoryInput oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_changed);
-      widget.controller.addListener(_changed);
+      oldWidget.controller.removeListener(_controllerChanged);
+      _lastValue = widget.controller.value;
+      widget.controller.addListener(_controllerChanged);
     }
     if (oldWidget.historyKey != widget.historyKey ||
-        oldWidget.controller != widget.controller) {
+        oldWidget.controller != widget.controller ||
+        !listEquals(oldWidget.options, widget.options)) {
       _changed();
     }
   }
 
-  void _changed() {
+  void _controllerChanged() {
+    final value = widget.controller.value;
+    final unchanged =
+        value.text == _lastValue.text &&
+        value.composing == _lastValue.composing;
+    _lastValue = value;
+    if (widget.browseOptionsOnFocus && unchanged) return;
+    _changed();
+  }
+
+  void _changed({bool browse = false}) {
     _debounce?.cancel();
     final generation = ++_generation;
     if (mounted && _options.isNotEmpty) setState(() => _options = []);
     if (!_focused ||
         _selecting ||
-        widget.historyKey == null ||
+        (widget.historyKey == null && !widget.browseOptionsOnFocus) ||
         !widget.controller.value.composing.isCollapsed) {
       return;
     }
-    final key = widget.historyKey!;
+    final key = widget.historyKey;
     final text = widget.controller.text;
+    final query = browse ? '' : text.trim().toLowerCase();
+    List<String> matchingOptions(List<String> history) {
+      final seen = <String>{};
+      final matching = [...history, ...widget.options].where((value) {
+        final normalized = value.trim().toLowerCase();
+        return normalized.isNotEmpty &&
+            normalized.startsWith(query) &&
+            value != text &&
+            seen.add(normalized);
+      });
+      return (widget.browseOptionsOnFocus ? matching : matching.take(10))
+          .toList();
+    }
+
+    if (widget.browseOptionsOnFocus) {
+      setState(() => _options = matchingOptions(const []));
+    }
+    if (key == null) return;
     _debounce = Timer(const Duration(milliseconds: 300), () async {
       final options = await (widget.service ?? FieldTypeHistoryService.instance)
-          .suggestions(key, text);
+          .suggestions(key, query);
       if (!mounted || !_focused || generation != _generation) return;
-      final seen = <String>{};
-      final query = text.trim().toLowerCase();
-      final matching = [...options, ...widget.options]
-          .where((value) {
-            final normalized = value.trim().toLowerCase();
-            return normalized.isNotEmpty &&
-                normalized.startsWith(query) &&
-                value != text &&
-                seen.add(normalized);
-          })
-          .take(10)
-          .toList();
-      setState(() => _options = matching);
+      setState(() => _options = matchingOptions(options));
     });
   }
 
@@ -111,7 +138,7 @@ class _TypeHistoryInputState extends State<TypeHistoryInput> {
   void dispose() {
     ++_generation;
     _debounce?.cancel();
-    widget.controller.removeListener(_changed);
+    widget.controller.removeListener(_controllerChanged);
     super.dispose();
   }
 
@@ -120,7 +147,7 @@ class _TypeHistoryInputState extends State<TypeHistoryInput> {
     canRequestFocus: false,
     onFocusChange: (value) {
       _focused = value;
-      _changed();
+      _changed(browse: value && widget.browseOptionsOnFocus);
     },
     child: TextFieldTapRegion(
       child: Column(
@@ -160,7 +187,8 @@ class _TypeHistoryInputState extends State<TypeHistoryInput> {
                 ),
               ),
             ),
-          if (_options.isNotEmpty) const SizedBox(height: 6),
+          if (_options.isNotEmpty)
+            SizedBox(height: widget.optionsBottomSpacing),
         ],
       ),
     ),

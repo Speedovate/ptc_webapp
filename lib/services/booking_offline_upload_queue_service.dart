@@ -1,3 +1,5 @@
+import 'package:webapp/services/firestore_transaction_errors.dart';
+import 'package:webapp/services/offline_error_diagnostics.dart';
 import 'package:webapp/models/offline_queue_item.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -80,6 +82,7 @@ class BookingOfflineUploadQueueService {
             createdAt: DateTime.tryParse(entry.createdAtIso),
             hasError: entry.lastError?.isNotEmpty == true,
             errorMessage: entry.lastError,
+            diagnostics: entry.diagnostics,
           ),
         )
         .toList(growable: false);
@@ -160,6 +163,7 @@ class BookingOfflineUploadQueueService {
     required String fileName,
     String? mimeType,
     int? size,
+    bool waitForBookingCommit = false,
   }) async {
     final actionAt = DateTime.now().toUtc();
     final originatingStorageKey = await _resolvedStorageKey();
@@ -186,6 +190,7 @@ class BookingOfflineUploadQueueService {
           staged ??
           _PendingBookingUploadEntry(
             id: _nextEntryId(),
+            waitingForCommit: waitForBookingCommit,
             bookingId: bookingId,
             statusKey: statusKey,
             fieldKey: fieldKey,
@@ -265,7 +270,8 @@ class BookingOfflineUploadQueueService {
     final documentRef = _bookingsCollection.doc(entry.bookingId);
     var applied = false;
 
-    await _firestore.runTransaction((transaction) async {
+    await runTransactionWithOriginalErrors(_firestore, (transaction) async {
+      applied = false;
       final snapshot = await transaction.get(documentRef);
       if (!snapshot.exists) {
         return;
@@ -306,7 +312,10 @@ class BookingOfflineUploadQueueService {
     _PendingBookingUploadEntry entry,
   ) async {
     try {
-      final snapshot = await _bookingsCollection.doc(entry.bookingId).get();
+      final snapshot = await _bookingsCollection
+          .doc(entry.bookingId)
+          .get()
+          .timeout(const Duration(seconds: 10));
       if (!snapshot.exists) {
         return false;
       }
@@ -457,36 +466,60 @@ class BookingOfflineUploadQueueService {
           continue;
         }
         if (_pendingUploadId(markerField) != entry.id) {
+          if (entry.waitingForCommit) {
+            remaining.add(entry);
+            continue;
+          }
           // This field was superseded. Do not upload or replace its newer value.
           mutated = true;
           continue;
         }
-        final upload = await _photoStorageService.uploadBookingPhoto(
-          bytes: base64Decode(entry.bytesBase64),
-          bookingId: entry.bookingId,
-          statusKey: entry.statusKey,
-          fieldKey: entry.fieldKey,
-          fileName: entry.fileName,
-          mimeType: entry.mimeType,
-          size: entry.size,
-        );
+        entry = entry.copyWith(waitingForCommit: false);
+        final upload = await _photoStorageService
+            .uploadBookingPhoto(
+              bytes: base64Decode(entry.bytesBase64),
+              bookingId: entry.bookingId,
+              statusKey: entry.statusKey,
+              fieldKey: entry.fieldKey,
+              fileName: entry.fileName,
+              mimeType: entry.mimeType,
+              size: entry.size,
+            )
+            .timeout(const Duration(seconds: 30));
 
         final applied = await _applyUploadedPhoto(
           entry: entry,
           uploadedValue: upload,
-        );
+        ).timeout(const Duration(seconds: 15));
 
         if (!applied) {
-          await _photoStorageService.deleteByPath(
-            upload['storage_path']?.toString(),
-          );
+          await _photoStorageService
+              .deleteByPath(upload['storage_path']?.toString())
+              .timeout(const Duration(seconds: 20));
         }
 
         mutated = true;
-      } catch (error) {
+      } catch (error, stackTrace) {
         final normalizedError = normalizeUserErrorText(
           error.toString(),
           fallback: 'Something went wrong. Please try again.',
+        );
+        final diagnostics = await offlineErrorDiagnostics(
+          error: error,
+          stack: stackTrace,
+          source: 'booking_offline_upload_queue_service.dart',
+          operation: 'bookingPhotoUpload',
+          entryId: entry.id,
+          target:
+              'bookings/${entry.bookingId}/${entry.statusKey}/${entry.fieldKey}',
+          attempt: entry.retryCount + 1,
+          owner: storageKey.substring('$_storageKey::'.length),
+          actionAt: entry.createdAtIso,
+          context: {
+            'booking_status': entry.statusKey,
+            'field_key': entry.fieldKey,
+            'media_size': entry.size,
+          },
         );
         if (_isRetryableUploadError(normalizedError) ||
             normalizedError.toLowerCase().contains('sync conflict')) {
@@ -494,15 +527,19 @@ class BookingOfflineUploadQueueService {
             entry.copyWith(
               retryCount: entry.retryCount + 1,
               lastError: normalizedError,
+              diagnostics: diagnostics,
             ),
           );
         } else {
-          final shouldKeep = await _shouldKeepEntryAfterFailure(entry);
+          final shouldKeep =
+              entry.waitingForCommit ||
+              await _shouldKeepEntryAfterFailure(entry);
           if (shouldKeep) {
             remaining.add(
               entry.copyWith(
                 retryCount: entry.retryCount + 1,
                 lastError: normalizedError,
+                diagnostics: diagnostics,
               ),
             );
           } else {
@@ -642,6 +679,8 @@ class _PendingBookingUploadEntry {
     required this.createdAtIso,
     required this.retryCount,
     this.lastError,
+    this.diagnostics,
+    this.waitingForCommit = false,
   });
 
   final String id;
@@ -655,14 +694,19 @@ class _PendingBookingUploadEntry {
   final String createdAtIso;
   final int retryCount;
   final String? lastError;
+  final String? diagnostics;
+  final bool waitingForCommit;
 
   _PendingBookingUploadEntry copyWith({
     int? retryCount,
     String? lastError,
+    String? diagnostics,
     String? bookingId,
+    bool? waitingForCommit,
   }) {
     return _PendingBookingUploadEntry(
       id: id,
+      waitingForCommit: waitingForCommit ?? this.waitingForCommit,
       bookingId: bookingId ?? this.bookingId,
       statusKey: statusKey,
       fieldKey: fieldKey,
@@ -673,12 +717,14 @@ class _PendingBookingUploadEntry {
       createdAtIso: createdAtIso,
       retryCount: retryCount ?? this.retryCount,
       lastError: lastError ?? this.lastError,
+      diagnostics: diagnostics ?? this.diagnostics,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'waiting_for_commit': waitingForCommit,
       'booking_id': bookingId,
       'status_key': statusKey,
       'field_key': fieldKey,
@@ -689,12 +735,14 @@ class _PendingBookingUploadEntry {
       'created_at': createdAtIso,
       'retry_count': retryCount,
       'last_error': lastError,
+      if (diagnostics != null) 'error_diagnostics': diagnostics,
     };
   }
 
   factory _PendingBookingUploadEntry.fromMap(Map<String, dynamic> map) {
     return _PendingBookingUploadEntry(
       id: map['id']?.toString() ?? '',
+      waitingForCommit: map['waiting_for_commit'] == true,
       bookingId: map['booking_id']?.toString() ?? '',
       statusKey: map['status_key']?.toString() ?? '',
       fieldKey: map['field_key']?.toString() ?? '',
@@ -709,6 +757,7 @@ class _PendingBookingUploadEntry {
           ? (map['retry_count'] as num).toInt()
           : int.tryParse(map['retry_count']?.toString() ?? '') ?? 0,
       lastError: map['last_error']?.toString(),
+      diagnostics: map['error_diagnostics']?.toString(),
     );
   }
 }

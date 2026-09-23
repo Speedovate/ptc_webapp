@@ -94,6 +94,43 @@ void main() {
   });
 
   test(
+    'home shows only today pickup schedules, earliest first, without changing assignments',
+    () {
+      Booking scheduled(
+        String id,
+        String date,
+        String time,
+        DateTime created,
+      ) => Booking(
+        id: id,
+        createdAt: created,
+        statusOutputs: {
+          'pending': {
+            'fields': {'pick_up_date': date, 'pick_up_time': time},
+          },
+        },
+      );
+      vm.assignedBookings = [
+        scheduled('late', '2026-09-20', '4:00 PM', DateTime(2020)),
+        scheduled('tomorrow', '2026-09-21', '06:00', DateTime(2020)),
+        scheduled('early', '2026-09-20', '08:00', DateTime(2026)),
+        scheduled('yesterday', '2026-09-19', '23:59', DateTime(2020)),
+        const Booking(id: 'missing'),
+        scheduled('noon', '2026-09-20', '12:00 PM', DateTime(2025)),
+      ];
+      expect(vm.bookingsForToday(now: DateTime(2026, 9, 20)).map((b) => b.id), [
+        'early',
+        'noon',
+        'late',
+      ]);
+      expect(vm.bookingsForToday(now: DateTime(2026, 9, 21)).map((b) => b.id), [
+        'tomorrow',
+      ]);
+      expect(vm.assignedBookings.length, 6);
+    },
+  );
+
+  test(
     'driver waits for chassis, but not users, statuses or pending get',
     () async {
       final load = vm.load(driver);

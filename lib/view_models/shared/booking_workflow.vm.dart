@@ -1,3 +1,4 @@
+import 'package:webapp/services/booking_chassis_lifecycle.dart';
 import 'package:webapp/services/field_type_history_service.dart';
 import 'package:webapp/services/pending_booking_submission.dart';
 import 'package:webapp/services/network_status_events.dart';
@@ -1587,6 +1588,28 @@ class BookingWorkflowViewModel extends BaseViewModel {
         continue;
       }
       answers[key] = value;
+    }
+    final stage = booking.clientStatus?.trim().toLowerCase();
+    if (stage == 'delivered' || stage == 'check') {
+      final location = chassisLifecycleInstruction(
+        previousBookingStatus: stage,
+        nextBookingStatus: stage,
+        bookingDocument: booking.toMap(),
+      )?.location;
+      if (location != null && location.trim().isNotEmpty) {
+        final locationKeys = {
+          'chassis_location',
+          for (final field in fieldLibrary)
+            if (field.isChassisLocationInput &&
+                (field.key?.trim().isNotEmpty ?? false))
+              field.key!.trim(),
+        };
+        for (final key in locationKeys) {
+          if (_isEmptyValue(answers[key])) {
+            answers[key] = location;
+          }
+        }
+      }
     }
     return answers;
   }

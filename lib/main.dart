@@ -1,3 +1,4 @@
+import 'package:webapp/services/sync_error_log_service.dart';
 import 'dart:ui';
 import 'package:webapp/services/app_widgets_binding.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
@@ -28,6 +29,16 @@ Future<void> main() async {
   showStartupSplash();
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
+    unawaited(
+      SyncErrorLogService.instance.report(
+        details.exception,
+        details.stack ?? StackTrace.current,
+        source: details.library ?? 'FlutterError.onError',
+        operation: 'uncaught frontend error',
+        kind: 'uncaught_error',
+        details: {'context': details.context?.toDescription()},
+      ),
+    );
   };
   ErrorWidget.builder = (details) => _AppErrorFallback(details: details);
 
@@ -51,6 +62,7 @@ Future<void> main() async {
 }
 
 Future<void> _bootstrapApplication() async {
+  unawaited(SyncErrorLogService.instance.start());
   try {
     await () async {
       try {
@@ -59,16 +71,46 @@ Future<void> _bootstrapApplication() async {
             options: DefaultFirebaseOptions.currentPlatform,
           ).timeout(_firebaseBootstrapTimeout);
         }
-      } catch (_) {}
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'main.dart',
+            operation: 'Firebase initialization',
+            kind: 'startup_failure',
+          ),
+        );
+      }
       try {
         await FirestoreOfflineService.initialize().timeout(
           _firestoreBootstrapTimeout,
         );
-      } catch (_) {}
+      } catch (error, stack) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'main.dart',
+            operation: 'Firestore offline initialization',
+            kind: 'startup_failure',
+          ),
+        );
+      }
       unawaited(() async {
         try {
           await OfflineQueueCoordinatorService.instance.initialize();
-        } catch (_) {}
+        } catch (error, stack) {
+          unawaited(
+            SyncErrorLogService.instance.report(
+              error,
+              stack,
+              source: 'main.dart',
+              operation: 'queue coordinator initialization',
+              kind: 'startup_failure',
+            ),
+          );
+        }
       }());
       if (Firebase.apps.isNotEmpty) {
         unawaited(() async {
@@ -76,10 +118,36 @@ Future<void> _bootstrapApplication() async {
             await FirebaseAnalytics.instance.setAnalyticsCollectionEnabled(
               true,
             );
-          } catch (_) {}
+          } catch (error, stack) {
+            unawaited(
+              SyncErrorLogService.instance.report(
+                error,
+                stack,
+                source: 'main.dart',
+                operation: 'analytics initialization',
+                kind: 'startup_failure',
+              ),
+            );
+          }
         }());
       }
-    }().timeout(_applicationBootstrapTimeout, onTimeout: () {});
+    }().timeout(
+      _applicationBootstrapTimeout,
+      onTimeout: () {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            TimeoutException(
+              'Application bootstrap exceeded its deadline',
+              _applicationBootstrapTimeout,
+            ),
+            StackTrace.current,
+            source: 'main.dart',
+            operation: 'application bootstrap',
+            kind: 'startup_failure',
+          ),
+        );
+      },
+    );
   } finally {}
 }
 

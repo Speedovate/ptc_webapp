@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/status_form/status_form_runtime_fields.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -61,6 +62,9 @@ class BookingWorkflowView extends StatefulWidget {
 }
 
 String? _bookingFieldPlaceholder(StatusField field) {
+  if (field.isChassisLocationInput) {
+    return 'Enter location';
+  }
   final placeholder = field.placeholder?.trim();
   if (field.required == true && placeholder?.toLowerCase() == 'optional') {
     return null;
@@ -842,7 +846,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
             if (linkedUser == null) {
               return;
             }
-            AdminUsersView.showUserDetailDialog(
+            AdminUsersView.openDetailPage(
               context,
               currentUser: widget.user,
               viewedUser: linkedUser,
@@ -900,7 +904,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                 return null;
               }
               return () {
-                AdminUsersView.showUserDetailDialog(
+                AdminUsersView.openDetailPage(
                   context,
                   currentUser: widget.user,
                   viewedUser: linkedUser,
@@ -2189,7 +2193,9 @@ class _WorkflowFieldCard extends StatelessWidget {
         fieldKey == 'helper_id' ||
         optionSourceKey == statusFieldOptionSourceHelpers;
     final isSearchDropdownCard =
-        type == 'search_dropdown' || isPalawanLocationFieldKey(fieldKey);
+        type == 'search_dropdown' ||
+        field.isChassisLocationInput ||
+        isPalawanLocationFieldKey(fieldKey);
     final isNormalDropdownCard = type == 'dropdown' || usesRoleDropdown;
     final usesCompactDropdownCard =
         isNormalDropdownCard || isSearchDropdownCard;
@@ -2246,6 +2252,21 @@ class _WorkflowFieldCard extends StatelessWidget {
     required String? errorText,
   }) {
     final type = (field.type ?? 'text').trim().toLowerCase();
+    if (field.isChassisLocationInput) {
+      return StatusFormRuntimeFieldInput(
+        field: field,
+        initialValue: initialValue,
+        onChanged: onChanged,
+        focusNode: focusNode,
+        nextFocusNode: nextFocusNode,
+        activateNextFocus: activateNextFocus,
+        formTitle: formTitle,
+        formButtonText: formButtonText,
+        formStatusKey: formStatusKey,
+        errorText: errorText,
+      );
+    }
+
     final fieldKey = (field.key ?? '').trim().toLowerCase();
     final fieldLabel = field.title?.trim().isNotEmpty == true
         ? field.title!.trim()
@@ -2294,7 +2315,8 @@ class _WorkflowFieldCard extends StatelessWidget {
                     : 'Optional'),
           palette,
         ).copyWith(errorText: errorText),
-        options: palawanLocationOptions,
+        options: locationOptionsFor(field.key ?? 'origin'),
+        locationOptionKey: field.key,
         onChanged: (value) {
           onChanged(value);
           final handleAdvance = onAdvanceAfterSelection;
@@ -2326,6 +2348,7 @@ class _WorkflowFieldCard extends StatelessWidget {
             palette,
           ).copyWith(errorText: errorText),
           options: field.options,
+          locationOptionKey: field.key,
           onChanged: (value) {
             onChanged(value);
             final handleAdvance = onAdvanceAfterSelection;
@@ -2786,7 +2809,7 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
   @override
   void initState() {
     super.initState();
-    _field = widget.initialField;
+    _field = _normalizeFieldPlaceholder(widget.initialField);
   }
 
   String? _validationMessage() {
@@ -2859,6 +2882,9 @@ class _BookingFieldEditorDialogState extends State<_BookingFieldEditorDialog> {
   }
 
   StatusField _normalizeFieldPlaceholder(StatusField field) {
+    if (field.isChassisLocationInput) {
+      return field.copyWith(placeholder: 'Enter location');
+    }
     final fieldType = (field.type ?? '').trim();
     final isRequired = field.required ?? false;
     final currentPlaceholder = field.placeholder?.trim() ?? '';

@@ -1,4 +1,6 @@
-const palawanLocationOptions = <String>[
+import 'package:webapp/services/kpi/location_option_registry.dart';
+
+const defaultPalawanLocationOptions = <String>[
   'Aborlan',
   'Agutaya',
   'Araceli',
@@ -29,12 +31,20 @@ bool isPalawanLocationFieldKey(String? key) {
   return normalized == 'origin' || normalized == 'destination';
 }
 
-bool isValidPalawanLocationOption(String? value) {
+bool isValidPalawanLocationOption(String? value, {String fieldKey = 'origin'}) {
   final normalized = value?.trim().toLowerCase();
   if (normalized == null || normalized.isEmpty) {
     return false;
   }
-  return palawanLocationOptions.any(
-    (option) => option.trim().toLowerCase() == normalized,
+  return LocationOptionRegistry.accepts(
+    fieldKey,
+    normalized,
+    palawanLocationOptions,
   );
 }
+
+List<String> get palawanLocationOptions =>
+    LocationOptionRegistry.options('cities', defaultPalawanLocationOptions);
+
+List<String> locationOptionsFor(String key) =>
+    LocationOptionRegistry.options(key, palawanLocationOptions);

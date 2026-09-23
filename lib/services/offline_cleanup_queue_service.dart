@@ -1,3 +1,6 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'booking_photo_cleanup.dart';
+import 'package:webapp/services/offline_error_diagnostics.dart';
 import 'package:webapp/models/offline_queue_item.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -14,9 +17,11 @@ class OfflineCleanupQueueService {
   OfflineCleanupQueueService({
     BookingStorageBackend? backend,
     FirebaseStorage? storage,
+    FirebaseFirestore? firestore,
     bool Function()? isOnline,
   }) : _backend = backend ?? createBookingStorageBackend(),
        _providedStorage = storage,
+       _providedFirestore = firestore,
        _isOnline = isOnline ?? currentNetworkStatus;
 
   static final OfflineCleanupQueueService instance =
@@ -29,6 +34,7 @@ class OfflineCleanupQueueService {
 
   final BookingStorageBackend _backend;
   final FirebaseStorage? _providedStorage;
+  final FirebaseFirestore? _providedFirestore;
   final bool Function() _isOnline;
   Future<void> _queueMutationTail = Future<void>.value();
   FirebaseStorage get _storage => _providedStorage ?? FirebaseStorage.instance;
@@ -64,6 +70,7 @@ class OfflineCleanupQueueService {
             createdAt: DateTime.tryParse(entry.createdAtIso),
             hasError: entry.lastError?.isNotEmpty == true,
             errorMessage: entry.lastError,
+            diagnostics: entry.diagnostics,
             nextRetryAt: entry.nextRetryAt,
           ),
         )
@@ -120,6 +127,12 @@ class OfflineCleanupQueueService {
 
   Future<void> queueDeleteByPath(String storagePath) =>
       _enqueue(_OfflineCleanupKind.deleteByPath, storagePath);
+
+  Future<void> queueBookingPhotoDelete(String bookingId, String path) =>
+      _enqueue(
+        _OfflineCleanupKind.bookingPhoto,
+        jsonEncode({'booking_id': bookingId, 'path': path}),
+      );
 
   Future<void> queueDeleteFolder(
     String storagePath, {
@@ -222,6 +235,38 @@ class OfflineCleanupQueueService {
 
   Future<void> _applyEntry(_OfflineCleanupEntry entry) async {
     switch (entry.kind) {
+      case _OfflineCleanupKind.bookingPhoto:
+        final target = jsonDecode(entry.targetPath) as Map;
+        final ref = (_providedFirestore ?? FirebaseFirestore.instance)
+            .collection('bookings')
+            .doc(target['booking_id'] as String);
+        final path = target['path'] as String;
+        final firestore = _providedFirestore ?? FirebaseFirestore.instance;
+        final claimed = await firestore
+            .runTransaction<bool>((transaction) async {
+              final snapshot = await transaction.get(ref);
+              final data = snapshot.data();
+              if (!snapshot.exists ||
+                  data?['photo_cleanup_paths'] is! List ||
+                  !(data!['photo_cleanup_paths'] as List).contains(path) ||
+                  BookingPhotoCleanup.references(
+                    data['status_outputs'],
+                  ).contains(path)) {
+                return false;
+              }
+              transaction.update(ref, {
+                'photo_cleanup_claims': FieldValue.arrayUnion([path]),
+              });
+              return true;
+            })
+            .timeout(const Duration(seconds: 10));
+        if (!claimed) return;
+        await _deleteByPathNow(path).timeout(const Duration(seconds: 20));
+        await ref
+            .update({
+              'photo_cleanup_paths': FieldValue.arrayRemove([path]),
+            })
+            .timeout(const Duration(seconds: 10));
       case _OfflineCleanupKind.deleteByPath:
         await _deleteByPathNow(entry.targetPath);
       case _OfflineCleanupKind.deleteFolder:
@@ -380,7 +425,7 @@ class OfflineCleanupQueueService {
           continue;
         }
         await _applyEntry(entry);
-      } catch (error) {
+      } catch (error, stackTrace) {
         final normalizedError = normalizeUserErrorText(
           error.toString(),
           fallback: 'Something went wrong. Please try again.',
@@ -392,6 +437,18 @@ class OfflineCleanupQueueService {
           entry.copyWith(
             retryCount: entry.retryCount + 1,
             lastError: normalizedError,
+            diagnostics: await offlineErrorDiagnostics(
+              error: error,
+              stack: stackTrace,
+              source: 'offline_cleanup_queue_service.dart',
+              operation: entry.kind.name,
+              entryId: entry.id,
+              target: entry.targetPath,
+              attempt: entry.retryCount + 1,
+              owner: storageKey.substring('$_storageKey::'.length),
+              actionAt: entry.createdAtIso,
+              context: {'next_retry_delay_seconds': delaySeconds},
+            ),
             nextRetryAt: DateTime.now().toUtc().add(
               Duration(seconds: delaySeconds),
             ),
@@ -465,7 +522,7 @@ class OfflineCleanupQueueService {
   }
 }
 
-enum _OfflineCleanupKind { deleteByPath, deleteFolder }
+enum _OfflineCleanupKind { deleteByPath, deleteFolder, bookingPhoto }
 
 class _OfflineCleanupEntry {
   const _OfflineCleanupEntry({
@@ -475,6 +532,7 @@ class _OfflineCleanupEntry {
     required this.createdAtIso,
     required this.retryCount,
     this.lastError,
+    this.diagnostics,
     this.nextRetryAt,
   });
 
@@ -484,11 +542,13 @@ class _OfflineCleanupEntry {
   final String createdAtIso;
   final int retryCount;
   final String? lastError;
+  final String? diagnostics;
   final DateTime? nextRetryAt;
 
   _OfflineCleanupEntry copyWith({
     int? retryCount,
     String? lastError,
+    String? diagnostics,
     DateTime? nextRetryAt,
   }) {
     return _OfflineCleanupEntry(
@@ -498,6 +558,7 @@ class _OfflineCleanupEntry {
       createdAtIso: createdAtIso,
       retryCount: retryCount ?? this.retryCount,
       lastError: lastError ?? this.lastError,
+      diagnostics: diagnostics ?? this.diagnostics,
       nextRetryAt: nextRetryAt ?? this.nextRetryAt,
     );
   }
@@ -510,6 +571,7 @@ class _OfflineCleanupEntry {
       'created_at': createdAtIso,
       'retry_count': retryCount,
       'last_error': lastError,
+      if (diagnostics != null) 'error_diagnostics': diagnostics,
       'next_retry_at': nextRetryAt?.toIso8601String(),
     };
   }
@@ -528,6 +590,7 @@ class _OfflineCleanupEntry {
           ? (map['retry_count'] as num).toInt()
           : int.tryParse(map['retry_count']?.toString() ?? '') ?? 0,
       lastError: map['last_error']?.toString(),
+      diagnostics: map['error_diagnostics']?.toString(),
       nextRetryAt: DateTime.tryParse(map['next_retry_at']?.toString() ?? ''),
     );
   }

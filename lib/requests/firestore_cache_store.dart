@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:archive/archive.dart';
+import 'cache_mirror_codec.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webapp/requests/firestore_cache_persistence.dart';
@@ -18,6 +18,8 @@ class FirestoreCacheStore {
   SharedPreferences? _prefs;
   final FirestoreCachePersistence _persistentStore;
   final Map<String, Object> _resourceRevisions = {};
+  final Map<String, Object> _documentWriteRevisions = {};
+  final Map<String, Object> _versionWriteRevisions = {};
   int _clearGeneration = 0;
   final Map<String, List<Map<String, dynamic>>> _documentMemoryCache = {};
   final Map<String, String> _versionMemoryCache = {};
@@ -47,12 +49,18 @@ class FirestoreCacheStore {
           .toList();
     }
     // Migrate caches made by earlier releases on their first successful read.
-    raw ??= _decodePreferenceValue(_prefs!.getString(key));
+    raw ??= await decodeCacheMirror(_prefs!.getString(key));
     if (raw != null && _persistentStore.isAvailable) {
       unawaited(_persistentStore.write(key, raw).catchError((_) {}));
     }
     if (raw == null || raw.isEmpty) {
       return null;
+    }
+    if (clearGeneration != _clearGeneration ||
+        !identical(revision, _resourceRevisions[resourceKey])) {
+      return _documentMemoryCache[resourceKey]
+          ?.map((item) => Map<String, dynamic>.from(item))
+          .toList();
     }
     final decoded = json.decode(raw);
     if (decoded is! List) {
@@ -71,15 +79,30 @@ class FirestoreCacheStore {
     String resourceKey,
     List<Map<String, dynamic>> documents,
   ) async {
-    _resourceRevisions[resourceKey] = Object();
-    final serializableDocuments = _toSerializableDocuments(documents);
-    _documentMemoryCache[resourceKey] = serializableDocuments
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList();
+    final revision = Object();
+    final generation = _clearGeneration;
+    _resourceRevisions[resourceKey] = revision;
+    _documentWriteRevisions[resourceKey] = revision;
+    bool current() =>
+        generation == _clearGeneration &&
+        identical(_documentWriteRevisions[resourceKey], revision);
+    final serializableDocuments = <Map<String, dynamic>>[];
+    final chunks = <String>[];
+    for (var start = 0; start < documents.length; start += 150) {
+      final end = (start + 150).clamp(0, documents.length);
+      final batch = _toSerializableDocuments(documents.sublist(start, end));
+      serializableDocuments.addAll(batch);
+      final encoded = json.encode(batch);
+      chunks.add(encoded.substring(1, encoded.length - 1));
+      if (end < documents.length) await Future<void>.delayed(Duration.zero);
+      if (!current()) return;
+    }
+    if (!current()) return;
+    _documentMemoryCache[resourceKey] = serializableDocuments;
     await _ensurePrefs();
+    if (!current()) return;
     final key = _dataKey(resourceKey);
-    final encoded = json.encode(serializableDocuments);
-    await _writePersistentValue(key, encoded);
+    await _writePersistentValue(key, '[${chunks.join(',')}]', current: current);
   }
 
   Future<String?> readVersion(String resourceKey) async {
@@ -96,7 +119,11 @@ class FirestoreCacheStore {
         !identical(revision, _resourceRevisions[resourceKey])) {
       return _versionMemoryCache[resourceKey];
     }
-    value ??= _decodePreferenceValue(_prefs!.getString(key));
+    value ??= await decodeCacheMirror(_prefs!.getString(key));
+    if (clearGeneration != _clearGeneration ||
+        !identical(revision, _resourceRevisions[resourceKey])) {
+      return _versionMemoryCache[resourceKey];
+    }
     if (value != null && _persistentStore.isAvailable) {
       unawaited(_persistentStore.write(key, value).catchError((_) {}));
     }
@@ -107,14 +134,25 @@ class FirestoreCacheStore {
   }
 
   Future<void> writeVersion(String resourceKey, String version) async {
-    _resourceRevisions[resourceKey] = Object();
+    final revision = Object();
+    final generation = _clearGeneration;
+    _resourceRevisions[resourceKey] = revision;
+    _versionWriteRevisions[resourceKey] = revision;
     _versionMemoryCache[resourceKey] = version;
     await _ensurePrefs();
-    await _writePersistentValue(_versionKey(resourceKey), version);
+    await _writePersistentValue(
+      _versionKey(resourceKey),
+      version,
+      current: () =>
+          generation == _clearGeneration &&
+          identical(_versionWriteRevisions[resourceKey], revision),
+    );
   }
 
   Future<void> clearResource(String resourceKey) async {
     _resourceRevisions[resourceKey] = Object();
+    _documentWriteRevisions[resourceKey] = Object();
+    _versionWriteRevisions[resourceKey] = Object();
     _documentMemoryCache.remove(resourceKey);
     _versionMemoryCache.remove(resourceKey);
     await _ensurePrefs();
@@ -127,6 +165,8 @@ class FirestoreCacheStore {
   Future<void> clearAll() async {
     _clearGeneration++;
     _resourceRevisions.clear();
+    _documentWriteRevisions.clear();
+    _versionWriteRevisions.clear();
     _documentMemoryCache.clear();
     _versionMemoryCache.clear();
     await _ensurePrefs();
@@ -150,7 +190,7 @@ class FirestoreCacheStore {
     // The compressed SharedPreferences value is the fast, durable startup
     // mirror. Prefer it over a serialized IndexedDB operation so cached UI
     // data can render immediately after a cold start or reconnect.
-    final mirrored = _decodePreferenceValue(_prefs?.getString(key));
+    final mirrored = await decodeCacheMirror(_prefs?.getString(key));
     if (mirrored != null) {
       return mirrored;
     }
@@ -164,11 +204,17 @@ class FirestoreCacheStore {
     }
   }
 
-  Future<void> _writePersistentValue(String key, String value) async {
+  Future<void> _writePersistentValue(
+    String key,
+    String value, {
+    bool Function()? current,
+  }) async {
     var mirrorSaved = false;
     try {
       // Commit the fast durable mirror before returning control to the UI.
-      mirrorSaved = await _prefs!.setString(key, _encodePreferenceValue(value));
+      final encoded = await encodeCacheMirror(value);
+      if (current != null && !current()) return;
+      mirrorSaved = await _prefs!.setString(key, encoded);
     } catch (_) {
       // Fall back to IndexedDB below when browser localStorage is blocked.
     }
@@ -178,8 +224,13 @@ class FirestoreCacheStore {
       }
       return;
     }
+    if (current != null && !current()) return;
     if (_persistentStore.isAvailable) {
       await _persistentStore.write(key, value);
+      // A newer save may have committed its mirror while this fallback waited.
+      // Only the current writer may invalidate that mirror.
+      if (current != null && !current()) return;
+      await _prefs!.remove(key);
       return;
     }
     throw StateError('Could not persist cache resource $key.');
@@ -194,23 +245,6 @@ class FirestoreCacheStore {
       }
     }
     await _prefs!.remove(key);
-  }
-
-  String _encodePreferenceValue(String value) {
-    final compressed = GZipEncoder().encode(utf8.encode(value));
-    return 'gzip:${base64Encode(compressed)}';
-  }
-
-  String? _decodePreferenceValue(String? value) {
-    if (value == null || !value.startsWith('gzip:')) {
-      return value;
-    }
-    try {
-      final bytes = base64Decode(value.substring('gzip:'.length));
-      return utf8.decode(GZipDecoder().decodeBytes(bytes));
-    } catch (_) {
-      return null;
-    }
   }
 
   List<Map<String, dynamic>> _toSerializableDocuments(

@@ -1,3 +1,4 @@
+import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -120,7 +121,7 @@ void main() {
     });
 
     test(
-      'loginAsUser keeps previous current user as quick-login source',
+      'impersonation preserves original account across switches, returns and logs out',
       () async {
         await _seedSession({'paltranco_current_user_id': '1'});
 
@@ -161,6 +162,18 @@ void main() {
           offlineQueueFlusher: () async {},
         );
 
+        await firestore.collection('users').doc('1').set({
+          'id': '1',
+          'role': 'admin',
+          'name': 'Original Admin',
+          'is_active': true,
+        });
+        await firestore.collection('users').doc('8').set({
+          'id': '8',
+          'role': 'helper',
+          'name': 'Helper',
+          'is_active': true,
+        });
         await request.loginAsUser('7');
 
         final prefs = createAuthStorageBackend();
@@ -173,6 +186,36 @@ void main() {
         expect(
           await prefs.readStringList('paltranco_known_session_user_ids'),
           <String>['7', '1'],
+        );
+        await request.loginAsUser('8');
+        expect(await prefs.readString('paltranco_current_user_id'), '8');
+        expect(
+          await prefs.readString('paltranco_quick_login_source_user_id'),
+          '1',
+        );
+        final restored = await request.returnToQuickLoginSource();
+        expect(restored?.id, '1');
+        expect(await prefs.readString('paltranco_current_user_id'), '1');
+        expect(await request.hasQuickLoginSource(), isFalse);
+        await request.logout();
+        expect(await prefs.readString('paltranco_current_user_id'), isNull);
+        expect(await request.hasQuickLoginSource(), isFalse);
+
+        // A missing source must not turn Go Back into Logout or erase its anchor.
+        await prefs.writeString('paltranco_current_user_id', '7');
+        await prefs.writeString(
+          'paltranco_quick_login_source_user_id',
+          'missing',
+        );
+        await prefs.remove('paltranco_quick_login_source_snapshot');
+        await expectLater(
+          request.returnToQuickLoginSource(),
+          throwsA(isA<AuthFailure>()),
+        );
+        expect(await prefs.readString('paltranco_current_user_id'), '7');
+        expect(
+          await prefs.readString('paltranco_quick_login_source_user_id'),
+          'missing',
         );
       },
     );
@@ -225,6 +268,7 @@ Future<void> _seedSession(Map<String, String> values) async {
     'paltranco_quick_login_source_user_id',
     'paltranco_known_session_user_ids',
     'paltranco_current_session_auth_snapshot',
+    'paltranco_quick_login_source_snapshot',
   ];
   for (final key in keys) {
     await storage.remove(key);

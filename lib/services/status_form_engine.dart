@@ -1,3 +1,4 @@
+import 'package:webapp/services/kpi/location_option_registry.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/constants/palawan_locations.dart';
 import 'package:webapp/models/status_field.dart';
@@ -68,8 +69,14 @@ class StatusFormEngine {
           optionSourceKey == statusFieldOptionSourceDrivers ||
           optionSourceKey == statusFieldOptionSourceHelpers;
 
-      if (answer is String && isPalawanLocationFieldKey(normalizedKey)) {
-        if (!isValidPalawanLocationOption(answer)) {
+      if (answer is String && LocationOptionRegistry.supports(normalizedKey)) {
+        if (!(isPalawanLocationFieldKey(normalizedKey)
+            ? isValidPalawanLocationOption(answer, fieldKey: normalizedKey)
+            : LocationOptionRegistry.accepts(
+                normalizedKey,
+                answer,
+                field.options,
+              ))) {
           errors[key] =
               field.validationError ??
               ((title?.isNotEmpty == true)

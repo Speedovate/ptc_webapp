@@ -1,7 +1,7 @@
 name: webapp
 description: "PALTRANCO Web App"
 publish_to: 'none'
-version: 1.0.1+9
+version: 1.0.1+10
 
 environment:
   sdk: ^3.11.5
@@ -12,6 +12,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   stacked: ^3.5.0
   archive: ^4.0.9
+  crypto: ^3.0.7
   shared_preferences: ^2.5.3
   file_picker: ^10.3.2
   url_launcher: ^6.3.1
@@ -38,6 +39,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/export_templates/kpi-2026-layout.xlsx
     - assets/logo.png
     - assets/icon.png
     - assets/sdv_footer_lite.png

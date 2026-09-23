@@ -1,3 +1,4 @@
+import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/services/offline_reference_mapper.dart';
 import 'dart:async';
 
@@ -1362,9 +1363,15 @@ class StatusRequest implements StatusFormRepository {
   }) async {
     try {
       return await action();
-    } on FirebaseException catch (error) {
-      throw Exception(userFacingErrorMessage(error, fallback: fallback));
-    } catch (error) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'status.request.dart',
+          operation: fallback,
+        ),
+      );
       throw Exception(userFacingErrorMessage(error, fallback: fallback));
     }
   }

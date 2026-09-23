@@ -1,3 +1,5 @@
+import 'package:webapp/widgets/shared/user_session_actions_scope.dart';
+import 'package:webapp/widgets/shared/inline_detail_host.dart';
 import 'package:webapp/widgets/shared/app_selectable_dialog.dart';
 import 'package:webapp/widgets/shared/paged_data_sliver.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
@@ -122,17 +124,52 @@ class AdminUsersView extends StatefulWidget {
     required UserModel viewedUser,
     Future<void> Function()? onCurrentUserUpdated,
     VoidCallback? onLogout,
-    bool isQuickLoggedIn = false,
+    bool? isQuickLoggedIn,
   }) {
+    final session = UserSessionActionsScope.maybeOf(context);
     return showAppDialog<void>(
       context: context,
       modalKey: 'user-detail:${viewedUser.id ?? "-"}',
       builder: (dialogContext) => _AdminUserDetailDialog(
         currentUser: currentUser,
         initialViewedUser: viewedUser,
-        onCurrentUserUpdated: onCurrentUserUpdated ?? () async {},
-        onLogout: onLogout ?? () {},
-        isQuickLoggedIn: isQuickLoggedIn,
+        onCurrentUserUpdated:
+            onCurrentUserUpdated ?? session?.onUserUpdated ?? () async {},
+        onLogout: onLogout ?? session?.onLogout ?? () {},
+        isQuickLoggedIn: isQuickLoggedIn ?? session?.isQuickLoggedIn ?? false,
+      ),
+    );
+  }
+
+  static Future<void> openDetailPage(
+    BuildContext context, {
+    required UserModel currentUser,
+    required UserModel viewedUser,
+  }) async {
+    if (!RoleAccessService.instance.canAccess(
+      'users.read',
+      role: currentUser.role,
+    )) {
+      return;
+    }
+    final session = UserSessionActionsScope.maybeOf(context);
+    await InlineDetailHost.open(
+      context,
+      (detailContext) => BookingSectionNavigationScope(
+        onOpenBooking: (booking) => AdminBookingsView.openDetailPage(
+          detailContext,
+          currentUser: currentUser,
+          booking: booking,
+        ),
+        child: _AdminUserDetailDialogBody(
+          currentUser: currentUser,
+          initialViewedUser: viewedUser,
+          onCurrentUserUpdated: session?.onUserUpdated ?? () async {},
+          onLogout: session?.onLogout ?? () {},
+          isQuickLoggedIn: session?.isQuickLoggedIn ?? false,
+          asPage: true,
+          onBack: () => InlineDetailHost.close(detailContext),
+        ),
       ),
     );
   }
@@ -1776,7 +1813,14 @@ class _UsersWideRow extends StatelessWidget {
                     icon: Icons.visibility_rounded,
                     backgroundColor: Colors.yellow.shade900,
                     onTap: () {
-                      vm.openUserView(user);
+                      final currentUser = vm.currentUser;
+                      if (currentUser != null) {
+                        AdminUsersView.openDetailPage(
+                          context,
+                          currentUser: currentUser,
+                          viewedUser: user,
+                        );
+                      }
                     },
                   ),
                   if (vm.canUpdateUsers)
@@ -1936,7 +1980,14 @@ class _UsersResponsiveCard extends StatelessWidget {
                           icon: Icons.visibility_rounded,
                           backgroundColor: Colors.yellow.shade900,
                           onTap: () {
-                            vm.openUserView(user);
+                            final currentUser = vm.currentUser;
+                            if (currentUser != null) {
+                              AdminUsersView.openDetailPage(
+                                context,
+                                currentUser: currentUser,
+                                viewedUser: user,
+                              );
+                            }
                           },
                         ),
                         _UserActionButton(
@@ -2013,7 +2064,14 @@ class _UsersResponsiveCard extends StatelessWidget {
                       icon: Icons.visibility_rounded,
                       backgroundColor: Colors.yellow.shade900,
                       onTap: () {
-                        vm.openUserView(user);
+                        final currentUser = vm.currentUser;
+                        if (currentUser != null) {
+                          AdminUsersView.openDetailPage(
+                            context,
+                            currentUser: currentUser,
+                            viewedUser: user,
+                          );
+                        }
                       },
                     ),
                     if (vm.canUpdateUsers)
@@ -2066,7 +2124,14 @@ class _UsersResponsiveCard extends StatelessWidget {
                       icon: Icons.visibility_rounded,
                       backgroundColor: Colors.yellow.shade900,
                       onTap: () {
-                        vm.openUserView(user);
+                        final currentUser = vm.currentUser;
+                        if (currentUser != null) {
+                          AdminUsersView.openDetailPage(
+                            context,
+                            currentUser: currentUser,
+                            viewedUser: user,
+                          );
+                        }
                       },
                     ),
                     if (vm.canUpdateUsers)
@@ -2247,6 +2312,8 @@ class _AdminUserDetailDialogBody extends StatefulWidget {
     required this.onCurrentUserUpdated,
     required this.onLogout,
     required this.isQuickLoggedIn,
+    this.asPage = false,
+    this.onBack,
   });
 
   final UserModel currentUser;
@@ -2254,6 +2321,8 @@ class _AdminUserDetailDialogBody extends StatefulWidget {
   final Future<void> Function() onCurrentUserUpdated;
   final VoidCallback onLogout;
   final bool isQuickLoggedIn;
+  final bool asPage;
+  final VoidCallback? onBack;
 
   @override
   State<_AdminUserDetailDialogBody> createState() =>
@@ -2366,6 +2435,14 @@ class _AdminUserDetailDialogBodyState
               child: SliverSection(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (widget.asPage) ...[
+                    _UserDetailHeader(
+                      user: viewedUser,
+                      onBack:
+                          widget.onBack ?? () => Navigator.of(context).pop(),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   ProfileView(
                     key: profileViewRefreshKey(viewedUser),
                     user: viewedUser,
@@ -2395,8 +2472,41 @@ class _AdminUserDetailDialogBodyState
                         : null,
                     onQuickActionPressed: isViewingCurrentUser
                         ? null
-                        : () => Navigator.of(context).pop(),
-                    quickActionLabel: isViewingCurrentUser ? null : 'Close',
+                        : !vm.canSignInAsOtherUsers
+                        ? null
+                        : () async {
+                            final confirmed = await showAdminActionConfirmation(
+                              context,
+                              title: 'Sign In As User',
+                              message:
+                                  'Continue signing in as ${viewedUser.name ?? 'this user'} (${AdminUsersView.formatRole(viewedUser.role)})?',
+                              confirmLabel: 'Sign In',
+                              onConfirmAsync: () async {
+                                try {
+                                  await vm.loginAsUser(viewedUser);
+                                  if (!context.mounted) {
+                                    return false;
+                                  }
+                                  await widget.onCurrentUserUpdated();
+                                  return true;
+                                } on AuthFailure catch (error) {
+                                  if (!context.mounted) {
+                                    return false;
+                                  }
+                                  AppSnackbar.showError(context, error.message);
+                                  return false;
+                                }
+                              },
+                            );
+                            if (!confirmed || !context.mounted) {
+                              return;
+                            }
+                          },
+                    quickActionLabel: isViewingCurrentUser
+                        ? null
+                        : vm.canSignInAsOtherUsers
+                        ? 'Sign In'
+                        : null,
                     onEditPressed: () async {
                       if (!vm.canUpdateUsers) {
                         return;

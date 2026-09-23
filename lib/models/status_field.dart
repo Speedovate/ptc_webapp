@@ -67,6 +67,18 @@ const statusFieldOptionSourceLabels = <String, String>{
 };
 
 class StatusField {
+  /// Recognizes the legacy free-text location field without changing its key.
+  bool get isChassisLocationInput {
+    final normalizedKey = key?.trim().toLowerCase();
+    final normalizedPlaceholder = placeholder?.trim().toLowerCase().replaceAll(
+      RegExp(r'\s+'),
+      ' ',
+    );
+    return normalizedKey == 'chassis_location' ||
+        normalizedPlaceholder == 'enter location or google maps link' ||
+        normalizedPlaceholder == 'enter location';
+  }
+
   const StatusField({
     this.id,
     this.statusForm,

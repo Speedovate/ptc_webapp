@@ -5,13 +5,11 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/services/app_version_service.dart';
 import 'package:webapp/services/offline_sync_status_service.dart';
-import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/web_app_install_service.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/collapsible_sidebar.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/app_profile_avatar.dart';
-import 'package:webapp/widgets/shared/app_sync_status_banner.dart';
 
 class PlatformShell extends StatelessWidget {
   const PlatformShell({
@@ -327,10 +325,6 @@ class _PlatformSidebarFooter extends StatelessWidget {
         // The sidebar belongs to the active account. Do not surface a stale
         // conflict from a previously signed-out account in this session.
         final snapshot = service.snapshot;
-        final canReviewSync = RoleAccessService.instance.canAccess(
-          'sync.read',
-          role: currentUser.role,
-        );
 
         return AnimatedSwitcher(
           duration: const Duration(milliseconds: 180),
@@ -338,7 +332,6 @@ class _PlatformSidebarFooter extends StatelessWidget {
               ? _PlatformSyncStatusButton(
                   key: const ValueKey('sidebar-sync-status'),
                   snapshot: snapshot,
-                  canReviewSync: canReviewSync,
                   userId: currentUser.id,
                 )
               : const _PlatformInstallAppButton(
@@ -361,12 +354,10 @@ class _PlatformSyncStatusButton extends StatelessWidget {
   const _PlatformSyncStatusButton({
     super.key,
     required this.snapshot,
-    required this.canReviewSync,
     required this.userId,
   });
 
   final OfflineSyncStatusSnapshot snapshot;
-  final bool canReviewSync;
   final String? userId;
 
   @override
@@ -408,16 +399,9 @@ class _PlatformSyncStatusButton extends StatelessWidget {
         : Colors.white.withValues(alpha: 0.16);
 
     return AppMousePressable(
-      // Every signed-in role can inspect its own durable queue offline.
-      // Conflict resolution retains its existing permission check.
+      // All queue states open the same account-scoped modal.
       onTap: userId?.trim().isNotEmpty == true
-          ? () {
-              if (canReviewSync && hasIssue) {
-                showOfflineConflictReviewSheet(context, userId: userId);
-              } else {
-                showOfflineQueueItems(context, userId!);
-              }
-            }
+          ? () => showOfflineQueueItems(context, userId!)
           : null,
       borderRadius: BorderRadius.circular(16),
       child: Container(

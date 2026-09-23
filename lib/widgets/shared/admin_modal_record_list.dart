@@ -12,20 +12,41 @@ class AdminModalRecordList extends StatelessWidget {
     required this.itemCount,
     required this.valuesAt,
     this.cellBuilder,
+    this.rowGroupKey,
     this.columnStyles = const {},
     this.columnExtraWidths = const {},
     this.wrappingColumn,
     this.selectableCells = false,
+    this.trailingActions = false,
+    this.shrinkWrap = false,
+    this.horizontalOnDesktop = false,
+    this.scrollHeader,
+    this.scrollController,
+    this.scrollFooter,
   });
   final List<String> titles;
   final int itemCount;
   final List<String> Function(int index) valuesAt;
 
   final Widget? Function(int row, int column)? cellBuilder;
+
+  /// Adjacent rows with the same key share a card. The first row is the
+  /// summary, separated from its expanded detail rows by one divider.
+  final Object Function(int index)? rowGroupKey;
   final Map<int, TextStyle> columnStyles;
   final Map<int, double> columnExtraWidths;
   final int? wrappingColumn;
   final bool selectableCells;
+  final bool trailingActions;
+
+  /// Let an enclosing scroll view own vertical scrolling.
+  final bool shrinkWrap;
+  final bool horizontalOnDesktop;
+
+  /// Header and rows share one lazy vertical viewport when supplied.
+  final Widget? scrollHeader;
+  final Widget? scrollFooter;
+  final ScrollController? scrollController;
 
   static final _measurements = TextWidthCache(capacity: 1024);
 
@@ -70,7 +91,7 @@ class AdminModalRecordList extends StatelessWidget {
     Widget valueText(String text, TextStyle style) => selectableCells
         ? SelectableText(text, style: style)
         : Text(text, style: style, softWrap: true);
-    Widget header(String title) => selectableCells
+    Widget header(String title, {bool trailing = false}) => selectableCells
         ? AdminListBodyCell(
             child: SelectableText(
               title,
@@ -79,7 +100,13 @@ class AdminModalRecordList extends StatelessWidget {
               ),
             ),
           )
-        : AdminListHeaderCell(label: title);
+        : AdminListHeaderCell(
+            label: title,
+            alignment: trailing ? Alignment.centerRight : Alignment.centerLeft,
+            trailingPadding: trailing
+                ? 0
+                : AdminListMeasurements.defaultTrailingPadding,
+          );
     return LayoutBuilder(
       builder: (context, constraints) {
         final layoutWidths = List<double>.of(widths);
@@ -106,92 +133,191 @@ class AdminModalRecordList extends StatelessWidget {
           32,
           (sum, width) => sum + width,
         );
-        final wide = tableWidth <= constraints.maxWidth;
-        return Column(
-          children: [
-            AdminListHeaderBar(
-              minHeight: 48,
-              borderRadius: 16,
-              horizontalPadding: 16,
-              child: wide
-                  ? Row(
-                      children: [
-                        for (var i = 0; i < titles.length; i++)
-                          AdminListFixedSlot(
-                            width: layoutWidths[i],
-                            child: header(titles[i]),
-                          ),
-                      ],
-                    )
-                  : header(titles.first),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: ListView.separated(
-                primary: false,
-                itemCount: itemCount,
-                separatorBuilder: (_, _) => const SizedBox(height: 12),
-                itemBuilder: (context, index) {
-                  final values = rows[index];
-                  return AdminListItemCard(
-                    child: wide
-                        ? Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              for (var i = 0; i < titles.length; i++)
-                                AdminListFixedSlot(
-                                  width: layoutWidths[i],
-                                  child: AdminListBodyCell(
-                                    child:
-                                        cellBuilder?.call(index, i) ??
-                                        valueText(values[i], valueStyles[i]),
-                                  ),
-                                ),
-                            ],
-                          )
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              for (var i = 0; i < titles.length; i++) ...[
-                                if (i > 0) const SizedBox(height: 12),
-                                if (cellBuilder?.call(index, i)
-                                    case final Widget cell)
-                                  Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      AdminListHeaderCell(label: titles[i]),
-                                      const SizedBox(height: 6),
-                                      cell,
-                                    ],
-                                  )
-                                else if (selectableCells)
-                                  Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      header(titles[i]),
-                                      const SizedBox(height: 6),
-                                      valueText(values[i], valueStyles[i]),
-                                    ],
-                                  )
-                                else
-                                  AdminListResponsiveField(
-                                    title: titles[i],
-                                    value: values[i],
-                                    width: double.infinity,
-                                    centered: false,
-                                    isTitle: i == 0,
-                                  ),
-                              ],
-                            ],
-                          ),
-                  );
-                },
-              ),
-            ),
-          ],
+        final desktopRows =
+            horizontalOnDesktop && MediaQuery.sizeOf(context).width >= 900;
+        final wide = desktopRows || tableWidth <= constraints.maxWidth;
+        Widget listContainer({required Widget child}) =>
+            shrinkWrap ? child : Expanded(child: child);
+        final tableHeader = AdminListHeaderBar(
+          minHeight: 48,
+          borderRadius: 16,
+          horizontalPadding: 16,
+          child: wide
+              ? Row(
+                  children: [
+                    for (var i = 0; i < titles.length; i++) ...[
+                      if (trailingActions && i == titles.length - 1)
+                        const Spacer(),
+                      AdminListFixedSlot(
+                        width: layoutWidths[i],
+                        child: header(
+                          titles[i],
+                          trailing: trailingActions && i == titles.length - 1,
+                        ),
+                      ),
+                    ],
+                  ],
+                )
+              : header(titles.first),
         );
+        Widget buildRowContent(BuildContext context, int index) {
+          final values = rows[index];
+          return wide
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    for (var i = 0; i < titles.length; i++) ...[
+                      if (trailingActions && i == titles.length - 1)
+                        const Spacer(),
+                      AdminListFixedSlot(
+                        width: layoutWidths[i],
+                        child: AdminListBodyCell(
+                          alignment: trailingActions && i == titles.length - 1
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
+                          trailingPadding:
+                              trailingActions && i == titles.length - 1
+                              ? 0
+                              : AdminListMeasurements.defaultTrailingPadding,
+                          child:
+                              cellBuilder?.call(index, i) ??
+                              valueText(values[i], valueStyles[i]),
+                        ),
+                      ),
+                    ],
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < titles.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 12),
+                      if (cellBuilder?.call(index, i) case final Widget cell)
+                        Column(
+                          crossAxisAlignment:
+                              trailingActions && i == titles.length - 1
+                              ? CrossAxisAlignment.end
+                              : CrossAxisAlignment.start,
+                          children: [
+                            header(
+                              titles[i],
+                              trailing:
+                                  trailingActions && i == titles.length - 1,
+                            ),
+                            const SizedBox(height: 6),
+                            cell,
+                          ],
+                        )
+                      else if (selectableCells)
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            header(titles[i]),
+                            const SizedBox(height: 6),
+                            valueText(values[i], valueStyles[i]),
+                          ],
+                        )
+                      else
+                        AdminListResponsiveField(
+                          title: titles[i],
+                          value: values[i],
+                          width: double.infinity,
+                          centered: false,
+                          isTitle: i == 0,
+                        ),
+                    ],
+                  ],
+                );
+        }
+
+        final groups = <({int start, int end})>[];
+        for (var start = 0; start < itemCount;) {
+          var end = start + 1;
+          if (rowGroupKey != null) {
+            final key = rowGroupKey!(start);
+            while (end < itemCount && rowGroupKey!(end) == key) {
+              end++;
+            }
+          }
+          groups.add((start: start, end: end));
+          start = end;
+        }
+        Widget buildGroup(BuildContext context, int index) {
+          final group = groups[index];
+          return AdminListItemCard(
+            child: group.end == group.start + 1
+                ? buildRowContent(context, group.start)
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      buildRowContent(context, group.start),
+                      const Divider(height: 25, color: AppColors.primaryBorder),
+                      for (
+                        var row = group.start + 1;
+                        row < group.end;
+                        row++
+                      ) ...[
+                        if (row > group.start + 1) const SizedBox(height: 16),
+                        buildRowContent(context, row),
+                      ],
+                    ],
+                  ),
+          );
+        }
+
+        final content = scrollHeader != null
+            ? ListView.separated(
+                controller: scrollController,
+                primary: false,
+                padding: EdgeInsets.zero,
+                itemCount: groups.length + 2 + (scrollFooter == null ? 0 : 1),
+                separatorBuilder: (_, index) =>
+                    SizedBox(height: index == 0 ? 0 : 12),
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return Align(
+                      alignment: Alignment.centerLeft,
+                      child: SizedBox(
+                        width: constraints.maxWidth,
+                        child: scrollHeader,
+                      ),
+                    );
+                  }
+                  if (index == 1) return tableHeader;
+                  if (index == groups.length + 2) return scrollFooter!;
+                  return buildGroup(context, index - 2);
+                },
+              )
+            : Column(
+                mainAxisSize: shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
+                children: [
+                  tableHeader,
+                  const SizedBox(height: 12),
+                  listContainer(
+                    child: ListView.separated(
+                      shrinkWrap: shrinkWrap,
+                      physics: shrinkWrap
+                          ? const NeverScrollableScrollPhysics()
+                          : null,
+                      primary: false,
+                      itemCount: groups.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                      itemBuilder: buildGroup,
+                    ),
+                  ),
+                ],
+              );
+        if (desktopRows && tableWidth > constraints.maxWidth) {
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: tableWidth + 2,
+              height: shrinkWrap ? null : constraints.maxHeight,
+              child: content,
+            ),
+          );
+        }
+        return content;
       },
     );
   }

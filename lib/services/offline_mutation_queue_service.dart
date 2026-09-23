@@ -1,7 +1,11 @@
+import 'booking_photo_cleanup.dart';
+import 'package:webapp/services/sync_error_log_service.dart';
+import 'package:webapp/services/offline_error_diagnostics.dart';
 import 'package:webapp/utils/copy_document_fields.dart';
 import 'package:webapp/models/offline_queue_item.dart';
 import 'package:webapp/services/offline_cleanup_queue_service.dart';
 import 'package:webapp/services/support_read_marker_writer.dart';
+import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -98,10 +102,13 @@ class OfflineMutationQueueService {
                             : 'bookings'),
                     entry.targetId,
                   ),
+            conflictId: entry.isBlocked ? entry.id : null,
+            collectionKey: entry.collectionKey,
             isBlocked: entry.isBlocked,
             createdAt: DateTime.tryParse(entry.createdAtIso),
             hasError: entry.lastError?.isNotEmpty == true,
             errorMessage: entry.lastError,
+            diagnostics: entry.diagnostics,
           ),
         )
         .toList(growable: false);
@@ -251,6 +258,118 @@ class OfflineMutationQueueService {
         .toList(growable: false);
   }
 
+  Future<CatalogConflictReview> reviewCatalogConflict(String id) async {
+    await initialize();
+    if (!_isOnline()) {
+      throw StateError('Go online to compare with the current server record.');
+    }
+    final storageKey = await _resolvedStorageKey();
+    final entry = (await _readEntriesForStorageKey(storageKey))
+        .where(
+          (e) =>
+              e.id == id &&
+              e.isBlocked &&
+              e.collectionKey == 'operations_catalog' &&
+              e.kind == _OfflineMutationKind.collectionDocumentUpsert,
+        )
+        .firstOrNull;
+    if (entry == null) {
+      throw StateError(
+        'This queued change is no longer available. Refresh the queue.',
+      );
+    }
+    final ref = _firestore.collection('operations_catalog');
+    final snapshot = await ref
+        .doc(entry.targetId)
+        .get(const GetOptions(source: Source.server))
+        .timeout(_remoteMutationTimeout);
+    final server = snapshot.data();
+    if (server == null || server['updated_at'] == null) {
+      throw StateError(
+        'The server record is missing its version. Keep this action for review.',
+      );
+    }
+    final versions = await Future.wait(
+      (server['matrix_version_ids'] as List? ?? []).map(
+        (id) =>
+            ref.doc('matrix_$id').get(const GetOptions(source: Source.server)),
+      ),
+    ).timeout(_remoteMutationTimeout);
+    if (versions.any((v) => !v.exists)) {
+      throw StateError(
+        'A server matrix version is unavailable. Try comparison again.',
+      );
+    }
+    if (await _resolvedStorageKey() != storageKey) {
+      throw StateError('The active account changed. Reopen the queue.');
+    }
+    final pendingVersions = <String, Map>{
+      for (final v
+          in (server['matrix_versions'] as List? ?? []).whereType<Map>())
+        v['id'].toString(): v,
+      for (final v
+          in (entry.payload['matrix_versions'] as List? ?? []).whereType<Map>())
+        v['id'].toString(): v,
+    };
+    final retainedIds = <String>{
+      ...(server['matrix_version_ids'] as List? ?? []).map((v) => v.toString()),
+      ...(entry.payload['matrix_version_ids'] as List? ?? []).map(
+        (v) => v.toString(),
+      ),
+      ...pendingVersions.keys,
+    }.toList();
+    final proposed = {
+      ...entry.payload,
+      'matrix_version_ids': retainedIds,
+      'matrix_versions': pendingVersions.values.toList(),
+    };
+    return CatalogConflictReview(
+      id: id,
+      storageKey: storageKey,
+      pending: entry.payload,
+      proposed: proposed,
+      server: server,
+      serverVersions: versions.map((v) => v.data()!).toList(),
+    );
+  }
+
+  Future<void> applyReviewedCatalogConflict(
+    CatalogConflictReview review,
+  ) async {
+    await initialize();
+    await _serializeQueueMutation(() async {
+      if (await _resolvedStorageKey() != review.storageKey) {
+        throw StateError('The active account changed. Reopen the queue.');
+      }
+      final entries = await _readEntries();
+      final index = entries.indexWhere((e) => e.id == review.id && e.isBlocked);
+      if (index < 0 || !_sameDocument(entries[index].payload, review.pending)) {
+        throw StateError(
+          'The queued change was updated. Compare again before applying.',
+        );
+      }
+      final snapshot = await _firestore
+          .collection('operations_catalog')
+          .doc(entries[index].targetId)
+          .get(const GetOptions(source: Source.server))
+          .timeout(_remoteMutationTimeout);
+      if (!_sameDocument(snapshot.data(), review.server)) {
+        throw StateError(
+          'The server changed since this comparison. Compare again before applying.',
+        );
+      }
+      entries[index] = entries[index].copyWith(
+        payload: review.proposed,
+        baseUpdatedAt: review.server['updated_at'].toString(),
+        isBlocked: false,
+        clearLastError: true,
+      );
+      await _writeEntries(entries);
+      _setStatus(_snapshotForEntries(entries));
+    });
+    await flushPendingMutations();
+  }
+
   Future<void> retryBlockedConflict(
     String conflictId, {
     bool clearBaseVersion = true,
@@ -319,6 +438,13 @@ class OfflineMutationQueueService {
   Future<void> _queueMutationTail = Future<void>.value();
 
   final Object _storageScopeKey = Object();
+
+  /// Retain the initiating account through network awaits and offline fallback.
+  Future<T> withAccountScope<T>(Future<T> Function() action) async {
+    await _authStorage.initialize();
+    final scope = await _resolvedStorageKey();
+    return runZoned(action, zoneValues: {_storageScopeKey: scope});
+  }
 
   Future<T> _serializeQueueMutation<T>(Future<T> Function() action) {
     // Capture the originating account before waiting for another local write.
@@ -572,6 +698,108 @@ class OfflineMutationQueueService {
     });
   }
 
+  /// Returns false only when the write needs the durable offline queue.
+  /// Foreground writes use the same version/identity checks without emitting
+  /// queue progress or completing before the server acknowledges the write.
+  Future<bool> tryWriteCollectionDocumentOnline({
+    required String collectionKey,
+    required String documentId,
+    required Map<String, dynamic> document,
+    String? baseUpdatedAt,
+  }) async {
+    if (!_isOnline() ||
+        documentId.startsWith('offline_') ||
+        documentId.startsWith('-') ||
+        OfflineReferenceMapper.hasTemporaryReferences(document)) {
+      return false;
+    }
+    await initialize();
+    final entries = await _readEntries();
+    if (entries.any(
+      (entry) =>
+          entry.targetId == documentId && entry.collectionKey == collectionKey,
+    )) {
+      return false;
+    }
+    if (collectionKey != 'bookings' &&
+        _collectionForKey(collectionKey) == null) {
+      throw StateError('Unsupported collection: $collectionKey');
+    }
+    final entry = _OfflineMutationEntry(
+      id: _nextEntryId('foreground'),
+      kind: _OfflineMutationKind.collectionDocumentUpsert,
+      targetId: documentId,
+      collectionKey: collectionKey,
+      payload: document,
+      baseUpdatedAt: baseUpdatedAt,
+      createdAtIso: DateTime.now().toUtc().toIso8601String(),
+      retryCount: 0,
+    );
+    try {
+      if (collectionKey == 'bookings') {
+        await _applyQueuedBookingUpsert(entry);
+      } else {
+        await _applyVersionedUpsert(_collectionForKey(collectionKey)!, entry);
+      }
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'offline_mutation_queue_service.dart',
+          operation: 'foreground upsert',
+          target: '$collectionKey/$documentId',
+          owner: (await _resolvedStorageKey()).substring(
+            '$_storageKey::'.length,
+          ),
+          details: {
+            'base_updated_at': baseUpdatedAt,
+            'payload_keys': document.keys.toList(),
+          },
+        ),
+      );
+      if (!_isOnline() ||
+          error is TimeoutException ||
+          (error is FirebaseException &&
+              const {
+                'unavailable',
+                'deadline-exceeded',
+                'network-request-failed',
+              }.contains(error.code))) {
+        return false;
+      }
+      rethrow;
+    }
+    unawaited(_publishCollectionVersion(collectionKey));
+    if (collectionKey == 'bookings') {
+      unawaited(_publishCollectionVersion('chassis'));
+    }
+    return true;
+  }
+
+  Future<bool> saveCollectionDocumentOnlineFirst({
+    required String collectionKey,
+    required String documentId,
+    required Map<String, dynamic> document,
+    String? baseUpdatedAt,
+  }) => withAccountScope(() async {
+    if (await tryWriteCollectionDocumentOnline(
+      collectionKey: collectionKey,
+      documentId: documentId,
+      document: document,
+      baseUpdatedAt: baseUpdatedAt,
+    )) {
+      return true;
+    }
+    await queueCollectionDocumentUpsert(
+      collectionKey: collectionKey,
+      documentId: documentId,
+      document: document,
+      baseUpdatedAt: baseUpdatedAt,
+    );
+    return false;
+  });
+
   Future<void> queueCollectionDocumentUpsert({
     required String collectionKey,
     required String documentId,
@@ -655,6 +883,13 @@ class OfflineMutationQueueService {
           targetId: documentId,
           collectionKey: collectionKey,
           payload: document,
+          catalogPredecessorVersions:
+              collectionKey == 'operations_catalog' &&
+                  previous != null &&
+                  baseUpdatedAt != null &&
+                  baseUpdatedAt == previous.payload['updated_at']
+              ? [...previous.catalogPredecessorVersions, baseUpdatedAt]
+              : const [],
           baseUpdatedAt: previous != null
               ? previous.baseUpdatedAt
               : baseUpdatedAt,
@@ -804,6 +1039,16 @@ class OfflineMutationQueueService {
                 ? previous.payload['previous_booking_id']
                 : previousBookingId,
             'next_booking_id': nextBookingId,
+            'booking_link_ids': <String>{
+              ...?((previous?.payload['booking_link_ids'] as List?)?.map(
+                (id) => '$id',
+              )),
+              if (previous?.payload['next_booking_id'] case final String id
+                  when id.isNotEmpty)
+                id,
+              if (nextBookingId != null && nextBookingId.isNotEmpty)
+                nextBookingId,
+            }.toList(),
             'provisional_create':
                 previous?.payload['provisional_create'] == true ||
                 isProvisionalCreate,
@@ -1081,6 +1326,11 @@ class OfflineMutationQueueService {
         payload[key] = await resolveReference(payload[key]);
       }
     }
+    if (payload['booking_link_ids'] is List) {
+      payload['booking_link_ids'] = await Future.wait(
+        (payload['booking_link_ids'] as List).map(resolveReference),
+      );
+    }
     if (payload['chassis'] is Map) {
       final chassis = Map<String, dynamic>.from(payload['chassis'] as Map);
       if (chassis.containsKey('current_booking_id')) {
@@ -1222,40 +1472,84 @@ class OfflineMutationQueueService {
     Map<String, dynamic>? patch,
   }) async {
     final document = patch ?? entry.payload;
-    await _firestore
-        .runTransaction<void>((tx) async {
-          final ref = collection.doc(entry.targetId);
-          final existing = await tx.get(ref);
-          final base = _parseSyncTimestamp(entry.baseUpdatedAt);
-          final remote = _parseSyncTimestamp(
-            existing.data()?['updated_at']?.toString(),
-          );
-          final next = _parseSyncTimestamp(document['updated_at']?.toString());
-          if (!existing.exists && (base != null || patch != null)) {
+    await runTransactionWithOriginalErrors(_firestore, (tx) async {
+      final ref = collection.doc(entry.targetId);
+      final existing = await tx.get(ref);
+      final base = _parseSyncTimestamp(entry.baseUpdatedAt);
+      final remote = _parseSyncTimestamp(
+        existing.data()?['updated_at']?.toString(),
+      );
+      final next = _parseSyncTimestamp(document['updated_at']?.toString());
+      // KPI day IDs are deterministic. Concurrent first-time entries must
+      // not overwrite another manager's confirmed record.
+      if (const {
+            'pm_kpi_records',
+            'pm_fuel_entries',
+            'operations_catalog',
+          }.contains(collection.path) &&
+          existing.exists &&
+          base == null &&
+          remote != next) {
+        throw StateError(
+          'Sync conflict: ${collection.path}/${entry.targetId} already exists. '
+          'This queued change has no original server version. Review before replacing.',
+        );
+      }
+      if (!existing.exists && (base != null || patch != null)) {
+        throw StateError(
+          'Sync conflict: record was deleted. Pending edit was preserved.',
+        );
+      }
+      if (base != null &&
+          remote != null &&
+          (collection.path == 'operations_catalog'
+              ? remote != base
+              : remote.isAfter(base)) &&
+          remote != next) {
+        throw StateError(
+          'Sync conflict: ${collection.path}/${entry.targetId} changed remotely. '
+          'Original version: ${entry.baseUpdatedAt}; server version: ${existing.data()?['updated_at']}. '
+          'Pending edit was preserved.',
+        );
+      }
+      final catalogVersions = <Map<String, dynamic>>[];
+      if (collection.path == 'operations_catalog' &&
+          document['matrix_versions'] is List) {
+        for (final raw in document['matrix_versions'] as List) {
+          if (raw is! Map) {
+            throw StateError('Invalid trip matrix snapshot.');
+          }
+          final version = Map<String, dynamic>.from(raw);
+          final id = version['id']?.toString() ?? '';
+          if (!RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(id)) {
+            throw StateError('Invalid trip matrix version ID.');
+          }
+          final snapshot = await tx.get(collection.doc('matrix_$id'));
+          if (snapshot.exists && !_sameDocument(snapshot.data(), version)) {
             throw StateError(
-              'Sync conflict: record was deleted. Pending edit was preserved.',
+              'Sync conflict: trip matrix version $id already exists with different contents.',
             );
           }
-          if (base != null &&
-              remote != null &&
-              remote.isAfter(base) &&
-              remote != next) {
-            throw StateError(
-              'Sync conflict: record changed remotely. Pending edit was preserved.',
-            );
-          }
-          if (patch != null) {
-            tx.update(ref, patch);
-          } else {
-            final receipts = existing.data()?['offline_photo_uploads'];
-            tx.set(ref, {
-              ...document,
-              if (collection.path == 'users' && receipts is Map)
-                'offline_photo_uploads': receipts,
-            });
-          }
-        })
-        .timeout(_remoteMutationTimeout);
+          catalogVersions.add(version);
+        }
+      }
+      for (final version in catalogVersions) {
+        tx.set(collection.doc('matrix_${version['id']}'), version);
+      }
+      if (patch != null) {
+        tx.update(ref, patch);
+      } else {
+        final receipts = existing.data()?['offline_photo_uploads'];
+        tx.set(ref, {
+          for (final e in document.entries)
+            if (collection.path != 'operations_catalog' ||
+                e.key != 'matrix_versions')
+              e.key: e.value,
+          if (collection.path == 'users' && receipts is Map)
+            'offline_photo_uploads': receipts,
+        });
+      }
+    }).timeout(_remoteMutationTimeout);
   }
 
   Future<void> _publishCollectionVersion(String? collectionKey) async {
@@ -1270,138 +1564,147 @@ class OfflineMutationQueueService {
           .doc(normalizedKey)
           .set({'version': now, 'updated_at': now}, SetOptions(merge: true))
           .timeout(_remoteMutationTimeout);
-    } catch (_) {
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'offline_mutation_queue_service.dart',
+          operation: 'publish cache version',
+          target: 'manage_cache/$normalizedKey',
+          kind: 'cache_notification_failure',
+          details: {'business_write_committed': true},
+        ),
+      );
       // The primary mutation has already succeeded. A later refresh still
       // reconciles clients if the optional cross-device signal cannot publish.
     }
   }
 
   Future<void> _applyQueuedBookingUpsert(_OfflineMutationEntry entry) async {
-    await _throwIfConflict(
-      _bookingsCollection,
-      entry.targetId,
-      baseUpdatedAt: entry.baseUpdatedAt,
-      nextUpdatedAt: entry.payload['updated_at']?.toString(),
-    );
+    // The transaction below validates the server version and identity atomically.
+    // A separate unbounded get() can stall after reconnect before the transaction
+    // timeout even starts; it adds no conflict protection to this write.
     final document = Map<String, dynamic>.from(entry.payload)
       ..['id'] = entry.targetId
       ..remove('local_sync_status');
-    await _firestore
-        .runTransaction<void>((transaction) async {
-          final bookingRef = _bookingsCollection.doc(entry.targetId);
-          final existingBooking = await transaction.get(bookingRef);
-          final expectedKey = document['submission_key'];
-          if (expectedKey != null &&
-              entry.baseUpdatedAt != null &&
-              !existingBooking.exists) {
-            throw StateError(
-              'Sync conflict: the booking was removed before applying the pending edit.',
-            );
-          }
-          if (expectedKey != null &&
-              existingBooking.exists &&
-              existingBooking.data()?['submission_key'] != expectedKey) {
-            throw StateError(
-              'Sync conflict: booking identity changed before applying the edit.',
-            );
-          }
-          final remoteVersion = _parseSyncTimestamp(
-            existingBooking.data()?['updated_at']?.toString(),
-          );
-          final baseVersion = _parseSyncTimestamp(entry.baseUpdatedAt);
-          final nextVersion = _parseSyncTimestamp(
-            document['updated_at']?.toString(),
-          );
-          if (remoteVersion != null &&
-              baseVersion != null &&
-              remoteVersion.isAfter(baseVersion) &&
-              remoteVersion != nextVersion) {
-            throw StateError(
-              'Sync conflict: booking changed remotely before applying this edit.',
-            );
-          }
-          final previousChassisId = normalizeId(
-            existingBooking.data()?['chassis_id']?.toString(),
-          );
-          final nextChassisId = normalizeId(document['chassis_id']?.toString());
-          final lifecycle = chassisLifecycleInstruction(
-            previousBookingStatus: existingBooking
-                .data()?['client_status']
-                ?.toString(),
-            nextBookingStatus: document['client_status']?.toString(),
-            bookingDocument: document,
-          );
-
-          DocumentSnapshot<Map<String, dynamic>>? nextChassis;
-          DocumentSnapshot<Map<String, dynamic>>? previousChassis;
-          if (previousChassisId != null && previousChassisId != nextChassisId) {
-            previousChassis = await transaction.get(
-              _firestore.collection('chassis').doc(previousChassisId),
-            );
-          }
-          if (nextChassisId != null) {
-            nextChassis = await transaction.get(
-              _firestore.collection('chassis').doc(nextChassisId),
-            );
-            if (!nextChassis.exists && lifecycle?.keepBookingLink != false) {
-              throw StateError('The selected chassis no longer exists.');
-            }
-            final displacedBookingId = normalizeId(
-              nextChassis.data()?['current_booking_id']?.toString(),
-            );
-            if (lifecycle?.keepBookingLink == false &&
-                displacedBookingId != entry.targetId) {
-              // A retry/edit of a released booking cannot touch its next owner.
-              nextChassis = null;
-            } else if (displacedBookingId != null &&
-                displacedBookingId != entry.targetId) {
-              throw StateError(
-                'Sync conflict: chassis was assigned to another booking while offline.',
-              );
-            }
-          }
-
-          final now = document['updated_at']?.toString() ?? entry.createdAtIso;
-          if (previousChassisId != null &&
-              previousChassisId != nextChassisId &&
-              normalizeId(
-                    previousChassis?.data()?['current_booking_id']?.toString(),
-                  ) ==
-                  entry.targetId) {
-            transaction
-                .set(_firestore.collection('chassis').doc(previousChassisId), {
-                  'current_booking_id': FieldValue.delete(),
-                  'current_driver_id': FieldValue.delete(),
-                  'current_status': 'ready',
-                  'updated_at': now,
-                }, SetOptions(merge: true));
-          }
-          if (nextChassis != null) {
-            transaction.set(
-              nextChassis.reference,
-              lifecycle == null
-                  ? _defaultChassisAssignmentPatch(
-                      bookingId: entry.targetId,
-                      bookingDocument: document,
-                      now: now,
-                    )
-                  : _lifecycleChassisPatch(
-                      instruction: lifecycle,
-                      bookingId: entry.targetId,
-                      bookingDocument: document,
-                      now: now,
-                    ),
-              SetOptions(merge: true),
-            );
-          }
-          transaction.set(bookingRef, document);
-        })
-        .timeout(
-          _remoteMutationTimeout,
-          onTimeout: () => throw TimeoutException(
-            'queued bookings write timeout for ${entry.targetId}',
-          ),
+    await runTransactionWithOriginalErrors(_firestore, (transaction) async {
+      final bookingRef = _bookingsCollection.doc(entry.targetId);
+      final existingBooking = await transaction.get(bookingRef);
+      final expectedKey = document['submission_key'];
+      if (expectedKey != null &&
+          entry.baseUpdatedAt != null &&
+          !existingBooking.exists) {
+        throw StateError(
+          'Sync conflict: the booking was removed before applying the pending edit.',
         );
+      }
+      if (expectedKey != null &&
+          existingBooking.exists &&
+          existingBooking.data()?['submission_key'] != expectedKey) {
+        throw StateError(
+          'Sync conflict: booking identity changed before applying the edit.',
+        );
+      }
+      final remoteVersion = _parseSyncTimestamp(
+        existingBooking.data()?['updated_at']?.toString(),
+      );
+      final baseVersion = _parseSyncTimestamp(entry.baseUpdatedAt);
+      final nextVersion = _parseSyncTimestamp(
+        document['updated_at']?.toString(),
+      );
+      if (remoteVersion != null &&
+          baseVersion != null &&
+          remoteVersion.isAfter(baseVersion) &&
+          remoteVersion != nextVersion) {
+        throw StateError(
+          'Sync conflict: booking changed remotely before applying this edit.',
+        );
+      }
+      final previousChassisId = normalizeId(
+        existingBooking.data()?['chassis_id']?.toString(),
+      );
+      final nextChassisId = normalizeId(document['chassis_id']?.toString());
+      final lifecycle = chassisLifecycleInstruction(
+        previousBookingStatus: existingBooking
+            .data()?['client_status']
+            ?.toString(),
+        nextBookingStatus: document['client_status']?.toString(),
+        bookingDocument: document,
+      );
+
+      DocumentSnapshot<Map<String, dynamic>>? nextChassis;
+      DocumentSnapshot<Map<String, dynamic>>? previousChassis;
+      if (previousChassisId != null && previousChassisId != nextChassisId) {
+        previousChassis = await transaction.get(
+          _firestore.collection('chassis').doc(previousChassisId),
+        );
+      }
+      if (nextChassisId != null) {
+        nextChassis = await transaction.get(
+          _firestore.collection('chassis').doc(nextChassisId),
+        );
+        if (!nextChassis.exists && lifecycle?.keepBookingLink != false) {
+          throw StateError('The selected chassis no longer exists.');
+        }
+        final ownerId = normalizeId(
+          nextChassis.data()?['current_booking_id']?.toString(),
+        );
+        final ownerBooking = ownerId != null && ownerId != entry.targetId
+            ? (await transaction.get(_bookingsCollection.doc(ownerId))).data()
+            : null;
+        if (!shouldProjectBookingOntoChassis(
+          bookingId: entry.targetId,
+          booking: document,
+          chassis: nextChassis.data() ?? {},
+          ownerBooking: ownerBooking,
+        )) {
+          nextChassis = null;
+        }
+      }
+
+      final now = document['updated_at']?.toString() ?? entry.createdAtIso;
+      if (previousChassisId != null &&
+          previousChassisId != nextChassisId &&
+          normalizeId(
+                previousChassis?.data()?['current_booking_id']?.toString(),
+              ) ==
+              entry.targetId) {
+        transaction
+            .set(_firestore.collection('chassis').doc(previousChassisId), {
+              'current_booking_id': FieldValue.delete(),
+              'current_driver_id': FieldValue.delete(),
+              'current_status': 'ready',
+              'updated_at': now,
+            }, SetOptions(merge: true));
+      }
+      if (nextChassis != null) {
+        transaction.set(
+          nextChassis.reference,
+          lifecycle == null
+              ? _defaultChassisAssignmentPatch(
+                  bookingId: entry.targetId,
+                  bookingDocument: document,
+                  now: now,
+                )
+              : _lifecycleChassisPatch(
+                  instruction: lifecycle,
+                  bookingId: entry.targetId,
+                  bookingDocument: document,
+                  now: now,
+                ),
+          SetOptions(merge: true),
+        );
+      }
+      BookingPhotoCleanup.prepare(document, existingBooking.data());
+      transaction.set(bookingRef, document);
+    }).timeout(
+      _remoteMutationTimeout,
+      onTimeout: () => throw TimeoutException(
+        'queued bookings write timeout for ${entry.targetId}',
+      ),
+    );
+    BookingPhotoCleanup.schedule(entry.targetId, document);
   }
 
   Future<String> _applyOfflineBookingCreate(
@@ -1564,15 +1867,23 @@ class OfflineMutationQueueService {
             if (linkedChassis != null && chassisSnapshot.exists) {
               throw StateError('Sync conflict: linked chassis ID is occupied.');
             }
-            final displacedBookingId = normalizeId(
-              chassisSnapshot.data()?['current_booking_id']?.toString(),
-            );
-            if (displacedBookingId != null &&
-                displacedBookingId != finalId &&
-                displacedBookingId != entry.targetId) {
-              throw StateError(
-                'Sync conflict: chassis was assigned to another booking while offline.',
+            if (linkedChassis == null) {
+              final ownerId = normalizeId(
+                chassisSnapshot.data()?['current_booking_id']?.toString(),
               );
+              final ownerBooking = ownerId != null && ownerId != finalId
+                  ? (await transaction.get(
+                      _bookingsCollection.doc(ownerId),
+                    )).data()
+                  : null;
+              if (!shouldProjectBookingOntoChassis(
+                bookingId: finalId,
+                booking: finalDocument,
+                chassis: chassisSnapshot.data() ?? {},
+                ownerBooking: ownerBooking,
+              )) {
+                chassisSnapshot = null;
+              }
             }
           }
           final now =
@@ -1580,6 +1891,13 @@ class OfflineMutationQueueService {
           if (linkedChassis != null) {
             final chassisDocument = Map<String, dynamic>.from(linkedChassis)
               ..['current_booking_id'] = nextId;
+            if (isChassisReservation(
+              finalDocument['client_status']?.toString(),
+            )) {
+              chassisDocument.remove('current_booking_id');
+              chassisDocument.remove('current_driver_id');
+              chassisDocument['current_status'] = 'ready';
+            }
             transaction.set(chassisSnapshot!.reference, chassisDocument);
             transaction.set(linkedReservation!, {
               'committed_document': chassisDocument,
@@ -1588,16 +1906,27 @@ class OfflineMutationQueueService {
               'linked_booking_id': finalId,
             }, SetOptions(merge: true));
           } else if (chassisSnapshot != null) {
-            final driverId = normalizeId(
-              finalDocument['driver_id']?.toString(),
+            final lifecycle = chassisLifecycleInstruction(
+              previousBookingStatus: null,
+              nextBookingStatus: finalDocument['client_status']?.toString(),
+              bookingDocument: finalDocument,
             );
-            transaction.set(chassisSnapshot.reference, {
-              'current_booking_id': nextId,
-              'current_driver_id': driverId == null
-                  ? FieldValue.delete()
-                  : (int.tryParse(driverId) ?? driverId),
-              'updated_at': now,
-            }, SetOptions(merge: true));
+            transaction.set(
+              chassisSnapshot.reference,
+              lifecycle == null
+                  ? _defaultChassisAssignmentPatch(
+                      bookingId: finalId,
+                      bookingDocument: finalDocument,
+                      now: now,
+                    )
+                  : _lifecycleChassisPatch(
+                      instruction: lifecycle,
+                      bookingId: finalId,
+                      bookingDocument: finalDocument,
+                      now: now,
+                    ),
+              SetOptions(merge: true),
+            );
           }
           transaction.set(_bookingsCollection.doc(finalId), finalDocument);
           transaction.set(_bookingsCounterRef, {
@@ -1734,7 +2063,11 @@ class OfflineMutationQueueService {
     final reservationRef = _idManagementCollection.doc(
       _idempotencyDocumentId('chassis', submissionKey),
     );
+    final originalChassisDocument = Map<String, dynamic>.from(chassisDocument);
     await _firestore.runTransaction<void>((transaction) async {
+      final chassisDocument = Map<String, dynamic>.from(
+        originalChassisDocument,
+      );
       final chassisRef = _firestore.collection('chassis').doc(resolvedId);
       final currentChassis = await transaction.get(chassisRef);
       final remoteVersion = _parseSyncTimestamp(
@@ -1780,31 +2113,15 @@ class OfflineMutationQueueService {
           );
         }
       }
-      final currentBooking = normalizeId(
-        currentChassis.data()?['current_booking_id']?.toString(),
-      );
-      if (currentBooking != null &&
-          currentBooking != previousBookingId &&
-          currentBooking != nextBookingId) {
+      final currentBooking = currentChassis
+          .data()?['current_booking_id']
+          ?.toString();
+      if ((nextBookingId == null || nextBookingId.isEmpty) &&
+          currentBooking != null &&
+          currentBooking != previousBookingId) {
         throw StateError(
           'Sync conflict: chassis now belongs to another booking.',
         );
-      }
-      DocumentSnapshot<Map<String, dynamic>>? previousBooking;
-      if (previousBookingId != null &&
-          previousBookingId.isNotEmpty &&
-          previousBookingId != nextBookingId) {
-        previousBooking = await transaction.get(
-          _bookingsCollection.doc(previousBookingId),
-        );
-        final assigned = normalizeId(
-          previousBooking.data()?['chassis_id']?.toString(),
-        );
-        if (assigned != null && assigned != resolvedId) {
-          throw StateError(
-            'Sync conflict: previous booking now has another chassis.',
-          );
-        }
       }
       final driverId = normalizeId(
         chassisDocument['current_driver_id']?.toString(),
@@ -1815,12 +2132,42 @@ class OfflineMutationQueueService {
           'Driver record is temporarily unavailable. Try again after its create syncs.',
         );
       }
+      final additionalLinks = <DocumentSnapshot<Map<String, dynamic>>>[];
+      for (final rawId in payload['booking_link_ids'] as List? ?? const []) {
+        final linkId = rawId.toString();
+        if (linkId == nextBookingId) continue;
+        final linked = await transaction.get(_bookingsCollection.doc(linkId));
+        final assigned = linked.data()?['chassis_id']?.toString();
+        if (!linked.exists || (assigned != null && assigned != resolvedId)) {
+          throw StateError(
+            'Sync conflict: an earlier booking reservation changed before syncing.',
+          );
+        }
+        additionalLinks.add(linked);
+      }
       if (nextBookingId != null && nextBookingId.isNotEmpty) {
         final targetSnapshot = await transaction.get(
           _bookingsCollection.doc(nextBookingId),
         );
         if (!targetSnapshot.exists) {
           throw StateError('The selected booking no longer exists.');
+        }
+        final ownerId = currentChassis
+            .data()?['current_booking_id']
+            ?.toString();
+        final ownerBooking = ownerId != null && ownerId != nextBookingId
+            ? (await transaction.get(_bookingsCollection.doc(ownerId))).data()
+            : null;
+        if (!shouldProjectBookingOntoChassis(
+          bookingId: nextBookingId,
+          booking: targetSnapshot.data()!,
+          chassis: currentChassis.data() ?? {},
+          ownerBooking: ownerBooking,
+        )) {
+          preserveChassisPhysicalAssignment(
+            chassisDocument,
+            currentChassis.data() ?? {},
+          );
         }
         final priorChassisId = int.tryParse(
           targetSnapshot.data()?['chassis_id']?.toString() ?? '',
@@ -1831,14 +2178,15 @@ class OfflineMutationQueueService {
           );
         }
       }
-      if (previousBooking?.exists == true) {
-        transaction.set(_bookingsCollection.doc(previousBookingId), {
-          'chassis_id': FieldValue.delete(),
+      if (nextBookingId != null && nextBookingId.isNotEmpty) {
+        transaction.set(_bookingsCollection.doc(nextBookingId), {
+          'chassis_id': resolvedId,
           'updated_at': rawChassis['updated_at'] ?? entry.createdAtIso,
         }, SetOptions(merge: true));
       }
-      if (nextBookingId != null && nextBookingId.isNotEmpty) {
-        transaction.set(_bookingsCollection.doc(nextBookingId), {
+      for (final linked in additionalLinks) {
+        if (linked.data()?['chassis_id']?.toString() == resolvedId) continue;
+        transaction.set(linked.reference, {
           'chassis_id': resolvedId,
           'updated_at': rawChassis['updated_at'] ?? entry.createdAtIso,
         }, SetOptions(merge: true));
@@ -1903,6 +2251,9 @@ class OfflineMutationQueueService {
       'bookings' => _bookingsCollection,
       'role_access' => _firestore.collection('role_access'),
       'vehicle_makes' => _firestore.collection('vehicle_makes'),
+      'pm_kpi_records' => _firestore.collection('pm_kpi_records'),
+      'pm_fuel_entries' => _firestore.collection('pm_fuel_entries'),
+      'operations_catalog' => _firestore.collection('operations_catalog'),
       'vehicle_types' => _firestore.collection('vehicle_types'),
       'vehicle_sizes' => _firestore.collection('vehicle_sizes'),
       'chassis' => _firestore.collection('chassis'),
@@ -2134,7 +2485,34 @@ class OfflineMutationQueueService {
     String storageKey, {
     required bool updateStatus,
   }) async {
-    final entries = await _readEntriesForStorageKey(storageKey);
+    final entries = await _serializeQueueMutation(() async {
+      final saved = await _readEntriesForStorageKey(storageKey);
+      var changed = false;
+      final recovered = saved.map((entry) {
+        if (entry.isBlocked &&
+            const {
+              'operations_catalog',
+              'bookings',
+            }.contains(entry.collectionKey) &&
+            entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+            !entry.boxedErrorRechecked &&
+            isBoxedTransactionError(entry.lastError ?? '')) {
+          changed = true;
+          return entry.copyWith(
+            isBlocked: false,
+            boxedErrorRechecked: true,
+            clearLastError: true,
+          );
+        }
+        return entry;
+      }).toList();
+      if (changed) {
+        // Persist the one-time marker before touching the server. Keep the
+        // original base version: this is diagnosis, never forced overwrite.
+        await _writeEntriesForStorageKey(storageKey, recovered);
+      }
+      return recovered;
+    });
     final activeEntries = entries.where((entry) => !entry.isBlocked).toList();
     final aliases = await _readResolvedIdAliases(storageKey);
     final linkedCreates = _linkedChassisCreates(activeEntries);
@@ -2202,7 +2580,7 @@ class OfflineMutationQueueService {
         if (entry.kind == _OfflineMutationKind.chassisAssignment) {
           _traceChassis('sync applied documentId=${entry.targetId}');
         }
-      } catch (error) {
+      } catch (error, stackTrace) {
         if (entry.kind == _OfflineMutationKind.chassisAssignment) {
           _traceChassis(
             'sync failed documentId=${entry.targetId} error=$error',
@@ -2211,6 +2589,22 @@ class OfflineMutationQueueService {
         final normalizedError = normalizeUserErrorText(
           error.toString(),
           fallback: 'Something went wrong. Please try again.',
+        );
+        final diagnostics = await offlineErrorDiagnostics(
+          error: error,
+          stack: stackTrace,
+          source: 'offline_mutation_queue_service.dart',
+          operation: entry.kind.name,
+          entryId: entry.id,
+          target: '${entry.collectionKey ?? entry.kind.name}/${entry.targetId}',
+          attempt: entry.retryCount + 1,
+          owner: storageKey.substring('$_storageKey::'.length),
+          actionAt: entry.createdAtIso,
+          context: {
+            'base_updated_at': entry.baseUpdatedAt,
+            'payload_keys': entry.payload.keys.take(100).toList(),
+            'blocked_before_attempt': entry.isBlocked,
+          },
         );
         if (companion != null) {
           remaining.add(
@@ -2221,24 +2615,34 @@ class OfflineMutationQueueService {
                       error is! TimeoutException),
               retryCount: companion.retryCount + 1,
               lastError: normalizedError,
+              diagnostics: diagnostics,
             ),
           );
         }
         if (_isConflictError(normalizedError)) {
           remaining.add(
-            entry.copyWith(isBlocked: true, lastError: normalizedError),
+            entry.copyWith(
+              isBlocked: true,
+              lastError: normalizedError,
+              diagnostics: diagnostics,
+            ),
           );
         } else if (_isRetryable(normalizedError) || error is TimeoutException) {
           remaining.add(
             entry.copyWith(
               retryCount: entry.retryCount + 1,
               lastError: normalizedError,
+              diagnostics: diagnostics,
             ),
           );
         } else {
           // Preserve failed work for review instead of silently losing edits.
           remaining.add(
-            entry.copyWith(isBlocked: true, lastError: normalizedError),
+            entry.copyWith(
+              isBlocked: true,
+              lastError: normalizedError,
+              diagnostics: diagnostics,
+            ),
           );
         }
       } finally {
@@ -2268,6 +2672,33 @@ class OfflineMutationQueueService {
       final merged = <_OfflineMutationEntry>[];
       for (final item in latest) {
         final original = originals[item.id];
+        if (item.collectionKey == 'operations_catalog' &&
+            item.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+            original == null) {
+          final predecessor = entries
+              .where(
+                (candidate) =>
+                    candidate.collectionKey == item.collectionKey &&
+                    candidate.targetId == item.targetId &&
+                    candidate.kind == item.kind &&
+                    !candidate.isBlocked &&
+                    !outcomes.containsKey(candidate.id) &&
+                    item.catalogPredecessorVersions.contains(
+                      candidate.payload['updated_at']?.toString(),
+                    ),
+              )
+              .firstOrNull;
+          if (predecessor != null) {
+            // Only advance through a successfully committed, proven local
+            // predecessor. The next transaction still checks the server version.
+            merged.add(
+              item.copyWith(
+                baseUpdatedAt: predecessor.payload['updated_at']?.toString(),
+              ),
+            );
+            continue;
+          }
+        }
         final committedChassis = committedChassisCreates[item.targetId];
         if (item.kind == _OfflineMutationKind.chassisAssignment &&
             committedChassis != null &&
@@ -2461,44 +2892,6 @@ class OfflineMutationQueueService {
     _setStatus(_snapshotForEntries(entries));
   }
 
-  Future<void> _throwIfConflict(
-    CollectionReference<Map<String, dynamic>> collection,
-    String documentId, {
-    required String? baseUpdatedAt,
-    String? nextUpdatedAt,
-  }) async {
-    final normalizedBase = baseUpdatedAt?.trim();
-    if (normalizedBase == null || normalizedBase.isEmpty) {
-      return;
-    }
-    final snapshot = await collection.doc(documentId).get();
-    if (!snapshot.exists) {
-      return;
-    }
-    final remoteUpdatedAt = snapshot.data()?['updated_at']?.toString().trim();
-    if (remoteUpdatedAt == null || remoteUpdatedAt.isEmpty) {
-      return;
-    }
-    final remoteTimestamp = _parseSyncTimestamp(remoteUpdatedAt);
-    final baseTimestamp = _parseSyncTimestamp(normalizedBase);
-    final nextTimestamp = _parseSyncTimestamp(nextUpdatedAt);
-
-    // Legacy documents may omit a timezone while current writes may use UTC.
-    // Compare the actual instant, not the raw ISO text, to prevent a false
-    // conflict caused solely by a different timestamp representation.
-    if (remoteTimestamp == null || baseTimestamp == null) {
-      return;
-    }
-    final isSameAsQueuedWrite =
-        nextTimestamp != null &&
-        remoteTimestamp.isAtSameMomentAs(nextTimestamp);
-    if (remoteTimestamp.isAfter(baseTimestamp) && !isSameAsQueuedWrite) {
-      throw Exception(
-        'Sync conflict detected. This record changed remotely and needs review.',
-      );
-    }
-  }
-
   DateTime? _parseSyncTimestamp(String? value) {
     final normalized = value?.trim();
     if (normalized == null || normalized.isEmpty) {
@@ -2581,7 +2974,10 @@ class _OfflineMutationEntry {
     required this.createdAtIso,
     required this.retryCount,
     this.isBlocked = false,
+    this.boxedErrorRechecked = false,
+    this.catalogPredecessorVersions = const [],
     this.lastError,
+    this.diagnostics,
   });
 
   final String id;
@@ -2593,16 +2989,21 @@ class _OfflineMutationEntry {
   final String createdAtIso;
   final int retryCount;
   final bool isBlocked;
+  final bool boxedErrorRechecked;
+  final List<String> catalogPredecessorVersions;
   final String? lastError;
+  final String? diagnostics;
 
   _OfflineMutationEntry copyWith({
     String? targetId,
     Map<String, dynamic>? payload,
     int? retryCount,
     bool? isBlocked,
+    bool? boxedErrorRechecked,
     String? baseUpdatedAt,
     bool clearBaseUpdatedAt = false,
     String? lastError,
+    String? diagnostics,
     bool clearLastError = false,
   }) {
     return _OfflineMutationEntry(
@@ -2617,7 +3018,10 @@ class _OfflineMutationEntry {
       createdAtIso: createdAtIso,
       retryCount: retryCount ?? this.retryCount,
       isBlocked: isBlocked ?? this.isBlocked,
+      boxedErrorRechecked: boxedErrorRechecked ?? this.boxedErrorRechecked,
+      catalogPredecessorVersions: catalogPredecessorVersions,
       lastError: clearLastError ? null : (lastError ?? this.lastError),
+      diagnostics: clearLastError ? null : (diagnostics ?? this.diagnostics),
     );
   }
 
@@ -2632,7 +3036,11 @@ class _OfflineMutationEntry {
       'created_at': createdAtIso,
       'retry_count': retryCount,
       'is_blocked': isBlocked,
+      'boxed_error_rechecked': boxedErrorRechecked,
+      if (catalogPredecessorVersions.isNotEmpty)
+        'catalog_predecessor_versions': catalogPredecessorVersions,
       'last_error': lastError,
+      if (diagnostics != null) 'error_diagnostics': diagnostics,
     };
   }
 
@@ -2655,9 +3063,29 @@ class _OfflineMutationEntry {
           ? (map['retry_count'] as num).toInt()
           : int.tryParse(map['retry_count']?.toString() ?? '') ?? 0,
       isBlocked: map['is_blocked'] as bool? ?? false,
+      boxedErrorRechecked: map['boxed_error_rechecked'] == true,
+      catalogPredecessorVersions:
+          (map['catalog_predecessor_versions'] as List? ?? [])
+              .whereType<String>()
+              .toList(),
       lastError: map['last_error']?.toString(),
+      diagnostics: map['error_diagnostics']?.toString(),
     );
   }
+}
+
+class CatalogConflictReview {
+  const CatalogConflictReview({
+    required this.id,
+    required this.storageKey,
+    required this.pending,
+    required this.proposed,
+    required this.server,
+    required this.serverVersions,
+  });
+  final String id, storageKey;
+  final Map<String, dynamic> pending, proposed, server;
+  final List<Map<String, dynamic>> serverVersions;
 }
 
 class OfflineMutationConflictRecord {

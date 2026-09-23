@@ -1,4 +1,6 @@
+import 'package:webapp/utils/location_display.dart';
 import 'package:webapp/services/field_type_history_service.dart';
+import 'package:webapp/services/kpi/location_option_registry.dart';
 import 'package:webapp/widgets/shared/type_history_input.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +16,9 @@ import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/widgets/shared/booking_form_primitives.dart';
 
 String? _runtimeFieldPlaceholder(StatusField field) {
+  if (field.isChassisLocationInput) {
+    return 'Enter location';
+  }
   final placeholder = field.placeholder?.trim();
   if (field.required == true && placeholder?.toLowerCase() == 'optional') {
     return null;
@@ -63,7 +68,9 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
     final fieldType = (field.type ?? '').trim().toLowerCase();
     final fieldKey = (field.key ?? '').trim().toLowerCase();
     final isSearchDropdownCard =
-        fieldType == 'search_dropdown' || isPalawanLocationFieldKey(fieldKey);
+        fieldType == 'search_dropdown' ||
+        field.isChassisLocationInput ||
+        isPalawanLocationFieldKey(fieldKey);
     final isNormalDropdownCard = fieldType == 'dropdown';
     final usesDropdownCard = isNormalDropdownCard || isSearchDropdownCard;
     final hasValidationError = errorText?.trim().isNotEmpty == true;
@@ -153,6 +160,29 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fieldKey = (field.key ?? '').trim().toLowerCase();
+    if (field.isChassisLocationInput) {
+      return ValueListenableBuilder<int>(
+        valueListenable: LocationOptionRegistry.revision,
+        builder: (context, revision, child) => AdminSearchSelectFormField(
+          initialValue: initialValue?.toString(),
+          focusNode: focusNode,
+          dialogTitle: 'Location',
+          allowCustomValue: true,
+          selectedDisplayFormatter: locationDisplayLabel,
+          historyKey: FieldTypeHistoryService.fieldKey(field),
+          decoration: adminPlainDropdownDecoration(
+            'Enter location',
+          ).copyWith(errorText: errorText),
+          options: {
+            'Garage',
+            ...LocationOptionRegistry.options('destination', const []),
+            ...LocationOptionRegistry.options('destination_barangay', const []),
+            ...field.options,
+          }.toList(growable: false),
+          onChanged: onChanged,
+        ),
+      );
+    }
     if (isPalawanLocationFieldKey(fieldKey)) {
       return _PalawanLocationFieldInput(
         field: field,
@@ -382,6 +412,7 @@ class _SearchDropdownFieldInput extends StatelessWidget {
             errorText: errorText,
           ),
       options: field.options,
+      locationOptionKey: field.key,
       onChanged: (value) => _closeSelectionFlow(context, value),
     );
   }
@@ -476,7 +507,8 @@ class _PalawanLocationFieldInput extends StatelessWidget {
             ),
             errorText: errorText,
           ),
-      options: palawanLocationOptions,
+      options: locationOptionsFor(field.key ?? 'origin'),
+      locationOptionKey: field.key,
       onChanged: (value) => _closeSelectionFlow(context, value),
     );
   }
@@ -650,10 +682,22 @@ class _TextFieldInputState extends State<_TextFieldInput> {
         ? adminEnterPlaceholder(fieldLabel)
         : 'Optional';
 
-    return TypeHistoryInput(
+    final isChassisLocation = widget.field.isChassisLocationInput;
+    Widget buildInput() => TypeHistoryInput(
       controller: _controller,
       historyKey: FieldTypeHistoryService.fieldKey(widget.field),
-      options: widget.field.options,
+      browseOptionsOnFocus: isChassisLocation,
+      options: isChassisLocation
+          ? {
+              'Garage',
+              ...LocationOptionRegistry.options('destination', const []),
+              ...LocationOptionRegistry.options(
+                'destination_barangay',
+                const [],
+              ),
+              ...widget.field.options,
+            }.toList(growable: false)
+          : widget.field.options,
       inputFormatters: _isPhoneField
           ? const [PhilippinesPhoneInputFormatter()]
           : _textCaseInputFormatters,
@@ -712,6 +756,11 @@ class _TextFieldInputState extends State<_TextFieldInput> {
           ),
         ),
       ),
+    );
+    if (!isChassisLocation) return buildInput();
+    return ValueListenableBuilder<int>(
+      valueListenable: LocationOptionRegistry.revision,
+      builder: (context, revision, child) => buildInput(),
     );
   }
 
@@ -776,7 +825,9 @@ class _DropdownFieldInput extends StatelessWidget {
     final optionSourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
       field,
     );
-    final effectiveOptions = field.options.isNotEmpty
+    final effectiveOptions = LocationOptionRegistry.supports(field.key)
+        ? LocationOptionRegistry.options(field.key, field.options)
+        : field.options.isNotEmpty
         ? field.options
         : optionLabels.keys.toList();
     final palette = bookingFormResolvedStatusPalette(
@@ -798,6 +849,8 @@ class _DropdownFieldInput extends StatelessWidget {
     final selectedOption = initialValue is String ? initialValue.trim() : '';
     final selectedDisplayText = selectedOption.isEmpty
         ? null
+        : LocationOptionRegistry.supports(field.key)
+        ? selectedOption
         : optionLabels[selectedOption] ??
               (optionSourceKey == statusFieldOptionSourceVehicleSizes
                   ? VehicleRequest.instance.displayVehicleSizeLabel(
@@ -847,13 +900,14 @@ class _DropdownFieldInput extends StatelessWidget {
         errorText: errorText,
       ),
       items: effectiveOptions.map((option) {
-        final label =
-            optionLabels[option] ??
-            (optionSourceKey == statusFieldOptionSourceVehicleSizes
-                ? VehicleRequest.instance.displayVehicleSizeLabel(option)
-                : optionSourceKey == statusFieldOptionSourceChassis
-                ? ChassisRequest.instance.displayChassisLabel(option)
-                : option);
+        final label = LocationOptionRegistry.supports(field.key)
+            ? LocationOptionRegistry.label(field.key, option)
+            : optionLabels[option] ??
+                  (optionSourceKey == statusFieldOptionSourceVehicleSizes
+                      ? VehicleRequest.instance.displayVehicleSizeLabel(option)
+                      : optionSourceKey == statusFieldOptionSourceChassis
+                      ? ChassisRequest.instance.displayChassisLabel(option)
+                      : option);
         return DropdownMenuItem<String>(
           value: option,
           child: Text(

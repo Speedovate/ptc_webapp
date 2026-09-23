@@ -1,3 +1,5 @@
+import 'package:webapp/widgets/status_form/status_form_runtime_fields.dart';
+import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -36,6 +38,89 @@ class HistoryMemory extends AuthStorageBackend {
 }
 
 void main() {
+  for (final legacy in [false, true]) {
+    testWidgets(
+      'booking chassis claiming field offers matrix locations (legacy: $legacy)',
+      (tester) async {
+        dynamic selected;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: StatusFormRuntimeFieldCard(
+                field: StatusField(
+                  key: legacy ? 'location' : 'chassis_location',
+                  placeholder: legacy
+                      ? 'Enter location or Google Maps link'
+                      : null,
+                  type: 'text',
+                  title: 'Location',
+                ),
+                initialValue: '',
+                onChanged: (value) => selected = value,
+              ),
+            ),
+          ),
+        );
+        expect(find.text('Enter location'), findsWidgets);
+        expect(find.text('Enter location or Google Maps link'), findsNothing);
+        await tester.tap(find.text('Enter location').first);
+        await tester.pumpAndSettle();
+        expect(find.text('Garage'), findsOneWidget);
+        await tester.enterText(find.byType(TextField), 'Rox');
+        await tester.pumpAndSettle();
+        expect(find.text('Garage'), findsNothing);
+        await tester.tap(find.text('Roxas'));
+        await tester.pumpAndSettle();
+        expect(selected, 'Roxas');
+        await tester.tap(find.text('Roxas'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField), 'New depot');
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Use "New depot"'));
+        await tester.pumpAndSettle();
+        expect(selected, 'New depot');
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
+  testWidgets(
+    'prefilled chassis location browses choices then filters typing',
+    (tester) async {
+      final controller = TextEditingController(text: 'Garage');
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TypeHistoryInput(
+              controller: controller,
+              historyKey: 'chassis:location',
+              browseOptionsOnFocus: true,
+              service: FieldTypeHistoryService(storage: HistoryMemory()),
+              options: const ['Garage', 'Roxas', 'Sicsican'],
+              child: TextField(controller: controller),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      expect(find.text('Roxas'), findsOneWidget);
+      expect(find.text('Sicsican'), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text('Roxas'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'Si');
+      await tester.pump();
+      expect(find.text('Roxas'), findsNothing);
+      expect(find.text('Sicsican'), findsOneWidget);
+      await tester.tap(find.text('Sicsican'));
+      await tester.pump();
+      expect(controller.text, 'Sicsican');
+      expect(find.byType(TextButton), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   test(
     'default policy enables text-like fields but excludes identities/secrets',
     () {
@@ -109,6 +194,82 @@ void main() {
       storage.fail = true;
       expect(await service.suggestions('flow:8', ''), isEmpty);
       await service.record('7', {'flow:8': 'safe failure'}, at);
+    },
+  );
+
+  testWidgets('chassis options touch the input border with spacing below', (
+    tester,
+  ) async {
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TypeHistoryInput(
+            controller: controller,
+            historyKey: 'chassis:location',
+            service: FieldTypeHistoryService(storage: HistoryMemory()),
+            options: const ['Garage'],
+            optionsBottomSpacing: 12,
+            child: AdminModalTextField(
+              controller: controller,
+              label: 'Location',
+              bottomPadding: 0,
+              minHeight: 0,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), 'Gar');
+    await tester.pump(const Duration(milliseconds: 301));
+    await tester.pump();
+    final border = find.byWidgetPredicate(
+      (widget) => widget.runtimeType.toString() == '_BorderContainer',
+    );
+    final options = find
+        .ancestor(of: find.byType(ListView), matching: find.byType(Container))
+        .first;
+    expect(border, findsOneWidget);
+    expect(tester.getTopLeft(options).dy, tester.getBottomLeft(border).dy);
+    expect(
+      tester.getBottomLeft(find.byType(TypeHistoryInput)).dy -
+          tester.getBottomLeft(options).dy,
+      12,
+    );
+  });
+
+  testWidgets(
+    'existing chassis locations appear with no typing history and update while focused',
+    (tester) async {
+      final storage = HistoryMemory();
+      final service = FieldTypeHistoryService(storage: storage);
+      final controller = TextEditingController();
+      addTearDown(controller.dispose);
+      Widget field(List<String> options) => MaterialApp(
+        home: Scaffold(
+          body: TypeHistoryInput(
+            controller: controller,
+            historyKey: 'chassis:location',
+            service: service,
+            options: options,
+            child: TextField(controller: controller),
+          ),
+        ),
+      );
+      await tester.pumpWidget(field(const []));
+      await tester.enterText(find.byType(TextField), 'Gar');
+      await tester.pump(const Duration(milliseconds: 301));
+      await tester.pumpWidget(field(const ['Garage', 'Garage', 'Port']));
+      await tester.pump(const Duration(milliseconds: 301));
+      await tester.pump();
+      expect(find.text('Garage'), findsOneWidget);
+      expect(find.text('Port'), findsNothing);
+      await tester.tap(find.text('Garage'));
+      await tester.pump();
+      expect(controller.text, 'Garage');
+      expect(storage.lists, isEmpty);
+      expect(tester.takeException(), isNull);
     },
   );
 

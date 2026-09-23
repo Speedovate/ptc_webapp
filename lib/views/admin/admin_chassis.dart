@@ -1,3 +1,6 @@
+import 'package:webapp/utils/location_display.dart';
+import 'package:webapp/services/kpi/location_option_registry.dart';
+import 'package:webapp/services/kpi/operations_catalog_store.dart';
 import 'package:webapp/services/field_type_history_service.dart';
 import 'package:webapp/widgets/shared/type_history_input.dart';
 import 'package:webapp/models/chassis_action_history.dart';
@@ -24,10 +27,18 @@ import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
 import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
-import 'package:webapp/widgets/shared/booking_section_navigation_scope.dart';
+import 'package:webapp/views/admin/admin_bookings.dart';
 import 'package:webapp/widgets/shared/chassis_status_presentation.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
+
+String _chassisLocationLabel(Chassis item, {String? resolvedLocation}) {
+  final location = (resolvedLocation ?? item.location)?.trim();
+  if (location == null || location.isEmpty) {
+    return '—';
+  }
+  return locationDisplayLabel(location);
+}
 
 class AdminChassisView extends StatefulWidget {
   const AdminChassisView({super.key});
@@ -246,7 +257,8 @@ class _AdminChassisViewState extends State<AdminChassisView>
           .toList();
       return LayoutBuilder(
         builder: (context, constraints) {
-          final useWideTable = constraints.maxWidth >= 940;
+          const pagePadding = EdgeInsets.all(24);
+          final contentWidth = constraints.maxWidth - pagePadding.horizontal;
           final textScaler = MediaQuery.textScalerOf(context);
           final sampleId = visible
               .map((item) => '${item.id}')
@@ -269,15 +281,23 @@ class _AdminChassisViewState extends State<AdminChassisView>
               .map((item) => item.bookingReferenceId?.toString() ?? '-')
               .fold<String>('-', AdminListMeasurements.longerText);
           final sampleLocation = visible
-              .map((item) => item.location ?? '-')
+              .map(
+                (item) => _chassisLocationLabel(
+                  item,
+                  resolvedLocation: _histories.value[item.id]?.currentLocation,
+                ),
+              )
               .fold<String>('-', AdminListMeasurements.longerText);
           final sampleStatus = visible
+              .map((item) => chassisStatusLabel(item.currentStatus))
+              .fold<String>('-', AdminListMeasurements.longerText);
+          final sampleElapsed = visible
               .map(
                 (item) =>
                     _histories.value[item.id]?.elapsedLabel(
                       _historyClock.value,
                     ) ??
-                    chassisStatusLabel(item.currentStatus),
+                    '-',
               )
               .fold<String>('-', AdminListMeasurements.longerText);
           final sampleCreated = visible
@@ -300,28 +320,28 @@ class _AdminChassisViewState extends State<AdminChassisView>
             sampleName,
             _ChassisStyles.title,
           );
-          final clientWidth = _resolvedChassisColumnWidth(
+          var clientWidth = _resolvedChassisColumnWidth(
             context,
             textScaler,
             'Client',
             sampleClient,
-            _ChassisStyles.value,
+            _ChassisStyles.link,
           );
-          final driverWidth = _resolvedChassisColumnWidth(
+          var driverWidth = _resolvedChassisColumnWidth(
             context,
             textScaler,
             'Driver',
             sampleDriver,
-            _ChassisStyles.value,
+            _ChassisStyles.link,
           );
           final bookingWidth = _resolvedChassisColumnWidth(
             context,
             textScaler,
             'Booking',
             sampleBooking,
-            _ChassisStyles.value,
+            _ChassisStyles.link,
           );
-          final locationWidth = _resolvedChassisColumnWidth(
+          var locationWidth = _resolvedChassisColumnWidth(
             context,
             textScaler,
             'Location',
@@ -340,6 +360,15 @@ class _AdminChassisViewState extends State<AdminChassisView>
             textScaler,
             sampleStatus,
           );
+          final elapsedWidth =
+              _resolvedChassisColumnWidth(
+                context,
+                textScaler,
+                'Time',
+                sampleElapsed,
+                const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ) +
+              16;
           final updatedWidth = _resolvedChassisColumnWidth(
             context,
             textScaler,
@@ -358,11 +387,56 @@ class _AdminChassisViewState extends State<AdminChassisView>
                 ),
               ) +
               _extraWidthAllowance;
+          var tableWidth =
+              idWidth +
+              nameWidth +
+              clientWidth +
+              driverWidth +
+              bookingWidth +
+              locationWidth +
+              statusWidth +
+              elapsedWidth +
+              createdWidth +
+              updatedWidth +
+              actionsWidth +
+              34; // 16px card padding and 1px border on each side.
+          // Keep identifiers, pills and actions at their measured widths.
+          // Names/location may wrap before the whole row switches to cards.
+          final flexibleWidths = [clientWidth, driverWidth, locationWidth];
+          final minimumWidths = [
+            for (var i = 0; i < flexibleWidths.length; i++)
+              AdminListMeasurements.maxValue(
+                _resolvedChassisColumnWidth(
+                  context,
+                  textScaler,
+                  ['Client', 'Driver', 'Location'][i],
+                  '',
+                  _ChassisStyles.value,
+                ),
+                120,
+              ).clamp(0.0, flexibleWidths[i]).toDouble(),
+          ];
+          final reducible = List.generate(
+            3,
+            (i) => flexibleWidths[i] - minimumWidths[i],
+          );
+          final totalReducible = reducible.fold<double>(0, (a, b) => a + b);
+          final overflow = tableWidth - contentWidth;
+          if (overflow > 0 && overflow <= totalReducible) {
+            for (var i = 0; i < flexibleWidths.length; i++) {
+              flexibleWidths[i] -= overflow * reducible[i] / totalReducible;
+            }
+            clientWidth = flexibleWidths[0];
+            driverWidth = flexibleWidths[1];
+            locationWidth = flexibleWidths[2];
+            tableWidth = contentWidth;
+          }
+          final useWideTable = tableWidth <= contentWidth;
           return AppPageLoadingOverlay(
             isVisible: _isLoadingChassis && _items.isEmpty,
             message: 'Loading chassis ...',
             child: LazyDataScrollView(
-              padding: const EdgeInsets.all(24),
+              padding: pagePadding,
               child: SliverSection(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -428,6 +502,7 @@ class _AdminChassisViewState extends State<AdminChassisView>
                         bookingWidth: bookingWidth,
                         locationWidth: locationWidth,
                         statusWidth: statusWidth,
+                        elapsedWidth: elapsedWidth,
                         createdWidth: createdWidth,
                         updatedWidth: updatedWidth,
                         actionsWidth: actionsWidth,
@@ -448,15 +523,32 @@ class _AdminChassisViewState extends State<AdminChassisView>
                           ),
                           child: useWideTable
                               ? _ChassisDesktopRow(
-                                  item: entry.value,
+                                  item: entry.value.copyWith(
+                                    location:
+                                        _histories
+                                            .value[entry.value.id]
+                                            ?.currentLocation ??
+                                        _chassisLocationLabel(entry.value),
+                                  ),
                                   elapsed: ChassisElapsedText(
                                     history:
                                         _histories.value[entry.value.id] ??
                                         ChassisActionHistory([]),
                                     clock: _historyClock,
+                                    emptyLabel: '-',
                                   ),
                                   client: client,
                                   driver: driver,
+                                  onOpenClient:
+                                      _canOpenUsers &&
+                                          client.user?.id?.isNotEmpty == true
+                                      ? () => _openContactUser(client.user!)
+                                      : null,
+                                  onOpenDriver:
+                                      _canOpenUsers &&
+                                          driver.user?.id?.isNotEmpty == true
+                                      ? () => _openContactUser(driver.user!)
+                                      : null,
                                   idWidth: idWidth,
                                   nameWidth: nameWidth,
                                   clientWidth: clientWidth,
@@ -464,6 +556,7 @@ class _AdminChassisViewState extends State<AdminChassisView>
                                   bookingWidth: bookingWidth,
                                   locationWidth: locationWidth,
                                   statusWidth: statusWidth,
+                                  elapsedWidth: elapsedWidth,
                                   createdWidth: createdWidth,
                                   updatedWidth: updatedWidth,
                                   actionsWidth: actionsWidth,
@@ -473,15 +566,32 @@ class _AdminChassisViewState extends State<AdminChassisView>
                                   ),
                                 )
                               : _ChassisResponsiveCard(
-                                  item: entry.value,
+                                  item: entry.value.copyWith(
+                                    location:
+                                        _histories
+                                            .value[entry.value.id]
+                                            ?.currentLocation ??
+                                        _chassisLocationLabel(entry.value),
+                                  ),
                                   elapsed: ChassisElapsedText(
                                     history:
                                         _histories.value[entry.value.id] ??
                                         ChassisActionHistory([]),
                                     clock: _historyClock,
+                                    emptyLabel: '-',
                                   ),
                                   client: client,
                                   driver: driver,
+                                  onOpenClient:
+                                      _canOpenUsers &&
+                                          client.user?.id?.isNotEmpty == true
+                                      ? () => _openContactUser(client.user!)
+                                      : null,
+                                  onOpenDriver:
+                                      _canOpenUsers &&
+                                          driver.user?.id?.isNotEmpty == true
+                                      ? () => _openContactUser(driver.user!)
+                                      : null,
                                   actions: _chassisActions(entry.value),
                                   onOpenBooking: () => _openBooking(
                                     entry.value.bookingReferenceId,
@@ -539,6 +649,18 @@ class _AdminChassisViewState extends State<AdminChassisView>
             valueListenable: _histories,
             builder: (context, histories, child) => ChassisActionHistoryDialog(
               name: item.name,
+              currentStatus:
+                  _items
+                      .where((chassis) => chassis.id == item.id)
+                      .firstOrNull
+                      ?.currentStatus ??
+                  item.currentStatus,
+              // Creation time is only evidence of the initial status when
+              // the chassis has never subsequently been updated.
+              currentStatusAt:
+                  item.createdAt != null && item.createdAt == item.updatedAt
+                  ? item.createdAt
+                  : null,
               usersById: _historyUsers,
               history: histories[item.id] ?? ChassisActionHistory([]),
               clock: _historyClock,
@@ -603,6 +725,13 @@ class _AdminChassisViewState extends State<AdminChassisView>
   Future<void> _openEditor({Chassis? item, bool readOnly = false}) async {
     await (_editorOptionsFuture ??= _loadEditorOptions());
     if (!mounted) return;
+    await OperationsCatalogStore.instance.restore();
+    unawaited(
+      OperationsCatalogStore.instance.load().then<void>(
+        (_) {},
+        onError: (Object error, StackTrace stack) {},
+      ),
+    );
     final historyAccount = await FieldTypeHistoryService.instance
         .currentAccount();
     if (!mounted) return;
@@ -723,10 +852,11 @@ class _AdminChassisViewState extends State<AdminChassisView>
                         controller: name,
                         label: 'Name',
                         bottomPadding: 0,
+                        minHeight: 0,
                         textInputAction: TextInputAction.next,
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 12),
                     AdminDropdownFormField<String>(
                       initialValue: item == null ? null : selectedStatus,
                       iconEnabledColor: AppColors.primaryColor,
@@ -780,17 +910,36 @@ class _AdminChassisViewState extends State<AdminChassisView>
                           value == _noDriverOptionValue ? null : value,
                     ),
                     const SizedBox(height: 6),
-                    TypeHistoryInput(
-                      controller: location,
-                      historyKey: readOnly ? null : 'chassis:location',
-                      child: AdminModalTextField(
+                    ValueListenableBuilder<int>(
+                      valueListenable: LocationOptionRegistry.revision,
+                      builder: (context, revision, child) => TypeHistoryInput(
                         controller: location,
-                        label: 'Location',
-                        bottomPadding: 0,
-                        textInputAction: TextInputAction.done,
+                        historyKey: readOnly ? null : 'chassis:location',
+                        browseOptionsOnFocus: true,
+                        options: {
+                          'Garage',
+                          ...LocationOptionRegistry.options(
+                            'destination',
+                            const [],
+                          ),
+                          ...LocationOptionRegistry.options(
+                            'destination_barangay',
+                            const [],
+                          ),
+                          ..._items
+                              .map((chassis) => chassis.location?.trim() ?? '')
+                              .where((value) => value.isNotEmpty),
+                        }.toList(growable: false),
+                        child: AdminModalTextField(
+                          controller: location,
+                          label: 'Location',
+                          bottomPadding: 0,
+                          minHeight: 0,
+                          textInputAction: TextInputAction.done,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 12),
                     ValueListenableBuilder<bool>(
                       valueListenable: isActive,
                       builder: (context, value, _) => AdminModalToggleRow(
@@ -819,13 +968,56 @@ class _AdminChassisViewState extends State<AdminChassisView>
     if (saved != true) return;
   }
 
+  bool get _canOpenUsers => RoleAccessService.instance.canAccess(
+    DispatcherAccessCapability.usersRead,
+  );
+
+  bool _openingRelatedPage = false;
+
+  Future<void> _openContactUser(UserModel user) async {
+    if (_openingRelatedPage || !_canOpenUsers || user.id?.isNotEmpty != true) {
+      return;
+    }
+    _openingRelatedPage = true;
+    try {
+      final currentUser = await AuthRequest.instance.getCurrentUser();
+      if (!mounted || currentUser == null || !_canOpenUsers) {
+        return;
+      }
+      await AdminUsersView.openDetailPage(
+        context,
+        currentUser: currentUser,
+        viewedUser: _historyUsers[user.id] ?? user,
+      );
+    } finally {
+      _openingRelatedPage = false;
+    }
+  }
+
   Future<void> _openBooking(String? bookingId) async {
-    final bookingIdText = bookingId?.toString();
-    if (bookingIdText == null) return;
-    final booking = _bookingOptions.where((item) => item.id == bookingIdText);
-    if (booking.isEmpty) return;
-    if (!mounted) return;
-    BookingSectionNavigationScope.maybeOf(context)?.openBooking(booking.first);
+    if (_openingRelatedPage || bookingId == null) {
+      return;
+    }
+    final booking = _bookingOptions
+        .where((item) => item.id == bookingId)
+        .firstOrNull;
+    if (booking == null) {
+      return;
+    }
+    _openingRelatedPage = true;
+    try {
+      final currentUser = await AuthRequest.instance.getCurrentUser();
+      if (!mounted || currentUser == null) {
+        return;
+      }
+      await AdminBookingsView.openDetailPage(
+        context,
+        currentUser: currentUser,
+        booking: booking,
+      );
+    } finally {
+      _openingRelatedPage = false;
+    }
   }
 
   void _traceOffline(String message) {}
@@ -843,6 +1035,7 @@ class _AdminChassisViewState extends State<AdminChassisView>
           booking.statusOutputs,
           'representative_phone',
         ),
+        user: _historyUsers[booking.client?.id] ?? booking.client,
       );
     }
     return const _ChassisContact.empty();
@@ -982,6 +1175,7 @@ class _ChassisHeaderRow extends StatelessWidget {
     required this.bookingWidth,
     required this.locationWidth,
     required this.statusWidth,
+    required this.elapsedWidth,
     required this.createdWidth,
     required this.updatedWidth,
     required this.actionsWidth,
@@ -994,6 +1188,7 @@ class _ChassisHeaderRow extends StatelessWidget {
   final double bookingWidth;
   final double locationWidth;
   final double statusWidth;
+  final double elapsedWidth;
   final double createdWidth;
   final double updatedWidth;
   final double actionsWidth;
@@ -1035,6 +1230,10 @@ class _ChassisHeaderRow extends StatelessWidget {
             child: const AdminListHeaderCell(label: 'Status'),
           ),
           AdminListFixedSlot(
+            width: elapsedWidth,
+            child: const AdminListHeaderCell(label: 'Time'),
+          ),
+          AdminListFixedSlot(
             width: createdWidth,
             child: const AdminListHeaderCell(label: 'Created'),
           ),
@@ -1070,11 +1269,14 @@ class _ChassisDesktopRow extends StatelessWidget {
     required this.bookingWidth,
     required this.locationWidth,
     required this.statusWidth,
+    required this.elapsedWidth,
     required this.createdWidth,
     required this.updatedWidth,
     required this.actionsWidth,
     required this.actions,
     required this.onOpenBooking,
+    this.onOpenClient,
+    this.onOpenDriver,
   });
 
   final Chassis item;
@@ -1088,11 +1290,14 @@ class _ChassisDesktopRow extends StatelessWidget {
   final double bookingWidth;
   final double locationWidth;
   final double statusWidth;
+  final double elapsedWidth;
   final double createdWidth;
   final double updatedWidth;
   final double actionsWidth;
   final List<Widget> actions;
   final VoidCallback onOpenBooking;
+  final VoidCallback? onOpenClient;
+  final VoidCallback? onOpenDriver;
 
   @override
   Widget build(BuildContext context) {
@@ -1114,13 +1319,21 @@ class _ChassisDesktopRow extends StatelessWidget {
           AdminListFixedSlot(
             width: clientWidth,
             child: AdminListBodyCell(
-              child: _ChassisContactText(contact: client),
+              child: _ChassisContactText(
+                contact: client,
+                onOpen: onOpenClient,
+                role: 'Client',
+              ),
             ),
           ),
           AdminListFixedSlot(
             width: driverWidth,
             child: AdminListBodyCell(
-              child: _ChassisContactText(contact: driver),
+              child: _ChassisContactText(
+                contact: driver,
+                onOpen: onOpenDriver,
+                role: 'Driver',
+              ),
             ),
           ),
           AdminListFixedSlot(
@@ -1135,20 +1348,21 @@ class _ChassisDesktopRow extends StatelessWidget {
           AdminListFixedSlot(
             width: locationWidth,
             child: AdminListBodyCell(
-              child: Text(item.location ?? '-', style: _ChassisStyles.value),
+              child: Text(
+                _chassisLocationLabel(item),
+                style: _ChassisStyles.value,
+              ),
             ),
           ),
           AdminListFixedSlot(
             width: statusWidth,
             child: AdminListBodyCell(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ChassisStatusPill(status: item.currentStatus),
-                  elapsed,
-                ],
-              ),
+              child: ChassisStatusPill(status: item.currentStatus),
             ),
+          ),
+          AdminListFixedSlot(
+            width: elapsedWidth,
+            child: AdminListBodyCell(child: elapsed),
           ),
           AdminListFixedSlot(
             width: createdWidth,
@@ -1202,6 +1416,8 @@ class _ChassisResponsiveCard extends StatelessWidget {
     required this.driver,
     required this.actions,
     required this.onOpenBooking,
+    this.onOpenClient,
+    this.onOpenDriver,
   });
 
   final Chassis item;
@@ -1210,6 +1426,8 @@ class _ChassisResponsiveCard extends StatelessWidget {
   final _ChassisContact driver;
   final List<Widget> actions;
   final VoidCallback onOpenBooking;
+  final VoidCallback? onOpenClient;
+  final VoidCallback? onOpenDriver;
 
   @override
   Widget build(BuildContext context) {
@@ -1223,7 +1441,7 @@ class _ChassisResponsiveCard extends StatelessWidget {
             ('Name', item.name, true),
             ('Client', client.display, false),
             ('Driver', driver.display, false),
-            ('Location', item.location ?? '-', false),
+            ('Location', _chassisLocationLabel(item), false),
             ('Created', AdminUsersView.formatCreatedAt(item.createdAt), false),
             ('Updated', AdminUsersView.formatUpdatedAt(item.updatedAt), false),
           ];
@@ -1248,15 +1466,37 @@ class _ChassisResponsiveCard extends StatelessWidget {
                 runSpacing: 16,
                 children: [
                   ...fields.map(
-                    (field) => AdminListResponsiveField(
-                      title: field.$1,
-                      value: field.$2,
-                      isTitle: field.$3,
-                      centered: false,
-                      width: singleColumn
-                          ? constraints.maxWidth
-                          : (constraints.maxWidth - 16) / 2,
-                    ),
+                    (field) => field.$1 == 'Client' || field.$1 == 'Driver'
+                        ? SizedBox(
+                            width: singleColumn
+                                ? constraints.maxWidth
+                                : (constraints.maxWidth - 16) / 2,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                AdminListHeaderCell(label: field.$1),
+                                const SizedBox(height: 6),
+                                _ChassisContactText(
+                                  contact: field.$1 == 'Client'
+                                      ? client
+                                      : driver,
+                                  onOpen: field.$1 == 'Client'
+                                      ? onOpenClient
+                                      : onOpenDriver,
+                                  role: field.$1,
+                                ),
+                              ],
+                            ),
+                          )
+                        : AdminListResponsiveField(
+                            title: field.$1,
+                            value: field.$2,
+                            isTitle: field.$3,
+                            centered: false,
+                            width: singleColumn
+                                ? constraints.maxWidth
+                                : (constraints.maxWidth - 16) / 2,
+                          ),
                   ),
                   SizedBox(
                     width: singleColumn
@@ -1276,6 +1516,18 @@ class _ChassisResponsiveCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 6),
                         ChassisStatusPill(status: item.currentStatus),
+                      ],
+                    ),
+                  ),
+                  SizedBox(
+                    width: singleColumn
+                        ? constraints.maxWidth
+                        : (constraints.maxWidth - 16) / 2,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const AdminListHeaderCell(label: 'Time'),
+                        const SizedBox(height: 6),
                         elapsed,
                       ],
                     ),
@@ -1291,29 +1543,41 @@ class _ChassisResponsiveCard extends StatelessWidget {
 }
 
 class _ChassisContact {
-  const _ChassisContact({required this.name, required this.phone});
+  const _ChassisContact({required this.name, required this.phone, this.user});
 
-  const _ChassisContact.empty() : name = '-', phone = '-';
+  const _ChassisContact.empty() : name = '-', phone = '-', user = null;
 
   final String name;
   final String phone;
+  final UserModel? user;
 
   bool get isEmpty => name == '-' && phone == '-';
 
-  String get display => isEmpty ? '-' : '$name\n$phone';
+  String get display => name;
 
   factory _ChassisContact.fromUser(UserModel? user) {
     if (user == null) return const _ChassisContact.empty();
-    return _ChassisContact.fromValues(user.name, user.phone);
+    return _ChassisContact.fromValues(user.name, user.phone, user: user);
   }
 
-  factory _ChassisContact.fromValues(String? nameValue, String? phoneValue) {
-    final name = nameValue?.trim();
+  factory _ChassisContact.fromValues(
+    String? nameValue,
+    String? phoneValue, {
+    UserModel? user,
+  }) {
+    final name =
+        (nameValue?.trim().isNotEmpty == true && nameValue != '-'
+                ? nameValue
+                : user?.name)
+            ?.trim();
     final phone = phoneValue?.trim();
-    if ((name == null || name.isEmpty) && (phone == null || phone.isEmpty)) {
+    if ((name == null || name.isEmpty) &&
+        (phone == null || phone.isEmpty) &&
+        user == null) {
       return const _ChassisContact.empty();
     }
     return _ChassisContact(
+      user: user,
       name: name == null || name.isEmpty || name == '-' ? '-' : name,
       phone: phone == null || phone.isEmpty || phone == '-' ? '-' : phone,
     );
@@ -1321,13 +1585,34 @@ class _ChassisContact {
 }
 
 class _ChassisContactText extends StatelessWidget {
-  const _ChassisContactText({required this.contact});
-
+  const _ChassisContactText({
+    required this.contact,
+    required this.role,
+    this.onOpen,
+  });
   final _ChassisContact contact;
+  final String role;
+  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
-    return Text(contact.display, softWrap: true, style: _ChassisStyles.value);
+    final link = Text(
+      contact.display,
+      softWrap: true,
+      style: onOpen != null ? _ChassisStyles.link : _ChassisStyles.value,
+    );
+    if (onOpen == null) return link;
+    return Tooltip(
+      message: 'Open $role account',
+      child: InkWell(
+        onTap: onOpen,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: link,
+        ),
+      ),
+    );
   }
 }
 
@@ -1346,19 +1631,9 @@ class _ChassisBookingLink extends StatelessWidget {
   Widget build(BuildContext context) {
     final value = bookingId?.toString() ?? '-';
     final canOpen = bookingId != null;
-    final link = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(value, style: _ChassisStyles.value),
-        if (canOpen) ...[
-          const SizedBox(width: 6),
-          Icon(
-            Icons.open_in_new_rounded,
-            size: 16,
-            color: AppColors.primaryColor,
-          ),
-        ],
-      ],
+    final link = Text(
+      value,
+      style: canOpen ? _ChassisStyles.link : _ChassisStyles.value,
     );
     final interactiveLink = canOpen
         ? InkWell(
@@ -1389,6 +1664,13 @@ class _ChassisBookingLink extends StatelessWidget {
 }
 
 class _ChassisStyles {
+  static const link = TextStyle(
+    color: AppColors.primaryColor,
+    fontWeight: FontWeight.w700,
+    decoration: TextDecoration.underline,
+    decorationColor: AppColors.primaryColor,
+    height: 1.2,
+  );
   static const title = TextStyle(
     color: AppColors.textPrimary,
     fontWeight: FontWeight.w700,

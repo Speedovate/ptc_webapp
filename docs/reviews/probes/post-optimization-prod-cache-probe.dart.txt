@@ -1,0 +1,65 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:webapp/requests/firestore_cache_store.dart';
+import 'package:webapp/requests/firestore_cache_persistence.dart';
+import 'package:webapp/repositories/local/booking_storage_backend.dart';
+
+class _Prefs extends InMemorySharedPreferencesStore {
+  _Prefs():super.withData({});
+  bool first = true;
+  @override
+  Future<bool> setValue(String type, String key, Object value) async {
+    if (first) { first = false; return false; }
+    return super.setValue(type, key, value);
+  }
+}
+class _Disk extends FirestoreCachePersistence {
+  final started = Completer<void>(), release = Completer<void>();
+  final values = <String,String>{};
+  bool first = true;
+  @override bool get isAvailable => true;
+  @override Future<String?> read(String key) async => values[key];
+  Future<void> tail = Future.value();
+  @override Future<void> write(String key, String value) {
+    final task = tail.then((_) async {
+      if (first) { first = false; started.complete(); await release.future; }
+      // Match the real backend's serial ordering; fail the best-effort backup
+      // of the newer value after its localStorage mirror already succeeded.
+      if (value.contains('new')) throw StateError('Injected IndexedDB quota failure');
+      values[key] = value;
+    });
+    tail = task.then<void>((_) {}, onError: (Object error) {});
+    return task;
+  }
+  @override Future<void> remove(String key) async => values.remove(key);
+  @override Future<void> removeWhere(bool Function(String) predicate) async => values.removeWhere((k,v)=>predicate(k));
+}
+class _Logs implements BookingStorageBackend {
+  final values = <String,List<String>>{};
+  @override Future<void> initialize() async {}
+  @override Future<List<String>> readStringList(String key) async => List.of(values[key] ?? []);
+  @override Future<void> writeStringList(String key,List<String> value) async { values[key] = List.of(value); }
+}
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test('fault probe: old fallback removes newer cache mirror and resurrects stale data', () async {
+    SharedPreferences.setMockInitialValues({});
+    SharedPreferencesStorePlatform.instance = _Prefs();
+    final disk = _Disk();
+    final store = FirestoreCacheStore(persistence: disk);
+    final old = store.writeDocumentMaps('bookings',[{'id':'old'}]);
+    await disk.started.future;
+    await store.writeDocumentMaps('bookings',[{'id':'new'}]);
+    disk.release.complete();
+    await old;
+    final reopened = FirestoreCacheStore(persistence: disk);
+    expect(await reopened.readDocumentMaps('bookings'), [{'id':'new'}]);
+  });
+
+}
