@@ -3,6 +3,8 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 
 class AdminModalShell extends StatelessWidget {
+  static const double kpiMaxWidth = 900;
+
   static const BorderRadius _dialogBorderRadius = BorderRadius.all(
     Radius.circular(28),
   );

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_record_list.dart';
@@ -453,8 +454,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
     String device(Map<String, dynamic> log) =>
         '${log['device_id'] ?? 'Device not recorded'}';
     String deviceKey(String user, String id) => _deviceKey(user, id);
-    String deviceLabel(String user, String id) =>
-        'Device $id (${_deviceSummaries[deviceKey(user, id)] ?? "—"} Errors)';
+
     final devices = <String, List<Map<String, dynamic>>>{};
     final rows = <({String user, String? device, Map<String, dynamic>? log})>[];
     for (final group in groups.entries) {
@@ -511,13 +511,11 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
           trailingActions: true,
           selectableCells: true,
           wrappingColumn: 3,
-          columnExtraWidths: const {4: 100},
+          columnExtraWidths: const {3: 24, 4: 100},
           titles: const ['ID', 'Name', 'Role', 'Errors', 'Actions'],
           itemCount: rows.length,
-          hiddenColumnsAt: (i) =>
-              rows[i].device != null ? const {0, 2} : const <int>{},
-          fullWidthRowColumnAt: (i) =>
-              rows[i].device != null && rows[i].log == null ? 1 : null,
+          leadingColumnSpanAt: (i) => rows[i].device != null ? 3 : 1,
+          fullWidthRowColumnAt: (i) => rows[i].log != null ? 0 : null,
           rowGroupKey: (i) => rows[i].user,
           dividerAfterRow: (i) {
             final row = rows[i];
@@ -539,7 +537,13 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
             final first = groups[row.user]!.first;
             final summary = _summaries[row.user];
             if (log == null && row.device != null) {
-              return ['', deviceLabel(row.user, row.device!), '', '', ''];
+              return [
+                row.device!,
+                '',
+                '',
+                '${_deviceSummaries[deviceKey(row.user, row.device!)] ?? "—"} Errors',
+                '',
+              ];
             }
             return log == null
                 ? [
@@ -560,13 +564,46 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
           cellBuilder: (i, col) {
             final row = rows[i];
             final log = row.log;
-            if (col == 1 && log == null) {
+            if (col == 0 && log != null) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SelectableText(
+                    preview('${log['operation'] ?? log['source'] ?? 'Error'}'),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  SelectableText(preview('${log['error'] ?? '—'}')),
+                ],
+              );
+            }
+            if (col == 3 && log == null) {
+              final count = row.device == null
+                  ? _summaries[row.user]
+                  : _deviceSummaries[deviceKey(row.user, row.device!)];
+              return Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.dangerSurfaceAlt,
+                  border: Border.all(color: AppColors.dangerBorderAlt),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: SelectableText(
+                  '${count ?? "—"} Errors',
+                  style: const TextStyle(color: AppColors.danger),
+                ),
+              );
+            }
+            if (log == null && col == (row.device == null ? 1 : 0)) {
               return InkWell(
                 onTap: () => toggle(row.user, row.device),
                 child: Text(
                   row.device == null
                       ? _name(row.user, groups[row.user]!.first)
-                      : deviceLabel(row.user, row.device!),
+                      : row.device!,
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               );

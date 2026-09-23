@@ -2,6 +2,30 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:webapp/services/booking_chassis_lifecycle.dart';
 
 void main() {
+  test('cancelled returns to Garage; assigned waits for ongoing pickup', () {
+    const booking = {
+      'status_outputs': {
+        'book': {
+          'submitted_at': '2026-09-23T08:00:00',
+          'fields': {'origin': 'Roxas'},
+        },
+      },
+    };
+    for (final entry in {
+      'cancelled': 'Garage',
+      'assigned': null,
+      'ongoing': 'Roxas',
+    }.entries) {
+      expect(
+        chassisLifecycleInstruction(
+          previousBookingStatus: null,
+          nextBookingStatus: entry.key,
+          bookingDocument: booking,
+        )?.location,
+        entry.value,
+      );
+    }
+  });
   test('check remains booking-only while the chassis stays loaded', () {
     final instruction = chassisLifecycleInstruction(
       previousBookingStatus: 'delivered',

@@ -78,11 +78,19 @@ class OperationsCatalogStore {
     }
   }
 
+  Future<OperationsCatalog?> readCached() async {
+    final owner = await _accountId();
+    if (owner == null) return null;
+    final cached = await _cache.readDocumentMaps('operations_catalog:$owner');
+    if (cached == null) return null;
+    return _load(true, localOnly: true);
+  }
+
   Future<OperationsCatalog> load({bool force = false}) {
     return _loading ??= _load(force).whenComplete(() => _loading = null);
   }
 
-  Future<OperationsCatalog> _load(bool force) async {
+  Future<OperationsCatalog> _load(bool force, {bool localOnly = false}) async {
     final owner = await _accountId();
     if (owner == null) {
       _owner = null;
@@ -107,7 +115,7 @@ class OperationsCatalogStore {
         (await _cache.readDocumentMaps(key))?.firstOrNull ??
         <String, dynamic>{};
     _apply(document); // cached choices are visible before network finishes
-    if (_online()) {
+    if (!localOnly && _online()) {
       try {
         final collectionRef = _firestore.collection(collection);
         final responses = await Future.wait([
@@ -187,7 +195,7 @@ class OperationsCatalogStore {
       return current;
     }
     _apply(document);
-    _loadedAt = DateTime.now();
+    if (!localOnly) _loadedAt = DateTime.now();
     return current;
   }
 

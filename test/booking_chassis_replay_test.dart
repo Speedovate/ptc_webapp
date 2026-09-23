@@ -82,6 +82,9 @@ void main() {
           expect(chassis['current_booking_id'], expected.$2);
           expect(chassis['current_driver_id'], expected.$3);
           expect(chassis['updated_at'], finalDoc['updated_at']);
+          if (stage == 'cancelled') {
+            expect(chassis['location'], 'Garage');
+          }
           expect(
             (await db.collection('bookings').doc('10').get())
                 .data()!['client_status'],

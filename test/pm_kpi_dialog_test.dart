@@ -1,3 +1,5 @@
+import 'package:flutter/rendering.dart';
+import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_record_list.dart';
@@ -12,16 +14,51 @@ import 'package:webapp/services/kpi/pm_kpi_store.dart';
 import 'package:webapp/views/admin/pm_kpi_dialog.dart';
 import 'package:webapp/widgets/shared/app_modal_guard.dart';
 
+class TestDiagnostics extends SyncErrorLogService {
+  final captured = <Map<String, dynamic>>[];
+  @override
+  Future<void> capture({
+    required String source,
+    required String operation,
+    required String entryId,
+    required String target,
+    required String error,
+    required String stack,
+    required int attempt,
+    String? owner,
+    String? actionAt,
+    String? failedAt,
+    String kind = 'queue_failure',
+    bool? attentionRequired,
+    Map<String, dynamic> details = const {},
+  }) async {
+    captured.add({
+      'kind': kind,
+      'operation': operation,
+      'error': error,
+      'stack': stack,
+      'details': details,
+      'attention_required': attentionRequired,
+    });
+  }
+}
+
+final testDiagnostics = TestDiagnostics();
+
 class TestStore extends PmKpiStore {
   @override
   bool get canRead => true;
   @override
   bool get canReadFuel => true;
   @override
-  bool get canReadIncome => true;
+  bool get canReadCatalog => true;
+  bool incomeAllowed = true;
+  @override
+  bool get canReadIncome => incomeAllowed;
   final updates = StreamController<List<Booking>>.broadcast();
   final records = <Map<String, dynamic>>[];
   Map<String, dynamic> settings = {};
+  bool failSave = false;
   int loads = 0;
   int exportLoads = 0;
   @override
@@ -65,17 +102,35 @@ class TestStore extends PmKpiStore {
   }
 
   @override
+  Future<Map<String, dynamic>> loadFleetRules({bool localOnly = false}) async =>
+      settings;
+
+  @override
   Future<void> save({
     required String makeId,
     required Map<String, dynamic> data,
     required Map<String, dynamic> previous,
   }) async {
+    if (failSave) throw StateError('Save failed');
     if (data['kind'] == 'settings') {
       settings = {...data};
     } else {
       records.add({...data, 'make_id': makeId});
     }
   }
+}
+
+class EmptyKpiStore extends TestStore {
+  bool stall = false;
+  @override
+  Future<KpiStoredData?> readCached(String makeId, KpiPeriod period) async =>
+      null;
+  @override
+  Future<List<Booking>> bookings() async => [];
+  @override
+  Future<KpiStoredData> load(String makeId, KpiPeriod period) => stall
+      ? Completer<KpiStoredData>().future
+      : Future.value(const KpiStoredData([], {}, false));
 }
 
 class HydratedBookingsStore extends DelayedRefreshStore {
@@ -131,6 +186,104 @@ Future<void> expandDay(WidgetTester tester, DateTime day) async {
 }
 
 void main() {
+  testWidgets('income permission hides crew details and transactions', (
+    tester,
+  ) async {
+    final store = TestStore()..incomeAllowed = false;
+    addTearDown(store.updates.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PmKpiDialog(
+            diagnostics: testDiagnostics,
+            make: const VehicleMake(id: '4', code: 'PM4'),
+            store: store,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final list = tester.widget<AdminModalRecordList>(
+      find.byType(AdminModalRecordList),
+    );
+    expect(list.itemCount, 0);
+    expect(list.showTitlesRow, false);
+    expect(
+      list.emptyMessage,
+      'You do not have access to driver/helper income.',
+    );
+    expect(find.text('Trip Shares'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
+  for (final stalled in [false, true]) {
+    testWidgets('null KPI cache and empty data settle; stalled=$stalled', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final store = EmptyKpiStore()..stall = stalled;
+      addTearDown(store.updates.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PmKpiDialog(
+              diagnostics: testDiagnostics,
+              make: const VehicleMake(id: '4', code: 'PM4'),
+              store: store,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      if (stalled) await tester.pump(const Duration(seconds: 16));
+      await tester.pumpAndSettle();
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      final list = tester.widget<AdminModalRecordList>(
+        find.byType(AdminModalRecordList),
+      );
+      expect(list.itemCount, 0);
+      expect(
+        list.emptyMessage,
+        stalled
+            ? isNull
+            : 'No delivered trips or recorded expenses in this period.',
+      );
+      if (stalled) {
+        expect(find.text('Retry'), findsOneWidget);
+        expect(
+          find.text(
+            'Refresh KPI records, fuel, rates and settings took too long. Select Retry to try again.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.textContaining('TimeoutException'), findsNothing);
+        expect(find.text('Data could not be refreshed'), findsNothing);
+        final report = testDiagnostics.captured.last;
+        expect(report['kind'], 'kpi_diagnostic');
+        expect(report['attention_required'], isTrue);
+        expect(report['error'], contains('TimeoutException'));
+        expect(
+          (report['details'] as Map)['failed_step'],
+          'Refresh KPI records, fuel, rates and settings',
+        );
+        expect((report['details'] as Map)['diagnostics'], contains('pm_id'));
+
+        store.stall = false;
+        await tester.tap(find.text('Retry'));
+        await tester.pumpAndSettle();
+        expect(find.text('Retry'), findsNothing);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+      } else {
+        expect(find.text('Retry'), findsNothing);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets(
     'Export opens Excel confirmation directly and Cancel does not export',
     (tester) async {
@@ -144,6 +297,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: PmKpiDialog(
+              diagnostics: testDiagnostics,
               make: const VehicleMake(id: '4', code: 'PM4'),
               store: store,
             ),
@@ -189,6 +343,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: PmKpiDialog(
+              diagnostics: testDiagnostics,
               make: const VehicleMake(
                 id: '4',
                 code: 'PM4',
@@ -267,6 +422,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: PmKpiDialog(
+              diagnostics: testDiagnostics,
               make: const VehicleMake(id: '4', code: 'PM4'),
               store: store,
             ),
@@ -299,7 +455,7 @@ void main() {
           .widget<AdminDropdownFormField<String>>(
             find.byType(AdminDropdownFormField<String>),
           )
-          .onChanged!('Custom range');
+          .onChanged!('Range');
       await tester.pumpAndSettle();
       expect(find.text('Date Range'), findsOneWidget);
       await tester.tap(find.text('Cancel'));
@@ -308,6 +464,63 @@ void main() {
       expect(label().contains(' – '), isTrue);
     },
   );
+
+  testWidgets('KPI section buttons match the existing New button surface', (
+    tester,
+  ) async {
+    final store = TestStore();
+    addTearDown(store.updates.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: AdminListNewButton(
+              controlHeight: 52,
+              surfaceRadius: 16,
+              iconOnly: false,
+              onTap: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final reference = find.descendant(
+      of: find.byType(FilledButton),
+      matching: find.byType(Material),
+    );
+    final referenceHeight = tester.getSize(reference).height;
+    final referenceShape = tester.widget<Material>(reference).shape;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PmKpiDialog(
+            diagnostics: testDiagnostics,
+            make: const VehicleMake(id: '4', code: 'PM4'),
+            store: store,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final label in ['Fuel', 'Rates', 'Rules']) {
+      final button = find.ancestor(
+        of: find.text(label),
+        matching: find.byWidgetPredicate((w) => w is FilledButton),
+      );
+      final surface = find.descendant(
+        of: button,
+        matching: find.byType(Material),
+      );
+      expect(tester.getSize(surface).height, referenceHeight, reason: label);
+      expect(
+        tester.widget<Material>(surface).shape,
+        referenceShape,
+        reason: label,
+      );
+    }
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('period controls have equal rendered bounds', (tester) async {
     tester.view.physicalSize = const Size(1200, 1000);
@@ -320,6 +533,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: PmKpiDialog(
+            diagnostics: testDiagnostics,
             make: const VehicleMake(id: '4', code: 'PM4'),
             store: store,
           ),
@@ -332,6 +546,15 @@ void main() {
       matching: find.byType(InputDecorator),
     );
     final button = find.byKey(const ValueKey('kpi-period-date-field'));
+    final selector = tester.widget<AdminDropdownFormField<String>>(
+      find.byType(AdminDropdownFormField<String>),
+    );
+    expect(selector.items!.map((item) => item.value), [
+      'Range',
+      'Weekly',
+      'Monthly',
+      'All Time',
+    ]);
     final dropdownRect = tester.getRect(dropdown);
     final buttonRect = tester.getRect(button);
     expect(
@@ -340,13 +563,9 @@ void main() {
       reason: 'Dropdown $dropdownRect, date $buttonRect',
     );
     expect(dropdownRect.center.dy, buttonRect.center.dy);
-    final refreshRect = tester.getRect(
-      find.byKey(const ValueKey('kpi-refresh-control')),
-    );
-    final refreshIconRect = tester.getRect(find.byIcon(Icons.refresh));
-    expect(refreshRect.height, dropdownRect.height);
-    expect(refreshRect.center.dy, dropdownRect.center.dy);
-    expect(refreshIconRect.center, refreshRect.center);
+    expect(buttonRect.height, 48);
+    expect(find.byTooltip('Refresh KPI'), findsNothing);
+    expect(find.text('Retry'), findsNothing);
     final dropdownContainer = InputDecorator.containerOf(
       tester.element(find.text('Monthly')),
     )!;
@@ -357,6 +576,13 @@ void main() {
         dropdownContainer.localToGlobal(Offset.zero) & dropdownContainer.size;
     final paintedDate =
         dateContainer.localToGlobal(Offset.zero) & dateContainer.size;
+    final titleRect = tester.getRect(find.text('PM4 KPI'));
+    expect(paintedDate.top - titleRect.bottom, 20);
+    final financialTable = find.ancestor(
+      of: find.text('Item'),
+      matching: find.byType(Table),
+    );
+    expect(tester.getRect(financialTable).top - paintedDate.bottom, 20);
     expect(
       paintedDropdown,
       Rect.fromLTWH(
@@ -366,7 +592,100 @@ void main() {
         paintedDate.height,
       ),
     );
-    expect(refreshIconRect.center.dy, paintedDate.center.dy);
+    final desktopDateWidth = tester.getSize(button).width;
+    tester.view.physicalSize = const Size(950, 1000);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(button).width,
+      desktopDateWidth,
+      reason: 'Non-mobile controls stay content-sized when the toolbar wraps',
+    );
+    tester.view.physicalSize = const Size(1200, 1000);
+    await tester.pumpAndSettle();
+    for (final mode in ['Monthly', 'Range']) {
+      if (mode == 'Range') {
+        // Modal guard uses wall-clock debounce across dialog instances.
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 400)),
+        );
+        selector.onChanged!('Range');
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+      }
+      final selectedText = find.text(mode);
+      final selectedField = find.ancestor(
+        of: selectedText,
+        matching: find.byType(InputDecorator),
+      );
+      expect(
+        tester.getRect(selectedText).center.dy,
+        closeTo(tester.getRect(selectedField).center.dy, 0.5),
+        reason: '$mode selected text center',
+      );
+      final dateText = find.descendant(of: button, matching: find.byType(Text));
+      expect(tester.widget<Text>(dateText).style!.fontSize, 14);
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.descendant(of: dateText, matching: find.byType(RichText)),
+      );
+      expect(
+        paragraph.size.width + 0.01,
+        greaterThanOrEqualTo(paragraph.getMaxIntrinsicWidth(double.infinity)),
+        reason: '$mode must have room for every date character',
+      );
+
+      expect(
+        tester.getRect(dateText).center.dy,
+        closeTo(tester.getRect(button).center.dy, 0.5),
+        reason: '$mode date text center',
+      );
+      expect(
+        tester.getRect(find.byIcon(Icons.date_range)).center.dy,
+        closeTo(tester.getRect(button).center.dy, 0.5),
+        reason: '$mode icon center',
+      );
+    }
+    tester.view.physicalSize = const Size(375, 1000);
+    await tester.pumpAndSettle();
+    final rangeText = find.descendant(of: button, matching: find.byType(Text));
+    expect(
+      tester.widget<Text>(rangeText).overflow,
+      isNot(TextOverflow.ellipsis),
+    );
+    expect(tester.widget<Text>(rangeText).maxLines, 1);
+    expect(tester.getRect(button).height, 48);
+    expect(
+      tester.getRect(rangeText).right,
+      lessThanOrEqualTo(tester.getRect(button).right),
+    );
+    expect(tester.takeException(), isNull);
+    selector.onChanged!('Monthly');
+    for (final width in [375.0, 600.0, 850.0]) {
+      tester.view.physicalSize = Size(width, 1000);
+      await tester.pumpAndSettle();
+      Finder section(String label) => find.ancestor(
+        of: find.text(label),
+        matching: find.byWidgetPredicate((w) => w is FilledButton),
+      );
+      final fuel = tester.getRect(section('Fuel'));
+      final rules = tester.getRect(section('Rules'));
+      final period = tester.getRect(
+        find.ancestor(
+          of: find.text('Monthly'),
+          matching: find.byType(InputDecorator),
+        ),
+      );
+      final date = tester.getRect(button);
+      expect(period.left, fuel.left, reason: 'mobile left edge at $width');
+      expect(
+        date.right,
+        closeTo(rules.right, 0.01),
+        reason: 'mobile right edge at $width',
+      );
+      expect(fuel.width, closeTo(rules.width, 0.01));
+      expect(date.bottom, lessThan(fuel.top));
+      expect(tester.takeException(), isNull);
+    }
   });
 
   testWidgets(
@@ -382,6 +701,7 @@ void main() {
                 onPressed: () => showAppDialog<void>(
                   context: context,
                   builder: (_) => PmKpiDialog(
+                    diagnostics: testDiagnostics,
                     make: const VehicleMake(id: '4', code: 'PM4'),
                     store: store,
                   ),
@@ -396,13 +716,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Payroll Summary'), findsNothing);
       expect(find.text('Import Excel'), findsNothing);
-      for (final section in ['Fuel Requests']) {
+      for (final section in ['Fuel', 'Rules']) {
+        final sectionButton = find.ancestor(
+          of: find.text(section),
+          matching: find.byWidgetPredicate((widget) => widget is FilledButton),
+        );
         await Scrollable.ensureVisible(
-          tester.element(find.text(section)),
+          tester.element(sectionButton),
           alignment: 0.5,
         );
         await tester.pumpAndSettle();
-        await tester.tap(find.text(section));
+        await tester.tap(sectionButton);
         await tester.pumpAndSettle();
         expect(find.byType(Dialog), findsOneWidget);
         expect(find.text('Back to KPI'), findsOneWidget);
@@ -428,6 +752,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: PmKpiDialog(
+            diagnostics: testDiagnostics,
             make: const VehicleMake(id: '4', code: 'PM4'),
             store: store,
             onOpenBooking: (current, booking) => opened = booking,
@@ -471,6 +796,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: PmKpiDialog(
+              diagnostics: testDiagnostics,
               make: const VehicleMake(id: '4', code: 'PM4'),
               store: store,
             ),
@@ -497,6 +823,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: PmKpiDialog(
+            diagnostics: testDiagnostics,
             make: const VehicleMake(id: '4', code: 'PM4'),
             store: store,
           ),
@@ -527,6 +854,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: PmKpiDialog(
+            diagnostics: testDiagnostics,
             make: const VehicleMake(id: '4', code: 'PM4'),
             store: store,
           ),
@@ -621,6 +949,7 @@ void main() {
                     context: context,
                     modalKey: 'kpi-layout-$width',
                     builder: (_) => PmKpiDialog(
+                      diagnostics: testDiagnostics,
                       make: const VehicleMake(
                         id: '4',
                         code: 'PM 4',
@@ -690,6 +1019,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: PmKpiDialog(
+            diagnostics: testDiagnostics,
             make: const VehicleMake(id: '4', code: 'PM 4'),
             store: store,
           ),
@@ -697,22 +1027,42 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final button = find.text('Rating Rules');
+    final button = find.text('Rules');
     await tester.ensureVisible(button);
     await tester.pumpAndSettle();
     await tester.tap(button);
     await tester.pumpAndSettle();
+    expect(find.text('Rule'), findsOneWidget);
+    expect(find.text('Value'), findsOneWidget);
+    expect(find.text('Save'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('kpi-rule-edit-0')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '101');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Check threshold order'), findsOneWidget);
+    expect(store.settings['rating_rules'], isNull);
+    store.failSave = true;
     await tester.enterText(find.byType(TextField).first, '35');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(find.text('Bad state: Save failed'), findsOneWidget);
+    expect(find.text('Edit Rule'), findsOneWidget);
+    expect(store.settings['rating_rules'], isNull);
+    store.failSave = false;
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
+    expect(find.text('Save'), findsNothing);
+    expect(find.text('Back to KPI'), findsOneWidget);
     expect(
       (store.settings['rating_rules'] as Map)['gross_satisfactory_min'],
       35,
     );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(milliseconds: 400));
   });
   testWidgets(
     'manager confirms fuel and zero-trip salary without changing bookings',
@@ -730,6 +1080,7 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: PmKpiDialog(
+              diagnostics: testDiagnostics,
               make: const VehicleMake(id: '4', code: 'PM 4'),
               store: store,
             ),

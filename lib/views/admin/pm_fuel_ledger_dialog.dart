@@ -1,3 +1,5 @@
+import 'package:webapp/services/kpi/kpi_period_label.dart';
+import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'dart:async';
 import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
@@ -18,10 +20,16 @@ Future<void> showFuelLedger(
   required VehicleMake make,
   required KpiPeriod period,
   required PmKpiStore store,
+  String? periodLabel,
 }) => showAppDialog<void>(
   context: context,
   modalKey: 'fuel-ledger:${make.id}',
-  builder: (_) => PmFuelLedgerDialog(make: make, period: period, store: store),
+  builder: (_) => PmFuelLedgerDialog(
+    make: make,
+    period: period,
+    store: store,
+    periodLabel: periodLabel,
+  ),
 );
 
 class PmFuelLedgerDialog extends StatefulWidget {
@@ -31,32 +39,115 @@ class PmFuelLedgerDialog extends StatefulWidget {
     required this.period,
     required this.store,
     this.onBack,
+    this.backLabel = 'Back to KPI',
+    this.initialData,
+    this.periodLabel,
   });
   final VehicleMake make;
   final KpiPeriod period;
   final PmKpiStore store;
   final VoidCallback? onBack;
+  final String backLabel;
+  final KpiStoredData? initialData;
+  final String? periodLabel;
   @override
   State<PmFuelLedgerDialog> createState() => _PmFuelLedgerDialogState();
 }
 
 class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
+  final _toolbarKey = GlobalKey();
   KpiStoredData? _data;
   bool _busy = true;
   int _visibleRows = 15;
+  String _query = '';
+  String _status = 'All';
+  DateTime? _from, _to;
+
+  String _entryStatus(Map<String, dynamic> row) => row['voided'] == true
+      ? 'Voided'
+      : row['local_sync_status'] != null
+      ? 'Queued'
+      : 'Active';
+
+  void _filter(VoidCallback change) => setState(() {
+    change();
+    _visibleRows = 15;
+  });
+
+  Widget _toolbar() => AdminListToolbar(
+    key: _toolbarKey,
+    controlHeight: adminFilterFieldMinHeight,
+    surfaceRadius: 16,
+    search: AdminListSearchField(
+      controlHeight: adminFilterFieldMinHeight,
+      surfaceRadius: 16,
+      initialValue: _query,
+      onChanged: (value) => _filter(() => _query = value),
+    ),
+    filtersBuilder: (_, iconOnly) => AdminListDynamicFiltersPanel(
+      iconOnly: iconOnly,
+      menuAnchorKey: _toolbarKey,
+      filters: [
+        AdminListDropdownFilterConfig(
+          label: 'Status',
+          value: _status,
+          items: const ['All', 'Active', 'Queued', 'Voided'],
+          onChanged: (value) => _filter(() => _status = value),
+        ),
+        AdminListDateFilterConfig(
+          label: 'From',
+          value: _from,
+          onSelected: (value) => _filter(() => _from = value),
+        ),
+        AdminListDateFilterConfig(
+          label: 'To',
+          value: _to,
+          onSelected: (value) => _filter(() => _to = value),
+        ),
+      ],
+      onClear: () => _filter(() {
+        _status = 'All';
+        _from = null;
+        _to = null;
+      }),
+    ),
+    onNewPressed: widget.store.canEditFuel && !_busy && _data != null
+        ? () => _edit()
+        : null,
+  );
   String? _error;
   @override
   void initState() {
     super.initState();
+    _data = widget.initialData;
+    _busy = _data == null;
     _load();
   }
 
   Future<void> _load() async {
+    setState(() {
+      _busy = _data == null;
+      _error = null;
+    });
     try {
       if (!widget.store.canReadFuel) {
         throw StateError('You do not have access to fuel requests.');
       }
-      final data = await widget.store.load(widget.make.id!, widget.period);
+      if (_data == null) {
+        final cached = await widget.store
+            .readCached(widget.make.id!, widget.period)
+            .timeout(const Duration(seconds: 5));
+        if (!mounted) return;
+        if (cached != null) {
+          setState(() {
+            _data = cached;
+            _busy = false;
+          });
+        }
+      }
+      final data = await widget.store
+          .load(widget.make.id!, widget.period)
+          .timeout(const Duration(seconds: 15));
       if (mounted) {
         setState(() {
           _data = data;
@@ -105,13 +196,14 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
     animation: RoleAccessService.instance,
     builder: (context, _) => !widget.store.canReadFuel
         ? AdminModalShell(
+            maxWidth: AdminModalShell.kpiMaxWidth,
             actions: [
               TextButton(
                 onPressed: widget.onBack ?? () => Navigator.pop(context),
-                child: Text(widget.onBack == null ? 'Close' : 'Back to KPI'),
+                child: Text(widget.onBack == null ? 'Close' : widget.backLabel),
               ),
             ],
-            title: 'Fuel Requests',
+            title: 'Fuel',
             child: Text('You do not have access to fuel requests.'),
           )
         : _buildContent(context),
@@ -121,113 +213,148 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
     final rows =
         (_data?.fuel ?? []).where((r) {
             final date = DateTime.tryParse('${r['day']}T00:00:00Z');
-            return date != null && widget.period.contains(date);
+            if (date == null || !widget.period.contains(date)) return false;
+            if (_from != null && date.isBefore(kpiDate(_from!))) return false;
+            if (_to != null && date.isAfter(kpiDate(_to!))) return false;
+            if (_status != 'All' && _entryStatus(r) != _status) return false;
+            final query = _query.trim().toLowerCase();
+            return query.isEmpty ||
+                [
+                  r['day'],
+                  r['reference'],
+                  r['supplier'],
+                  r['liters'],
+                  r['price_per_liter'],
+                  r['amount'],
+                  r['notes'],
+                  _entryStatus(r),
+                ].whereType<Object>().join(' ').toLowerCase().contains(query);
           }).toList()
           ..sort((a, b) => b['day'].toString().compareTo(a['day'].toString()));
     return AdminModalShell(
-      title: '${widget.make.code ?? "PM"} Fuel Requests',
-      maxWidth: 1200,
+      maxWidth: AdminModalShell.kpiMaxWidth,
+      title:
+          '${widget.make.code ?? "PM"} Fuel · ${widget.periodLabel ?? kpiPeriodLabel(widget.period)}',
+
       flexibleBody: true,
       bodyHandlesScrolling: true,
       actions: [
-        if (widget.store.canEditFuel && !_busy && _data != null)
-          FilledButton.icon(
-            onPressed: () => _edit(),
-            icon: const Icon(Icons.add),
-            label: const Text('Add fuel'),
-          ),
         TextButton(
           onPressed: widget.onBack ?? () => Navigator.pop(context),
-          child: Text(widget.onBack == null ? 'Close' : 'Back to KPI'),
+          child: Text(widget.onBack == null ? 'Close' : widget.backLabel),
         ),
       ],
       child: _busy
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppPageLoading(compact: true)
           : Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: NotificationListener<ScrollNotification>(
-                onNotification: (notification) {
-                  if (notification.metrics.axis == Axis.vertical &&
-                      notification.metrics.extentAfter < 240 &&
-                      ((notification is ScrollUpdateNotification &&
-                              (notification.scrollDelta ?? 0) > 0) ||
-                          (notification is OverscrollNotification &&
-                              notification.overscroll > 0)) &&
-                      _visibleRows < rows.length) {
-                    setState(
-                      () => _visibleRows = (_visibleRows + 15).clamp(
-                        0,
-                        rows.length,
+              child: Column(
+                children: [
+                  _toolbar(),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: NotificationListener<ScrollNotification>(
+                      onNotification: (notification) {
+                        if (notification.metrics.axis == Axis.vertical &&
+                            notification.metrics.extentAfter < 240 &&
+                            ((notification is ScrollUpdateNotification &&
+                                    (notification.scrollDelta ?? 0) > 0) ||
+                                (notification is OverscrollNotification &&
+                                    notification.overscroll > 0)) &&
+                            _visibleRows < rows.length) {
+                          setState(
+                            () => _visibleRows = (_visibleRows + 15).clamp(
+                              0,
+                              rows.length,
+                            ),
+                          );
+                        }
+                        return false;
+                      },
+                      child: AdminModalRecordList(
+                        scrollHeader: _error == null
+                            ? const SizedBox.shrink()
+                            : Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: AdminListItemCard(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      AdminListStateText(message: _error!),
+                                      TextButton(
+                                        onPressed: _load,
+                                        child: const Text('Retry'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                        emptyMessage: _error == null
+                            ? (_query.trim().isNotEmpty ||
+                                      _status != 'All' ||
+                                      _from != null ||
+                                      _to != null
+                                  ? 'No matching fuel requests.'
+                                  : 'No fuel requests in this period.')
+                            : null,
+                        scrollFooter: _visibleRows < rows.length
+                            ? Text(
+                                'Showing $_visibleRows of ${rows.length} · Pull up to load more',
+                              )
+                            : null,
+                        titles: const [
+                          'Date',
+                          'Reference',
+                          'Supplier',
+                          'Liters',
+                          'Price / Liter',
+                          'Amount',
+                          'Notes / Route',
+                          'Status',
+                          'Actions',
+                        ],
+                        itemCount: rows.length.clamp(0, _visibleRows),
+                        trailingActions: true,
+                        horizontalOnDesktop: true,
+                        showTitlesRow: MediaQuery.sizeOf(context).width >= 900,
+                        wrappingColumn: 6,
+                        columnExtraWidths: const {8: 40},
+                        valuesAt: (i) {
+                          final r = rows[i];
+                          return [
+                            AdminUsersView.formatCreatedAt(
+                              DateTime.tryParse('${r['day']}T00:00:00'),
+                            ),
+                            '${r['reference'] ?? "—"}',
+                            '${r['supplier'] ?? "—"}',
+                            '${r['liters'] ?? "—"}',
+                            kpiMoney(r['price_per_liter']) == null
+                                ? '—'
+                                : '₱${kpiMoney(r['price_per_liter'])!.toStringAsFixed(2)}',
+                            '₱${(kpiMoney(r['amount']) ?? 0).toStringAsFixed(2)}',
+                            '${r['notes'] ?? '—'}',
+                            r['voided'] == true
+                                ? 'Voided'
+                                : r['local_sync_status'] != null
+                                ? 'Queued'
+                                : 'Active',
+                            '',
+                          ];
+                        },
+                        cellBuilder: (i, column) => column == 8
+                            ? Tooltip(
+                                message: 'View fuel entry',
+                                child: AdminListActionButton(
+                                  icon: Icons.visibility_outlined,
+                                  onTap: () => _edit(rows[i]),
+                                ),
+                              )
+                            : null,
                       ),
-                    );
-                  }
-                  return false;
-                },
-                child: AdminModalRecordList(
-                  scrollHeader: _error == null
-                      ? const SizedBox.shrink()
-                      : Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: Text(
-                            _error!,
-                            style: const TextStyle(color: AppColors.danger),
-                          ),
-                        ),
-                  scrollFooter: rows.isEmpty
-                      ? const Text('No fuel requests in this period.')
-                      : _visibleRows < rows.length
-                      ? Text(
-                          'Showing $_visibleRows of ${rows.length} · Pull up to load more',
-                        )
-                      : null,
-                  titles: const [
-                    'Date',
-                    'Reference',
-                    'Supplier',
-                    'Liters',
-                    'Price / Liter',
-                    'Amount',
-                    'Notes / Route',
-                    'Status',
-                    'Actions',
-                  ],
-                  itemCount: rows.length.clamp(0, _visibleRows),
-                  trailingActions: true,
-                  horizontalOnDesktop: true,
-                  wrappingColumn: 6,
-                  columnExtraWidths: const {8: 40},
-                  valuesAt: (i) {
-                    final r = rows[i];
-                    return [
-                      AdminUsersView.formatCreatedAt(
-                        DateTime.tryParse('${r['day']}T00:00:00'),
-                      ),
-                      '${r['reference'] ?? "—"}',
-                      '${r['supplier'] ?? "—"}',
-                      '${r['liters'] ?? "—"}',
-                      kpiMoney(r['price_per_liter']) == null
-                          ? '—'
-                          : '₱${kpiMoney(r['price_per_liter'])!.toStringAsFixed(2)}',
-                      '₱${(kpiMoney(r['amount']) ?? 0).toStringAsFixed(2)}',
-                      '${r['notes'] ?? '—'}',
-                      r['voided'] == true
-                          ? 'Voided'
-                          : r['local_sync_status'] != null
-                          ? 'Queued'
-                          : 'Active',
-                      '',
-                    ];
-                  },
-                  cellBuilder: (i, column) => column == 8
-                      ? Tooltip(
-                          message: 'View fuel entry',
-                          child: AdminListActionButton(
-                            icon: Icons.visibility_outlined,
-                            onTap: () => _edit(rows[i]),
-                          ),
-                        )
-                      : null,
-                ),
+                    ),
+                  ),
+                ],
               ),
             ),
     );
@@ -359,6 +486,7 @@ class _FuelEntryDialogState extends State<FuelEntryDialog> {
     animation: RoleAccessService.instance,
     builder: (context, _) => !widget.store.canReadFuel
         ? const AdminModalShell(
+            maxWidth: 560,
             title: 'Fuel Entry',
             child: Text('You do not have access to fuel requests.'),
           )
@@ -366,9 +494,10 @@ class _FuelEntryDialogState extends State<FuelEntryDialog> {
   );
 
   Widget _buildContent(BuildContext context) => AdminModalShell(
-    title: widget.entry.isEmpty ? 'Add Fuel' : 'Fuel Entry',
+    maxWidth: 560,
+    title: widget.entry.isEmpty ? 'Add request' : 'Fuel Entry',
     flexibleBody: true,
-    maxWidth: 700,
+
     actions: [
       TextButton(
         onPressed: () => Navigator.pop(context),
@@ -389,28 +518,36 @@ class _FuelEntryDialogState extends State<FuelEntryDialog> {
           children: [
             if (_error != null)
               Text(_error!, style: const TextStyle(color: AppColors.danger)),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.calendar_today),
-              label: Text('Fuel date: ${kpiDayKey(_date)}'),
-              onPressed: widget.entry.isNotEmpty || !widget.store.canEditFuel
-                  ? null
-                  : () async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: _date,
-                        firstDate: DateTime(2000),
-                        lastDate: kpiDate(DateTime.now()),
-                      );
-                      if (picked != null && mounted) {
-                        setState(() {
-                          _date = DateTime.utc(
-                            picked.year,
-                            picked.month,
-                            picked.day,
-                          );
-                        });
-                      }
-                    },
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: TextFormField(
+                key: ValueKey('fuel-date-${kpiDayKey(_date)}'),
+                initialValue: kpiDayKey(_date),
+                readOnly: true,
+                style: adminFieldValueTextStyle,
+                decoration: adminFormInputDecoration('Fuel date').copyWith(
+                  suffixIcon: const Icon(Icons.calendar_today_outlined),
+                ),
+                onTap: widget.entry.isNotEmpty || !widget.store.canEditFuel
+                    ? null
+                    : () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _date,
+                          firstDate: DateTime(2000),
+                          lastDate: kpiDate(DateTime.now()),
+                        );
+                        if (picked != null && mounted) {
+                          setState(() {
+                            _date = DateTime.utc(
+                              picked.year,
+                              picked.month,
+                              picked.day,
+                            );
+                          });
+                        }
+                      },
+              ),
             ),
             for (final e in _fields.entries)
               Padding(
@@ -469,6 +606,9 @@ class _FuelEntryDialogState extends State<FuelEntryDialog> {
               SizedBox(
                 height: 280,
                 child: AdminModalRecordList(
+                  horizontalOnDesktop: true,
+                  showTitlesRow: MediaQuery.sizeOf(context).width >= 900,
+                  emptyMessage: 'No previous versions.',
                   titles: const [
                     'DateTime',
                     'Reference',

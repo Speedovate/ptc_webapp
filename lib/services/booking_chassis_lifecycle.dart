@@ -44,6 +44,7 @@ ChassisLifecycleInstruction? chassisLifecycleInstruction({
       status: 'ready',
       keepBookingLink: false,
       driverLink: ChassisDriverLink.clear,
+      location: 'Garage',
     ),
     'delivered' || 'check' => ChassisLifecycleInstruction(
       status: 'loaded',

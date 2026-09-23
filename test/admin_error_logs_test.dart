@@ -123,7 +123,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Expand errors'));
     await tester.pumpAndSettle();
-    expect(find.text('Device A (117 Errors)'), findsOneWidget);
+    expect(find.text('A'), findsOneWidget);
     await db.collection('sync_error_logs').doc('error0').update({
       'added_after_open': true,
     });
@@ -355,6 +355,13 @@ void main() {
     await tester.tap(find.byTooltip('Expand device errors').first);
     await tester.pumpAndSettle();
     expect(find.text('Action $device'), findsOneWidget);
+    final userLeft = tester.getTopLeft(find.text('8')).dx;
+    expect(tester.getTopLeft(find.text('$device')).dx, userLeft);
+    expect(tester.getTopLeft(find.text('Action $device')).dx, userLeft);
+    expect(
+      tester.getTopLeft(find.text('1 Errors').first).dx,
+      tester.getTopLeft(find.text('2 Errors')).dx,
+    );
     expect(find.text('Action ${device == 'A' ? 'B' : 'A'}'), findsNothing);
     expect(find.byTooltip('Collapse device errors'), findsOneWidget);
     await tester.tap(find.byTooltip('Collapse device errors'));
@@ -438,7 +445,7 @@ void main() {
     expect(find.text('17 Errors'), findsOneWidget);
     await tester.tap(find.byTooltip('Expand errors'));
     await tester.pumpAndSettle();
-    expect(find.text('Device device-A (17 Errors)'), findsOneWidget);
+    expect(find.text('device-A'), findsOneWidget);
     await tester.tap(find.byTooltip('Collapse errors'));
     await tester.pumpAndSettle();
     expect(find.text('Created'), findsNothing);
@@ -461,7 +468,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Expand errors'));
     await tester.pumpAndSettle();
-    expect(find.text('Device device-A (17 Errors)'), findsOneWidget);
+    expect(find.text('device-A'), findsOneWidget);
     await tester.tap(find.byTooltip('Expand device errors'));
     await tester.pumpAndSettle();
     expect(loadedDeviceCount(), 19);

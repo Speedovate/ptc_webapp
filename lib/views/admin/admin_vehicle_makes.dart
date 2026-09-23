@@ -344,7 +344,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                         child: TextButton.icon(
                           onPressed: () => showOperationsCatalog(context),
                           icon: const Icon(Icons.edit_location_alt_outlined),
-                          label: const Text('Trip Rates'),
+                          label: const Text('Rates'),
                         ),
                       ),
                     AdminListToolbar(

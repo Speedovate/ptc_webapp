@@ -28,6 +28,7 @@ class AdminListToolbar extends StatelessWidget {
     this.buttonLabel = 'New',
     this.buttonIcon = Icons.add_rounded,
     this.buttonBusy = false,
+    this.fitButtonLabel = false,
   });
 
   final double controlHeight;
@@ -38,6 +39,7 @@ class AdminListToolbar extends StatelessWidget {
   final String buttonLabel;
   final IconData buttonIcon;
   final bool buttonBusy;
+  final bool fitButtonLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -52,7 +54,26 @@ class AdminListToolbar extends StatelessWidget {
             : 12.0;
         final searchFlex = availableWidth >= 1000 ? 4 : 1;
         final iconOnlySquareSize = controlHeight - 4;
-        final buttonWidth = iconOnly ? iconOnlySquareSize : 108.0;
+        var buttonWidth = iconOnly ? iconOnlySquareSize : 108.0;
+        if (!iconOnly && fitButtonLabel) {
+          final painter = TextPainter(
+            text: TextSpan(
+              text: buttonLabel,
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context),
+            maxLines: 1,
+          )..layout();
+          // Match the button's 32px padding, 10px gap and 18px icon.
+          buttonWidth = (painter.width.ceilToDouble() + 60).clamp(
+            108.0,
+            double.infinity,
+          );
+          painter.dispose();
+        }
         final filterWidth = adminListFiltersButtonWidth(iconOnly);
         return Row(
           crossAxisAlignment: CrossAxisAlignment.center,
@@ -328,6 +349,10 @@ class AdminListFiltersButton extends StatefulWidget {
     this.rightGap = 44,
     this.alignMenuToButtonRight = false,
     this.menuWidth,
+    this.label = 'Filters',
+    this.icon = Icons.filter_alt_rounded,
+    this.onPressed,
+    this.menuAnchorKey,
   });
 
   final double controlHeight;
@@ -340,6 +365,10 @@ class AdminListFiltersButton extends StatefulWidget {
   final double rightGap;
   final bool alignMenuToButtonRight;
   final double? menuWidth;
+  final String label;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final GlobalKey? menuAnchorKey;
 
   @override
   State<AdminListFiltersButton> createState() => _AdminListFiltersButtonState();
@@ -400,6 +429,7 @@ class AdminListDynamicFiltersPanel extends StatelessWidget {
     required this.filters,
     required this.onClear,
     this.alignMenuToButtonRight = false,
+    this.menuAnchorKey,
     this.controlHeight = adminFilterFieldMinHeight,
     this.surfaceRadius = 16,
     this.filterItemWidth = 216,
@@ -409,6 +439,7 @@ class AdminListDynamicFiltersPanel extends StatelessWidget {
   final List<AdminListFilterConfig> filters;
   final VoidCallback onClear;
   final bool alignMenuToButtonRight;
+  final GlobalKey? menuAnchorKey;
   final double controlHeight;
   final double surfaceRadius;
   final double filterItemWidth;
@@ -433,6 +464,7 @@ class AdminListDynamicFiltersPanel extends StatelessWidget {
       surfaceRadius: surfaceRadius,
       iconOnly: iconOnly,
       alignMenuToButtonRight: alignMenuToButtonRight,
+      menuAnchorKey: menuAnchorKey,
       menuWidth: desiredOverlayWidth,
       menuChildren: [
         SizedBox(
@@ -811,7 +843,15 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
         buttonBox != null &&
         (widget.menuWidth == null ||
             buttonLeft + widget.menuWidth! <= screenWidth - 12);
+    final menuAnchor =
+        widget.menuAnchorKey?.currentContext?.findRenderObject() as RenderBox?;
+    final anchorRight = menuAnchor != null && menuAnchor.hasSize
+        ? menuAnchor
+              .localToGlobal(Offset(menuAnchor.constraints.maxWidth, 0))
+              .dx
+        : null;
     final useDesktopLeftAnchor =
+        anchorRight == null &&
         !widget.iconOnly &&
         screenWidth >= 520 &&
         !widget.alignMenuToButtonRight &&
@@ -824,7 +864,9 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
         !alignToToolbarAction &&
         (widget.alignMenuToButtonRight ||
             (!widget.iconOnly && screenWidth >= 520 && !useDesktopLeftAnchor));
-    final popupRight = alignToToolbarAction
+    final popupRight = anchorRight != null
+        ? (screenWidth - anchorRight).clamp(12.0, screenWidth - 12.0)
+        : alignToToolbarAction
         ? effectiveRightGap
         : shouldAlignToButtonRight && buttonBox != null
         ? (screenWidth - buttonRight - widget.alignmentOffset.dx).clamp(
@@ -902,9 +944,7 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 2),
             child: FilledButton(
-              onPressed: () {
-                _toggleMenu();
-              },
+              onPressed: widget.onPressed ?? _toggleMenu,
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primaryColor,
                 foregroundColor: Colors.white,
@@ -918,20 +958,20 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
                 ),
               ),
               child: widget.iconOnly
-                  ? const Icon(Icons.filter_alt_rounded)
-                  : const Row(
+                  ? Icon(widget.icon)
+                  : Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Flexible(
                           child: Text(
-                            'Filters',
+                            widget.label,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontWeight: FontWeight.w700),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ),
-                        SizedBox(width: 12),
-                        Icon(Icons.filter_alt_rounded),
+                        const SizedBox(width: 12),
+                        Icon(widget.icon),
                       ],
                     ),
             ),

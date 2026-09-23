@@ -1,3 +1,4 @@
+import 'package:webapp/services/kpi/kpi_rating_rules.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/kpi/operations_catalog.dart';
@@ -85,9 +86,10 @@ class PmKpiStore {
   );
   bool get canEdit =>
       _editPermission?.call() ??
-      RoleAccessService.instance.canAccess(
-        DispatcherAccessCapability.pmKpiUpdate,
-      );
+      (canRead &&
+          RoleAccessService.instance.canAccess(
+            DispatcherAccessCapability.pmKpiUpdate,
+          ));
   bool get canOpenUsers => RoleAccessService.instance.canAccess(
     DispatcherAccessCapability.usersRead,
   );
@@ -132,11 +134,66 @@ class PmKpiStore {
 
   void invalidateRefreshWindow() => _refreshedAt.clear();
 
+  // Reserved settings namespace; this is not a vehicle document.
+  static const fleetRulesId = 'fleet';
+  Future<Map<String, dynamic>> loadFleetRules({bool localOnly = false}) async {
+    final account = await _account();
+    final key = 'kpi:$account:$fleetRulesId:settings';
+    final id = '${_prefix(fleetRulesId)}settings';
+    var document =
+        (await _cache.readDocumentMaps(key))?.firstOrNull ??
+        <String, dynamic>{};
+    final refreshed = _refreshedAt['fleet-rules:$account'];
+    final recent =
+        refreshed != null &&
+        DateTime.now().difference(refreshed) < const Duration(seconds: 30);
+    if (!localOnly && !recent && _online()) {
+      try {
+        final snapshot = await _firestore
+            .collection(collection)
+            .doc(id)
+            .get(const GetOptions(source: Source.server))
+            .timeout(const Duration(seconds: 10));
+        document = snapshot.exists ? {...snapshot.data()!, 'id': id} : {};
+        await _cache.writeDocumentMaps(key, [document]);
+        _refreshedAt['fleet-rules:$account'] = DateTime.now();
+      } on FirebaseException catch (error) {
+        if (error.code == 'permission-denied' ||
+            error.code == 'unauthenticated') {
+          rethrow;
+        }
+      } catch (_) {
+        // Keep persisted rules during an interrupted connection.
+      }
+    }
+    final pending = await _queue.readQueuedCollectionDocuments(
+      collectionKey: collection,
+    );
+    for (final item in pending.where((item) => item['id'] == id)) {
+      document = item;
+    }
+    return document;
+  }
+
+  Future<void> saveFleetRules(
+    KpiRatingRules rules,
+    Map<String, dynamic> previous,
+  ) async {
+    if (!rules.valid) throw StateError('Invalid rating rules.');
+    await save(
+      makeId: fleetRulesId,
+      data: {...previous, 'kind': 'settings', 'rating_rules': rules.toMap()},
+      previous: previous,
+    );
+    invalidateRefreshWindow();
+  }
+
   Future<KpiStoredData?> readCached(String makeId, KpiPeriod period) async {
     final account = await _account();
     if (await _cache.readDocumentMaps('kpi:$account:$makeId:settings') ==
             null &&
-        await _cache.readDocumentMaps('kpi:$account:$makeId:days') == null) {
+        await _cache.readDocumentMaps('kpi:$account:$makeId:days') == null &&
+        await _cache.readDocumentMaps('kpi:$account:$makeId:fuel') == null) {
       return null;
     }
     return _loadData(makeId, period, account, localOnly: true);
@@ -290,6 +347,11 @@ class PmKpiStore {
         'A KPI edit needs review in Queued Actions. Existing server data was preserved.',
       );
     }
+    final fleetRules = await loadFleetRules(localOnly: localOnly);
+    settings = {
+      ...settings,
+      'rating_rules': KpiRatingRules.fromMap(fleetRules).toMap(),
+    };
     return KpiStoredData(
       merged.values.toList(),
       settings,

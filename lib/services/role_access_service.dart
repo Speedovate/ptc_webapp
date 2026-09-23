@@ -6,7 +6,8 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/role_access.request.dart';
 
 class RoleAccessService extends ChangeNotifier {
-  RoleAccessService._();
+  RoleAccessService({RoleAccessRequest? request})
+    : _request = request ?? RoleAccessRequest.instance;
 
   static const List<String> _preferredRoleOrder = [
     'client',
@@ -19,9 +20,14 @@ class RoleAccessService extends ChangeNotifier {
   static const Set<String> _onlineEligibleRoles = {'driver', 'helper'};
   static const Set<String> _assignedBookingRoles = {'driver', 'helper'};
 
-  static final RoleAccessService instance = RoleAccessService._();
+  static final RoleAccessService instance = RoleAccessService();
 
-  final RoleAccessRequest _request = RoleAccessRequest.instance;
+  final RoleAccessRequest _request;
+  StreamSubscription<void>? _cacheSubscription;
+  bool _disposed = false;
+  int _revision = 0;
+  Future<void>? _refreshFuture;
+  bool _refreshAgain = false;
   Map<String, DispatcherAccessConfig> _configsByRole =
       <String, DispatcherAccessConfig>{};
   String? _currentRole;
@@ -39,33 +45,31 @@ class RoleAccessService extends ChangeNotifier {
       ..._configsByRole.keys,
     }.where((role) => role != 'sub-client');
     final roles = sourceRoles.toList(growable: false)
-          ..sort((a, b) {
-            final aIndex = _preferredRoleOrder.indexOf(a);
-            final bIndex = _preferredRoleOrder.indexOf(b);
-            if (aIndex != -1 && bIndex != -1) {
-              return aIndex.compareTo(bIndex);
-            }
-            if (aIndex != -1) {
-              return -1;
-            }
-            if (bIndex != -1) {
-              return 1;
-            }
-            return a.compareTo(b);
-          });
+      ..sort((a, b) {
+        final aIndex = _preferredRoleOrder.indexOf(a);
+        final bIndex = _preferredRoleOrder.indexOf(b);
+        if (aIndex != -1 && bIndex != -1) {
+          return aIndex.compareTo(bIndex);
+        }
+        if (aIndex != -1) {
+          return -1;
+        }
+        if (bIndex != -1) {
+          return 1;
+        }
+        return a.compareTo(b);
+      });
     return roles;
   }
 
   List<String> get publicRegisterRoleKeys => orderedKnownRoleKeys
-      .where(
-        (role) => role == 'client' || role == 'driver' || role == 'helper',
-      )
+      .where((role) => role == 'client' || role == 'driver' || role == 'helper')
       .toList(growable: false);
 
   List<String> get adminUserRoleKeys => orderedKnownRoleKeys;
 
-  List<String> get workflowRoleKeys => orderedKnownRoleKeys
-      .toList(growable: false);
+  List<String> get workflowRoleKeys =>
+      orderedKnownRoleKeys.toList(growable: false);
   bool get isInitialized => _isInitialized;
   String? get currentRoleKey => _currentRole;
 
@@ -78,6 +82,10 @@ class RoleAccessService extends ChangeNotifier {
     if (_isInitialized) {
       return;
     }
+    _cacheSubscription ??= _request.watchRoleAccessCacheUpdates().listen(
+      (_) => unawaited(refresh()),
+      onError: (Object error, StackTrace stack) {},
+    );
     final initialization = refresh();
     _initializingFuture = initialization;
     try {
@@ -88,16 +96,44 @@ class RoleAccessService extends ChangeNotifier {
     }
   }
 
-  Future<void> refresh() async {
-    try {
-      final configs = await _request.getAllRoleAccessConfigs();
-      _configsByRole = {
-        for (final config in configs) _normalizeRoleKey(config.role)!: config,
-      };
-    } catch (error) {
-      // Preserve the last known in-memory config if refresh fails.
+  Future<void> refresh() {
+    final running = _refreshFuture;
+    if (running != null) {
+      _refreshAgain = true;
+      return running;
     }
-    notifyListeners();
+    return _refreshFuture = _refreshConfigs().whenComplete(() {
+      _refreshFuture = null;
+    });
+  }
+
+  Future<void> _refreshConfigs() async {
+    do {
+      _refreshAgain = false;
+      final revision = _revision;
+      try {
+        final configs = await _request.getAllRoleAccessConfigs();
+        if (_disposed) return;
+        // A read started before a local save must not restore old permissions.
+        if (revision == _revision) {
+          _configsByRole = {
+            for (final config in configs)
+              _normalizeRoleKey(config.role)!: config,
+          };
+          notifyListeners();
+        }
+      } catch (_) {
+        // Preserve the last known config; retry only on the next explicit event.
+      }
+    } while (_refreshAgain && !_disposed);
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    unawaited(_cacheSubscription?.cancel());
+    _cacheSubscription = null;
+    super.dispose();
   }
 
   void setCurrentUser(UserModel? user) {
@@ -111,6 +147,8 @@ class RoleAccessService extends ChangeNotifier {
 
   Future<void> saveDispatcherAccess(DispatcherAccessConfig config) async {
     final saved = await _request.saveDispatcherAccess(config);
+    if (_disposed) return;
+    _revision++;
     _configsByRole['dispatcher'] = saved;
     notifyListeners();
   }
@@ -123,21 +161,24 @@ class RoleAccessService extends ChangeNotifier {
     final saved = await _request.saveRoleAccess(
       config.copyWith(id: normalizedRole, role: normalizedRole),
     );
+    if (_disposed) return;
+    _revision++;
     _configsByRole[normalizedRole] = saved;
     notifyListeners();
   }
 
-  bool canAccess(
-    String capabilityKey, {
-    String? role,
-  }) {
+  bool canAccess(String capabilityKey, {String? role}) {
     final normalizedRole = effectiveRoleKey(role);
-    final config = normalizedRole == null ? null : _configsByRole[normalizedRole];
+    final config = normalizedRole == null
+        ? null
+        : _configsByRole[normalizedRole];
     final resolvedValue = config != null
         ? config.isEnabled(capabilityKey)
         : (normalizedRole == null
               ? false
-              : (defaultAccessCapabilitiesForRole(normalizedRole)[capabilityKey] ??
+              : (defaultAccessCapabilitiesForRole(
+                      normalizedRole,
+                    )[capabilityKey] ??
                     false));
     if (resolvedValue) {
       return true;
@@ -191,10 +232,7 @@ class RoleAccessService extends ChangeNotifier {
         DispatcherAccessConfig.defaults(roleKey: normalizedRole);
   }
 
-  bool hasAnyAccess(
-    Iterable<String> capabilityKeys, {
-    String? role,
-  }) {
+  bool hasAnyAccess(Iterable<String> capabilityKeys, {String? role}) {
     for (final capabilityKey in capabilityKeys) {
       if (canAccess(capabilityKey, role: role)) {
         return true;
@@ -209,7 +247,8 @@ class RoleAccessService extends ChangeNotifier {
   }
 
   bool usesAdminShell({String? role}) {
-    return canAccess(DispatcherAccessCapability.usersRead, role: role) ||
+    return canAccess(DispatcherAccessCapability.pmKpiRead, role: role) ||
+        canAccess(DispatcherAccessCapability.usersRead, role: role) ||
         canAccess(DispatcherAccessCapability.dashboardRead, role: role) ||
         canAccess(DispatcherAccessCapability.vehicleMakesRead, role: role) ||
         canAccess(DispatcherAccessCapability.vehicleTypesRead, role: role) ||
@@ -222,12 +261,14 @@ class RoleAccessService extends ChangeNotifier {
 
   bool isOnlineEligibleRole(String? role) {
     final normalizedRole = _normalizeRoleKey(role);
-    return normalizedRole != null && _onlineEligibleRoles.contains(normalizedRole);
+    return normalizedRole != null &&
+        _onlineEligibleRoles.contains(normalizedRole);
   }
 
   bool isAssignedBookingRole(String? role) {
     final normalizedRole = _normalizeRoleKey(role);
-    return normalizedRole != null && _assignedBookingRoles.contains(normalizedRole);
+    return normalizedRole != null &&
+        _assignedBookingRoles.contains(normalizedRole);
   }
 
   String assignedBookingRoleLabel(String? role) {

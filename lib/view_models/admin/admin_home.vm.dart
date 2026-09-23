@@ -11,7 +11,8 @@ enum AdminSection {
   support('Support'),
   profile('Profile'),
   analytics('Analytics'),
-  errorLogs('Error Logs');
+  errorLogs('Error Logs'),
+  kpiTracking('KPI Tracking');
 
   const AdminSection(this.title);
 

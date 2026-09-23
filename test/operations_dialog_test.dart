@@ -19,6 +19,8 @@ class CatalogStub extends OperationsCatalogStore {
   @override
   Future<OperationsCatalog> load({bool force = false}) async => current;
   @override
+  Future<OperationsCatalog?> readCached() async => null;
+  @override
   Future<void> save(
     Map<String, dynamic> next,
     Map<String, dynamic> previous,
@@ -28,6 +30,9 @@ class CatalogStub extends OperationsCatalogStore {
 }
 
 class FuelStub extends PmKpiStore {
+  @override
+  Future<KpiStoredData?> readCached(String makeId, KpiPeriod period) async =>
+      null;
   @override
   Future<KpiStoredData> load(String makeId, KpiPeriod period) async =>
       const KpiStoredData(
@@ -98,7 +103,10 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final store = CatalogStub();
       await open(tester, OperationsCatalogDialog(store: store));
-      await tester.tap(find.text('Add location'));
+      final toolbar = tester.widget<AdminListToolbar>(
+        find.byType(AdminListToolbar),
+      );
+      toolbar.onNewPressed!();
       await tester.pumpAndSettle();
       await tester.enterText(field('Name'), 'Test route');
       if (width >= 1200) {
@@ -145,6 +153,7 @@ void main() {
         final list = tester.widget<AdminModalRecordList>(
           find.byType(AdminModalRecordList),
         );
+        expect(list.itemCount, greaterThan(0));
         expect(list.valuesAt(0).first, 'San Manuel');
         expect(
           List.generate(list.itemCount, (i) => list.valuesAt(i).first),

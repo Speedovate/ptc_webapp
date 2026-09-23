@@ -67,6 +67,42 @@ Future<void> waitFor(bool Function() ready) async {
 
 void main() {
   test(
+    'KPI diagnostics persist and upload with context without queue ownership',
+    () async {
+      final backend = MemoryLogs();
+      final writes = <Map<String, dynamic>>[];
+      var online = false;
+      final service = SyncErrorLogService(
+        backend: backend,
+        online: () => online,
+        metadata: (_) async => {'user_id': '13'},
+        writer: (_, data) async => writes.add(data),
+      );
+      await service.start();
+      await service.capture(
+        source: 'pm_kpi_dialog.dart',
+        operation: 'Load KPI',
+        entryId: '4:2026-09:load',
+        target: 'PM7',
+        error: 'timeout',
+        stack: 'load:123',
+        attempt: 1,
+        kind: 'kpi_diagnostic',
+        attentionRequired: true,
+        details: {'pm_id': '4', 'failed_step': 'Load KPI'},
+      );
+      expect(reports(backend), hasLength(1));
+      online = true;
+      await service.flush();
+      expect(writes, hasLength(1));
+      expect(writes.single['kind'], 'kpi_diagnostic');
+      expect(writes.single['attention_required'], isTrue);
+      expect(writes.single['queue_scope'], isNull);
+      expect(writes.single['details']['failed_step'], 'Load KPI');
+    },
+  );
+
+  test(
     'inline photos cannot truncate pending and server booking diagnostics',
     () {
       final image = 'data:image/jpeg;base64,${'A' * 200000}';

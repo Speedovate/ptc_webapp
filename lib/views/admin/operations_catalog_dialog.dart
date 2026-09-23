@@ -1,6 +1,6 @@
+import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'dart:async';
 import 'package:webapp/services/sync_error_log_service.dart';
-import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_record_list.dart';
@@ -35,7 +35,7 @@ class _OperationsCatalogDialogState extends State<OperationsCatalogDialog> {
   String _query = '';
   String? _error;
   bool _busy = true;
-  DateTime _effective = kpiDate(DateTime.now());
+  DateTime get _effective => kpiDate(DateTime.now());
   @override
   void initState() {
     super.initState();
@@ -44,13 +44,31 @@ class _OperationsCatalogDialogState extends State<OperationsCatalogDialog> {
   }
 
   Future<void> _load() async {
+    setState(() {
+      _busy = _catalog == null;
+      _error = null;
+    });
     try {
       if (!_store.canRead) {
         throw StateError(
           'You do not have access to locations and trip shares.',
         );
       }
-      final value = await _store.load(force: true);
+      if (_catalog == null) {
+        final cached = await _store.readCached().timeout(
+          const Duration(seconds: 5),
+        );
+        if (!mounted) return;
+        if (cached != null) {
+          setState(() {
+            _catalog = cached;
+            _busy = false;
+          });
+        }
+      }
+      final value = await _store
+          .load(force: true)
+          .timeout(const Duration(seconds: 15));
       if (mounted) {
         setState(() {
           _catalog = value;
@@ -321,13 +339,14 @@ class _OperationsCatalogDialogState extends State<OperationsCatalogDialog> {
     animation: RoleAccessService.instance,
     builder: (context, _) => !_store.canRead
         ? AdminModalShell(
+            maxWidth: AdminModalShell.kpiMaxWidth,
             actions: [
               TextButton(
                 onPressed: widget.onBack ?? () => Navigator.pop(context),
                 child: Text(widget.onBack == null ? 'Close' : 'Back to KPI'),
               ),
             ],
-            title: 'Trip Rates',
+            title: 'Rates',
             child: Text('You do not have access to these settings.'),
           )
         : _buildContent(context),
@@ -346,8 +365,9 @@ class _OperationsCatalogDialogState extends State<OperationsCatalogDialog> {
         )
         .toList();
     return AdminModalShell(
-      title: 'Trip Rates',
-      maxWidth: 950,
+      maxWidth: AdminModalShell.kpiMaxWidth,
+      title: 'Rates',
+
       flexibleBody: true,
       bodyHandlesScrolling: true,
       actions: [
@@ -357,7 +377,7 @@ class _OperationsCatalogDialogState extends State<OperationsCatalogDialog> {
         ),
       ],
       child: _busy
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppPageLoading(compact: true)
           : Column(
               children: [
                 Padding(
@@ -366,67 +386,49 @@ class _OperationsCatalogDialogState extends State<OperationsCatalogDialog> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (_error != null)
-                        Text(
-                          _error!,
-                          style: const TextStyle(color: AppColors.danger),
-                        ),
-                      TextField(
-                        decoration: adminFormInputDecoration(
-                          'Search locations',
-                        ),
-                        onChanged: (value) => setState(() => _query = value),
-                      ),
-                      Wrap(
-                        spacing: 8,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          OutlinedButton.icon(
-                            icon: const Icon(Icons.calendar_today),
-                            label: Text(
-                              'Rates effective ${kpiDayKey(_effective)}',
-                            ),
-                            onPressed: () async {
-                              final now = kpiDate(DateTime.now());
-                              final picked = await showDatePicker(
-                                context: context,
-                                initialDate: _effective,
-                                firstDate: now,
-                                lastDate: DateTime(2100),
-                              );
-                              if (picked != null && mounted) {
-                                setState(
-                                  () => _effective = DateTime.utc(
-                                    picked.year,
-                                    picked.month,
-                                    picked.day,
-                                  ),
-                                );
-                              }
-                            },
-                          ),
-                          if (_store.canEdit)
-                            TextButton(
-                              onPressed: _payRules,
-                              child: const Text(
-                                'Daily pay / City Proper / hustling rules',
+                        AdminListItemCard(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              AdminListStateText(message: _error!),
+                              TextButton(
+                                onPressed: _load,
+                                child: const Text('Retry'),
                               ),
-                            ),
-                        ],
-                      ),
-                      if (_store.canEdit)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          child: SizedBox(
-                            width: 170,
-                            child: AdminListNewButton(
-                              controlHeight: 48,
-                              surfaceRadius: 16,
-                              iconOnly: false,
-                              label: 'Add location',
-                              onTap: () => _location(),
-                            ),
+                            ],
                           ),
                         ),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _store.canEdit && _catalog != null
+                            ? AdminListToolbar(
+                                controlHeight: adminFilterFieldMinHeight,
+                                surfaceRadius: 16,
+                                search: AdminListSearchField(
+                                  controlHeight: adminFilterFieldMinHeight,
+                                  surfaceRadius: 16,
+                                  onChanged: (value) =>
+                                      setState(() => _query = value),
+                                ),
+                                filtersBuilder: (_, iconOnly) =>
+                                    AdminListFiltersButton(
+                                      controlHeight: adminFilterFieldMinHeight,
+                                      surfaceRadius: 16,
+                                      iconOnly: iconOnly,
+                                      label: 'Rules',
+                                      icon: Icons.tune,
+                                      onPressed: _payRules,
+                                      menuChildren: const [],
+                                    ),
+                                onNewPressed: () => _location(),
+                              )
+                            : AdminListSearchField(
+                                controlHeight: adminFilterFieldMinHeight,
+                                surfaceRadius: 16,
+                                onChanged: (value) =>
+                                    setState(() => _query = value),
+                              ),
+                      ),
                     ],
                   ),
                 ),
@@ -434,6 +436,11 @@ class _OperationsCatalogDialogState extends State<OperationsCatalogDialog> {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     child: AdminModalRecordList(
+                      emptyMessage: _error != null
+                          ? null
+                          : _query.trim().isEmpty
+                          ? 'No trip rates.'
+                          : 'No matching trip rates.',
                       trailingActions: true,
                       titles: const [
                         'Location',
@@ -442,13 +449,12 @@ class _OperationsCatalogDialogState extends State<OperationsCatalogDialog> {
                         'Driver',
                         'Helper',
                         'Status',
-                        'Created At',
-                        'Updated At',
                         'Actions',
                       ],
                       itemCount: locations.length,
-                      columnExtraWidths: const {8: 96},
+                      columnExtraWidths: const {6: 96},
                       horizontalOnDesktop: true,
+                      showTitlesRow: MediaQuery.sizeOf(context).width >= 900,
                       valuesAt: (i) {
                         final location = locations[i];
                         final rate = matrix == null
@@ -471,21 +477,11 @@ class _OperationsCatalogDialogState extends State<OperationsCatalogDialog> {
                           _catalog!.hasActiveRate(location, _effective)
                               ? 'Active'
                               : 'Inactive',
-                          location.createdAt == null
-                              ? '—'
-                              : AdminUsersView.formatCreatedAt(
-                                  location.createdAt,
-                                ),
-                          location.updatedAt == null
-                              ? '—'
-                              : AdminUsersView.formatCreatedAt(
-                                  location.updatedAt,
-                                ),
                           '',
                         ];
                       },
                       cellBuilder: (i, col) {
-                        if (col != 8 || !_store.canEdit) {
+                        if (col != 6 || !_store.canEdit) {
                           return null;
                         }
                         final location = locations[i];
@@ -578,6 +574,7 @@ class _ValuesDialogState extends State<_ValuesDialog> {
 
   @override
   Widget build(BuildContext context) => AdminModalShell(
+    maxWidth: 560,
     title: widget.title,
     flexibleBody: true,
     actions: [

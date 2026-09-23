@@ -1,3 +1,4 @@
+import 'package:webapp/views/admin/admin_kpi_tracking.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:webapp/views/admin/admin_error_logs.dart';
 import 'package:webapp/widgets/shared/user_session_actions_scope.dart';
@@ -568,10 +569,18 @@ class _AdminHomeState extends State<AdminHome> {
     role: _shellUser.role,
   );
 
+  bool get _canReadKpi => _roleAccessService.canAccess(
+    DispatcherAccessCapability.pmKpiRead,
+    role: _shellUser.role,
+  );
+
   bool get _canReadErrorLogs =>
       _shellUser.role?.trim().toLowerCase() == 'admin';
 
   AdminSection _resolvedSection(AdminSection section) {
+    if (section == AdminSection.kpiTracking && !_canReadKpi) {
+      return _fallbackSection();
+    }
     if (section == AdminSection.errorLogs && !_canReadErrorLogs) {
       return _fallbackSection();
     }
@@ -883,6 +892,16 @@ class _AdminHomeState extends State<AdminHome> {
               }
             },
           ),
+        if (_canReadKpi)
+          SidebarMenuItem(
+            label: AdminSection.kpiTracking.title,
+            icon: _menuIcon(AdminSection.kpiTracking),
+            isSelected: vm.selectedSection == AdminSection.kpiTracking,
+            onTap: () {
+              vm.selectSection(AdminSection.kpiTracking);
+              if (isCompact) Navigator.of(context).pop();
+            },
+          ),
       ],
     );
   }
@@ -961,6 +980,7 @@ class _AdminHomeState extends State<AdminHome> {
           ),
         ),
       ),
+      AdminSection.kpiTracking => const AdminKpiTrackingView(),
       AdminSection.analytics => const AdminAnalyticsView(),
       AdminSection.errorLogs => AdminErrorLogsView(
         user: _shellUser,
@@ -1150,6 +1170,7 @@ class _AdminHomeState extends State<AdminHome> {
       AdminSection.profile => Icons.account_circle_rounded,
       AdminSection.analytics => Icons.insights_rounded,
       AdminSection.errorLogs => Icons.bug_report_outlined,
+      AdminSection.kpiTracking => Icons.assessment_outlined,
     };
   }
 }

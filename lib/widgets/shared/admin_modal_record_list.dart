@@ -12,8 +12,10 @@ class AdminModalRecordList extends StatelessWidget {
     required this.itemCount,
     required this.valuesAt,
     this.cellBuilder,
+    this.onRowTap,
     this.hiddenColumnsAt,
     this.fullWidthRowColumnAt,
+    this.leadingColumnSpanAt,
     this.rowGroupKey,
     this.dividerAfterRow,
     this.columnStyles = const {},
@@ -23,22 +25,29 @@ class AdminModalRecordList extends StatelessWidget {
     this.trailingActions = false,
     this.shrinkWrap = false,
     this.horizontalOnDesktop = false,
+    this.showTitlesRow = true,
     this.scrollHeader,
     this.scrollController,
     this.scrollPhysics,
     this.scrollFooter,
+    this.emptyMessage,
   });
+  final String? emptyMessage;
   final List<String> titles;
   final int itemCount;
   final List<String> Function(int index) valuesAt;
 
   final Widget? Function(int row, int column)? cellBuilder;
+  final ValueChanged<int>? onRowTap;
 
   /// Hide row-specific fields, retaining desktop column alignment.
   final Set<int> Function(int row)? hiddenColumnsAt;
 
   /// Render this column across the row, with optional trailing actions.
   final int? Function(int row)? fullWidthRowColumnAt;
+
+  /// Merge leading columns into column zero while keeping later columns aligned.
+  final int Function(int row)? leadingColumnSpanAt;
 
   /// Adjacent rows with the same key share a card. The first row is the
   /// summary, separated from its expanded detail rows by one divider.
@@ -53,6 +62,7 @@ class AdminModalRecordList extends StatelessWidget {
   /// Let an enclosing scroll view own vertical scrolling.
   final bool shrinkWrap;
   final bool horizontalOnDesktop;
+  final bool showTitlesRow;
 
   /// Header and rows share one lazy vertical viewport when supplied.
   final Widget? scrollHeader;
@@ -94,6 +104,10 @@ class AdminModalRecordList extends StatelessWidget {
       if (fullWidthRowColumnAt?.call(rowIndex) != null) continue;
       final row = rows[rowIndex];
       for (var i = 0; i < titles.length; i++) {
+        if (i < (leadingColumnSpanAt?.call(rowIndex) ?? 1) &&
+            (leadingColumnSpanAt?.call(rowIndex) ?? 1) > 1) {
+          continue;
+        }
         for (final line in row[i].split('\n')) {
           widths[i] = AdminListMeasurements.maxValue(
             widths[i],
@@ -104,6 +118,15 @@ class AdminModalRecordList extends StatelessWidget {
     }
     for (var i = 0; i < widths.length; i++) {
       widths[i] = AdminListMeasurements.resolvedColumnWidth(widths[i]);
+    }
+    for (var row = 0; row < rows.length; row++) {
+      final span = leadingColumnSpanAt?.call(row) ?? 1;
+      if (span <= 1 || fullWidthRowColumnAt?.call(row) != null) continue;
+      final available = widths.take(span).fold<double>(0, (sum, w) => sum + w);
+      final required = AdminListMeasurements.resolvedColumnWidth(
+        measure(rows[row][0], headerStyle),
+      );
+      if (required > available) widths[span - 1] += required - available;
     }
     Widget valueText(String text, TextStyle style) => selectableCells
         ? SelectableText(text, style: style)
@@ -200,37 +223,46 @@ class AdminModalRecordList extends StatelessWidget {
             );
           }
           final hidden = hiddenColumnsAt?.call(index) ?? const <int>{};
+          final leadingSpan = leadingColumnSpanAt?.call(index) ?? 1;
           final visible = [
             for (var i = 0; i < titles.length; i++)
-              if (!hidden.contains(i)) i,
+              if (!hidden.contains(i) && (i == 0 || i >= leadingSpan)) i,
           ];
           return wide
               ? Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    for (var i = 0; i < titles.length; i++) ...[
-                      if (trailingActions && i == titles.length - 1)
-                        const Spacer(),
-                      AdminListFixedSlot(
-                        width: layoutWidths[i],
-                        child: hidden.contains(i)
-                            ? const SizedBox.shrink()
-                            : AdminListBodyCell(
-                                alignment:
-                                    trailingActions && i == titles.length - 1
-                                    ? Alignment.centerRight
-                                    : Alignment.centerLeft,
-                                trailingPadding:
-                                    trailingActions && i == titles.length - 1
-                                    ? 0
-                                    : AdminListMeasurements
-                                          .defaultTrailingPadding,
-                                child:
-                                    cellBuilder?.call(index, i) ??
-                                    valueText(values[i], valueStyles[i]),
-                              ),
-                      ),
-                    ],
+                    for (var i = 0; i < titles.length; i++)
+                      if (i == 0 || i >= leadingSpan) ...[
+                        if (trailingActions && i == titles.length - 1)
+                          const Spacer(),
+                        AdminListFixedSlot(
+                          width: i == 0
+                              ? layoutWidths
+                                    .take(leadingSpan)
+                                    .fold<double>(
+                                      0,
+                                      (sum, width) => sum + width,
+                                    )
+                              : layoutWidths[i],
+                          child: hidden.contains(i)
+                              ? const SizedBox.shrink()
+                              : AdminListBodyCell(
+                                  alignment:
+                                      trailingActions && i == titles.length - 1
+                                      ? Alignment.centerRight
+                                      : Alignment.centerLeft,
+                                  trailingPadding:
+                                      trailingActions && i == titles.length - 1
+                                      ? 0
+                                      : AdminListMeasurements
+                                            .defaultTrailingPadding,
+                                  child:
+                                      cellBuilder?.call(index, i) ??
+                                      valueText(values[i], valueStyles[i]),
+                                ),
+                        ),
+                      ],
                   ],
                 )
               : Column(
@@ -288,9 +320,17 @@ class AdminModalRecordList extends StatelessWidget {
           groups.add((start: start, end: end));
           start = end;
         }
+        final showEmpty = groups.isEmpty && emptyMessage != null;
+        final groupCount = showEmpty ? 1 : groups.length;
         Widget buildGroup(BuildContext context, int index) {
+          if (showEmpty) {
+            return AdminListItemCard(
+              padding: const EdgeInsets.all(24),
+              child: AdminListStateText(message: emptyMessage!),
+            );
+          }
           final group = groups[index];
-          return AdminListItemCard(
+          final card = AdminListItemCard(
             child: group.end == group.start + 1
                 ? buildRowContent(context, group.start)
                 : Column(
@@ -316,15 +356,26 @@ class AdminModalRecordList extends StatelessWidget {
                     ],
                   ),
           );
+          if (onRowTap == null) return card;
+          return Semantics(
+            button: true,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: () => onRowTap!(group.start),
+              child: card,
+            ),
+          );
         }
 
+        final rowStart = showTitlesRow ? 2 : 1;
         final content = scrollHeader != null
             ? ListView.separated(
                 controller: scrollController,
                 physics: scrollPhysics,
                 primary: false,
                 padding: EdgeInsets.zero,
-                itemCount: groups.length + 2 + (scrollFooter == null ? 0 : 1),
+                itemCount:
+                    groupCount + rowStart + (scrollFooter == null ? 0 : 1),
                 separatorBuilder: (_, index) =>
                     SizedBox(height: index == 0 ? 0 : 12),
                 itemBuilder: (context, index) {
@@ -337,16 +388,18 @@ class AdminModalRecordList extends StatelessWidget {
                       ),
                     );
                   }
-                  if (index == 1) return tableHeader;
-                  if (index == groups.length + 2) return scrollFooter!;
-                  return buildGroup(context, index - 2);
+                  if (showTitlesRow && index == 1) return tableHeader;
+                  if (index == groupCount + rowStart) return scrollFooter!;
+                  return buildGroup(context, index - rowStart);
                 },
               )
             : Column(
                 mainAxisSize: shrinkWrap ? MainAxisSize.min : MainAxisSize.max,
                 children: [
-                  tableHeader,
-                  const SizedBox(height: 12),
+                  if (showTitlesRow) ...[
+                    tableHeader,
+                    const SizedBox(height: 12),
+                  ],
                   listContainer(
                     child: ListView.separated(
                       shrinkWrap: shrinkWrap,
@@ -354,7 +407,7 @@ class AdminModalRecordList extends StatelessWidget {
                           ? const NeverScrollableScrollPhysics()
                           : scrollPhysics,
                       primary: false,
-                      itemCount: groups.length,
+                      itemCount: groupCount,
                       separatorBuilder: (_, _) => const SizedBox(height: 12),
                       itemBuilder: buildGroup,
                     ),

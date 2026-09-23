@@ -199,6 +199,7 @@ class AdminDropdownFormField<T> extends StatefulWidget {
     super.key,
     this.initialValue,
     this.expands = false,
+    this.textAlignVertical,
     this.focusNode,
     this.onFocusChanged,
     this.unfocusOnDismissWithoutSelection = true,
@@ -217,6 +218,7 @@ class AdminDropdownFormField<T> extends StatefulWidget {
 
   /// Fill a bounded control height instead of using the intrinsic border height.
   final bool expands;
+  final TextAlignVertical? textAlignVertical;
   final FocusNode? focusNode;
   final ValueChanged<bool>? onFocusChanged;
   final bool unfocusOnDismissWithoutSelection;
@@ -389,7 +391,10 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
     ).copyWith(helperStyle: const TextStyle(fontSize: 0, height: 0));
     final minHeight =
         decoration.constraints?.minHeight ?? adminModalFieldMinHeight;
-    final verticalPadding = minHeight <= adminFilterFieldMinHeight
+    final verticalPadding =
+        widget.expands && widget.textAlignVertical == TextAlignVertical.center
+        ? 0.0
+        : minHeight <= adminFilterFieldMinHeight
         ? 12.0
         : 14.0;
     final contentPadding = switch (decoration.contentPadding) {
@@ -467,6 +472,7 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
             child: InputDecorator(
               key: _fieldKey,
               expands: widget.expands,
+              textAlignVertical: widget.textAlignVertical,
               isFocused: _focusNode.hasFocus,
               isEmpty: !hasSelectedLabel,
               decoration: fieldDecoration.copyWith(

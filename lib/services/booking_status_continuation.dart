@@ -108,3 +108,146 @@ bool _equal(Object? a, Object? b) {
   }
   return a == b;
 }
+
+/// Merge an independently recorded forward action with later amount/photo edits.
+/// Existing event contents and unrelated booking fields are never overwritten.
+Map<String, dynamic>? reconcileBookingHistory(
+  Map<String, dynamic> server,
+  Map<String, dynamic> pending, {
+  required String? baseUpdatedAt,
+  Map<String, dynamic>? verifiedMake,
+}) {
+  final base = DateTime.tryParse(baseUpdatedAt ?? '');
+  final identity = server['submission_key'];
+  if (base == null ||
+      identity is! String ||
+      identity.isEmpty ||
+      pending['submission_key'] != identity ||
+      server['id'] != pending['id']) {
+    return null;
+  }
+  final before = server['status_outputs'];
+  final after = pending['status_outputs'];
+  if (before is! Map || after is! Map || before.isEmpty || after.isEmpty) {
+    return null;
+  }
+  final normalized = <String, dynamic>{};
+  for (final key in after.keys) {
+    final local = after[key];
+    if (!before.containsKey(key)) {
+      normalized['$key'] = local;
+      continue;
+    }
+    final remote = before[key];
+    if (_equal(local, remote)) {
+      normalized['$key'] = remote;
+      continue;
+    }
+    if (local is! Map || remote is! Map) return null;
+    final localFields = local['fields'];
+    final remoteFields = remote['fields'];
+    if (localFields is! Map || remoteFields is! Map) return null;
+    final fields = Map<String, dynamic>.from(localFields);
+    for (final field in localFields.keys) {
+      final photo = localFields[field];
+      final uploaded = remoteFields[field];
+      if (_equal(photo, uploaded)) continue;
+      // Only transport state of the same original event can be substituted.
+      // The separate photo-upload queue remains responsible for its own action.
+      if (photo is! Map ||
+          uploaded is! Map ||
+          photo['pending_upload'] != true ||
+          '${photo['pending_upload_id'] ?? ''}'.isEmpty ||
+          uploaded['pending_upload'] == true ||
+          !'${uploaded['storage_path'] ?? ''}'.startsWith(
+            'bookings/${server['id']}/status_outputs/$key/$field/',
+          ) ||
+          !'${uploaded['download_url'] ?? ''}'.startsWith('https://') ||
+          [
+            'name',
+            'size',
+            'mime_type',
+          ].any((k) => photo[k] == null || photo[k] != uploaded[k])) {
+        return null;
+      }
+      fields['$field'] = uploaded;
+    }
+    if (!_equal({...local, 'fields': fields}, remote)) return null;
+    normalized['$key'] = remote;
+  }
+  // Remote-only events must be non-workflow amount/photo edits, never reassignment.
+  for (final key in before.keys.where((key) => !after.containsKey(key))) {
+    final event = before[key];
+    if (event is! Map ||
+        event['status_form'] != null ||
+        event['fields'] is! Map) {
+      return null;
+    }
+    final fields = event['fields'] as Map;
+    if (fields.isEmpty ||
+        fields.keys.any(
+          (key) => !const {
+            'amount',
+            'waybill_photo',
+            'delivery_form_photo',
+          }.contains(key),
+        )) {
+      return null;
+    }
+    final time = DateTime.tryParse('${event['submitted_at']}');
+    if (time == null || time.isBefore(base)) return null;
+  }
+  final candidate = Map<String, dynamic>.from(pending);
+  // These server-managed fields cannot be restored from an old offline snapshot.
+  for (final key in [
+    'media_synced_at',
+    'photo_cleanup_paths',
+    'photo_cleanup_claims',
+  ]) {
+    if (pending.containsKey(key) && !_equal(pending[key], server[key])) {
+      return null;
+    }
+    if (server.containsKey(key)) candidate[key] = server[key];
+  }
+  if (pending['vehicle_make_id'] == null && server['vehicle_make_id'] != null) {
+    if (verifiedMake == null ||
+        verifiedMake['driver_id'] != pending['driver_id'] ||
+        verifiedMake['helper_id'] != pending['helper_id'] ||
+        pending['driver_id'] == null ||
+        pending['helper_id'] == null) {
+      return null;
+    }
+    candidate['vehicle_make_id'] = server['vehicle_make_id'];
+  }
+  final added = normalized.keys
+      .where((key) => !before.containsKey(key))
+      .toList();
+  final combined = {...before, ...normalized};
+  if (added.isEmpty) {
+    // Assignment already committed: acknowledge only a proven identical action.
+    for (final key in {...candidate.keys, ...server.keys}) {
+      if (key == 'updated_at' || key == 'status_outputs') continue;
+      if (!_equal(candidate[key], server[key])) return null;
+    }
+    return Map<String, dynamic>.from(server);
+  }
+  if (added.length != 1) return null;
+  // Validate against the action's original base, preserving all remote edits.
+  final baseline = {...server, 'updated_at': baseUpdatedAt};
+  candidate['status_outputs'] = combined;
+  if (!isSafeBookingStatusContinuation(
+    baseline,
+    candidate,
+    verifiedMake: verifiedMake,
+  )) {
+    return null;
+  }
+  final remoteTime = DateTime.tryParse('${server['updated_at']}');
+  final actionTime = DateTime.tryParse('${candidate['updated_at']}');
+  if (remoteTime != null &&
+      actionTime != null &&
+      remoteTime.isAfter(actionTime)) {
+    candidate['updated_at'] = server['updated_at'];
+  }
+  return candidate;
+}

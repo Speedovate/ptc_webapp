@@ -1,3 +1,9 @@
+import 'package:webapp/views/admin/shared_kpi_rules_dialog.dart';
+import 'package:webapp/services/kpi/kpi_period_label.dart';
+import 'package:webapp/services/kpi/kpi_all_time_period.dart';
+import 'dart:convert';
+import 'package:webapp/services/kpi/kpi_salary_diagnostics.dart';
+import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/services/kpi/kpi_calculation_cache.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/widgets/shared/admin_action_confirmation.dart';
@@ -17,8 +23,6 @@ import 'package:webapp/views/admin/pm_fuel_ledger_dialog.dart';
 import 'package:webapp/services/kpi/kpi_fleet_workbook.dart';
 import 'dart:async';
 import 'package:webapp/services/export_file_service.dart';
-import 'package:flutter/services.dart';
-import 'package:webapp/services/kpi/kpi_salary_diagnostics.dart';
 
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -33,6 +37,11 @@ import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/app_modal_guard.dart';
 
 const double _kpiContentSpacing = 24;
+const double _kpiSectionSpacing = 20;
+// Shared toolbar controls include 2px padding above and below their surface.
+const double _kpiToolbarSurfaceInset = 2;
+// Matches the visible Filters/New button height in a 52px toolbar slot.
+const double _kpiPeriodControlHeight = 48;
 
 class _KpiSectionTitle extends StatelessWidget {
   const _KpiSectionTitle({required this.title});
@@ -75,12 +84,17 @@ String _kpiAmount(double amount) {
   return '${amount < 0 ? "−" : ""}₱$digits.${parts.last}';
 }
 
-Future<void> showPmKpiDialog(BuildContext context, VehicleMake make) async {
+Future<void> showPmKpiDialog(
+  BuildContext context,
+  VehicleMake make, {
+  bool openRules = false,
+}) async {
   final selection = await showAppDialog<Object>(
     context: context,
     modalKey: 'pm-kpi:${make.id}',
     builder: (dialogContext) => PmKpiDialog(
       make: make,
+      openRules: openRules,
       onOpenBooking: (current, booking) =>
           Navigator.of(dialogContext).pop((current: current, booking: booking)),
       onOpenUser: (current, viewed) =>
@@ -114,13 +128,19 @@ class PmKpiDialog extends StatefulWidget {
     super.key,
     required this.make,
     this.store,
+    this.diagnostics,
     this.onOpenUser,
     this.onOpenBooking,
+    this.openRules = false,
+    this.onBack,
   });
   final void Function(UserModel current, UserModel viewed)? onOpenUser;
   final void Function(UserModel current, Booking booking)? onOpenBooking;
   final PmKpiStore? store;
+  final SyncErrorLogService? diagnostics;
   final VehicleMake make;
+  final bool openRules;
+  final VoidCallback? onBack;
   @override
   State<PmKpiDialog> createState() => _PmKpiDialogState();
 }
@@ -200,9 +220,12 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
   }
 
   String _mode = 'Monthly';
+  bool _openedInitialRules = false;
   int _week = 1;
   int _generation = 0;
   bool _loading = true;
+  bool _hasLoadedBookings = false;
+  bool _hasStoredData = false;
   String? _error;
   List<Booking> _bookings = [];
   KpiStoredData _stored = const KpiStoredData([], {}, true);
@@ -246,75 +269,168 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
     });
   }
 
+  Future<void> _recordKpiDiagnostic(
+    String stage,
+    Object error,
+    StackTrace stack,
+  ) async {
+    try {
+      final result = _calculate(_period);
+      await (widget.diagnostics ?? SyncErrorLogService.instance).capture(
+        source: 'pm_kpi_dialog.dart',
+        operation: stage,
+        entryId:
+            '${widget.make.id}:${kpiDayKey(_period.start)}:${kpiDayKey(_period.end)}:$stage',
+        target: 'PM ${widget.make.code ?? widget.make.id}',
+        error: error.toString(),
+        stack: stack.toString(),
+        attempt: DateTime.now().microsecondsSinceEpoch,
+        kind: 'kpi_diagnostic',
+        attentionRequired: true,
+        details: {
+          'failed_step': stage,
+          'error_type': error.runtimeType.toString(),
+          'has_stored_data': _hasStoredData,
+          'from_cache': _stored.fromCache,
+          'diagnostics': jsonDecode(
+            kpiSalaryDiagnostics(
+              makeId: widget.make.id!,
+              bookings: _bookings,
+              catalog: _stored.catalog,
+              result: result,
+              verified: _store.bookingsVerified,
+              makes: _store.makes,
+            ),
+          ),
+        },
+      );
+    } catch (_) {
+      // Diagnostic persistence must not block KPI loading or retry.
+    }
+  }
+
   Future<void> _load({bool initial = false}) async {
     final generation = ++_generation;
+    var stage = 'Read current user and permissions';
     setState(() {
       _error = null;
     });
     try {
-      if (initial) {
-        _currentUser = await _store.currentUser();
+      if (initial || !_hasLoadedBookings) {
+        _currentUser = await _store.currentUser().timeout(
+          const Duration(seconds: 12),
+        );
         if (!_store.canRead || !_store.canReadBookings) {
           throw StateError('You do not have access to booking KPIs.');
         }
-        _bookings = _store.cachedBookings ?? await _store.bookings();
+        stage = 'Load bookings';
+        _bookings =
+            _store.cachedBookings ??
+            await _store.bookings().timeout(const Duration(seconds: 12));
+        _hasLoadedBookings = true;
         if (!mounted || generation != _generation) {
           return;
         }
       }
-      final cached = await _store.readCached(widget.make.id!, _period);
+      final fetchPeriod = _mode == 'All Time'
+          ? KpiPeriod(DateTime.utc(1900), kpiDate(DateTime.now()))
+          : _period;
+      stage = 'Read locally saved KPI data';
+      final cached = await _store
+          .readCached(widget.make.id!, fetchPeriod)
+          .timeout(const Duration(seconds: 5));
       if (!mounted || generation != _generation) {
         return;
       }
       if (cached != null) {
         setState(() {
           _stored = cached;
+          _resolveAllTimePeriod();
+          _hasStoredData = true;
           _loading = false;
         });
       }
-      var stored = await _store.load(widget.make.id!, _period);
-      if (!mounted || generation != _generation) {
-        return;
-      }
-      stored = await _store.learnCityProperDropoffs(_bookings, stored);
+      stage = 'Refresh KPI records, fuel, rates and settings';
+      var stored = await _store
+          .load(widget.make.id!, fetchPeriod)
+          .timeout(const Duration(seconds: 15));
       if (!mounted || generation != _generation) {
         return;
       }
       setState(() {
         _stored = stored;
+        _resolveAllTimePeriod();
+        _hasStoredData = true;
         _loading = false;
       });
+      stage = 'Match City Proper drop-offs to rates';
+      stored = await _store
+          .learnCityProperDropoffs(_bookings, stored)
+          .timeout(const Duration(seconds: 12));
+      if (!mounted || generation != _generation) {
+        return;
+      }
+      setState(() {
+        _stored = stored;
+        _resolveAllTimePeriod();
+        _hasStoredData = true;
+        _loading = false;
+      });
+      if (widget.openRules && !_openedInitialRules && _canEdit) {
+        _openedInitialRules = true;
+        unawaited(_editRatingRules());
+      }
+      final dataIssues = _calculate(_period).issues;
+      if (dataIssues.isNotEmpty) {
+        unawaited(
+          _recordKpiDiagnostic(
+            'Validate KPI data',
+            dataIssues.join('\n'),
+            StackTrace.empty,
+          ),
+        );
+      }
       _subscription ??= _store.watchBookings().listen(
         (bookings) {
           if (mounted) {
             setState(() {
               _bookings = bookings;
+              _resolveAllTimePeriod();
             });
           }
         },
         onError: (Object error) {
           if (mounted) {
             setState(() {
-              _error = 'Could not refresh bookings. Refresh to try again.';
+              _error = 'Could not refresh bookings.';
             });
           }
         },
       );
     } catch (error, stack) {
-      unawaited(
-        SyncErrorLogService.instance.report(
-          error,
-          stack,
-          source: 'pm_kpi_dialog.dart',
-          operation: 'handled operation failure',
-        ),
-      );
+      if (mounted && generation == _generation) {
+        unawaited(_recordKpiDiagnostic(stage, error, stack));
+      }
       if (mounted && generation == _generation) {
         setState(() {
-          _error = error.toString();
+          _error = error is TimeoutException
+              ? '$stage took too long. Select Retry to try again.'
+              : error.toString();
           _loading = false;
         });
       }
+    }
+  }
+
+  void _resolveAllTimePeriod() {
+    if (_mode == 'All Time') {
+      _period = fleetTruckAllTimePeriod(
+        widget.make,
+        _store.makes,
+        _bookings,
+        _stored,
+        kpiDate(DateTime.now()),
+      );
     }
   }
 
@@ -322,11 +438,12 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
     _period = _mode == 'Weekly'
         ? KpiPeriod.week(_month.year, _month.month, _week)
         : KpiPeriod.month(_month.year, _month.month);
+    _resolveAllTimePeriod();
     _load();
   }
 
   Future<void> _pickPeriod() async {
-    if (_mode == 'Custom range') {
+    if (_mode == 'Range') {
       DateTime? from = _period.start;
       DateTime? to = _period.end;
       final range = await showAppDialog<DateTimeRange>(
@@ -341,8 +458,9 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                 to!.year <= 2100 &&
                 to!.difference(from!).inDays <= 366;
             return AdminModalShell(
-              title: 'Date Range',
               maxWidth: 420,
+              title: 'Date Range',
+
               selectable: false,
               actions: [
                 TextButton(
@@ -413,8 +531,9 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
         context: context,
         builder: (dialogContext) => StatefulBuilder(
           builder: (context, update) => AdminModalShell(
-            title: 'Select Month',
             maxWidth: 420,
+            title: 'Select Month',
+
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext),
@@ -492,126 +611,14 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
         : null,
   );
   Future<void> _editRatingRules() async {
-    final current = KpiRatingRules.fromMap(_stored.settings);
-    final labels = [
-      'Gross income: Satisfactory from (%)',
-      'Gross income: Excellent from (%)',
-      'Complaints: Excellent up to',
-      'Complaints: Satisfactory up to',
-      'Accidents: Excellent up to',
-      'Gross income target (%)',
-    ];
-    final controllers = [
-      for (final value in [
-        current.grossSatisfactoryMin,
-        current.grossExcellentMin,
-        current.complaintsExcellentMax,
-        current.complaintsSatisfactoryMax,
-        current.accidentsExcellentMax,
-        current.targetPercent,
-      ])
-        TextEditingController(text: '$value'),
-    ];
-    String? error;
-    final value = await showAppDialog<KpiRatingRules>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, update) => AdminModalShell(
-          title: 'Rating Rules',
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final nums = controllers
-                    .map((c) => double.tryParse(c.text.trim()))
-                    .toList();
-                if (nums.any((n) => n == null || !n.isFinite) ||
-                    nums
-                        .skip(2)
-                        .take(3)
-                        .any((n) => n != n!.truncateToDouble())) {
-                  update(
-                    () => error =
-                        'Enter valid percentages and whole-number counts.',
-                  );
-                  return;
-                }
-                final rules = KpiRatingRules(
-                  grossSatisfactoryMin: nums[0]!,
-                  grossExcellentMin: nums[1]!,
-                  complaintsExcellentMax: nums[2]!.toInt(),
-                  complaintsSatisfactoryMax: nums[3]!.toInt(),
-                  accidentsExcellentMax: nums[4]!.toInt(),
-                  targetPercent: nums[5]!,
-                );
-                if (!rules.valid) {
-                  update(
-                    () => error =
-                        'Check threshold order, percentages (0–100), and nonnegative counts.',
-                  );
-                  return;
-                }
-                Navigator.pop(dialogContext, rules);
-              },
-              child: const Text('Save'),
-            ),
-          ],
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: _kpiContentSpacing),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final i in [0, 1, 3, 2, 4, 5]) ...[
-                  if (i > 0) const SizedBox(height: 16),
-                  TextField(
-                    controller: controllers[i],
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: adminFormInputDecoration(labels[i]),
-                  ),
-                ],
-                if (error != null)
-                  Text(
-                    error!,
-                    style: const TextStyle(color: AppColors.dangerStrong),
-                  ),
-              ],
-            ),
-          ),
-        ),
+    _openSection(
+      SharedKpiRulesDialog(
+        store: _store,
+        onBack: widget.onBack ?? _backToSummary,
+        backLabel: widget.onBack == null ? 'Back to KPI' : 'Go Back',
+        onSaved: () => unawaited(_load()),
       ),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    for (final controller in controllers) {
-      controller.dispose();
-    }
-    if (value == null || !mounted) return;
-    try {
-      await _store.save(
-        makeId: widget.make.id!,
-        data: {
-          ..._stored.settings,
-          'kind': 'settings',
-          'rating_rules': value.toMap(),
-        },
-        previous: _stored.settings,
-      );
-      if (mounted) await _load();
-    } catch (error, stack) {
-      unawaited(
-        SyncErrorLogService.instance.report(
-          error,
-          stack,
-          source: 'pm_kpi_dialog.dart',
-          operation: 'handled operation failure',
-        ),
-      );
-      if (mounted) setState(() => _error = error.toString());
-    }
   }
 
   Future<void> _editIncidents({UserModel? initialUser, String? metric}) async {
@@ -688,10 +695,11 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AdminModalShell(
+          maxWidth: 560,
           title: initialUser == null
               ? 'Legacy PM Counts'
               : 'User Complaints & Accidents',
-          maxWidth: 480,
+
           selectable: false,
           actions: [
             TextButton(
@@ -902,8 +910,9 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
       ),
       child: AnimatedBuilder(
         animation: RoleAccessService.instance,
-        builder: (context, _) => !_store.canRead
+        builder: (context, _) => !_store.canRead || !_store.canReadBookings
             ? const AdminModalShell(
+                maxWidth: AdminModalShell.kpiMaxWidth,
                 title: 'PM KPI',
                 child: Text('You do not have access to PM KPIs.'),
               )
@@ -924,12 +933,16 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
       result.issues.add('Rating settings awaiting sync');
     }
     if (_error != null) {
-      result.issues.add('Data could not be refreshed');
+      result.issues.add(_error!);
     }
     // Cache verification is background work, not an actionable data issue.
     // Retain it in calculation completeness and copied diagnostics only.
     final visibleIssues = result.issues
-        .where((issue) => issue != 'Cached data · refresh online to verify')
+        .where(
+          (issue) =>
+              issue != 'Cached data · refresh online to verify' &&
+              issue != _error,
+        )
         .toList(growable: false);
     final incidents = KpiIncidentSummary(
       _stored.settings,
@@ -986,7 +999,7 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
           .add(i);
     }
     final displayRows = <({KpiDay day, int? transaction})>[];
-    for (final day in activeDays) {
+    for (final day in activeDays.where((_) => _store.canReadIncome)) {
       final key = kpiDayKey(day.date);
       displayRows.add((day: day, transaction: null));
       if (_expandedDays.contains(key)) {
@@ -1035,11 +1048,13 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
     final helper = widget.make.helper;
     final comparisons = <(String, PmKpi)>[
       (
-        _mode == 'Monthly'
+        _mode == 'All Time'
+            ? 'All Time'
+            : _mode == 'Monthly'
             ? 'Month total'
             : _mode == 'Weekly'
             ? 'Week $_week'
-            : 'Selected dates',
+            : '${_kpiDateLabel(_period.start)} - ${_kpiDateLabel(_period.end)}',
         result,
       ),
       if (_mode == 'Monthly')
@@ -1262,200 +1277,327 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
       );
     }
 
-    final header = <Widget>[
-      Wrap(
-        spacing: 8,
-        children: [
-          if (_store.canReadFuel)
-            TextButton.icon(
-              icon: const Icon(Icons.local_gas_station_outlined),
-              label: const Text('Fuel Requests'),
-              onPressed: () async {
-                _openSection(
-                  PmFuelLedgerDialog(
-                    make: widget.make,
-                    period: _period,
-                    store: _store,
-                    onBack: _backToSummary,
-                  ),
-                );
-              },
-            ),
-          if (_store.canReadCatalog)
-            TextButton.icon(
-              icon: const Icon(Icons.edit_location_alt_outlined),
-              label: const Text('Trip Rates'),
-              onPressed: () async {
-                _openSection(OperationsCatalogDialog(onBack: _backToSummary));
-              },
-            ),
-          if (_canEdit)
-            TextButton.icon(
-              onPressed: _editRatingRules,
-              icon: const Icon(Icons.tune),
-              label: const Text('Rating Rules'),
-            ),
+    final sectionActions = <Widget>[
+      if (_store.canReadFuel)
+        AdminListNewButton(
+          controlHeight: adminFilterFieldMinHeight,
+          surfaceRadius: 16,
+          iconOnly: false,
+          icon: Icons.local_gas_station_outlined,
+          label: 'Fuel',
+          onTap: () async {
+            _openSection(
+              PmFuelLedgerDialog(
+                make: widget.make,
+                period: _period,
+                periodLabel: kpiPeriodLabel(_period, mode: _mode, week: _week),
+                store: _store,
+                initialData: _hasStoredData ? _stored : null,
+                onBack: _backToSummary,
+              ),
+            );
+          },
+        ),
+      if (_store.canReadCatalog)
+        AdminListNewButton(
+          controlHeight: adminFilterFieldMinHeight,
+          surfaceRadius: 16,
+          iconOnly: false,
+          icon: Icons.edit_location_alt_outlined,
+          label: 'Rates',
+          onTap: () async {
+            _openSection(OperationsCatalogDialog(onBack: _backToSummary));
+          },
+        ),
+      if (_canEdit)
+        AdminListNewButton(
+          controlHeight: adminFilterFieldMinHeight,
+          surfaceRadius: 16,
+          iconOnly: false,
+          onTap: _editRatingRules,
+          icon: Icons.tune,
+          label: 'Rules',
+        ),
+    ];
+    final sectionButtons = Row(
+      children: [
+        for (var i = 0; i < sectionActions.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(child: sectionActions[i]),
         ],
-      ),
-      const SizedBox(height: 12),
-      Wrap(
-        spacing: 12,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          SizedBox(
-            width: 180,
-            height: adminModalFieldMinHeight,
-            child: AdminDropdownFormField<String>(
-              expands: true,
-              style: adminFieldValueTextStyle.copyWith(fontSize: 14),
-              decoration: adminFormInputDecoration("Period").copyWith(
-                constraints: const BoxConstraints.tightFor(
-                  height: adminModalFieldMinHeight,
-                ),
-              ),
-              initialValue: _mode,
-              items: [
-                'Weekly',
-                'Monthly',
-                'Custom range',
-              ].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    _mode = value;
-                  });
-                  if (value != 'Custom range') {
-                    _updatePeriod();
-                  } else {
-                    _pickPeriod();
-                  }
-                }
-              },
-            ),
-          ),
-          if (_mode == 'Weekly')
-            SizedBox(
-              width: 140,
-              height: adminModalFieldMinHeight,
-              child: AdminDropdownFormField<int>(
-                expands: true,
-                style: adminFieldValueTextStyle.copyWith(fontSize: 14),
-                decoration: adminFormInputDecoration('Week').copyWith(
-                  constraints: const BoxConstraints.tightFor(
-                    height: adminModalFieldMinHeight,
-                  ),
-                ),
-                initialValue: _week,
-                items: [1, 2, 3, 4]
-                    .map(
-                      (w) => DropdownMenuItem(value: w, child: Text('Week $w')),
-                    )
-                    .toList(),
-                onChanged: (w) {
-                  if (w != null) {
-                    _week = w;
-                    _updatePeriod();
-                  }
-                },
-              ),
-            ),
-          SizedBox(
-            width: _mode == 'Custom range' ? 340 : 200,
-            height: adminModalFieldMinHeight,
-            child: Semantics(
-              button: true,
-              label: _mode == 'Custom range'
-                  ? 'Select date range'
-                  : 'Select month',
-              child: InkWell(
-                onTap: _pickPeriod,
-                borderRadius: BorderRadius.circular(16),
-                child: InputDecorator(
-                  key: const ValueKey('kpi-period-date-field'),
-                  expands: true,
-                  decoration: InputDecoration(
-                    isDense: true,
-                    filled: true,
-                    fillColor: Colors.white,
-                    constraints: const BoxConstraints(
-                      minHeight: adminModalFieldMinHeight,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 14,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(
-                        color: AppColors.primaryBorder,
+      ],
+    );
+    final periodTextStyle = DefaultTextStyle.of(context).style
+        .merge(adminFieldValueTextStyle.copyWith(fontSize: 14))
+        .copyWith(inherit: false);
+    double controlWidth(String label, double chromeWidth) {
+      final painter = TextPainter(
+        text: TextSpan(text: label, style: periodTextStyle),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        maxLines: 1,
+      )..layout();
+      final width = painter.width.ceilToDouble() + chromeWidth;
+      painter.dispose();
+      return width;
+    }
+
+    final dateLabel = _mode == 'Range'
+        ? '${_kpiDateLabel(_period.start)} – ${_kpiDateLabel(_period.end)}'
+        : '${_kpiDateLabel(_month).split(' ').first} ${_month.year}';
+    // Input padding + dropdown suffix; date padding + calendar icon and gap.
+    final modeWidth = controlWidth(_mode, 64);
+    final weekWidth = controlWidth('Week $_week', 64);
+    final dateWidth = controlWidth(dateLabel, 62);
+    final mobileToolbar = MediaQuery.sizeOf(context).width < 900;
+    final periodControls = LayoutBuilder(
+      builder: (context, constraints) {
+        final mobile = mobileToolbar;
+        final naturalWidths = [
+          modeWidth,
+          if (_mode == 'Weekly') weekWidth,
+          if (_mode != 'All Time') dateWidth,
+        ];
+        final naturalTotal =
+            naturalWidths.fold<double>(0, (sum, width) => sum + width) +
+            (naturalWidths.length - 1) * 12;
+        final fitOneRow = naturalTotal <= constraints.maxWidth;
+        final extra = fitOneRow
+            ? (constraints.maxWidth - naturalTotal) / naturalWidths.length
+            : 0.0;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children:
+              [
+                    SizedBox(
+                      width: modeWidth,
+                      height: _kpiPeriodControlHeight,
+                      child: AdminDropdownFormField<String>(
+                        expands: true,
+                        textAlignVertical: TextAlignVertical.center,
+                        style: periodTextStyle,
+                        decoration: adminFormInputDecoration("Period").copyWith(
+                          constraints: const BoxConstraints.tightFor(
+                            height: _kpiPeriodControlHeight,
+                          ),
+                        ),
+                        initialValue: _mode,
+                        items: ['Range', 'Weekly', 'Monthly', 'All Time']
+                            .map(
+                              (s) => DropdownMenuItem(value: s, child: Text(s)),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() {
+                              _mode = value;
+                            });
+                            if (value != 'Range') {
+                              _updatePeriod();
+                            } else {
+                              _pickPeriod();
+                            }
+                          }
+                        },
                       ),
                     ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(
-                        color: AppColors.primaryBorder,
+                    if (_mode == 'Weekly')
+                      SizedBox(
+                        width: weekWidth,
+                        height: _kpiPeriodControlHeight,
+                        child: AdminDropdownFormField<int>(
+                          expands: true,
+                          textAlignVertical: TextAlignVertical.center,
+                          style: periodTextStyle,
+                          decoration: adminFormInputDecoration('Week').copyWith(
+                            constraints: const BoxConstraints.tightFor(
+                              height: _kpiPeriodControlHeight,
+                            ),
+                          ),
+                          initialValue: _week,
+                          items: [1, 2, 3, 4]
+                              .map(
+                                (w) => DropdownMenuItem(
+                                  value: w,
+                                  child: Text('Week $w'),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (w) {
+                            if (w != null) {
+                              _week = w;
+                              _updatePeriod();
+                            }
+                          },
+                        ),
                       ),
-                    ),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.date_range,
-                        size: 24,
-                        color: AppColors.primaryColor,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            _mode == 'Custom range'
-                                ? '${_kpiDateLabel(_period.start)} – ${_kpiDateLabel(_period.end)}'
-                                : '${_kpiDateLabel(_month).split(' ').first} ${_month.year}',
-                            style: adminFieldValueTextStyle.copyWith(
-                              fontSize: 14,
+                    if (_mode != 'All Time')
+                      IntrinsicWidth(
+                        child: SizedBox(
+                          height: _kpiPeriodControlHeight,
+                          child: Semantics(
+                            button: true,
+                            label: _mode == 'Range'
+                                ? 'Select date range'
+                                : 'Select month',
+                            child: InkWell(
+                              onTap: _pickPeriod,
+                              borderRadius: BorderRadius.circular(16),
+                              child: InputDecorator(
+                                key: const ValueKey('kpi-period-date-field'),
+                                textAlignVertical: TextAlignVertical.center,
+                                expands: true,
+                                decoration: InputDecoration(
+                                  isDense: true,
+                                  filled: true,
+                                  fillColor: Colors.white,
+                                  constraints: const BoxConstraints(
+                                    minHeight: _kpiPeriodControlHeight,
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 0,
+                                  ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                    borderSide: const BorderSide(
+                                      color: AppColors.primaryBorder,
+                                    ),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                    borderSide: const BorderSide(
+                                      color: AppColors.primaryBorder,
+                                    ),
+                                  ),
+                                ),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      const Icon(
+                                        Icons.date_range,
+                                        size: 24,
+                                        color: AppColors.primaryColor,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        dateLabel,
+                                        style: periodTextStyle,
+                                        maxLines: 1,
+                                        softWrap: false,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                  ].indexed
+                  .map(
+                    (entry) => ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: constraints.maxWidth,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: mobile
+                            ? SizedBox(
+                                width: fitOneRow
+                                    ? naturalWidths[entry.$1] + extra
+                                    : constraints.maxWidth,
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      minWidth: fitOneRow
+                                          ? naturalWidths[entry.$1] + extra
+                                          : constraints.maxWidth,
+                                    ),
+                                    child: entry.$2,
+                                  ),
+                                ),
+                              )
+                            : SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: entry.$2,
+                              ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+        );
+      },
+    );
+    final sectionCount =
+        (_store.canReadFuel ? 1 : 0) +
+        (_store.canReadCatalog ? 1 : 0) +
+        (_canEdit ? 1 : 0);
+    final sectionWidth = sectionCount == 0
+        ? 0.0
+        : sectionCount * 104.0 + (sectionCount - 1) * 8;
+    final periodWidth =
+        modeWidth +
+        (_mode == 'All Time' ? 0 : dateWidth + 12) +
+        (_mode == 'Weekly' ? weekWidth + 12 : 0);
+    final header = <Widget>[
+      LayoutBuilder(
+        builder: (context, constraints) {
+          if (!mobileToolbar &&
+              constraints.maxWidth >= periodWidth + sectionWidth + 12) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(child: periodControls),
+                if (sectionCount > 0) ...[
+                  const SizedBox(width: 12),
+                  SizedBox(width: sectionWidth, child: sectionButtons),
+                ],
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: constraints.maxWidth, child: periodControls),
+              if (sectionCount > 0) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: mobileToolbar ? constraints.maxWidth : sectionWidth,
+                  child: sectionButtons,
                 ),
-              ),
-            ),
-          ),
-          SizedBox(
-            key: const ValueKey('kpi-refresh-control'),
-            width: adminModalFieldMinHeight,
-            height: adminModalFieldMinHeight,
-            child: IconButton(
-              tooltip: 'Refresh KPI',
-              padding: EdgeInsets.zero,
-              alignment: Alignment.center,
-              iconSize: 24,
-              style: IconButton.styleFrom(
-                fixedSize: const Size.square(adminModalFieldMinHeight),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.standard,
-                alignment: Alignment.center,
-                padding: EdgeInsets.zero,
-              ),
-              onPressed: () {
-                _store.invalidateRefreshWindow();
-                _load(initial: true);
-              },
-              icon: const Icon(Icons.refresh),
-            ),
-          ),
-        ],
+              ],
+            ],
+          );
+        },
       ),
-      if (_error != null)
-        Text(_error!, style: const TextStyle(color: AppColors.danger)),
-      const SizedBox(height: 8),
+      if (_error != null) ...[
+        const SizedBox(height: _kpiSectionSpacing - _kpiToolbarSurfaceInset),
+        AdminListItemCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AdminListStateText(message: _error!),
+              TextButton(
+                onPressed: () {
+                  _store.invalidateRefreshWindow();
+                  _load(initial: true);
+                },
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      ],
       if (visibleIssues.isNotEmpty) ...[
+        const SizedBox(height: _kpiSectionSpacing),
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: Text(
@@ -1474,40 +1616,42 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
               ),
             ),
       ],
-      const SizedBox(height: 12),
-      const _KpiSectionTitle(title: 'Income & Expenses'),
-
-      const SizedBox(height: 12),
+      SizedBox(
+        height:
+            _kpiSectionSpacing -
+            (visibleIssues.isEmpty && _error == null
+                ? _kpiToolbarSurfaceInset
+                : 0),
+      ),
       _KpiFinancialTable(columns: comparisons),
-      const SizedBox(height: _kpiContentSpacing),
-      LayoutBuilder(
-        builder: (context, constraints) {
-          final driverSummary = crewSummary('Driver', driver);
-          final helperSummary = crewSummary('Helper', helper);
-          if (constraints.maxWidth >= 640) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      const SizedBox(height: _kpiSectionSpacing),
+      _KpiPlanComparison(result: result),
+      const SizedBox(height: _kpiSectionSpacing),
+      if (_store.canReadIncome)
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final driverSummary = crewSummary('Driver', driver);
+            final helperSummary = crewSummary('Helper', helper);
+            if (constraints.maxWidth >= 640) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: driverSummary),
+                  const SizedBox(width: _kpiSectionSpacing),
+                  Expanded(child: helperSummary),
+                ],
+              );
+            }
+            return Column(
               children: [
-                Expanded(child: driverSummary),
-                const SizedBox(width: _kpiContentSpacing),
-                Expanded(child: helperSummary),
+                driverSummary,
+                const SizedBox(height: _kpiSectionSpacing),
+                helperSummary,
               ],
             );
-          }
-          return Column(
-            children: [
-              driverSummary,
-              const SizedBox(height: _kpiContentSpacing),
-              helperSummary,
-            ],
-          );
-        },
-      ),
-      const SizedBox(height: _kpiContentSpacing),
-      const _KpiSectionTitle(title: 'Performance vs Plan'),
-      const SizedBox(height: 8),
-      _KpiPlanComparison(result: result),
-      const SizedBox(height: 12),
+          },
+        ),
+      const SizedBox(height: _kpiSectionSpacing),
       if (_canEdit &&
           _stored.settings['incident_counts'] is Map &&
           (_stored.settings['incident_counts'] as Map).isNotEmpty &&
@@ -1559,10 +1703,8 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
             ],
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: _kpiSectionSpacing),
       ],
-      const _KpiSectionTitle(title: 'Transaction History'),
-      const SizedBox(height: 12),
     ];
     List<String> transactionValues(int i) {
       final row = activityRows[i];
@@ -1683,8 +1825,12 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
     }
 
     return AdminModalShell(
+      maxWidth: AdminModalShell.kpiMaxWidth,
       title: '${widget.make.code ?? "PM ${widget.make.id}"} KPI',
-      maxWidth: 900,
+      contentInset: const EdgeInsets.only(
+        top: _kpiSectionSpacing - _kpiToolbarSurfaceInset,
+        bottom: _kpiSectionSpacing,
+      ),
       bodyHandlesScrolling: true,
       flexibleBody: true,
       actions: [
@@ -1702,40 +1848,13 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
           child: Text(_exporting ? 'Exporting...' : 'Export'),
         ),
         TextButton(
-          style: TextButton.styleFrom(foregroundColor: AppColors.primaryColor),
-          onPressed: _loading
-              ? null
-              : () async {
-                  await Clipboard.setData(
-                    ClipboardData(
-                      text: kpiSalaryDiagnostics(
-                        makeId: widget.make.id ?? '',
-                        bookings: _bookings,
-                        makes: _store.makes,
-                        catalog: _stored.catalog,
-                        result: result,
-                        verified: _store.bookingsVerified && !_stored.fromCache,
-                      ),
-                    ),
-                  );
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Salary diagnostics copied'),
-                      ),
-                    );
-                  }
-                },
-          child: const Text('Copy'),
-        ),
-        TextButton(
           style: TextButton.styleFrom(foregroundColor: AppColors.textPrimary),
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
+          onPressed: widget.onBack ?? () => Navigator.pop(context),
+          child: Text(widget.onBack == null ? 'Close' : 'Go Back'),
         ),
       ],
       child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppPageLoading(compact: true)
           : Padding(
               padding: const EdgeInsets.symmetric(
                 horizontal: _kpiContentSpacing,
@@ -1757,12 +1876,13 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: header,
                   ),
-                  scrollFooter: activeDays.isEmpty
-                      ? const Text(
-                          'No delivered trips or recorded expenses in this period.',
-                        )
+                  emptyMessage: !_store.canReadIncome
+                      ? 'You do not have access to driver/helper income.'
+                      : _error == null
+                      ? 'No delivered trips or recorded expenses in this period.'
                       : null,
                   horizontalOnDesktop: true,
+                  showTitlesRow: !mobileToolbar && _store.canReadIncome,
                   trailingActions: true,
                   titles: const [
                     'Label',
@@ -2024,7 +2144,7 @@ class _KpiDayDialogState extends State<_KpiDayDialog> {
         fuel != kpiMoney(widget.day.record['fuel'])) {
       setState(() {
         _error =
-            'Add refueling through Fuel Requests first, then confirm its daily total here.';
+            'Add refueling through Fuel first, then confirm its daily total here.';
       });
       return;
     }
@@ -2106,6 +2226,7 @@ class _KpiDayDialogState extends State<_KpiDayDialog> {
     animation: RoleAccessService.instance,
     builder: (context, _) => !widget.store.canEdit
         ? const AdminModalShell(
+            maxWidth: 560,
             title: 'Salary & Trip Shares',
             child: Text('You do not have access to edit PM KPIs.'),
           )
@@ -2163,10 +2284,11 @@ class _KpiDayDialogState extends State<_KpiDayDialog> {
       ),
     );
     return AdminModalShell(
+      maxWidth: 560,
       title: widget.trip == null
           ? 'Salary · ${_kpiDateLabel(widget.day.date)}'
           : 'Trip Share · Booking ${widget.trip!.booking.id ?? widget.trip!.identity}',
-      maxWidth: 560,
+
       flexibleBody: true,
       actions: [
         TextButton(
@@ -2192,7 +2314,7 @@ class _KpiDayDialogState extends State<_KpiDayDialog> {
             (trip) => trip.identity == widget.trip?.identity,
           ))
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.only(bottom: 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -2260,7 +2382,6 @@ class _KpiDayDialogState extends State<_KpiDayDialog> {
                 _salaryChanged = true;
               }),
             ),
-            const SizedBox(height: 12),
             Text(
               'Driver: ₱${(salary.driver - salary.rates.fold<double>(0, (sum, rate) => sum + (kpiMoney(rate['driver']) ?? 0))).toStringAsFixed(2)} · Helper: ₱${(salary.helper - salary.rates.fold<double>(0, (sum, rate) => sum + (kpiMoney(rate['helper']) ?? 0))).toStringAsFixed(2)}',
             ),

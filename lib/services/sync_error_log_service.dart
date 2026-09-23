@@ -527,6 +527,7 @@ class SyncErrorLogService {
     'queue_failure',
     'persisted_queue_failure',
     'queue_stalled',
+    'kpi_diagnostic',
   }.contains(kind);
 
   Future<void> capture({

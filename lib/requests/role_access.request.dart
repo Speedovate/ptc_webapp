@@ -74,7 +74,11 @@ class RoleAccessRequest {
     }
     _didStartRealtimeCacheSync = true;
     _cache.watchResourceVersion(roleAccessResourceKey).listen((version) {
-      unawaited(_handleRoleAccessVersionSignal(version));
+      unawaited(
+        _handleRoleAccessVersionSignal(version).catchError((Object error) {
+          // Keep cached permissions when offline; the next version event retries.
+        }),
+      );
     }, onError: (_, _) {});
   }
 

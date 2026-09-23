@@ -79,7 +79,7 @@ class _CatalogConflictReviewDialogState
   Widget build(BuildContext context) {
     final rows = catalogConflictRows(widget.review);
     return AdminModalShell(
-      title: 'Review Trip Rates',
+      title: 'Review Rates',
       maxWidth: 1100,
       flexibleBody: true,
       bodyHandlesScrolling: true,
