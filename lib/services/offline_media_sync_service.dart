@@ -867,13 +867,6 @@ class OfflineMediaSyncService {
           if (entry.retryCount > 0 || entry.lastError != null) entry.id,
         });
       } catch (error, stackTrace) {
-        if (kDebugMode && entry.kind == _OfflineMediaQueueKind.supportMessage) {
-          debugPrint('[Support sync] ${entry.id}: $error');
-          debugPrintStack(
-            label: '[Support sync] replay failure',
-            stackTrace: stackTrace,
-          );
-        }
         final normalizedError = normalizeUserErrorText(
           error.toString(),
           fallback: 'Something went wrong. Please try again.',

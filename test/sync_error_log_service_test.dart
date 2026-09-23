@@ -66,6 +66,34 @@ Future<void> waitFor(bool Function() ready) async {
 }
 
 void main() {
+  test(
+    'inline photos cannot truncate pending and server booking diagnostics',
+    () {
+      final image = 'data:image/jpeg;base64,${'A' * 200000}';
+      final details = SyncErrorLogService.sanitizeDetails({
+        'queue_snapshot': {
+          'pending_payload': {'photo': image, 'amount': 1000},
+        },
+        'server_document': {'amount': 900},
+        'base_updated_at': 'original',
+        'differing_fields': ['amount'],
+      });
+      expect(details['details_truncated'], isNull);
+      expect(
+        details['queue_snapshot']['pending_payload']['photo'],
+        contains('INLINE MEDIA OMITTED'),
+      );
+      expect(
+        details['queue_snapshot']['pending_payload']['photo'],
+        contains('sha256='),
+      );
+      expect(details['queue_snapshot']['pending_payload']['amount'], 1000);
+      expect(details['server_document']['amount'], 900);
+      expect(details['base_updated_at'], 'original');
+      expect(jsonEncode(details).length, lessThan(1000));
+    },
+  );
+
   test('attention definitions match the four queue status counters', () {
     expect(
       SyncErrorLogService.requiresAttention('offline_mutation_queue_v1', {
@@ -661,53 +689,51 @@ void main() {
     },
   );
 
-  test(
-    'backfills existing blocked actions without altering the queue',
-    () async {
-      final backend = MemoryLogs();
-      final queue = jsonEncode({
-        'id': 'legacy',
-        'kind': 'bookingUpdate',
-        'target_id': '98',
-        'created_at': '2026-09-19T10:00:00Z',
-        'base_updated_at': '2026-09-18T00:00:00Z',
-        'payload': {
-          'id': '98',
-          'amount': 3995,
-          'created_at': '2026-09-18T00:00:00Z',
-          'updated_at': '2026-09-19T10:00:00Z',
-          'answers': {'destination': 'Sicsican', 'password': 'private'},
-        },
-        'retry_count': 3,
-        'is_blocked': true,
-        'last_error': 'Sync conflict',
-        'error_diagnostics':
-            'Failed at (UTC): 2026-09-20T00:00:00Z\nStack trace: original',
-      });
-      backend.values['offline_mutation_queue_v1::signed_out'] = [queue];
-      final remote = <Map<String, dynamic>>[];
-      final service = SyncErrorLogService(
-        backend: backend,
-        online: () => true,
-        metadata: (_) async => {},
-        writer: (_, d) async {
-          remote.add(d);
-        },
-      );
-      await service.start();
-      expect(remote.single['kind'], 'persisted_queue_failure');
-      expect(remote.single['first_failed_at'], '2026-09-20T00:00:00Z');
-      final snapshot =
-          (remote.single['details'] as Map)['queue_snapshot'] as Map;
-      expect(snapshot['base_updated_at'], '2026-09-18T00:00:00Z');
-      expect(snapshot['original_document_available'], false);
-      expect(snapshot['pending_payload_available'], true);
-      expect(snapshot['pending_payload']['amount'], 3995);
-      expect(snapshot['pending_payload']['answers']['destination'], 'Sicsican');
-      expect(snapshot['pending_payload']['answers']['password'], '[REDACTED]');
-      expect(backend.values['offline_mutation_queue_v1::signed_out'], [queue]);
-    },
-  );
+  test('backfills existing blocked actions without altering the queue', () async {
+    final backend = MemoryLogs();
+    final queue = jsonEncode({
+      'id': 'legacy',
+      'kind': 'bookingUpdate',
+      'target_id': '98',
+      'created_at': '2026-09-19T10:00:00Z',
+      'base_updated_at': '2026-09-18T00:00:00Z',
+      'payload': {
+        'id': '98',
+        'amount': 3995,
+        'created_at': '2026-09-18T00:00:00Z',
+        'updated_at': '2026-09-19T10:00:00Z',
+        'answers': {'destination': 'Sicsican', 'password': 'private'},
+      },
+      'retry_count': 3,
+      'is_blocked': true,
+      'last_error': 'Sync conflict',
+      'error_diagnostics':
+          'Failed at (UTC): 2026-09-20T00:00:00Z\nContext:\n{"server_document":{"amount":900},"server_updated_at":"server-time","differing_fields":["amount"]}\nStack trace: original',
+    });
+    backend.values['offline_mutation_queue_v1::signed_out'] = [queue];
+    final remote = <Map<String, dynamic>>[];
+    final service = SyncErrorLogService(
+      backend: backend,
+      online: () => true,
+      metadata: (_) async => {},
+      writer: (_, d) async {
+        remote.add(d);
+      },
+    );
+    await service.start();
+    expect(remote.single['kind'], 'persisted_queue_failure');
+    expect(remote.single['first_failed_at'], '2026-09-20T00:00:00Z');
+    expect(remote.single['details']['server_document']['amount'], 900);
+    expect(remote.single['details']['server_updated_at'], 'server-time');
+    final snapshot = (remote.single['details'] as Map)['queue_snapshot'] as Map;
+    expect(snapshot['base_updated_at'], '2026-09-18T00:00:00Z');
+    expect(snapshot['original_document_available'], false);
+    expect(snapshot['pending_payload_available'], true);
+    expect(snapshot['pending_payload']['amount'], 3995);
+    expect(snapshot['pending_payload']['answers']['destination'], 'Sicsican');
+    expect(snapshot['pending_payload']['answers']['password'], '[REDACTED]');
+    expect(backend.values['offline_mutation_queue_v1::signed_out'], [queue]);
+  });
   test(
     'queue error reports preserve source and sanitize nested context',
     () async {

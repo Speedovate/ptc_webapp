@@ -1,3 +1,4 @@
+import 'booking_status_continuation.dart';
 import 'booking_photo_cleanup.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
@@ -1628,27 +1629,44 @@ class OfflineMutationQueueService {
           // or replace the server's timestamp with the old action timestamp.
           return;
         }
-        throw OfflineSyncConflict(
-          'Sync conflict: booking changed remotely before applying this edit.',
-          {
-            'base_updated_at': entry.baseUpdatedAt,
-            'server_updated_at': existingBooking
-                .data()?['updated_at']
-                ?.toString(),
-            'pending_updated_at': document['updated_at']?.toString(),
-            'server_document': existingBooking.data(),
-            'server_status': existingBooking.data()?['client_status'],
-            'pending_status': document['client_status'],
-            'differing_fields': [
-              for (final key in {
-                ...?existingBooking.data()?.keys,
-                ...document.keys,
-              })
-                if (!_sameDocument(existingBooking.data()?[key], document[key]))
-                  key,
-            ],
-          },
-        );
+        Map<String, dynamic>? verifiedMake;
+        final makeId = normalizeId(document['vehicle_make_id']?.toString());
+        if (makeId != null &&
+            existingBooking.data()?['vehicle_make_id'] == null) {
+          verifiedMake = (await transaction.get(
+            _firestore.collection('vehicle_makes').doc(makeId),
+          )).data();
+        }
+        if (!isSafeBookingStatusContinuation(
+          existingBooking.data()!,
+          document,
+          verifiedMake: verifiedMake,
+        )) {
+          throw OfflineSyncConflict(
+            'Sync conflict: booking changed remotely before applying this edit.',
+            {
+              'base_updated_at': entry.baseUpdatedAt,
+              'server_updated_at': existingBooking
+                  .data()?['updated_at']
+                  ?.toString(),
+              'pending_updated_at': document['updated_at']?.toString(),
+              'server_document': existingBooking.data(),
+              'server_status': existingBooking.data()?['client_status'],
+              'pending_status': document['client_status'],
+              'differing_fields': [
+                for (final key in {
+                  ...?existingBooking.data()?.keys,
+                  ...document.keys,
+                })
+                  if (!_sameDocument(
+                    existingBooking.data()?[key],
+                    document[key],
+                  ))
+                    key,
+              ],
+            },
+          );
+        }
       }
       final previousChassisId = normalizeId(
         existingBooking.data()?['chassis_id']?.toString(),
@@ -2513,7 +2531,7 @@ class OfflineMutationQueueService {
                       'bookings',
                     }.contains(entry.collectionKey)));
         final bookingConflict =
-            !entry.bookingConflictRechecked &&
+            !entry.bookingContinuationRechecked &&
             entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
             entry.collectionKey == 'bookings' &&
             ((entry.lastError ?? '').contains(
@@ -2529,6 +2547,8 @@ class OfflineMutationQueueService {
             boxedErrorRechecked: boxed || entry.boxedErrorRechecked,
             bookingConflictRechecked:
                 bookingConflict || entry.bookingConflictRechecked,
+            bookingContinuationRechecked:
+                bookingConflict || entry.bookingContinuationRechecked,
             clearLastError: true,
           );
         }
@@ -3024,6 +3044,7 @@ class _OfflineMutationEntry {
     this.isBlocked = false,
     this.boxedErrorRechecked = false,
     this.bookingConflictRechecked = false,
+    this.bookingContinuationRechecked = false,
     this.catalogPredecessorVersions = const [],
     this.lastError,
     this.diagnostics,
@@ -3040,6 +3061,7 @@ class _OfflineMutationEntry {
   final bool isBlocked;
   final bool boxedErrorRechecked;
   final bool bookingConflictRechecked;
+  final bool bookingContinuationRechecked;
   final List<String> catalogPredecessorVersions;
   final String? lastError;
   final String? diagnostics;
@@ -3051,6 +3073,7 @@ class _OfflineMutationEntry {
     bool? isBlocked,
     bool? boxedErrorRechecked,
     bool? bookingConflictRechecked,
+    bool? bookingContinuationRechecked,
     String? baseUpdatedAt,
     bool clearBaseUpdatedAt = false,
     String? lastError,
@@ -3072,6 +3095,8 @@ class _OfflineMutationEntry {
       boxedErrorRechecked: boxedErrorRechecked ?? this.boxedErrorRechecked,
       bookingConflictRechecked:
           bookingConflictRechecked ?? this.bookingConflictRechecked,
+      bookingContinuationRechecked:
+          bookingContinuationRechecked ?? this.bookingContinuationRechecked,
       catalogPredecessorVersions: catalogPredecessorVersions,
       lastError: clearLastError ? null : (lastError ?? this.lastError),
       diagnostics: clearLastError ? null : (diagnostics ?? this.diagnostics),
@@ -3091,6 +3116,7 @@ class _OfflineMutationEntry {
       'is_blocked': isBlocked,
       'boxed_error_rechecked': boxedErrorRechecked,
       'booking_conflict_rechecked': bookingConflictRechecked,
+      'booking_continuation_rechecked': bookingContinuationRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
       'last_error': lastError,
@@ -3119,6 +3145,8 @@ class _OfflineMutationEntry {
       isBlocked: map['is_blocked'] as bool? ?? false,
       boxedErrorRechecked: map['boxed_error_rechecked'] == true,
       bookingConflictRechecked: map['booking_conflict_rechecked'] == true,
+      bookingContinuationRechecked:
+          map['booking_continuation_rechecked'] == true,
       catalogPredecessorVersions:
           (map['catalog_predecessor_versions'] as List? ?? [])
               .whereType<String>()

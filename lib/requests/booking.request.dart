@@ -93,10 +93,7 @@ class BookingRequest implements BookingRepository {
           !currentNetworkStatus()) {
         return;
       }
-      await _legacyRepair.repairSnapshot(
-        documents,
-        onResult: (result) => debugPrint('[Booking ID repair] $result'),
-      );
+      await _legacyRepair.repairSnapshot(documents);
     } catch (error, stack) {
       unawaited(
         SyncErrorLogService.instance.report(
@@ -106,7 +103,6 @@ class BookingRequest implements BookingRepository {
           operation: 'booking operation failure',
         ),
       );
-      debugPrint('[Booking ID repair] Deferred: $error');
     } finally {
       _legacyRepairDispatchRunning = false;
     }

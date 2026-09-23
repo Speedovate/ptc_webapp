@@ -1,3 +1,4 @@
+import 'booking_status_continuation_test.dart' as fixture;
 import 'dart:convert';
 import 'support/merge_aware_firestore.dart';
 import 'dart:async';
@@ -262,6 +263,52 @@ void main() {
     expect(entry['is_blocked'], false);
     expect(entry['payload'], {'amount': 1000});
   });
+
+  test(
+    'legacy continuation rechecks once, commits status with original offline time',
+    () async {
+      final db = FakeFirebaseFirestore();
+      final backend = _MemoryBookingStorageBackend();
+      const key = 'offline_mutation_queue_v1::signed_out';
+      final server = fixture.server();
+      final pending = fixture.pending();
+      await db.collection('bookings').doc('7').set(server);
+      await backend.writeStringList(key, [
+        jsonEncode({
+          'id': 'continue-status',
+          'kind': 'collectionDocumentUpsert',
+          'collection_key': 'bookings',
+          'target_id': '7',
+          'created_at': pending['updated_at'],
+          'base_updated_at': server['created_at'],
+          'payload': pending,
+          'retry_count': 0,
+          'is_blocked': true,
+          'booking_conflict_rechecked': true,
+          'last_error':
+              'Sync conflict: booking changed remotely before applying this edit.',
+        }),
+      ]);
+      final service = OfflineMutationQueueService(
+        firestore: db,
+        backend: backend,
+        isOnline: () => true,
+      );
+      await service.flushPendingMutations();
+      expect(await backend.readStringList(key), isEmpty);
+      expect((await db.collection('bookings').doc('7').get()).data(), {
+        ...pending,
+        'photo_cleanup_claims': [],
+        'photo_cleanup_paths': [],
+      });
+      await service.flushPendingMutations();
+      expect((await db.collection('bookings').doc('7').get()).data(), {
+        ...pending,
+        'photo_cleanup_claims': [],
+        'photo_cleanup_paths': [],
+      });
+    },
+  );
 
   for (final kind in ['media', 'cleanup', 'mutations', 'booking photos']) {
     test('reading $kind status does not feed another status event', () async {

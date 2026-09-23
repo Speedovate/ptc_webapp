@@ -163,17 +163,21 @@ class SyncErrorLogService {
               )
               .toList(),
         );
-      } catch (error) {
-        debugPrint(
-          '[Sync error log] Quarantine unavailable: ${sanitize('$error')}',
-        );
-      }
+      } catch (_) {}
     }
     return rows;
   }
 
   /// Credentials are redacted even when a SDK embeds a URL in its exception.
   static String sanitize(String value) => value
+      .replaceAllMapped(
+        RegExp(
+          r'data:([^;,\s]+);base64,([A-Za-z0-9+/=\r\n]+)',
+          caseSensitive: false,
+        ),
+        (m) =>
+            '[INLINE MEDIA OMITTED: ${m[1]}; encoded_chars=${m[2]!.length}; sha256=${sha256.convert(utf8.encode(m[2]!))}]',
+      )
       .replaceAllMapped(
         RegExp(
           r'''(token|password|authorization|api[_-]?key|secret)(["'\s]*[=:]["'\s]*)([^\s&,}"']+)''',
@@ -454,6 +458,7 @@ class SyncErrorLogService {
                 kind: 'persisted_queue_failure',
                 attentionRequired: attention,
                 details: {
+                  ..._persistedConflictContext(entry['error_diagnostics']),
                   'queue_snapshot': pendingMutationSnapshot(entry),
                   'base_updated_at': entry['base_updated_at'],
                   'pending_updated_at':
@@ -515,9 +520,7 @@ class SyncErrorLogService {
         );
       });
       unawaited(flush());
-    } catch (error) {
-      debugPrint('[Sync error log] Resolution deferred: ${sanitize('$error')}');
-    }
+    } catch (_) {}
   }
 
   static bool _isSyncError(Object? kind) => const {
@@ -647,6 +650,11 @@ class SyncErrorLogService {
               row['details'] as Map? ?? {},
             );
             final incomingDetails = sanitizeDetails(details);
+            if (storedDetails['details_truncated'] == true &&
+                incomingDetails['queue_snapshot'] is Map) {
+              storedDetails.remove('details_truncated');
+              storedDetails.remove('summary');
+            }
             final additions = {
               for (final entry in incomingDetails.entries)
                 if (!storedDetails.containsKey(entry.key) ||
@@ -723,11 +731,23 @@ class SyncErrorLogService {
         });
       });
       unawaited(flush());
-    } catch (error) {
+    } catch (_) {
       // Diagnostic storage failures must not change the original queue outcome.
-      debugPrint(
-        '[Sync error log] Local persistence failed: ${sanitize('$error')}',
+    }
+  }
+
+  static Map<String, dynamic> _persistedConflictContext(Object? diagnostic) {
+    if (diagnostic is! String) return {};
+    final marker = diagnostic.indexOf('Context:\n');
+    if (marker < 0) return {};
+    try {
+      final decoded = jsonDecode(
+        diagnostic.substring(marker + 9).split('\n').first,
       );
+      if (decoded is! Map || decoded['details_truncated'] == true) return {};
+      return Map<String, dynamic>.from(decoded);
+    } catch (_) {
+      return {};
     }
   }
 
@@ -791,14 +811,7 @@ class SyncErrorLogService {
     });
     // A hung upload owns one actual operation and one bounded caller future.
     // Maintenance ticks must not accumulate waiting writes or callbacks.
-    return _boundedFlush = future.timeout(
-      uploadTimeout,
-      onTimeout: () {
-        debugPrint(
-          '[Sync error log] Remote operation still pending; no overlapping retry.',
-        );
-      },
-    );
+    return _boundedFlush = future.timeout(uploadTimeout, onTimeout: () {});
   }
 
   Future<void> _flush() async {
@@ -884,8 +897,7 @@ class SyncErrorLogService {
         }
         await Future<void>.delayed(Duration.zero);
       }
-    } catch (error) {
-      debugPrint('[Sync error log] Upload deferred: ${sanitize('$error')}');
+    } catch (_) {
       _retryAfter = _now().add(const Duration(minutes: 1));
       // Never report logger failures back through itself or a business queue.
     }

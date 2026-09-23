@@ -402,11 +402,7 @@ class OfflineSyncStatusService extends ChangeNotifier {
   // Queue bursts request one running scan and at most one latest follow-up.
   late final _knownSessionRefresh = LatestValueWorker<bool>(
     apply: (_) => _refreshKnownSessionSnapshot(),
-    onError: (error, stack) {
-      if (kDebugMode) {
-        debugPrint('Sync status refresh deferred: $error');
-      }
-    },
+    onError: (_, _) {},
   );
 
   Future<void> _refreshKnownSessionSnapshot() async {
