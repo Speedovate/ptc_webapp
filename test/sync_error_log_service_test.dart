@@ -55,11 +55,149 @@ List<String> reports(MemoryLogs backend) => [
     if (entry.key.startsWith('${SyncDiagnosticOutbox.prefix}_row_'))
       ...entry.value,
 ];
+Future<void> waitFor(bool Function() ready) async {
+  final until = DateTime.now().add(const Duration(seconds: 5));
+  while (!ready()) {
+    if (DateTime.now().isAfter(until)) {
+      throw StateError('Condition did not complete');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() {
     SharedPreferences.setMockInitialValues({});
   });
+  test(
+    'queued, retrying and blocked actions cannot be resolved or deleted',
+    () async {
+      final disk = MemoryLogs();
+      var deletes = 0;
+      final service = SyncErrorLogService(
+        backend: disk,
+        online: () => true,
+        metadata: (_) async => {},
+        writer: (_, _) async {},
+        deleter: (_) async {
+          deletes++;
+        },
+      );
+      await service.start();
+      await capture(service);
+      await service.flush();
+      for (final state in ['syncing', 'retrying', 'blocked']) {
+        disk.values['offline_media_sync_queue_v1::13'] = [
+          jsonEncode({'id': 'queue1', 'state': state, 'last_error': 'failure'}),
+        ];
+        await service.resolveQueueEntries('offline_media_sync_queue_v1::13', {
+          'queue1',
+        });
+        await service.flush();
+        expect(deletes, 0);
+        expect(jsonDecode(reports(disk).single)['resolved_at'], isNull);
+      }
+      // The successful replay has durably removed its action before cleanup.
+      disk.values['offline_media_sync_queue_v1::13'] = [];
+      await service.resolveQueueEntries('offline_media_sync_queue_v1::13', {
+        'queue1',
+      });
+      await service.flush();
+      expect(deletes, 1);
+    },
+  );
+
+  test(
+    'resolution deletes only this device and suppresses late callbacks after restart',
+    () async {
+      final remote = <String, Map<String, dynamic>>{};
+      final a = MemoryLogs(), b = MemoryLogs();
+      SyncErrorLogService create(MemoryLogs disk) => SyncErrorLogService(
+        backend: disk,
+        online: () => true,
+        metadata: (_) async => {},
+        writer: (id, row) async => remote[id] = Map.of(row),
+        deleter: (id) async {
+          remote.remove(id);
+        },
+      );
+      final first = create(a), other = create(b);
+      await first.start();
+      await other.start();
+      await capture(first);
+      await first.flush();
+      await capture(other);
+      await other.flush();
+      expect(remote.length, 2);
+      final otherId = jsonDecode(reports(b).single)['id'];
+      await first.resolveQueueEntries('offline_media_sync_queue_v1::13', {
+        'queue1',
+      });
+      await first.flush();
+      expect(remote.keys, [otherId]);
+      final restarted = create(a);
+      await restarted.start();
+      await capture(restarted, attempt: 99);
+      await restarted.flush();
+      expect(remote.keys, [otherId]);
+      await restarted.resolveQueueEntries('offline_media_sync_queue_v1::13', {
+        'queue1',
+      });
+      await restarted.flush();
+      expect(remote.keys, [otherId]);
+    },
+  );
+
+  test(
+    'shared tabs order a late upload before deletion without re-creating the log',
+    () async {
+      final disk = MemoryLogs();
+      final gate = Completer<void>();
+      final entered = Completer<void>();
+      final remote = <String, Map<String, dynamic>>{};
+      var writes = 0, deletes = 0;
+      SyncErrorLogService create() => SyncErrorLogService(
+        backend: disk,
+        online: () => true,
+        metadata: (_) async => {},
+        uploadTimeout: const Duration(milliseconds: 20),
+        writer: (id, row) async {
+          writes++;
+          if (!entered.isCompleted) entered.complete();
+          await gate.future;
+          remote[id] = row;
+        },
+        deleter: (id) async {
+          deletes++;
+          remote.remove(id);
+        },
+      );
+      final a = create(), b = create();
+      await a.start();
+      await b.start();
+      await capture(a);
+      await entered.future;
+      await a.flush();
+      await b.resolveQueueEntries('offline_media_sync_queue_v1::13', {
+        'queue1',
+      });
+      await b.flush();
+      await capture(b, attempt: 2);
+      expect(writes, 1);
+      gate.complete();
+      await a.flush();
+      await b.flush();
+      await waitFor(() => remote.isEmpty && deletes == 1);
+      expect(remote, isEmpty);
+      expect(deletes, 1);
+      await capture(a, attempt: 3);
+      await a.flush();
+      expect(writes, 1);
+      expect(remote, isEmpty);
+    },
+  );
+
   test(
     'legacy reports migrate without changing IDs or original failure times',
     () async {
@@ -371,7 +509,7 @@ void main() {
     expect(reports(backend), hasLength(1));
   });
 
-  test('timed out diagnostic upload retains outbox and retries', () async {
+  test('timed out diagnostic upload keeps a single actual writer', () async {
     final backend = MemoryLogs();
     var time = DateTime.utc(2026, 9, 23);
     var hung = true;
@@ -390,14 +528,19 @@ void main() {
     );
     await service.start();
     await capture(service);
+    await waitFor(() => writes == 1);
     await service.flush();
     expect(jsonDecode(reports(backend).single)['dirty'], true);
     time = time.add(const Duration(minutes: 1));
     hung = false;
     await service.flush();
-    expect(writes, 2);
-    expect(jsonDecode(reports(backend).single)['dirty'], false);
+    expect(writes, 1);
+    expect(jsonDecode(reports(backend).single)['dirty'], true);
     gate.complete();
+    await service.flush();
+    await waitFor(() => jsonDecode(reports(backend).single)['dirty'] == false);
+    expect(writes, 1);
+    expect(jsonDecode(reports(backend).single)['dirty'], false);
   });
   test(
     'stalled persistence bounds callers and preserves serialized late writes',

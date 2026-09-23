@@ -110,7 +110,12 @@ class AdminModalShell extends StatelessWidget {
                     children: [
                       Padding(
                         padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-                        child: Text(title, style: theme.textTheme.titleLarge),
+                        child: selectable
+                            ? Text(title, style: theme.textTheme.titleLarge)
+                            : SelectableText(
+                                title,
+                                style: theme.textTheme.titleLarge,
+                              ),
                       ),
                       if (flexibleBody)
                         Flexible(

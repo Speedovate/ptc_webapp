@@ -22,6 +22,7 @@ class AdminModalRecordList extends StatelessWidget {
     this.horizontalOnDesktop = false,
     this.scrollHeader,
     this.scrollController,
+    this.scrollPhysics,
     this.scrollFooter,
   });
   final List<String> titles;
@@ -47,6 +48,7 @@ class AdminModalRecordList extends StatelessWidget {
   final Widget? scrollHeader;
   final Widget? scrollFooter;
   final ScrollController? scrollController;
+  final ScrollPhysics? scrollPhysics;
 
   static final _measurements = TextWidthCache(capacity: 1024);
 
@@ -268,6 +270,7 @@ class AdminModalRecordList extends StatelessWidget {
         final content = scrollHeader != null
             ? ListView.separated(
                 controller: scrollController,
+                physics: scrollPhysics,
                 primary: false,
                 padding: EdgeInsets.zero,
                 itemCount: groups.length + 2 + (scrollFooter == null ? 0 : 1),
@@ -298,7 +301,7 @@ class AdminModalRecordList extends StatelessWidget {
                       shrinkWrap: shrinkWrap,
                       physics: shrinkWrap
                           ? const NeverScrollableScrollPhysics()
-                          : null,
+                          : scrollPhysics,
                       primary: false,
                       itemCount: groups.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 12),

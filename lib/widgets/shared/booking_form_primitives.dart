@@ -386,8 +386,8 @@ class BookingFormFieldCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Expanded(
-              child: RichText(
-                text: TextSpan(
+              child: Text.rich(
+                TextSpan(
                   text: title,
                   style: const TextStyle(
                     color: AppColors.textPrimary,

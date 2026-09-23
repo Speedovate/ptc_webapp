@@ -7,7 +7,10 @@ extension type _LockManager(JSObject _) implements JSObject {
   external JSPromise<JSAny?> request(JSString name, JSFunction callback);
 }
 
-Future<void> withDiagnosticWriteLock(Future<void> Function() action) async {
+Future<void> withDiagnosticWriteLock(
+  Future<void> Function() action, {
+  String name = 'paltranco_sync_diagnostic_outbox_v2',
+}) async {
   final locks = _locks;
   if (locks == null) {
     // Never silently use an isolate-only lock for shared browser storage.
@@ -15,7 +18,7 @@ Future<void> withDiagnosticWriteLock(Future<void> Function() action) async {
   }
   await locks
       .request(
-        'paltranco_sync_diagnostic_outbox_v2'.toJS,
+        name.toJS,
         ((JSAny? lock) => action().then<JSAny?>((_) => null).toJS).toJS,
       )
       .toDart;

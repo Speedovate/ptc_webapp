@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'diagnostic_write_lock.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
 
@@ -63,17 +64,76 @@ class SyncDiagnosticOutbox {
     }
   }
 
+  String _scopeKey(String scope) =>
+      '${prefix}_queue_${sha256.convert(utf8.encode(scope))}';
+  String _doneKey(String scope, String entry) =>
+      '${prefix}_done_${sha256.convert(utf8.encode('$scope/$entry'))}';
+
+  Future<bool> isResolved(String scope, String entry) async =>
+      (await backend.readStringList(_doneKey(scope, entry))).isNotEmpty;
+
+  Future<void> update(
+    String fingerprint,
+    Future<Map<String, dynamic>?> Function(Map<String, dynamic>?) action,
+  ) => withDiagnosticWriteLock(() async {
+    final row = await action(await get(fingerprint));
+    if (row != null) await _put(row);
+  });
+
+  /// A completion receipt survives pruning, reloads and delayed failure callbacks.
+  Future<void> resolveEntries(String scope, Set<String> completed, String at) =>
+      withDiagnosticWriteLock(() async {
+        for (final id in completed) {
+          await backend.writeStringList(_doneKey(scope, id), [at]);
+        }
+        final fingerprints = await backend.readStringList(_scopeKey(scope));
+        for (final fingerprint in fingerprints) {
+          final row = await get(fingerprint);
+          if (row == null || !completed.contains(row['queue_entry_id'])) {
+            continue;
+          }
+          if (row['resolved_at'] != null) continue;
+          row['resolved_at'] = at;
+          row['dirty'] = true;
+          row.remove('last_uploaded_at');
+          await _put(row);
+        }
+      });
+
+  Future<Set<String>> trackedEntries(String scope) async {
+    final entries = <String>{};
+    for (final fp in await backend.readStringList(_scopeKey(scope))) {
+      final row = await get(fp);
+      if (row != null && row['resolved_at'] == null) {
+        entries.add(row['queue_entry_id'] as String);
+      }
+    }
+    return entries;
+  }
+
   Future<void> put(Map<String, dynamic> row) =>
       withDiagnosticWriteLock(() => _put(row));
 
   Future<void> _put(Map<String, dynamic> row) async {
     final fingerprint = row['fingerprint'] as String;
+    final scope = row['queue_scope'] as String?;
+    if (scope != null) {
+      final key = _scopeKey(scope);
+      final tracked = (await backend.readStringList(key)).toSet();
+      if (row['resolved_at'] != null && row['dirty'] != true) {
+        tracked.remove(fingerprint);
+      } else {
+        tracked.add(fingerprint);
+      }
+      await backend.writeStringList(key, tracked.toList());
+    }
     final key = _bucket(fingerprint);
     final entries = await _index(key);
     entries.removeWhere((e) => e['fingerprint'] == fingerprint);
     entries.add({
       'fingerprint': fingerprint,
       'dirty': row['dirty'],
+      'retain': row['queue_scope'] != null && row['resolved_at'] == null,
       'last_uploaded_at': row['last_uploaded_at'],
     });
     // Register before writing a new row: a interrupted write can leave a
@@ -81,7 +141,9 @@ class SyncDiagnosticOutbox {
     await backend.writeStringList(key, entries.map(jsonEncode).toList());
     await backend.writeStringList(_row(fingerprint), [jsonEncode(row)]);
     // Keep up to eight acknowledged receipts per shard (512 overall).
-    final receipts = entries.where((e) => e['dirty'] != true).toList();
+    final receipts = entries
+        .where((e) => e['dirty'] != true && e['retain'] != true)
+        .toList();
     if (receipts.length > 8) {
       final expired = receipts.take(receipts.length - 8).toList();
       entries.removeWhere(expired.contains);

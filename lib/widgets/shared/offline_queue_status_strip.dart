@@ -393,13 +393,15 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
                     return const Center(child: CircularProgressIndicator());
                   }
                   if (snapshot.hasError) {
-                    return const Text(
+                    return const SelectableText(
                       'Could not read saved actions. Please refresh to try again.',
                     );
                   }
                   final items = snapshot.data ?? [];
                   if (items.isEmpty) {
-                    return const Text('No queued actions for this account.');
+                    return const SelectableText(
+                      'No queued actions for this account.',
+                    );
                   }
                   return AdminModalRecordList(
                     titles: const ['Action', 'Record', 'DateTime', 'Status'],
@@ -453,7 +455,7 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
                 _retryError!,
                 style: const TextStyle(color: AppColors.danger),
               ),
-            if (_retrying) const Text('Syncing queued chat…'),
+            if (_retrying) const SelectableText('Syncing queued chat…'),
             Wrap(
               spacing: 12,
               alignment: WrapAlignment.end,

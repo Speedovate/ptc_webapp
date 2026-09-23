@@ -1,3 +1,4 @@
+import 'sync_error_log_service.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
 import 'package:webapp/utils/copy_document_fields.dart';
 import 'package:webapp/models/offline_queue_item.dart';
@@ -837,6 +838,7 @@ class OfflineMediaSyncService {
       return const _ScopedMediaFlushResult(shouldFlushAgainImmediately: false);
     }
 
+    final confirmedSuccesses = <String>{};
     final remaining = <_OfflineMediaQueueEntry>[];
     var processed = 0;
 
@@ -861,6 +863,9 @@ class OfflineMediaSyncService {
             storageKey.substring('$_storageKey::'.length),
           );
         }
+        confirmedSuccesses.addAll({
+          if (entry.retryCount > 0 || entry.lastError != null) entry.id,
+        });
       } catch (error, stackTrace) {
         if (kDebugMode && entry.kind == _OfflineMediaQueueKind.supportMessage) {
           debugPrint('[Support sync] ${entry.id}: $error');
@@ -930,6 +935,13 @@ class OfflineMediaSyncService {
         ...newlyQueuedEntries,
       ]);
     });
+
+    unawaited(
+      SyncErrorLogService.instance.resolveQueueEntries(
+        storageKey,
+        confirmedSuccesses,
+      ),
+    );
     final latestEntries = await _readEntriesForStorageKey(storageKey);
     final shouldFlushAgainImmediately =
         _isOnline() &&

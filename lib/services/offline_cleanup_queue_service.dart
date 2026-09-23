@@ -1,3 +1,4 @@
+import 'sync_error_log_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'booking_photo_cleanup.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
@@ -416,6 +417,7 @@ class OfflineCleanupQueueService {
       return;
     }
 
+    final confirmedSuccesses = <String>{};
     final remaining = <_OfflineCleanupEntry>[];
     var processed = 0;
     for (final entry in entries) {
@@ -425,6 +427,9 @@ class OfflineCleanupQueueService {
           continue;
         }
         await _applyEntry(entry);
+        confirmedSuccesses.addAll({
+          if (entry.retryCount > 0 || entry.lastError != null) entry.id,
+        });
       } catch (error, stackTrace) {
         final normalizedError = normalizeUserErrorText(
           error.toString(),
@@ -477,6 +482,13 @@ class OfflineCleanupQueueService {
         ...latest.where((entry) => !originalIds.contains(entry.id)),
       ]);
     });
+
+    unawaited(
+      SyncErrorLogService.instance.resolveQueueEntries(
+        storageKey,
+        confirmedSuccesses,
+      ),
+    );
     if (updateStatus) {
       _setStatus(
         _currentStatus.copyWith(

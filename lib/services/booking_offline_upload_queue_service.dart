@@ -1,3 +1,4 @@
+import 'sync_error_log_service.dart';
 import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
 import 'package:webapp/models/offline_queue_item.dart';
@@ -428,6 +429,7 @@ class BookingOfflineUploadQueueService {
     }
 
     var mutated = false;
+    final confirmedSuccesses = <String>{};
     final remaining = <_PendingBookingUploadEntry>[];
     var processed = 0;
 
@@ -498,6 +500,11 @@ class BookingOfflineUploadQueueService {
               .timeout(const Duration(seconds: 20));
         }
 
+        if (applied) {
+          confirmedSuccesses.addAll({
+            if (entry.retryCount > 0 || entry.lastError != null) entry.id,
+          });
+        }
         mutated = true;
       } catch (error, stackTrace) {
         final normalizedError = normalizeUserErrorText(
@@ -572,6 +579,13 @@ class BookingOfflineUploadQueueService {
         await _writeEntriesForStorageKey(storageKey, merged);
       });
     }
+
+    unawaited(
+      SyncErrorLogService.instance.resolveQueueEntries(
+        storageKey,
+        confirmedSuccesses,
+      ),
+    );
     if (updateStatus) {
       _setStatus(
         _currentStatus.copyWith(

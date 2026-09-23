@@ -380,7 +380,7 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                     ),
                     if (!valid) ...[
                       const SizedBox(height: 12),
-                      const Text(
+                      const SelectableText(
                         'Choose an end date on or after the start date, up to one year apart.',
                         style: TextStyle(color: AppColors.dangerStrong),
                       ),
@@ -794,7 +794,9 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                   ),
                   const SizedBox(height: 16),
                 ],
-                Text('${_kpiDateLabel(_period.start)} – ${_kpiDateLabel(end)}'),
+                SelectableText(
+                  '${_kpiDateLabel(_period.start)} – ${_kpiDateLabel(end)}',
+                ),
                 const SizedBox(height: 16),
                 NativeDateInput(
                   label: 'Date',
@@ -828,7 +830,7 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                       update(() => confirmMissingZero = value ?? false),
                 ),
                 if (error != null)
-                  Text(
+                  SelectableText(
                     error!,
                     style: const TextStyle(color: AppColors.dangerStrong),
                   ),

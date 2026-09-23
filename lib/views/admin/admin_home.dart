@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:webapp/views/admin/admin_error_logs.dart';
 import 'package:webapp/widgets/shared/user_session_actions_scope.dart';
 import 'package:webapp/widgets/shared/inline_detail_host.dart';
 import 'package:webapp/widgets/shared/paged_data_sliver.dart';
@@ -84,6 +86,37 @@ class _AdminHomeState extends State<AdminHome> {
   final ValueNotifier<int> _sidebarBadgeRevision = ValueNotifier<int>(0);
   bool _hasResolvedSidebarThreadReadMarkers = false;
   bool _isUploadingProfilePhoto = false;
+  int _errorLogsCount = 0;
+  int _errorLogsCountRevision = 0;
+  String? _errorLogsLoadingFor;
+
+  Future<void> _refreshErrorLogsCount() async {
+    if (!_canReadErrorLogs) return;
+    final account = _shellUser.id ?? '';
+    if (_errorLogsLoadingFor == account) return;
+    _errorLogsLoadingFor = account;
+    final revision = ++_errorLogsCountRevision;
+    try {
+      final result = await FirebaseFirestore.instance
+          .collection('sync_error_logs')
+          .count()
+          .get()
+          .timeout(const Duration(seconds: 8));
+      if (!mounted ||
+          revision != _errorLogsCountRevision ||
+          !_canReadErrorLogs ||
+          _shellUser.id != widget.user.id) {
+        return;
+      }
+      _errorLogsCount = result.count ?? 0;
+      _notifySidebarBadgeChanged();
+    } catch (_) {
+      // Keep the last known count offline; never create diagnostic retry loops.
+    } finally {
+      if (revision == _errorLogsCountRevision) _errorLogsLoadingFor = null;
+    }
+  }
+
   String? _supportInitialTopicKey;
   String? _supportInitialBookingId;
   String? _supportInitialUserId;
@@ -115,6 +148,7 @@ class _AdminHomeState extends State<AdminHome> {
       _profileUsersViewModel.loadUsers(fallbackCurrentUser: _shellUser),
     );
     _startSidebarBadgeSync();
+    unawaited(_refreshErrorLogsCount());
   }
 
   @override
@@ -124,6 +158,10 @@ class _AdminHomeState extends State<AdminHome> {
         oldWidget.user.updatedAt != widget.user.updatedAt ||
         oldWidget.user.role != widget.user.role) {
       _shellUser = widget.user;
+      _errorLogsCountRevision++;
+      _errorLogsLoadingFor = null;
+      _errorLogsCount = 0;
+      unawaited(_refreshErrorLogsCount());
       _invalidateRetainedPrimarySections();
       if (oldWidget.user.id != widget.user.id) {
         _startSidebarBadgeSync();
@@ -527,7 +565,13 @@ class _AdminHomeState extends State<AdminHome> {
     role: _shellUser.role,
   );
 
+  bool get _canReadErrorLogs =>
+      _shellUser.role?.trim().toLowerCase() == 'admin';
+
   AdminSection _resolvedSection(AdminSection section) {
+    if (section == AdminSection.errorLogs && !_canReadErrorLogs) {
+      return _fallbackSection();
+    }
     if (section == AdminSection.dashboard && !_canReadDashboard) {
       return _fallbackSection();
     }
@@ -636,7 +680,9 @@ class _AdminHomeState extends State<AdminHome> {
                           vm.selectVehiclesSection(
                             AdminVehiclesSection.chassis,
                           );
-                          if (isCompact) Navigator.of(context).pop();
+                          if (isCompact) {
+                            Navigator.of(context).pop();
+                          }
                         },
                       ),
                     if (_canReadVehicleMakes)
@@ -819,6 +865,20 @@ class _AdminHomeState extends State<AdminHome> {
               }
             },
           ),
+        if (_canReadErrorLogs)
+          SidebarMenuItem(
+            label: AdminSection.errorLogs.title,
+            icon: _menuIcon(AdminSection.errorLogs),
+            isSelected: vm.selectedSection == AdminSection.errorLogs,
+            trailing: _sidebarBadge(_errorLogsCount, showActualCount: true),
+            onTap: () {
+              vm.selectSection(AdminSection.errorLogs);
+              unawaited(_refreshErrorLogsCount());
+              if (isCompact) {
+                Navigator.of(context).pop();
+              }
+            },
+          ),
       ],
     );
   }
@@ -898,6 +958,10 @@ class _AdminHomeState extends State<AdminHome> {
         ),
       ),
       AdminSection.analytics => const AdminAnalyticsView(),
+      AdminSection.errorLogs => AdminErrorLogsView(
+        user: _shellUser,
+        onReportsLoaded: _refreshErrorLogsCount,
+      ),
     };
   }
 
@@ -1080,6 +1144,7 @@ class _AdminHomeState extends State<AdminHome> {
       AdminSection.support => Icons.support_agent_rounded,
       AdminSection.profile => Icons.account_circle_rounded,
       AdminSection.analytics => Icons.insights_rounded,
+      AdminSection.errorLogs => Icons.bug_report_outlined,
     };
   }
 }

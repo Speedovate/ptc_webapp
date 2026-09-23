@@ -2534,6 +2534,7 @@ class OfflineMutationQueueService {
       return;
     }
 
+    final confirmedSuccesses = <String>{};
     final remaining = <_OfflineMutationEntry>[];
     var processed = 0;
 
@@ -2555,6 +2556,12 @@ class OfflineMutationQueueService {
           aliases[companion.targetId] = chassisId;
           committedChassisCreates[companion.targetId] = companion;
           await _writeResolvedIdAliases(storageKey, aliases);
+          confirmedSuccesses.addAll({
+            if (sourceEntry.retryCount > 0 || sourceEntry.lastError != null)
+              sourceEntry.id,
+            if (companion.retryCount > 0 || companion.lastError != null)
+              companion.id,
+          });
           continue;
         }
         entry = await _resolveBookingReferences(sourceEntry);
@@ -2580,6 +2587,9 @@ class OfflineMutationQueueService {
         if (entry.kind == _OfflineMutationKind.chassisAssignment) {
           _traceChassis('sync applied documentId=${entry.targetId}');
         }
+        confirmedSuccesses.addAll({
+          if (entry.retryCount > 0 || entry.lastError != null) entry.id,
+        });
       } catch (error, stackTrace) {
         if (entry.kind == _OfflineMutationKind.chassisAssignment) {
           _traceChassis(
@@ -2751,6 +2761,13 @@ class OfflineMutationQueueService {
         ..addAll(merged);
       await _writeEntriesForStorageKey(storageKey, remaining);
     });
+    unawaited(
+      SyncErrorLogService.instance.resolveQueueEntries(
+        storageKey,
+        confirmedSuccesses,
+      ),
+    );
+
     if (updateStatus) {
       _setStatus(
         _currentStatus.copyWith(

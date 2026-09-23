@@ -1,4 +1,5 @@
 import 'sync_diagnostic_outbox.dart';
+import 'diagnostic_write_lock.dart';
 import 'sync_error_environment.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -12,13 +13,13 @@ import 'package:webapp/repositories/local/booking_storage_backend.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/services/network_status_events.dart';
 
-/// Independent diagnostic outbox. Never uses a business queue, never deletes
-/// remote logs. A single maintenance timer retries diagnostics and checks stalls.
+/// Independent diagnostic outbox. Never uses a business queue, deletes resolved queue diagnostics only for this installation. A single maintenance timer retries diagnostics and checks stalls.
 class SyncErrorLogService {
   SyncErrorLogService({
     BookingStorageBackend? backend,
     Future<void> Function(String id, Map<String, dynamic> data)? writer,
     Future<Map<String, dynamic>> Function(String? owner)? metadata,
+    Future<void> Function(String id)? deleter,
     bool Function()? online,
     DateTime Function()? now,
     this.automaticMaintenance = false,
@@ -27,6 +28,12 @@ class SyncErrorLogService {
     this.stallAfter = const Duration(seconds: 90),
   }) : _backend = backend ?? createBookingStorageBackend(),
        _writer = writer ?? _write,
+       _deleter =
+           deleter ??
+           ((id) => FirebaseFirestore.instance
+               .collection(collection)
+               .doc(id)
+               .delete()),
        _metadata = metadata ?? _context,
        _online = online ?? currentNetworkStatus,
        _now = now ?? DateTime.now;
@@ -35,6 +42,7 @@ class SyncErrorLogService {
   static const storageKey = 'sync_error_log_outbox_v1';
   final BookingStorageBackend _backend;
   final Future<void> Function(String, Map<String, dynamic>) _writer;
+  final Future<void> Function(String) _deleter;
   final Future<Map<String, dynamic>> Function(String?) _metadata;
   final bool Function() _online;
   final DateTime Function() _now;
@@ -48,6 +56,7 @@ class SyncErrorLogService {
   bool? _lastOnline;
   Future<void> _serial = Future.value();
   Future<void>? _flushing;
+  Future<void>? _boundedFlush;
   DateTime? _retryAfter;
   bool _enabled = false;
   static Future<PackageInfo>? _package;
@@ -94,6 +103,7 @@ class SyncErrorLogService {
     }
     return {
       'user_id': userId,
+      'user_name': user?['name']?.toString(),
       'role': user?['role']?.toString() ?? 'unknown',
       'session_user_id': session,
       'app_version': version,
@@ -401,6 +411,49 @@ class SyncErrorLogService {
     }
   }
 
+  static String? queuePrefix(String source) {
+    if (source.contains('offline_mutation_queue')) {
+      return 'offline_mutation_queue_v1';
+    }
+    if (source.contains('offline_media_sync')) {
+      return 'offline_media_sync_queue_v1';
+    }
+    if (source.contains('offline_cleanup_queue')) {
+      return 'offline_cleanup_queue_v1';
+    }
+    if (source.contains('booking_offline_upload_queue') ||
+        source == 'booking_pending_upload_queue_v1') {
+      return 'booking_pending_upload_queue_v1';
+    }
+    return null;
+  }
+
+  /// Call only after the specific action has successfully completed.
+  Future<void> resolveQueueEntries(String scope, Set<String> ids) async {
+    if (ids.isEmpty) return;
+    try {
+      await _locked(() async {
+        await _prepareOutbox();
+        // Confirmed success is necessary but insufficient: a newer edit or an
+        // in-progress retry may still retain the same action in durable storage.
+        final pending = <String>{};
+        for (final raw in await _backend.readStringList(scope)) {
+          pending.add('${(jsonDecode(raw) as Map)['id']}');
+        }
+        final completed = ids.difference(pending);
+        if (completed.isEmpty) return;
+        await _outbox.resolveEntries(
+          scope,
+          completed,
+          _now().toUtc().toIso8601String(),
+        );
+      });
+      unawaited(flush());
+    } catch (error) {
+      debugPrint('[Sync error log] Resolution deferred: ${sanitize('$error')}');
+    }
+  }
+
   Future<void> capture({
     required String source,
     required String operation,
@@ -502,55 +555,67 @@ class SyncErrorLogService {
       await _locked(() async {
         await _prepareOutbox();
         final time = failedAt ?? _now().toUtc().toIso8601String();
-        var row = await _outbox.get(fingerprint);
-        if (row != null && row['last_attempt'] == attempt) return;
-        if (row == null) {
-          final installation = await _backend.readStringList(
-            '${storageKey}_device',
-          );
-          final device = installation.isNotEmpty
-              ? installation.first
-              : '${_now().microsecondsSinceEpoch}-${Random.secure().nextInt(0x7fffffff)}';
-          if (installation.isEmpty) {
-            await _backend.writeStringList('${storageKey}_device', [device]);
+        final prefix =
+            (kind == 'queue_failure' || kind == 'persisted_queue_failure')
+            ? queuePrefix(source)
+            : null;
+        final scope = prefix == null
+            ? null
+            : '$prefix::${owner ?? metadata['user_id'] ?? 'signed_out'}';
+        await _outbox.update(fingerprint, (row) async {
+          if (scope != null && await _outbox.isResolved(scope, entryId)) {
+            return null;
           }
-          row = {
-            'id': '${device}_$fingerprint',
-            'fingerprint': fingerprint,
-            'device_id': device,
-            'first_failed_at': time,
-            'occurrences': 0,
-          };
-        }
-        row.addAll({
-          ...metadata,
-          'schema_version': 1,
-          'kind': kind,
-          'source': source,
-          'operation': operation,
-          'queue_entry_id': entryId,
-          'target': sanitize(target),
-          'action_at': actionAt,
-          'last_failed_at': time,
-          'captured_at': _now().toUtc().toIso8601String(),
-          'last_attempt': attempt,
-          'occurrences': (row['occurrences'] as int) + 1,
-          'error': safeError.length > 16000
-              ? safeError.substring(0, 16000)
-              : safeError,
-          'stack_trace': safeStack.length > 48000
-              ? safeStack.substring(0, 48000)
-              : safeStack,
-          'diagnostic_truncated':
-              safeError.length > 16000 || safeStack.length > 48000,
-          'online_at_failure': _online(),
-          'details': _safeDetails({
-            ...details,
-            'recent_network_transitions': List.of(_transitions),
-          }),
-          'dirty': true,
+          if (row != null && row['last_attempt'] == attempt) return null;
+          if (row == null) {
+            final installation = await _backend.readStringList(
+              '${storageKey}_device',
+            );
+            final device = installation.isNotEmpty
+                ? installation.first
+                : '${_now().microsecondsSinceEpoch}-${Random.secure().nextInt(0x7fffffff)}';
+            if (installation.isEmpty) {
+              await _backend.writeStringList('${storageKey}_device', [device]);
+            }
+            row = {
+              'id': '${device}_$fingerprint',
+              'fingerprint': fingerprint,
+              'device_id': device,
+              'first_failed_at': time,
+              'occurrences': 0,
+            };
+          }
+          row.addAll({
+            ...metadata,
+            'queue_scope': ?scope,
+            'schema_version': 1,
+            'kind': kind,
+            'source': source,
+            'operation': operation,
+            'queue_entry_id': entryId,
+            'target': sanitize(target),
+            'action_at': actionAt,
+            'last_failed_at': time,
+            'captured_at': _now().toUtc().toIso8601String(),
+            'last_attempt': attempt,
+            'occurrences': (row['occurrences'] as int) + 1,
+            'error': safeError.length > 16000
+                ? safeError.substring(0, 16000)
+                : safeError,
+            'stack_trace': safeStack.length > 48000
+                ? safeStack.substring(0, 48000)
+                : safeStack,
+            'diagnostic_truncated':
+                safeError.length > 16000 || safeStack.length > 48000,
+            'online_at_failure': _online(),
+            'details': _safeDetails({
+              ...details,
+              'recent_network_transitions': List.of(_transitions),
+            }),
+            'dirty': true,
+          });
+          return row;
         });
-        await _outbox.put(row);
       });
       unawaited(flush());
     } catch (error) {
@@ -592,12 +657,24 @@ class SyncErrorLogService {
     if (!_enabled || !_online() || (_retryAfter?.isAfter(_now()) ?? false)) {
       return Future.value();
     }
-    if (_flushing != null) return _flushing!;
-    final future = _flush();
-    _flushing = future;
-    return future.whenComplete(() {
-      if (identical(_flushing, future)) _flushing = null;
+    if (_flushing != null) return _boundedFlush!;
+    final future = _flushing = _flush();
+    future.then((_) {
+      if (identical(_flushing, future)) {
+        _flushing = null;
+        _boundedFlush = null;
+      }
     });
+    // A hung upload owns one actual operation and one bounded caller future.
+    // Maintenance ticks must not accumulate waiting writes or callbacks.
+    return _boundedFlush = future.timeout(
+      uploadTimeout,
+      onTimeout: () {
+        debugPrint(
+          '[Sync error log] Remote operation still pending; no overlapping retry.',
+        );
+      },
+    );
   }
 
   Future<void> _flush() async {
@@ -610,23 +687,63 @@ class SyncErrorLogService {
         if (ready.isEmpty) break;
         for (final row in ready) {
           if (!_online()) return;
-          final data = Map<String, dynamic>.from(row)
-            ..remove('dirty')
-            ..remove('last_uploaded_at');
-          data['copy_report'] = const JsonEncoder.withIndent(
-            '  ',
-          ).convert(data);
-          await _writer(row['id'] as String, data).timeout(uploadTimeout);
-          await _locked(() async {
-            final saved = await _outbox.get(row['fingerprint'] as String);
-            if (saved != null) {
-              saved['last_uploaded_at'] = _now().toUtc().toIso8601String();
-              if (saved['occurrences'] == row['occurrences']) {
+          // Cross-tab ordering includes the actual SDK future, even if this
+          // caller times out. A late upload cannot run after its deletion.
+          await withDiagnosticWriteLock(() async {
+            final current = await _outbox.get(row['fingerprint'] as String);
+            if (current == null || current['dirty'] != true) return;
+            final scope = current['queue_scope'] as String?;
+            final resolved =
+                current['resolved_at'] != null ||
+                (scope != null &&
+                    await _outbox.isResolved(
+                      scope,
+                      current['queue_entry_id'] as String,
+                    ));
+            if (resolved) {
+              if (scope == null) {
+                throw StateError('Missing completed queue scope');
+              }
+              for (final raw in await _backend.readStringList(scope)) {
+                if ('${(jsonDecode(raw) as Map)['id']}' ==
+                    current['queue_entry_id']) {
+                  throw StateError(
+                    'Error cleanup deferred: action is still queued or syncing',
+                  );
+                }
+              }
+              final device = await _backend.readStringList(
+                '${storageKey}_device',
+              );
+              if (device.isEmpty ||
+                  current['device_id'] != device.first ||
+                  !('${current['id']}'.startsWith('${device.first}_'))) {
+                throw StateError(
+                  'Refusing to delete a report from another device',
+                );
+              }
+              await _deleter(current['id'] as String);
+            } else {
+              final data = Map<String, dynamic>.from(current)
+                ..remove('dirty')
+                ..remove('last_uploaded_at');
+              data['copy_report'] = const JsonEncoder.withIndent(
+                '  ',
+              ).convert(data);
+              await _writer(current['id'] as String, data);
+            }
+            await _outbox.update(current['fingerprint'] as String, (
+              saved,
+            ) async {
+              if (saved == null) return null;
+              if (saved['occurrences'] == current['occurrences'] &&
+                  saved['resolved_at'] == current['resolved_at']) {
+                saved['last_uploaded_at'] = _now().toUtc().toIso8601String();
                 saved['dirty'] = false;
               }
-            }
-            if (saved != null) await _outbox.put(saved);
-          });
+              return saved;
+            });
+          }, name: 'paltranco_sync_diagnostic_remote_v1');
         }
         await Future<void>.delayed(Duration.zero);
       }

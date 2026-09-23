@@ -4,9 +4,46 @@
       "collectionGroup": "bookings",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "client_status", "order": "ASCENDING" },
-        { "fieldPath": "chassis_id", "order": "ASCENDING" },
-        { "fieldPath": "delivered_at", "order": "ASCENDING" }
+        {
+          "fieldPath": "client_status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "chassis_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "delivered_at",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "sync_error_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "user_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "first_failed_at",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "sync_error_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "user_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "last_failed_at",
+          "order": "DESCENDING"
+        }
       ]
     }
   ],
