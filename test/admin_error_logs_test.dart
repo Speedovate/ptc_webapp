@@ -68,6 +68,80 @@ class _StalledQuery implements Query<Map<String, dynamic>> {
 }
 
 void main() {
+  testWidgets('device copy fetches all 117 server documents and every field', (
+    tester,
+  ) async {
+    final db = FakeFirebaseFirestore();
+    for (var i = 0; i < 117; i++) {
+      await db.collection('sync_error_logs').doc('error$i').set({
+        'attention_required': true,
+        'user_id': '8',
+        'device_id': 'A',
+        'user_name': 'Alexis',
+        'role': 'dispatcher',
+        'last_failed_at': '2026-09-23T01:00:00Z',
+        'error': 'Failure $i',
+        'id': 'stored-id-$i',
+        'extra_field': {
+          'list': [1, 2, 'three'],
+        },
+        'received_at': Timestamp(100, 123456789),
+      });
+    }
+    await db.collection('sync_error_logs').doc('other-device').set({
+      'attention_required': true,
+      'user_id': '8',
+      'device_id': 'B',
+      'last_failed_at': '2026-09-01T01:00:00Z',
+    });
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AdminErrorLogsView(
+            user: const UserModel(role: 'admin'),
+            firestore: db,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Expand errors'));
+    await tester.pumpAndSettle();
+    expect(find.text('Device A (117 Errors)'), findsOneWidget);
+    await db.collection('sync_error_logs').doc('error0').update({
+      'added_after_open': true,
+    });
+    await tester.tap(find.byTooltip('Copy all device errors').first);
+    await tester.pumpAndSettle();
+    final records = jsonDecode(copied!) as List;
+    expect(records, hasLength(117));
+    expect(
+      records.every((r) => r['firestore_data']['device_id'] == 'A'),
+      isTrue,
+    );
+    final first = records.firstWhere((r) => r['document_id'] == 'error0');
+    expect(first['document_path'], 'sync_error_logs/error0');
+    expect(first['firestore_data']['id'], 'stored-id-0');
+    expect(first['firestore_data']['extra_field']['list'], [1, 2, 'three']);
+    expect(first['firestore_data']['received_at']['nanoseconds'], 123456789);
+    expect(first['firestore_data']['added_after_open'], true);
+  });
   for (final hasLogs in [false, true]) {
     testWidgets('stalled query verifies empty state, hasLogs=$hasLogs', (
       tester,
@@ -178,13 +252,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Jonami'), findsOneWidget);
       expect(find.text('Save booking 1'), findsNothing);
-      await tester.tap(find.byTooltip('Copy loaded user errors'));
+      await tester.tap(find.byTooltip('Copy all user errors'));
       await tester.pumpAndSettle();
       final copied = jsonDecode(clipboard!) as List;
       expect(copied.length, 2);
-      expect(copied.first['id'], 'error1');
-      expect(copied.first['stack_trace'], 'source.dart:123');
-      expect(copied.first['details']['queue_entry_id'], 'offline_1');
+      expect(copied.first['document_id'], 'error0');
+      expect(copied.first['firestore_data']['stack_trace'], 'source.dart:123');
+      expect(
+        copied.first['firestore_data']['details']['queue_entry_id'],
+        'offline_0',
+      );
       await tester.tap(find.byTooltip('Expand errors'));
       await tester.pumpAndSettle();
       expect(find.text('Save booking 1'), findsNothing);
@@ -200,8 +277,11 @@ void main() {
         expect(find.text('Error Details'), findsOneWidget);
         await tester.tap(find.widgetWithText(TextButton, 'Copy'));
         await tester.pumpAndSettle();
-        expect(jsonDecode(clipboard!)['id'], 'error1');
-        expect(jsonDecode(clipboard!)['stack_trace'], 'source.dart:123');
+        expect(jsonDecode(clipboard!)['document_id'], 'error1');
+        expect(
+          jsonDecode(clipboard!)['firestore_data']['stack_trace'],
+          'source.dart:123',
+        );
         await tester.tapAt(const Offset(2, 2));
         await tester.pumpAndSettle();
         expect(find.text('Error Details'), findsNothing);
@@ -267,11 +347,11 @@ void main() {
     await tester.tap(find.byTooltip('Expand errors'));
     await tester.pumpAndSettle();
     expect(find.byTooltip('Expand device errors'), findsNWidgets(2));
-    await tester.tap(find.byTooltip('Copy loaded device errors').first);
+    await tester.tap(find.byTooltip('Copy all device errors').first);
     await tester.pumpAndSettle();
     final records = jsonDecode(copied!) as List;
     expect(records, hasLength(1));
-    final device = records.single['device_id'];
+    final device = records.single['firestore_data']['device_id'];
     await tester.tap(find.byTooltip('Expand device errors').first);
     await tester.pumpAndSettle();
     expect(find.text('Action $device'), findsOneWidget);

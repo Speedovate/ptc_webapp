@@ -454,6 +454,13 @@ class SyncErrorLogService {
                 kind: 'persisted_queue_failure',
                 attentionRequired: attention,
                 details: {
+                  'queue_snapshot': pendingMutationSnapshot(entry),
+                  'base_updated_at': entry['base_updated_at'],
+                  'pending_updated_at':
+                      (entry['payload'] as Map?)?['updated_at'],
+                  'payload_keys': (entry['payload'] as Map?)?.keys
+                      .map((key) => '$key')
+                      .toList(),
                   'blocked': entry['is_blocked'],
                   'next_retry_at': entry['next_retry_at'],
                   'recovered_from_device': true,
@@ -636,11 +643,24 @@ class SyncErrorLogService {
             return null;
           }
           if (row != null && row['last_attempt'] == attempt) {
-            if (attentionRequired == null ||
-                row['attention_required'] == attentionRequired) {
-              return null;
-            }
-            row['attention_required'] = attentionRequired;
+            final storedDetails = Map<String, dynamic>.from(
+              row['details'] as Map? ?? {},
+            );
+            final incomingDetails = sanitizeDetails(details);
+            final additions = {
+              for (final entry in incomingDetails.entries)
+                if (!storedDetails.containsKey(entry.key) ||
+                    (entry.key == 'queue_snapshot' &&
+                        jsonEncode(storedDetails[entry.key]) !=
+                            jsonEncode(entry.value)))
+                  entry.key: entry.value,
+            };
+            final attentionChanged =
+                attentionRequired != null &&
+                row['attention_required'] != attentionRequired;
+            if (!attentionChanged && additions.isEmpty) return null;
+            if (attentionChanged) row['attention_required'] = attentionRequired;
+            row['details'] = sanitizeDetails({...storedDetails, ...additions});
             row['dirty'] = true;
             row.remove('last_uploaded_at');
             return row;
@@ -693,7 +713,7 @@ class SyncErrorLogService {
             'diagnostic_truncated':
                 safeError.length > 16000 || safeStack.length > 48000,
             'online_at_failure': _online(),
-            'details': _safeDetails({
+            'details': sanitizeDetails({
               ...details,
               'recent_network_transitions': List.of(_transitions),
             }),
@@ -711,7 +731,26 @@ class SyncErrorLogService {
     }
   }
 
-  static Map<String, dynamic> _safeDetails(Map<String, dynamic> details) {
+  /// Read-only evidence from the durable queue. A version timestamp is not a
+  /// historical document snapshot; older queues never retained that document.
+  static Map<String, dynamic> pendingMutationSnapshot(
+    Map<String, dynamic> entry,
+  ) => {
+    'schema_version': 1,
+    'queue_entry_id': entry['id'],
+    'operation': entry['kind'],
+    'collection': entry['collection_key'],
+    'target_id': entry['target_id'],
+    'action_at': entry['created_at'],
+    'base_updated_at': entry['base_updated_at'],
+    'original_document_available': false,
+    'original_document_unavailable_reason':
+        'The queue retains the original version timestamp, not the pre-edit document.',
+    'pending_payload_available': entry['payload'] is Map,
+    if (entry['payload'] is Map) 'pending_payload': entry['payload'],
+  };
+
+  static Map<String, dynamic> sanitizeDetails(Map<String, dynamic> details) {
     Object? clean(Object? value) {
       if (value is Map) {
         return {

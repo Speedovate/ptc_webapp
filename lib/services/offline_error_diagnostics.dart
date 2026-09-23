@@ -1,9 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
 import 'sync_error_log_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
-/// One latest failure per action; excludes the queued payload and image bytes.
+/// Conflict metadata captured in the same transaction that rejected the write.
+class OfflineSyncConflict extends StateError {
+  OfflineSyncConflict(super.message, this.context);
+  final Map<String, dynamic> context;
+}
+
+/// One latest failure per action, with sanitized queue/conflict context.
 Future<String> offlineErrorDiagnostics({
   required Object error,
   required StackTrace stack,
@@ -17,6 +24,10 @@ Future<String> offlineErrorDiagnostics({
   Map<String, dynamic> context = const {},
 }) async {
   final failedAt = DateTime.now().toUtc().toIso8601String();
+  final diagnosticContext = {
+    ...context,
+    if (error is OfflineSyncConflict) ...error.context,
+  };
   final diagnostics = [
     'Source: $source',
     'Operation: $operation',
@@ -31,6 +42,7 @@ Future<String> offlineErrorDiagnostics({
         ? 'profile'
         : 'debug'}',
     'Error type: ${error.runtimeType}',
+    'Context:\n${jsonEncode(SyncErrorLogService.sanitizeDetails(diagnosticContext))}',
     if (error is FirebaseException) ...[
       'Firebase plugin: ${error.plugin}',
       'Firebase code: ${error.code}',
@@ -51,7 +63,7 @@ Future<String> offlineErrorDiagnostics({
       actionAt: actionAt,
       failedAt: failedAt,
       details: {
-        ...context,
+        ...diagnosticContext,
         'error_type': error.runtimeType.toString(),
         if (error is FirebaseException) 'firebase_code': error.code,
         if (error is FirebaseException) 'firebase_plugin': error.plugin,

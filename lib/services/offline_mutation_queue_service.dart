@@ -372,7 +372,7 @@ class OfflineMutationQueueService {
 
   Future<void> retryBlockedConflict(
     String conflictId, {
-    bool clearBaseVersion = true,
+    bool clearBaseVersion = false,
   }) async {
     await initialize();
     return _serializeQueueMutation(() async {
@@ -1617,8 +1617,37 @@ class OfflineMutationQueueService {
           baseVersion != null &&
           remoteVersion.isAfter(baseVersion) &&
           remoteVersion != nextVersion) {
-        throw StateError(
+        final serverContents =
+            Map<String, dynamic>.from(existingBooking.data()!)
+              ..remove('updated_at')
+              ..remove('local_sync_status');
+        final pendingContents = Map<String, dynamic>.from(document)
+          ..remove('updated_at');
+        if (_sameDocument(serverContents, pendingContents)) {
+          // Already reflected on the server. Do not replay chassis transitions
+          // or replace the server's timestamp with the old action timestamp.
+          return;
+        }
+        throw OfflineSyncConflict(
           'Sync conflict: booking changed remotely before applying this edit.',
+          {
+            'base_updated_at': entry.baseUpdatedAt,
+            'server_updated_at': existingBooking
+                .data()?['updated_at']
+                ?.toString(),
+            'pending_updated_at': document['updated_at']?.toString(),
+            'server_document': existingBooking.data(),
+            'server_status': existingBooking.data()?['client_status'],
+            'pending_status': document['client_status'],
+            'differing_fields': [
+              for (final key in {
+                ...?existingBooking.data()?.keys,
+                ...document.keys,
+              })
+                if (!_sameDocument(existingBooking.data()?[key], document[key]))
+                  key,
+            ],
+          },
         );
       }
       final previousChassisId = normalizeId(
@@ -1723,244 +1752,229 @@ class OfflineMutationQueueService {
       counterRef: _bookingsCounterRef,
       collection: _bookingsCollection,
     );
-    return await _firestore
-        .runTransaction<String>((transaction) async {
-          final repair = await transaction.get(
-            _firestore.collection('booking_id_repairs').doc(entry.targetId),
-          );
-          if (repair.data()?['resolution'] == 'keep_both_new_id') {
-            throw StateError(
-              'Sync conflict: this offline booking was preserved under a new ID. Refresh and review this pending create.',
-            );
-          }
-          final idempotencyRef = _idManagementCollection.doc(
-            _idempotencyDocumentId('bookings', submissionKey),
-          );
-          final idempotencySnapshot = await transaction.get(idempotencyRef);
-          final existingId = int.tryParse(
-            idempotencySnapshot.data()?['document_id']?.toString() ?? '',
-          );
-
-          if (BookingIdResolver.temporaryId(submissionKey) != entry.targetId) {
-            throw StateError(
-              'Sync conflict: offline booking identity is inconsistent.',
-            );
-          }
-          if (idempotencySnapshot.exists &&
-              (idempotencySnapshot.data()?['resource_key'] != 'bookings' ||
-                  idempotencySnapshot.data()?['submission_key'] !=
-                      submissionKey ||
-                  existingId == null ||
-                  existingId <= 0)) {
-            throw StateError(
-              'Sync conflict: booking reservation identity is inconsistent.',
-            );
-          }
-          final counterSnapshot = await transaction.get(_bookingsCounterRef);
-          var nextId =
-              int.tryParse(
-                counterSnapshot.data()?['next_id']?.toString() ?? '',
-              ) ??
-              bootstrapNextId ??
-              1;
-          if (existingId != null && existingId > 0) {
-            nextId = existingId;
-          } else {
-            // Older deployments may not have a counter yet. Avoid overwriting an
-            // existing numeric booking while establishing the counter.
-            while ((await transaction.get(
-              _bookingsCollection.doc('$nextId'),
-            )).exists) {
-              nextId++;
-            }
-          }
-
-          final finalId = '$nextId';
-          final existingBooking = await transaction.get(
-            _bookingsCollection.doc(finalId),
-          );
-          DocumentReference<Map<String, dynamic>>? linkedReservation;
-          Map<String, dynamic>? linkedIdentity;
-          if (linkedChassis != null) {
-            linkedReservation = _idManagementCollection.doc(
-              _idempotencyDocumentId('chassis', linkedChassisSubmissionKey!),
-            );
-            linkedIdentity = (await transaction.get(linkedReservation)).data();
-            if (linkedIdentity?['resource_key'] != 'chassis' ||
-                linkedIdentity?['submission_key'] !=
-                    linkedChassisSubmissionKey ||
-                linkedIdentity?['document_id']?.toString() !=
-                    linkedChassis['id']?.toString()) {
-              throw StateError(
-                'Sync conflict: linked chassis reservation identity changed.',
-              );
-            }
-          }
-
-          if (existingBooking.exists) {
-            if (existingBooking.data()?['submission_key'] != submissionKey) {
-              throw StateError(
-                'Sync conflict: reserved booking belongs to another submission.',
-              );
-            }
-            // A retried create must never replay old assignments or statuses
-            // over a booking that has already progressed on another device.
-            final source = idempotencySnapshot.data()?['source_document'];
-            final retryMatches =
-                BookingIdResolver.reconcileCopies([
-                  {...entry.payload, 'id': entry.targetId},
-                  {
-                    ...(source is Map
-                        ? Map<String, dynamic>.from(source)
-                        : existingBooking.data()!),
-                    'id': finalId,
-                  },
-                ]).length ==
-                1;
-            if (!retryMatches) {
-              throw StateError(
-                'Sync conflict: booking was edited while its create was syncing. Review the pending edit.',
-              );
-            }
-            if (linkedChassis != null &&
-                (linkedIdentity?['linked_booking_submission_key'] !=
-                        submissionKey ||
-                    !_sameDocument(
-                      linkedIdentity?['linked_source_document'],
-                      linkedChassis,
-                    ))) {
-              throw StateError(
-                'Sync conflict: linked chassis create changed while syncing.',
-              );
-            }
-            return finalId;
-          }
-          if (linkedIdentity?['committed_document'] != null) {
-            throw StateError(
-              'Sync conflict: linked create was already committed; booking was removed.',
-            );
-          }
-          final linkedDriverId = linkedChassis?['current_driver_id']
-              ?.toString();
-          if (linkedDriverId != null &&
-              !(await transaction.get(
-                _usersCollection.doc(linkedDriverId),
-              )).exists) {
-            throw StateError(
-              'Driver record is temporarily unavailable. Try again after its create syncs.',
-            );
-          }
-          final finalDocument = Map<String, dynamic>.from(entry.payload)
-            ..['id'] = finalId
-            ..remove('local_sync_status');
-          final chassisId = normalizeId(
-            finalDocument['chassis_id']?.toString(),
-          );
-          DocumentSnapshot<Map<String, dynamic>>? chassisSnapshot;
-          if (chassisId != null) {
-            chassisSnapshot = await transaction.get(
-              _firestore.collection('chassis').doc(chassisId),
-            );
-            if (!chassisSnapshot.exists && linkedChassis == null) {
-              throw StateError('The selected chassis no longer exists.');
-            }
-            if (linkedChassis != null && chassisSnapshot.exists) {
-              throw StateError('Sync conflict: linked chassis ID is occupied.');
-            }
-            if (linkedChassis == null) {
-              final ownerId = normalizeId(
-                chassisSnapshot.data()?['current_booking_id']?.toString(),
-              );
-              final ownerBooking = ownerId != null && ownerId != finalId
-                  ? (await transaction.get(
-                      _bookingsCollection.doc(ownerId),
-                    )).data()
-                  : null;
-              if (!shouldProjectBookingOntoChassis(
-                bookingId: finalId,
-                booking: finalDocument,
-                chassis: chassisSnapshot.data() ?? {},
-                ownerBooking: ownerBooking,
-              )) {
-                chassisSnapshot = null;
-              }
-            }
-          }
-          final now =
-              finalDocument['updated_at']?.toString() ?? entry.createdAtIso;
-          if (linkedChassis != null) {
-            final chassisDocument = Map<String, dynamic>.from(linkedChassis)
-              ..['current_booking_id'] = nextId;
-            if (isChassisReservation(
-              finalDocument['client_status']?.toString(),
-            )) {
-              chassisDocument.remove('current_booking_id');
-              chassisDocument.remove('current_driver_id');
-              chassisDocument['current_status'] = 'ready';
-            }
-            transaction.set(chassisSnapshot!.reference, chassisDocument);
-            transaction.set(linkedReservation!, {
-              'committed_document': chassisDocument,
-              'linked_source_document': linkedChassis,
-              'linked_booking_submission_key': submissionKey,
-              'linked_booking_id': finalId,
-            }, SetOptions(merge: true));
-          } else if (chassisSnapshot != null) {
-            final lifecycle = chassisLifecycleInstruction(
-              previousBookingStatus: null,
-              nextBookingStatus: finalDocument['client_status']?.toString(),
-              bookingDocument: finalDocument,
-            );
-            transaction.set(
-              chassisSnapshot.reference,
-              lifecycle == null
-                  ? _defaultChassisAssignmentPatch(
-                      bookingId: finalId,
-                      bookingDocument: finalDocument,
-                      now: now,
-                    )
-                  : _lifecycleChassisPatch(
-                      instruction: lifecycle,
-                      bookingId: finalId,
-                      bookingDocument: finalDocument,
-                      now: now,
-                    ),
-              SetOptions(merge: true),
-            );
-          }
-          transaction.set(_bookingsCollection.doc(finalId), finalDocument);
-          transaction.set(_bookingsCounterRef, {
-            'next_id': max(
-              int.tryParse(
-                    counterSnapshot.data()?['next_id']?.toString() ?? '',
-                  ) ??
-                  1,
-              nextId + 1,
-            ),
-            'updated_at': DateTime.now().toUtc().toIso8601String(),
-          }, SetOptions(merge: true));
-          transaction.set(idempotencyRef, {
-            'kind': 'idempotency',
-            'resource_key': 'bookings',
-            'document_id': finalId,
-            'submission_key': submissionKey,
-            'provisional_id': entry.targetId,
-            'source_updated_at': entry.payload['updated_at'],
-            'source_document': Map<String, dynamic>.from(entry.payload)
-              ..remove('local_sync_status'),
-            'created_at':
-                idempotencySnapshot.data()?['created_at'] ??
-                DateTime.now().toUtc().toIso8601String(),
-            'synced_at': DateTime.now().toUtc().toIso8601String(),
-          }, SetOptions(merge: true));
-          return finalId;
-        })
-        .timeout(
-          _remoteMutationTimeout,
-          onTimeout: () => throw TimeoutException(
-            'queued booking create transaction timeout',
-          ),
+    return await runTransactionWithOriginalErrors<String>(_firestore, (
+      transaction,
+    ) async {
+      final repair = await transaction.get(
+        _firestore.collection('booking_id_repairs').doc(entry.targetId),
+      );
+      if (repair.data()?['resolution'] == 'keep_both_new_id') {
+        throw StateError(
+          'Sync conflict: this offline booking was preserved under a new ID. Refresh and review this pending create.',
         );
+      }
+      final idempotencyRef = _idManagementCollection.doc(
+        _idempotencyDocumentId('bookings', submissionKey),
+      );
+      final idempotencySnapshot = await transaction.get(idempotencyRef);
+      final existingId = int.tryParse(
+        idempotencySnapshot.data()?['document_id']?.toString() ?? '',
+      );
+
+      if (BookingIdResolver.temporaryId(submissionKey) != entry.targetId) {
+        throw StateError(
+          'Sync conflict: offline booking identity is inconsistent.',
+        );
+      }
+      if (idempotencySnapshot.exists &&
+          (idempotencySnapshot.data()?['resource_key'] != 'bookings' ||
+              idempotencySnapshot.data()?['submission_key'] != submissionKey ||
+              existingId == null ||
+              existingId <= 0)) {
+        throw StateError(
+          'Sync conflict: booking reservation identity is inconsistent.',
+        );
+      }
+      final counterSnapshot = await transaction.get(_bookingsCounterRef);
+      var nextId =
+          int.tryParse(counterSnapshot.data()?['next_id']?.toString() ?? '') ??
+          bootstrapNextId ??
+          1;
+      if (existingId != null && existingId > 0) {
+        nextId = existingId;
+      } else {
+        // Older deployments may not have a counter yet. Avoid overwriting an
+        // existing numeric booking while establishing the counter.
+        while ((await transaction.get(
+          _bookingsCollection.doc('$nextId'),
+        )).exists) {
+          nextId++;
+        }
+      }
+
+      final finalId = '$nextId';
+      final existingBooking = await transaction.get(
+        _bookingsCollection.doc(finalId),
+      );
+      DocumentReference<Map<String, dynamic>>? linkedReservation;
+      Map<String, dynamic>? linkedIdentity;
+      if (linkedChassis != null) {
+        linkedReservation = _idManagementCollection.doc(
+          _idempotencyDocumentId('chassis', linkedChassisSubmissionKey!),
+        );
+        linkedIdentity = (await transaction.get(linkedReservation)).data();
+        if (linkedIdentity?['resource_key'] != 'chassis' ||
+            linkedIdentity?['submission_key'] != linkedChassisSubmissionKey ||
+            linkedIdentity?['document_id']?.toString() !=
+                linkedChassis['id']?.toString()) {
+          throw StateError(
+            'Sync conflict: linked chassis reservation identity changed.',
+          );
+        }
+      }
+
+      if (existingBooking.exists) {
+        if (existingBooking.data()?['submission_key'] != submissionKey) {
+          throw StateError(
+            'Sync conflict: reserved booking belongs to another submission.',
+          );
+        }
+        // A retried create must never replay old assignments or statuses
+        // over a booking that has already progressed on another device.
+        final source = idempotencySnapshot.data()?['source_document'];
+        final retryMatches =
+            BookingIdResolver.reconcileCopies([
+              {...entry.payload, 'id': entry.targetId},
+              {
+                ...(source is Map
+                    ? Map<String, dynamic>.from(source)
+                    : existingBooking.data()!),
+                'id': finalId,
+              },
+            ]).length ==
+            1;
+        if (!retryMatches) {
+          throw StateError(
+            'Sync conflict: booking was edited while its create was syncing. Review the pending edit.',
+          );
+        }
+        if (linkedChassis != null &&
+            (linkedIdentity?['linked_booking_submission_key'] !=
+                    submissionKey ||
+                !_sameDocument(
+                  linkedIdentity?['linked_source_document'],
+                  linkedChassis,
+                ))) {
+          throw StateError(
+            'Sync conflict: linked chassis create changed while syncing.',
+          );
+        }
+        return finalId;
+      }
+      if (linkedIdentity?['committed_document'] != null) {
+        throw StateError(
+          'Sync conflict: linked create was already committed; booking was removed.',
+        );
+      }
+      final linkedDriverId = linkedChassis?['current_driver_id']?.toString();
+      if (linkedDriverId != null &&
+          !(await transaction.get(
+            _usersCollection.doc(linkedDriverId),
+          )).exists) {
+        throw StateError(
+          'Driver record is temporarily unavailable. Try again after its create syncs.',
+        );
+      }
+      final finalDocument = Map<String, dynamic>.from(entry.payload)
+        ..['id'] = finalId
+        ..remove('local_sync_status');
+      final chassisId = normalizeId(finalDocument['chassis_id']?.toString());
+      DocumentSnapshot<Map<String, dynamic>>? chassisSnapshot;
+      if (chassisId != null) {
+        chassisSnapshot = await transaction.get(
+          _firestore.collection('chassis').doc(chassisId),
+        );
+        if (!chassisSnapshot.exists && linkedChassis == null) {
+          throw StateError('The selected chassis no longer exists.');
+        }
+        if (linkedChassis != null && chassisSnapshot.exists) {
+          throw StateError('Sync conflict: linked chassis ID is occupied.');
+        }
+        if (linkedChassis == null) {
+          final ownerId = normalizeId(
+            chassisSnapshot.data()?['current_booking_id']?.toString(),
+          );
+          final ownerBooking = ownerId != null && ownerId != finalId
+              ? (await transaction.get(_bookingsCollection.doc(ownerId))).data()
+              : null;
+          if (!shouldProjectBookingOntoChassis(
+            bookingId: finalId,
+            booking: finalDocument,
+            chassis: chassisSnapshot.data() ?? {},
+            ownerBooking: ownerBooking,
+          )) {
+            chassisSnapshot = null;
+          }
+        }
+      }
+      final now = finalDocument['updated_at']?.toString() ?? entry.createdAtIso;
+      if (linkedChassis != null) {
+        final chassisDocument = Map<String, dynamic>.from(linkedChassis)
+          ..['current_booking_id'] = nextId;
+        if (isChassisReservation(finalDocument['client_status']?.toString())) {
+          chassisDocument.remove('current_booking_id');
+          chassisDocument.remove('current_driver_id');
+          chassisDocument['current_status'] = 'ready';
+        }
+        transaction.set(chassisSnapshot!.reference, chassisDocument);
+        transaction.set(linkedReservation!, {
+          'committed_document': chassisDocument,
+          'linked_source_document': linkedChassis,
+          'linked_booking_submission_key': submissionKey,
+          'linked_booking_id': finalId,
+        }, SetOptions(merge: true));
+      } else if (chassisSnapshot != null) {
+        final lifecycle = chassisLifecycleInstruction(
+          previousBookingStatus: null,
+          nextBookingStatus: finalDocument['client_status']?.toString(),
+          bookingDocument: finalDocument,
+        );
+        transaction.set(
+          chassisSnapshot.reference,
+          lifecycle == null
+              ? _defaultChassisAssignmentPatch(
+                  bookingId: finalId,
+                  bookingDocument: finalDocument,
+                  now: now,
+                )
+              : _lifecycleChassisPatch(
+                  instruction: lifecycle,
+                  bookingId: finalId,
+                  bookingDocument: finalDocument,
+                  now: now,
+                ),
+          SetOptions(merge: true),
+        );
+      }
+      transaction.set(_bookingsCollection.doc(finalId), finalDocument);
+      transaction.set(_bookingsCounterRef, {
+        'next_id': max(
+          int.tryParse(counterSnapshot.data()?['next_id']?.toString() ?? '') ??
+              1,
+          nextId + 1,
+        ),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, SetOptions(merge: true));
+      transaction.set(idempotencyRef, {
+        'kind': 'idempotency',
+        'resource_key': 'bookings',
+        'document_id': finalId,
+        'submission_key': submissionKey,
+        'provisional_id': entry.targetId,
+        'source_updated_at': entry.payload['updated_at'],
+        'source_document': Map<String, dynamic>.from(entry.payload)
+          ..remove('local_sync_status'),
+        'created_at':
+            idempotencySnapshot.data()?['created_at'] ??
+            DateTime.now().toUtc().toIso8601String(),
+        'synced_at': DateTime.now().toUtc().toIso8601String(),
+      }, SetOptions(merge: true));
+      return finalId;
+    }).timeout(
+      _remoteMutationTimeout,
+      onTimeout: () =>
+          throw TimeoutException('queued booking create transaction timeout'),
+    );
   }
 
   bool _sameDocument(Object? a, Object? b) {
@@ -2489,18 +2503,32 @@ class OfflineMutationQueueService {
       final saved = await _readEntriesForStorageKey(storageKey);
       var changed = false;
       final recovered = saved.map((entry) {
-        if (entry.isBlocked &&
-            const {
-              'operations_catalog',
-              'bookings',
-            }.contains(entry.collectionKey) &&
-            entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+        final boxed =
             !entry.boxedErrorRechecked &&
-            isBoxedTransactionError(entry.lastError ?? '')) {
+            isBoxedTransactionError(entry.lastError ?? '') &&
+            (entry.kind == _OfflineMutationKind.bookingCreate ||
+                (entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+                    const {
+                      'operations_catalog',
+                      'bookings',
+                    }.contains(entry.collectionKey)));
+        final bookingConflict =
+            !entry.bookingConflictRechecked &&
+            entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+            entry.collectionKey == 'bookings' &&
+            ((entry.lastError ?? '').contains(
+                  'booking changed remotely before applying this edit',
+                ) ||
+                (entry.lastError ?? '').contains(
+                  'Sync conflict detected. This record changed remotely',
+                ));
+        if (entry.isBlocked && (boxed || bookingConflict)) {
           changed = true;
           return entry.copyWith(
             isBlocked: false,
-            boxedErrorRechecked: true,
+            boxedErrorRechecked: boxed || entry.boxedErrorRechecked,
+            bookingConflictRechecked:
+                bookingConflict || entry.bookingConflictRechecked,
             clearLastError: true,
           );
         }
@@ -2611,6 +2639,9 @@ class OfflineMutationQueueService {
           owner: storageKey.substring('$_storageKey::'.length),
           actionAt: entry.createdAtIso,
           context: {
+            'queue_snapshot': SyncErrorLogService.pendingMutationSnapshot(
+              entry.toMap(),
+            ),
             'base_updated_at': entry.baseUpdatedAt,
             'payload_keys': entry.payload.keys.take(100).toList(),
             'blocked_before_attempt': entry.isBlocked,
@@ -2992,6 +3023,7 @@ class _OfflineMutationEntry {
     required this.retryCount,
     this.isBlocked = false,
     this.boxedErrorRechecked = false,
+    this.bookingConflictRechecked = false,
     this.catalogPredecessorVersions = const [],
     this.lastError,
     this.diagnostics,
@@ -3007,6 +3039,7 @@ class _OfflineMutationEntry {
   final int retryCount;
   final bool isBlocked;
   final bool boxedErrorRechecked;
+  final bool bookingConflictRechecked;
   final List<String> catalogPredecessorVersions;
   final String? lastError;
   final String? diagnostics;
@@ -3017,6 +3050,7 @@ class _OfflineMutationEntry {
     int? retryCount,
     bool? isBlocked,
     bool? boxedErrorRechecked,
+    bool? bookingConflictRechecked,
     String? baseUpdatedAt,
     bool clearBaseUpdatedAt = false,
     String? lastError,
@@ -3036,6 +3070,8 @@ class _OfflineMutationEntry {
       retryCount: retryCount ?? this.retryCount,
       isBlocked: isBlocked ?? this.isBlocked,
       boxedErrorRechecked: boxedErrorRechecked ?? this.boxedErrorRechecked,
+      bookingConflictRechecked:
+          bookingConflictRechecked ?? this.bookingConflictRechecked,
       catalogPredecessorVersions: catalogPredecessorVersions,
       lastError: clearLastError ? null : (lastError ?? this.lastError),
       diagnostics: clearLastError ? null : (diagnostics ?? this.diagnostics),
@@ -3054,6 +3090,7 @@ class _OfflineMutationEntry {
       'retry_count': retryCount,
       'is_blocked': isBlocked,
       'boxed_error_rechecked': boxedErrorRechecked,
+      'booking_conflict_rechecked': bookingConflictRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
       'last_error': lastError,
@@ -3081,6 +3118,7 @@ class _OfflineMutationEntry {
           : int.tryParse(map['retry_count']?.toString() ?? '') ?? 0,
       isBlocked: map['is_blocked'] as bool? ?? false,
       boxedErrorRechecked: map['boxed_error_rechecked'] == true,
+      bookingConflictRechecked: map['booking_conflict_rechecked'] == true,
       catalogPredecessorVersions:
           (map['catalog_predecessor_versions'] as List? ?? [])
               .whereType<String>()

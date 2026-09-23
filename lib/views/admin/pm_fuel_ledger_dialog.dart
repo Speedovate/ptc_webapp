@@ -124,15 +124,6 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
             return date != null && widget.period.contains(date);
           }).toList()
           ..sort((a, b) => b['day'].toString().compareTo(a['day'].toString()));
-    final total = rows
-        .where((r) => r['voided'] != true)
-        .fold<double>(0, (sum, r) => sum + (kpiMoney(r['amount']) ?? 0));
-    final totalLiters = rows
-        .where((r) => r['voided'] != true)
-        .fold<double>(0, (sum, r) => sum + (kpiMoney(r['liters']) ?? 0));
-    final missingLiters = rows
-        .where((r) => r['voided'] != true && kpiMoney(r['liters']) == null)
-        .length;
     return AdminModalShell(
       title: '${widget.make.code ?? "PM"} Fuel Requests',
       maxWidth: 1200,
@@ -173,34 +164,15 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
                   return false;
                 },
                 child: AdminModalRecordList(
-                  scrollHeader: Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${kpiDayKey(widget.period.start)} – ${kpiDayKey(widget.period.end)}',
-                        ),
-                        Text(
-                          'Fuel entries total: ₱${total.toStringAsFixed(2)}',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          'Fuel volume: ${totalLiters.toStringAsFixed(2)} L${missingLiters == 0 ? '' : ' · $missingLiters entries without liters'}',
-                        ),
-                        const Text(
-                          'Voided entries remain in history. Confirm the updated daily total in the KPI after changes.',
-                        ),
-                        if (_data?.fromCache == true)
-                          const Text('Cached data · refresh online to verify'),
-                        if (_error != null)
-                          Text(
+                  scrollHeader: _error == null
+                      ? const SizedBox.shrink()
+                      : Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: Text(
                             _error!,
                             style: const TextStyle(color: AppColors.danger),
                           ),
-                      ],
-                    ),
-                  ),
+                        ),
                   scrollFooter: rows.isEmpty
                       ? const Text('No fuel requests in this period.')
                       : _visibleRows < rows.length

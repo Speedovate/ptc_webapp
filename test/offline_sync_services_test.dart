@@ -31,6 +31,238 @@ void main() {
     await auth.remove('paltranco_known_session_user_ids');
   });
 
+  test(
+    'booking conflict retains exact versions and changed fields without overwriting',
+    () async {
+      final db = FakeFirebaseFirestore();
+      final backend = _MemoryBookingStorageBackend();
+      const base = '2026-09-22T00:00:00Z';
+      const remote = '2026-09-22T01:00:00Z';
+      const pending = '2026-09-22T02:00:00Z';
+      final server = {
+        'id': '121',
+        'amount': 900,
+        'updated_at': remote,
+        'client_status': 'Delivered',
+      };
+      await db.collection('bookings').doc('121').set(server);
+      const key = 'offline_mutation_queue_v1::signed_out';
+      await backend.writeStringList(key, [
+        jsonEncode({
+          'id': 'conflict-context',
+          'kind': 'collectionDocumentUpsert',
+          'target_id': '121',
+          'collection_key': 'bookings',
+          'base_updated_at': base,
+          'created_at': pending,
+          'retry_count': 0,
+          'is_blocked': false,
+          'payload': {
+            'id': '121',
+            'amount': 1000,
+            'updated_at': pending,
+            'client_status': 'Pending',
+          },
+        }),
+      ]);
+      final service = OfflineMutationQueueService(
+        firestore: db,
+        backend: backend,
+        isOnline: () => true,
+      );
+      await service.flushPendingMutations();
+      final saved =
+          jsonDecode((await backend.readStringList(key)).single) as Map;
+      expect(saved['is_blocked'], true);
+      expect(saved['created_at'], pending);
+      final diagnostics = saved['error_diagnostics'] as String;
+      expect(diagnostics, contains('"base_updated_at":"$base"'));
+      expect(diagnostics, contains('"server_updated_at":"$remote"'));
+      expect(diagnostics, contains('"pending_updated_at":"$pending"'));
+      expect(diagnostics, contains('"differing_fields"'));
+      expect(diagnostics, contains('"pending_payload"'));
+      expect(diagnostics, contains('"server_document"'));
+      expect(diagnostics, contains('"amount":1000'));
+      expect(diagnostics, contains('"amount":900'));
+      expect(diagnostics, contains('"amount"'));
+      expect((await db.collection('bookings').doc('121').get()).data(), server);
+    },
+  );
+
+  for (final sameContents in [true, false]) {
+    test(
+      'blocked booking recovery preserves server; identical=$sameContents',
+      () async {
+        final db = FakeFirebaseFirestore();
+        final backend = _MemoryBookingStorageBackend();
+        const key = 'offline_mutation_queue_v1::signed_out';
+        final server = {
+          'id': '121',
+          'amount': 900,
+          'updated_at': '2026-09-23T03:00:00Z',
+        };
+        await db.collection('bookings').doc('121').set(server);
+        await backend.writeStringList(key, [
+          jsonEncode({
+            'id': 'legacy-conflict',
+            'kind': 'collectionDocumentUpsert',
+            'collection_key': 'bookings',
+            'target_id': '121',
+            'base_updated_at': '2026-09-23T00:00:00Z',
+            'created_at': '2026-09-23T01:00:00Z',
+            'retry_count': 0,
+            'is_blocked': true,
+            'last_error':
+                'Bad state: Sync conflict: booking changed remotely before applying this edit.',
+            'payload': {
+              ...server,
+              'amount': sameContents ? 900 : 1000,
+              'updated_at': '2026-09-23T01:00:00Z',
+            },
+          }),
+        ]);
+        final service = OfflineMutationQueueService(
+          firestore: db,
+          backend: backend,
+          isOnline: () => true,
+        );
+        await service.flushPendingMutations();
+        final remaining = await backend.readStringList(key);
+        if (sameContents) {
+          expect(remaining, isEmpty);
+        } else {
+          final entry = jsonDecode(remaining.single) as Map;
+          expect(entry['is_blocked'], true);
+          expect(entry['booking_conflict_rechecked'], true);
+          expect(entry['base_updated_at'], '2026-09-23T00:00:00Z');
+          await service.flushPendingMutations();
+          expect(await backend.readStringList(key), remaining);
+        }
+        expect(
+          (await db.collection('bookings').doc('121').get()).data(),
+          server,
+        );
+      },
+    );
+  }
+
+  test(
+    'boxed create recovers once and retains the actual identity error',
+    () async {
+      final db = FakeFirebaseFirestore();
+      final backend = _MemoryBookingStorageBackend();
+      const key = 'offline_mutation_queue_v1::signed_out';
+      await backend.writeStringList(key, [
+        jsonEncode({
+          'id': 'legacy-create',
+          'kind': 'bookingCreate',
+          'collection_key': 'bookings',
+          'target_id': 'offline_booking_wrong',
+          'created_at': '2026-09-23T01:00:00Z',
+          'retry_count': 0,
+          'is_blocked': true,
+          'last_error': 'Dart exception thrown from converted Future.',
+          'payload': {'submission_key': 'actual-key'},
+        }),
+      ]);
+      final service = OfflineMutationQueueService(
+        firestore: db,
+        backend: backend,
+        isOnline: () => true,
+      );
+      await service.flushPendingMutations();
+      final remaining = await backend.readStringList(key);
+      final entry = jsonDecode(remaining.single) as Map;
+      expect(entry['boxed_error_rechecked'], true);
+      expect(entry['is_blocked'], true);
+      expect(
+        entry['last_error'],
+        contains('offline booking identity is inconsistent'),
+      );
+      expect(entry['created_at'], '2026-09-23T01:00:00Z');
+      await service.flushPendingMutations();
+      expect(await backend.readStringList(key), remaining);
+      expect((await db.collection('bookings').get()).docs, isEmpty);
+    },
+  );
+
+  test(
+    'boxed create recovery allocates unused ID and preserves timestamps',
+    () async {
+      final db = FakeFirebaseFirestore();
+      final backend = _MemoryBookingStorageBackend();
+      const key = 'offline_mutation_queue_v1::signed_out';
+      const submission = 'recovery-valid';
+      final temporaryId = BookingIdResolver.temporaryId(submission);
+      const when = '2026-09-22T01:00:00Z';
+      await db.collection('bookings').doc('1').set({'id': '1', 'amount': 321});
+      await backend.writeStringList(key, [
+        jsonEncode({
+          'id': 'recover-create',
+          'kind': 'bookingCreate',
+          'collection_key': 'bookings',
+          'target_id': temporaryId,
+          'created_at': when,
+          'retry_count': 0,
+          'is_blocked': true,
+          'last_error': 'Dart exception thrown from converted Future.',
+          'payload': {
+            'id': temporaryId,
+            'submission_key': submission,
+            'created_at': when,
+            'updated_at': when,
+            'client_status': 'Pending',
+          },
+        }),
+      ]);
+      final service = OfflineMutationQueueService(
+        firestore: db,
+        backend: backend,
+        isOnline: () => true,
+      );
+      await service.flushPendingMutations();
+      expect(await backend.readStringList(key), isEmpty);
+      final created = (await db.collection('bookings').doc('2').get()).data()!;
+      expect(created['created_at'], when);
+      expect(created['updated_at'], when);
+      expect((await db.collection('bookings').doc('1').get()).data(), {
+        'id': '1',
+        'amount': 321,
+      });
+      await service.flushPendingMutations();
+      expect((await db.collection('bookings').get()).docs, hasLength(2));
+    },
+  );
+
+  test('manual retry keeps the original booking version guard', () async {
+    final backend = _MemoryBookingStorageBackend();
+    const key = 'offline_mutation_queue_v1::signed_out';
+    await backend.writeStringList(key, [
+      jsonEncode({
+        'id': 'retry',
+        'kind': 'collectionDocumentUpsert',
+        'collection_key': 'bookings',
+        'target_id': '121',
+        'base_updated_at': 'original',
+        'created_at': 'action-time',
+        'retry_count': 0,
+        'is_blocked': true,
+        'payload': {'amount': 1000},
+      }),
+    ]);
+    final service = OfflineMutationQueueService(
+      firestore: FakeFirebaseFirestore(),
+      backend: backend,
+      isOnline: () => false,
+    );
+    await service.retryBlockedConflict('retry');
+    final entry = jsonDecode((await backend.readStringList(key)).single) as Map;
+    expect(entry['base_updated_at'], 'original');
+    expect(entry['created_at'], 'action-time');
+    expect(entry['is_blocked'], false);
+    expect(entry['payload'], {'amount': 1000});
+  });
+
   for (final kind in ['media', 'cleanup', 'mutations', 'booking photos']) {
     test('reading $kind status does not feed another status event', () async {
       final backend = _MemoryBookingStorageBackend();

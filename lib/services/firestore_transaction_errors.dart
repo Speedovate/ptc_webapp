@@ -6,18 +6,18 @@ bool isBoxedTransactionError(String message) => message.toLowerCase().contains(
 
 /// Preserve callback errors before Flutter Web turns the rejected Future into
 /// a JS error. Do not replace commit/network failures with a prior retry error.
-Future<void> runTransactionWithOriginalErrors(
+Future<T> runTransactionWithOriginalErrors<T>(
   FirebaseFirestore firestore,
-  Future<void> Function(Transaction) action,
+  Future<T> Function(Transaction) action,
 ) async {
   Object? callbackError;
   StackTrace? callbackStack;
   try {
-    await firestore.runTransaction<void>((transaction) async {
+    return await firestore.runTransaction<T>((transaction) async {
       callbackError = null;
       callbackStack = null;
       try {
-        await action(transaction);
+        return await action(transaction);
       } catch (error, stack) {
         callbackError = error;
         callbackStack = stack;

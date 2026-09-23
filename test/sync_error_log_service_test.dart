@@ -595,6 +595,73 @@ void main() {
     },
   );
   test(
+    'same-attempt reports gain queue snapshot once without duplicates or retry',
+    () async {
+      final backend = MemoryLogs();
+      const scope = 'offline_mutation_queue_v1::signed_out';
+      final queue = jsonEncode({
+        'id': 'old-action',
+        'kind': 'collectionDocumentUpsert',
+        'collection_key': 'bookings',
+        'target_id': '115',
+        'created_at': '2026-09-22T00:00:00Z',
+        'base_updated_at': '2026-09-21T00:00:00Z',
+        'payload': {'amount': 1000, 'submission_key': 'original-identity'},
+        'retry_count': 0,
+        'is_blocked': true,
+        'last_error': 'Sync conflict',
+      });
+      final remote = <String, Map<String, dynamic>>{};
+      var writes = 0;
+      final service = SyncErrorLogService(
+        backend: backend,
+        online: () => true,
+        metadata: (_) async => {},
+        automaticMaintenance: false,
+        writer: (id, data) async {
+          remote[id] = data;
+          writes++;
+        },
+      );
+      await service.start();
+      await service.capture(
+        source: 'offline_mutation_queue_v1',
+        operation: 'collectionDocumentUpsert',
+        entryId: 'old-action',
+        target: 'bookings/115',
+        owner: 'signed_out',
+        error: 'Sync conflict',
+        stack: 'old stack',
+        attempt: 0,
+        attentionRequired: true,
+      );
+      await service.flush();
+      final originalFirstFailure = remote.values.single['first_failed_at'];
+      final originalCount = remote.values.single['occurrences'];
+      backend.values[scope] = [queue];
+      await service.refreshQueueDiagnostics();
+      await service.flush();
+      expect(remote, hasLength(1));
+      final row = remote.values.single;
+      expect(
+        row['details']['queue_snapshot']['pending_payload']['amount'],
+        1000,
+      );
+      expect(
+        row['details']['queue_snapshot']['base_updated_at'],
+        '2026-09-21T00:00:00Z',
+      );
+      expect(row['first_failed_at'], originalFirstFailure);
+      expect(row['occurrences'], originalCount);
+      expect(backend.values[scope], [queue]);
+      final uploads = writes;
+      await service.refreshQueueDiagnostics();
+      await service.flush();
+      expect(writes, uploads);
+    },
+  );
+
+  test(
     'backfills existing blocked actions without altering the queue',
     () async {
       final backend = MemoryLogs();
@@ -603,6 +670,14 @@ void main() {
         'kind': 'bookingUpdate',
         'target_id': '98',
         'created_at': '2026-09-19T10:00:00Z',
+        'base_updated_at': '2026-09-18T00:00:00Z',
+        'payload': {
+          'id': '98',
+          'amount': 3995,
+          'created_at': '2026-09-18T00:00:00Z',
+          'updated_at': '2026-09-19T10:00:00Z',
+          'answers': {'destination': 'Sicsican', 'password': 'private'},
+        },
         'retry_count': 3,
         'is_blocked': true,
         'last_error': 'Sync conflict',
@@ -622,6 +697,14 @@ void main() {
       await service.start();
       expect(remote.single['kind'], 'persisted_queue_failure');
       expect(remote.single['first_failed_at'], '2026-09-20T00:00:00Z');
+      final snapshot =
+          (remote.single['details'] as Map)['queue_snapshot'] as Map;
+      expect(snapshot['base_updated_at'], '2026-09-18T00:00:00Z');
+      expect(snapshot['original_document_available'], false);
+      expect(snapshot['pending_payload_available'], true);
+      expect(snapshot['pending_payload']['amount'], 3995);
+      expect(snapshot['pending_payload']['answers']['destination'], 'Sicsican');
+      expect(snapshot['pending_payload']['answers']['password'], '[REDACTED]');
       expect(backend.values['offline_mutation_queue_v1::signed_out'], [queue]);
     },
   );

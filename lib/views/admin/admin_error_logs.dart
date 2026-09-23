@@ -43,6 +43,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
   bool _loading = false;
   bool _hasMore = true;
   String? _error;
+  bool _copying = false;
   bool get _allowed => widget.user.role?.trim().toLowerCase() == 'admin';
   FirebaseFirestore get _db => widget.firestore ?? FirebaseFirestore.instance;
 
@@ -277,7 +278,18 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
   };
 
   Object? _serializable(Object? value) {
-    if (value is Timestamp) return value.toDate().toUtc().toIso8601String();
+    if (value is Timestamp) {
+      return {
+        'type': 'Firestore Timestamp',
+        'seconds': value.seconds,
+        'nanoseconds': value.nanoseconds,
+        'iso8601': value.toDate().toUtc().toIso8601String(),
+      };
+    }
+    if (value is GeoPoint) {
+      return {'latitude': value.latitude, 'longitude': value.longitude};
+    }
+    if (value is DocumentReference) return {'document_path': value.path};
     if (value is Map) {
       return value.map((key, value) => MapEntry('$key', _serializable(value)));
     }
@@ -305,6 +317,74 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
     }
   }
 
+  Future<void> _copyFirestoreErrors({
+    required String user,
+    String? device,
+    String? id,
+  }) async {
+    if (!_allowed || _copying) return;
+    setState(() => _copying = true);
+    try {
+      final collection = _db.collection('sync_error_logs');
+      Map<String, dynamic> export(DocumentSnapshot<Map<String, dynamic>> doc) =>
+          {
+            'report': 'Sync error log',
+            'document_path': doc.reference.path,
+            'document_id': doc.id,
+            'user_display': _label(user, doc.data() ?? {}),
+            'firestore_data': _serializable(doc.data()),
+          };
+      Object result;
+      if (id != null) {
+        final doc = await collection
+            .doc(id)
+            .get(const GetOptions(source: Source.server))
+            .timeout(const Duration(seconds: 12));
+        if (!doc.exists) {
+          throw StateError(
+            'This error is no longer in Firestore. Reopen Error Logs.',
+          );
+        }
+        result = export(doc);
+      } else {
+        Query<Map<String, dynamic>> query = collection.where(
+          'attention_required',
+          isEqualTo: true,
+        );
+        query = user == 'signed_out'
+            ? query.where('user_id', isNull: true)
+            : query.where('user_id', isEqualTo: user);
+        if (device != null) query = query.where('device_id', isEqualTo: device);
+        query = query.orderBy(FieldPath.documentId);
+        final records = <Map<String, dynamic>>[];
+        DocumentSnapshot<Map<String, dynamic>>? cursor;
+        while (mounted && _allowed) {
+          final page =
+              await (cursor == null ? query : query.startAfterDocument(cursor))
+                  .limit(100)
+                  .get(const GetOptions(source: Source.server))
+                  .timeout(const Duration(seconds: 12));
+          records.addAll(page.docs.map(export));
+          if (page.docs.length < 100) break;
+          cursor = page.docs.last;
+          await Future<void>.delayed(Duration.zero);
+        }
+        result = records;
+      }
+      if (mounted && _allowed) await _copy(result);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not copy complete Firestore reports: $error'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _copying = false);
+    }
+  }
+
   void _details(Map<String, dynamic> row) {
     final data = _copyData(row);
     showDialog<void>(
@@ -314,7 +394,11 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
         title: 'Error Details',
         maxWidth: 800,
         actions: [
-          TextButton(onPressed: () => _copy(data), child: const Text('Copy')),
+          TextButton(
+            onPressed: () =>
+                _copyFirestoreErrors(user: _owner(row), id: '${row['id']}'),
+            child: const Text('Copy'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
@@ -494,23 +578,18 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                 Tooltip(
                   message: log == null
                       ? (row.device == null
-                            ? 'Copy loaded user errors'
-                            : 'Copy loaded device errors')
+                            ? 'Copy all user errors'
+                            : 'Copy all device errors')
                       : 'Copy error',
                   child: AdminListActionButton(
                     icon: Icons.copy,
-                    onTap: () => _copy(
-                      log == null
-                          ? (row.device == null
-                                    ? groups[row.user]!
-                                    : devices[deviceKey(
-                                        row.user,
-                                        row.device!,
-                                      )]!)
-                                .map(_copyData)
-                                .toList()
-                          : _copyData(log),
-                    ),
+                    onTap: _copying
+                        ? null
+                        : () => _copyFirestoreErrors(
+                            user: row.user,
+                            device: row.device,
+                            id: log?['id']?.toString(),
+                          ),
                   ),
                 ),
                 const SizedBox(width: 8),
