@@ -1,4 +1,8 @@
+// Fault-injection doubles implement the Firestore query interface.
+// ignore_for_file: subtype_of_sealed_class
 import 'dart:convert';
+import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -6,8 +10,119 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/views/admin/admin_error_logs.dart';
+import 'package:webapp/widgets/shared/admin_modal_record_list.dart';
+import 'package:webapp/widgets/shared/app_page_loading.dart';
+import 'package:webapp/widgets/shared/admin_list_primitives.dart';
+
+class _StalledReadFirestore extends FakeFirebaseFirestore {
+  @override
+  CollectionReference<Map<String, dynamic>> collection(String path) {
+    final ref = super.collection(path);
+    return path == 'sync_error_logs' ? _StalledCollection(ref) : ref;
+  }
+}
+
+class _StalledCollection implements CollectionReference<Map<String, dynamic>> {
+  _StalledCollection(this.ref);
+  final CollectionReference<Map<String, dynamic>> ref;
+  @override
+  Query<Map<String, dynamic>> orderBy(
+    Object field, {
+    bool descending = false,
+  }) => _StalledQuery(ref);
+  @override
+  AggregateQuery count() => ref.count();
+  @override
+  DocumentReference<Map<String, dynamic>> doc([String? path]) => ref.doc(path);
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.memberName == #where) {
+      return _StalledQuery(
+        ref.where(
+          invocation.positionalArguments.first,
+          isEqualTo: invocation.namedArguments[#isEqualTo],
+        ),
+      );
+    }
+    return super.noSuchMethod(invocation);
+  }
+}
+
+class _StalledQuery implements Query<Map<String, dynamic>> {
+  _StalledQuery(this.ref);
+  final Query<Map<String, dynamic>> ref;
+  @override
+  Query<Map<String, dynamic>> orderBy(
+    Object field, {
+    bool descending = false,
+  }) => this;
+  @override
+  AggregateQuery count() => ref.count();
+  @override
+  Query<Map<String, dynamic>> limit(int count) => this;
+  @override
+  Future<QuerySnapshot<Map<String, dynamic>>> get([GetOptions? options]) =>
+      Completer<QuerySnapshot<Map<String, dynamic>>>().future;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
+  for (final hasLogs in [false, true]) {
+    testWidgets('stalled query verifies empty state, hasLogs=$hasLogs', (
+      tester,
+    ) async {
+      final db = _StalledReadFirestore();
+      if (hasLogs) {
+        await db.collection('sync_error_logs').doc('existing').set({
+          'attention_required': true,
+          'error': 'saved',
+        });
+      }
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AdminErrorLogsView(
+              user: const UserModel(role: 'admin'),
+              firestore: db,
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(AppPageLoading), findsOneWidget);
+      await tester.pump(const Duration(seconds: 13));
+      await tester.pumpAndSettle();
+      expect(find.byType(AppPageLoading), findsNothing);
+      expect(
+        find.text('No error logs.'),
+        hasLogs ? findsNothing : findsOneWidget,
+      );
+      expect(find.text('Retry'), hasLogs ? findsOneWidget : findsNothing);
+      expect(find.textContaining('TimeoutException'), findsNothing);
+    });
+  }
+  testWidgets('initial loading resolves to the shared empty card', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AdminErrorLogsView(
+            user: const UserModel(role: 'admin'),
+            firestore: FakeFirebaseFirestore(),
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(AppPageLoading), findsOneWidget);
+    expect(find.text('No error logs.'), findsNothing);
+    await tester.pumpAndSettle();
+    expect(find.byType(AppPageLoading), findsNothing);
+    expect(find.text('No error logs.'), findsOneWidget);
+    expect(find.byType(AdminListItemCard), findsOneWidget);
+    expect(find.byTooltip('Refresh'), findsNothing);
+    expect(find.text('Retry'), findsNothing);
+  });
   for (final width in [390.0, 1400.0]) {
     testWidgets('groups and copies full diagnostics at width $width', (
       tester,
@@ -23,6 +138,7 @@ void main() {
       });
       for (var i = 0; i < 2; i++) {
         await db.collection('sync_error_logs').doc('error$i').set({
+          'attention_required': true,
           'user_id': '13',
           'device_id': 'device-A',
           'operation': 'Save booking $i',
@@ -110,6 +226,7 @@ void main() {
     final db = FakeFirebaseFirestore();
     for (final device in ['A', 'B']) {
       await db.collection('sync_error_logs').doc(device).set({
+        'attention_required': true,
         'user_id': '8',
         'user_name': 'Alexis',
         'role': 'dispatcher',
@@ -159,6 +276,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Action $device'), findsOneWidget);
     expect(find.text('Action ${device == 'A' ? 'B' : 'A'}'), findsNothing);
+    expect(find.byTooltip('Collapse device errors'), findsOneWidget);
+    await tester.tap(find.byTooltip('Collapse device errors'));
+    await tester.pumpAndSettle();
+    expect(find.text('Action $device'), findsNothing);
+    expect(find.byTooltip('Expand device errors'), findsNWidgets(2));
+    expect(find.byTooltip('Collapse errors'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -182,8 +305,20 @@ void main() {
     tester,
   ) async {
     final db = FakeFirebaseFirestore();
+    final refresh = ValueNotifier<int>(0);
+    addTearDown(refresh.dispose);
+    for (final kind in ['legacy', 'stalled']) {
+      await db.collection('sync_error_logs').doc(kind).set({
+        'user_id': '13',
+        'device_id': 'device-A',
+        'error': kind,
+        'last_failed_at': '2026-09-24T00:00:00Z',
+        if (kind == 'stalled') 'attention_required': false,
+      });
+    }
     for (var i = 0; i < 17; i++) {
       await db.collection('sync_error_logs').doc('error$i').set({
+        'attention_required': true,
         'user_id': '13',
         'device_id': 'device-A',
         'user_name': 'Stored Name',
@@ -205,15 +340,29 @@ void main() {
           body: AdminErrorLogsView(
             user: const UserModel(role: 'admin'),
             firestore: db,
+            refreshSignal: refresh,
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('15 loaded reports'), findsWidgets);
-    expect(find.text('17'), findsOneWidget);
-    expect(find.textContaining('Sep 1, 2026'), findsOneWidget);
-    expect(find.textContaining('Sep 23, 2026'), findsOneWidget);
+    int loadedDeviceCount() {
+      final list = tester.widget<AdminModalRecordList>(
+        find.byType(AdminModalRecordList),
+      );
+      return list.itemCount;
+    }
+
+    expect(find.textContaining('loaded reports'), findsNothing);
+    expect(find.text('Pull up to load more'), findsNothing);
+    expect(find.text('17 Errors'), findsOneWidget);
+    await tester.tap(find.byTooltip('Expand errors'));
+    await tester.pumpAndSettle();
+    expect(find.text('Device device-A (17 Errors)'), findsOneWidget);
+    await tester.tap(find.byTooltip('Collapse errors'));
+    await tester.pumpAndSettle();
+    expect(find.text('Created'), findsNothing);
+    expect(find.text('Updated'), findsNothing);
     await tester.dragFrom(
       tester.getBottomRight(find.byType(Scrollable).first) -
           const Offset(12, 12),
@@ -223,10 +372,24 @@ void main() {
     final scroll = tester.state<ScrollableState>(find.byType(Scrollable).first);
     scroll.position.jumpTo(0);
     await tester.pumpAndSettle();
-    expect(find.text('17 loaded reports'), findsWidgets);
+    expect(find.textContaining('loaded reports'), findsNothing);
     expect(find.text('Stored Name'), findsOneWidget);
     scroll.position.jumpTo(scroll.position.maxScrollExtent);
     await tester.pumpAndSettle();
-    expect(find.text('All reports loaded'), findsOneWidget);
+    expect(find.text('All reports loaded'), findsNothing);
+    scroll.position.jumpTo(0);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Expand errors'));
+    await tester.pumpAndSettle();
+    expect(find.text('Device device-A (17 Errors)'), findsOneWidget);
+    await tester.tap(find.byTooltip('Expand device errors'));
+    await tester.pumpAndSettle();
+    expect(loadedDeviceCount(), 19);
+    for (var i = 0; i < 17; i++) {
+      await db.collection('sync_error_logs').doc('error$i').delete();
+    }
+    refresh.value++;
+    await tester.pumpAndSettle();
+    expect(find.text('No error logs.'), findsOneWidget);
   });
 }

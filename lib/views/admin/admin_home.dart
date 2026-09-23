@@ -86,6 +86,7 @@ class _AdminHomeState extends State<AdminHome> {
   final ValueNotifier<int> _sidebarBadgeRevision = ValueNotifier<int>(0);
   bool _hasResolvedSidebarThreadReadMarkers = false;
   bool _isUploadingProfilePhoto = false;
+  final _errorLogsRefresh = ValueNotifier<int>(0);
   int _errorLogsCount = 0;
   int _errorLogsCountRevision = 0;
   String? _errorLogsLoadingFor;
@@ -99,6 +100,7 @@ class _AdminHomeState extends State<AdminHome> {
     try {
       final result = await FirebaseFirestore.instance
           .collection('sync_error_logs')
+          .where('attention_required', isEqualTo: true)
           .count()
           .get()
           .timeout(const Duration(seconds: 8));
@@ -177,6 +179,7 @@ class _AdminHomeState extends State<AdminHome> {
     _supportBadgeSubscription?.cancel();
     _supportReadBadgeSubscription?.cancel();
     _sidebarBadgeRevision.dispose();
+    _errorLogsRefresh.dispose();
     _flowViewModel.dispose();
     _profileUsersViewModel.dispose();
     super.dispose();
@@ -873,6 +876,7 @@ class _AdminHomeState extends State<AdminHome> {
             trailing: _sidebarBadge(_errorLogsCount, showActualCount: true),
             onTap: () {
               vm.selectSection(AdminSection.errorLogs);
+              _errorLogsRefresh.value++;
               unawaited(_refreshErrorLogsCount());
               if (isCompact) {
                 Navigator.of(context).pop();
@@ -960,6 +964,7 @@ class _AdminHomeState extends State<AdminHome> {
       AdminSection.analytics => const AdminAnalyticsView(),
       AdminSection.errorLogs => AdminErrorLogsView(
         user: _shellUser,
+        refreshSignal: _errorLogsRefresh,
         onReportsLoaded: _refreshErrorLogsCount,
       ),
     };

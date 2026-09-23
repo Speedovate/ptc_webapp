@@ -12,7 +12,10 @@ class AdminModalRecordList extends StatelessWidget {
     required this.itemCount,
     required this.valuesAt,
     this.cellBuilder,
+    this.hiddenColumnsAt,
+    this.fullWidthRowColumnAt,
     this.rowGroupKey,
+    this.dividerAfterRow,
     this.columnStyles = const {},
     this.columnExtraWidths = const {},
     this.wrappingColumn,
@@ -31,9 +34,16 @@ class AdminModalRecordList extends StatelessWidget {
 
   final Widget? Function(int row, int column)? cellBuilder;
 
+  /// Hide row-specific fields, retaining desktop column alignment.
+  final Set<int> Function(int row)? hiddenColumnsAt;
+
+  /// Render this column across the row, with optional trailing actions.
+  final int? Function(int row)? fullWidthRowColumnAt;
+
   /// Adjacent rows with the same key share a card. The first row is the
   /// summary, separated from its expanded detail rows by one divider.
   final Object Function(int index)? rowGroupKey;
+  final bool Function(int index)? dividerAfterRow;
   final Map<int, TextStyle> columnStyles;
   final Map<int, double> columnExtraWidths;
   final int? wrappingColumn;
@@ -51,6 +61,9 @@ class AdminModalRecordList extends StatelessWidget {
   final ScrollPhysics? scrollPhysics;
 
   static final _measurements = TextWidthCache(capacity: 1024);
+  // Both header and item cards inset content by 16px padding plus a 1px
+  // border on each side. Include both when deciding whether rows fit.
+  static const _horizontalInsets = 2 * (16.0 + 1.0);
 
   @override
   Widget build(BuildContext context) {
@@ -77,7 +90,9 @@ class AdminModalRecordList extends StatelessWidget {
       locale: Localizations.maybeLocaleOf(context),
     );
     final widths = [for (final title in titles) measure(title, headerStyle)];
-    for (final row in rows) {
+    for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      if (fullWidthRowColumnAt?.call(rowIndex) != null) continue;
+      final row = rows[rowIndex];
       for (var i = 0; i < titles.length; i++) {
         for (final line in row[i].split('\n')) {
           widths[i] = AdminListMeasurements.maxValue(
@@ -116,7 +131,7 @@ class AdminModalRecordList extends StatelessWidget {
         if (wrapping != null) {
           final otherWidth = widths.indexed
               .where((entry) => entry.$1 != wrapping)
-              .fold<double>(32, (sum, entry) => sum + entry.$2);
+              .fold<double>(_horizontalInsets, (sum, entry) => sum + entry.$2);
           final available = constraints.maxWidth - otherWidth;
           final minimum = math.max(
             160.0,
@@ -132,7 +147,7 @@ class AdminModalRecordList extends StatelessWidget {
           );
         }
         final tableWidth = layoutWidths.fold<double>(
-          32,
+          _horizontalInsets,
           (sum, width) => sum + width,
         );
         final desktopRows =
@@ -164,6 +179,31 @@ class AdminModalRecordList extends StatelessWidget {
         );
         Widget buildRowContent(BuildContext context, int index) {
           final values = rows[index];
+          final fullWidthColumn = fullWidthRowColumnAt?.call(index);
+          if (fullWidthColumn != null) {
+            return Row(
+              children: [
+                Expanded(
+                  child:
+                      cellBuilder?.call(index, fullWidthColumn) ??
+                      valueText(
+                        values[fullWidthColumn],
+                        valueStyles[fullWidthColumn],
+                      ),
+                ),
+                if (trailingActions) ...[
+                  const SizedBox(width: 8),
+                  cellBuilder?.call(index, titles.length - 1) ??
+                      const SizedBox.shrink(),
+                ],
+              ],
+            );
+          }
+          final hidden = hiddenColumnsAt?.call(index) ?? const <int>{};
+          final visible = [
+            for (var i = 0; i < titles.length; i++)
+              if (!hidden.contains(i)) i,
+          ];
           return wide
               ? Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
@@ -173,18 +213,22 @@ class AdminModalRecordList extends StatelessWidget {
                         const Spacer(),
                       AdminListFixedSlot(
                         width: layoutWidths[i],
-                        child: AdminListBodyCell(
-                          alignment: trailingActions && i == titles.length - 1
-                              ? Alignment.centerRight
-                              : Alignment.centerLeft,
-                          trailingPadding:
-                              trailingActions && i == titles.length - 1
-                              ? 0
-                              : AdminListMeasurements.defaultTrailingPadding,
-                          child:
-                              cellBuilder?.call(index, i) ??
-                              valueText(values[i], valueStyles[i]),
-                        ),
+                        child: hidden.contains(i)
+                            ? const SizedBox.shrink()
+                            : AdminListBodyCell(
+                                alignment:
+                                    trailingActions && i == titles.length - 1
+                                    ? Alignment.centerRight
+                                    : Alignment.centerLeft,
+                                trailingPadding:
+                                    trailingActions && i == titles.length - 1
+                                    ? 0
+                                    : AdminListMeasurements
+                                          .defaultTrailingPadding,
+                                child:
+                                    cellBuilder?.call(index, i) ??
+                                    valueText(values[i], valueStyles[i]),
+                              ),
                       ),
                     ],
                   ],
@@ -192,8 +236,8 @@ class AdminModalRecordList extends StatelessWidget {
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    for (var i = 0; i < titles.length; i++) ...[
-                      if (i > 0) const SizedBox(height: 12),
+                    for (final i in visible) ...[
+                      if (i != visible.first) const SizedBox(height: 12),
                       if (cellBuilder?.call(index, i) case final Widget cell)
                         Column(
                           crossAxisAlignment:
@@ -259,8 +303,15 @@ class AdminModalRecordList extends StatelessWidget {
                         row < group.end;
                         row++
                       ) ...[
-                        if (row > group.start + 1) const SizedBox(height: 16),
+                        if (row > group.start + 1 &&
+                            !(dividerAfterRow?.call(row - 1) ?? false))
+                          const SizedBox(height: 16),
                         buildRowContent(context, row),
+                        if (dividerAfterRow?.call(row) ?? false)
+                          const Divider(
+                            height: 25,
+                            color: AppColors.primaryBorder,
+                          ),
                       ],
                     ],
                   ),
@@ -314,7 +365,7 @@ class AdminModalRecordList extends StatelessWidget {
           return SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: SizedBox(
-              width: tableWidth + 2,
+              width: tableWidth,
               height: shrinkWrap ? null : constraints.maxHeight,
               child: content,
             ),

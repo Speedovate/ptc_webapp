@@ -198,7 +198,7 @@ class SyncErrorLogService {
         unawaited(flush());
       });
     }
-    await _backfill();
+    await refreshQueueDiagnostics();
     await flush();
   }
 
@@ -270,6 +270,7 @@ class SyncErrorLogService {
       ),
     );
     if (online) {
+      unawaited(refreshQueueDiagnostics());
       _retryAfter = null;
       unawaited(flush());
     }
@@ -284,6 +285,11 @@ class SyncErrorLogService {
     required int total,
   }) {
     final previous = _progress[source];
+    if (failed > 0) _attentionSources.add(source);
+    if (_enabled && !syncing && _attentionSources.contains(source)) {
+      if (failed == 0) _attentionSources.remove(source);
+      unawaited(refreshQueueDiagnostics());
+    }
     if (pending == 0 && !syncing) {
       if (previous?.reportedAt != null) {
         unawaited(
@@ -355,6 +361,53 @@ class SyncErrorLogService {
     _networkSubscription?.cancel();
   }
 
+  Future<void>? _refreshingQueueDiagnostics;
+  final _attentionSources = <String>{};
+  bool _refreshAgain = false;
+
+  /// Coalesce queue-settled/reconnect events; never add a polling listener.
+  Future<void> refreshQueueDiagnostics() {
+    _refreshAgain = true;
+    return _refreshingQueueDiagnostics ??= (() async {
+      try {
+        do {
+          _refreshAgain = false;
+          await _backfill();
+        } while (_refreshAgain);
+      } finally {
+        _refreshingQueueDiagnostics = null;
+      }
+    })();
+  }
+
+  static bool requiresAttention(String prefix, Map<String, dynamic> entry) {
+    if (prefix == 'offline_mutation_queue_v1') {
+      return entry['is_blocked'] == true;
+    }
+    if (prefix == 'booking_pending_upload_queue_v1') return false;
+    return entry['last_error'] != null;
+  }
+
+  static String _actionFingerprint(String scope, String entryId) => sha256
+      .convert(utf8.encode(jsonEncode(['queue_action_v2', scope, entryId])))
+      .toString();
+
+  Future<void> _clearAttention(String scope, String entryId) async {
+    var changed = false;
+    await _locked(() async {
+      await _prepareOutbox();
+      await _outbox.update(_actionFingerprint(scope, entryId), (row) async {
+        if (row == null || row['attention_required'] != true) return null;
+        changed = true;
+        row['attention_required'] = false;
+        row['dirty'] = true;
+        row.remove('last_uploaded_at');
+        return row;
+      });
+    });
+    if (changed) unawaited(flush());
+  }
+
   Future<void> _backfill() async {
     try {
       await _backend.initialize();
@@ -377,7 +430,11 @@ class SyncErrorLogService {
           for (final raw in await _backend.readStringList('$prefix::$owner')) {
             try {
               final entry = Map<String, dynamic>.from(jsonDecode(raw) as Map);
-              if ('${entry['last_error'] ?? ''}'.isEmpty) continue;
+              final attention = requiresAttention(prefix, entry);
+              if (!attention && '${entry['last_error'] ?? ''}'.isEmpty) {
+                await _clearAttention('$prefix::$owner', '${entry['id']}');
+                continue;
+              }
               await capture(
                 source: prefix,
                 operation: '${entry['kind'] ?? 'bookingPhotoUpload'}',
@@ -386,7 +443,8 @@ class SyncErrorLogService {
                     '${entry['collection_key'] ?? ''}/${entry['target_id'] ?? entry['booking_id'] ?? entry['thread_id'] ?? entry['target_path'] ?? ''}',
                 owner: owner,
                 actionAt: entry['created_at']?.toString(),
-                error: '${entry['last_error']}',
+                error:
+                    '${entry['last_error'] ?? 'Queued action needs review; original error was not recorded.'}',
                 stack:
                     '${entry['error_diagnostics'] ?? 'Original stack trace was not recorded by this app version.'}',
                 attempt: (entry['retry_count'] as num?)?.toInt() ?? 0,
@@ -394,6 +452,7 @@ class SyncErrorLogService {
                   r'Failed at \(UTC\): ([^\n]+)',
                 ).firstMatch('${entry['error_diagnostics'] ?? ''}')?.group(1),
                 kind: 'persisted_queue_failure',
+                attentionRequired: attention,
                 details: {
                   'blocked': entry['is_blocked'],
                   'next_retry_at': entry['next_retry_at'],
@@ -454,6 +513,12 @@ class SyncErrorLogService {
     }
   }
 
+  static bool _isSyncError(Object? kind) => const {
+    'queue_failure',
+    'persisted_queue_failure',
+    'queue_stalled',
+  }.contains(kind);
+
   Future<void> capture({
     required String source,
     required String operation,
@@ -466,8 +531,10 @@ class SyncErrorLogService {
     String? actionAt,
     String? failedAt,
     String kind = 'queue_failure',
+    bool? attentionRequired,
     Map<String, dynamic> details = const {},
   }) async {
+    if (!_isSyncError(kind)) return;
     try {
       Map<String, dynamic> metadata;
       try {
@@ -538,35 +605,46 @@ class SyncErrorLogService {
       }
       final safeError = sanitize(error);
       final safeStack = sanitize(stack);
-      final fingerprint = sha256
-          .convert(
-            utf8.encode(
-              jsonEncode([
-                owner ?? metadata['user_id'],
-                source,
-                operation,
-                entryId,
-                safeError,
-                safeStack,
-              ]),
-            ),
-          )
-          .toString();
+      final prefix =
+          (kind == 'queue_failure' || kind == 'persisted_queue_failure')
+          ? queuePrefix(source)
+          : null;
+      final scope = prefix == null
+          ? null
+          : '$prefix::${owner ?? metadata['user_id'] ?? 'signed_out'}';
+      final fingerprint = scope != null
+          ? _actionFingerprint(scope, entryId)
+          : sha256
+                .convert(
+                  utf8.encode(
+                    jsonEncode([
+                      owner ?? metadata['user_id'],
+                      source,
+                      operation,
+                      entryId,
+                      safeError,
+                      safeStack,
+                    ]),
+                  ),
+                )
+                .toString();
       await _locked(() async {
         await _prepareOutbox();
         final time = failedAt ?? _now().toUtc().toIso8601String();
-        final prefix =
-            (kind == 'queue_failure' || kind == 'persisted_queue_failure')
-            ? queuePrefix(source)
-            : null;
-        final scope = prefix == null
-            ? null
-            : '$prefix::${owner ?? metadata['user_id'] ?? 'signed_out'}';
         await _outbox.update(fingerprint, (row) async {
           if (scope != null && await _outbox.isResolved(scope, entryId)) {
             return null;
           }
-          if (row != null && row['last_attempt'] == attempt) return null;
+          if (row != null && row['last_attempt'] == attempt) {
+            if (attentionRequired == null ||
+                row['attention_required'] == attentionRequired) {
+              return null;
+            }
+            row['attention_required'] = attentionRequired;
+            row['dirty'] = true;
+            row.remove('last_uploaded_at');
+            return row;
+          }
           if (row == null) {
             final installation = await _backend.readStringList(
               '${storageKey}_device',
@@ -585,10 +663,17 @@ class SyncErrorLogService {
               'occurrences': 0,
             };
           }
+          if (attentionRequired != null &&
+              row['attention_required'] != attentionRequired) {
+            // Count transitions must not wait for the repeated-error throttle.
+            row.remove('last_uploaded_at');
+          }
           row.addAll({
             ...metadata,
             'queue_scope': ?scope,
-            'schema_version': 1,
+            'schema_version': 2,
+            'attention_required':
+                attentionRequired ?? row['attention_required'] ?? false,
             'kind': kind,
             'source': source,
             'operation': operation,
@@ -692,6 +777,19 @@ class SyncErrorLogService {
           await withDiagnosticWriteLock(() async {
             final current = await _outbox.get(row['fingerprint'] as String);
             if (current == null || current['dirty'] != true) return;
+            if (!_isSyncError(current['kind'])) {
+              // Older app versions may have queued informational/general logs.
+              // Suppress only their diagnostic upload, never business actions.
+              await _outbox.update(current['fingerprint'] as String, (
+                saved,
+              ) async {
+                if (saved == null || _isSyncError(saved['kind'])) return null;
+                saved['dirty'] = false;
+                saved['suppressed_at'] = _now().toUtc().toIso8601String();
+                return saved;
+              });
+              return;
+            }
             final scope = current['queue_scope'] as String?;
             final resolved =
                 current['resolved_at'] != null ||

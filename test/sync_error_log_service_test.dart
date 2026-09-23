@@ -66,6 +66,224 @@ Future<void> waitFor(bool Function() ready) async {
 }
 
 void main() {
+  test('attention definitions match the four queue status counters', () {
+    expect(
+      SyncErrorLogService.requiresAttention('offline_mutation_queue_v1', {
+        'is_blocked': true,
+      }),
+      isTrue,
+    );
+    expect(
+      SyncErrorLogService.requiresAttention('offline_mutation_queue_v1', {
+        'is_blocked': false,
+        'last_error': 'Retrying',
+      }),
+      isFalse,
+    );
+    for (final prefix in [
+      'offline_media_sync_queue_v1',
+      'offline_cleanup_queue_v1',
+    ]) {
+      expect(
+        SyncErrorLogService.requiresAttention(prefix, {'last_error': 'Failed'}),
+        isTrue,
+      );
+      expect(
+        SyncErrorLogService.requiresAttention(prefix, {'last_error': null}),
+        isFalse,
+      );
+    }
+    expect(
+      SyncErrorLogService.requiresAttention('booking_pending_upload_queue_v1', {
+        'last_error': 'Failed',
+      }),
+      isFalse,
+    );
+  });
+  test(
+    'queue settlement refreshes attention after retry clears an error',
+    () async {
+      final backend = MemoryLogs();
+      const scope = 'offline_mutation_queue_v1::signed_out';
+      backend.values[scope] = [
+        jsonEncode({
+          'id': 'a',
+          'is_blocked': true,
+          'last_error': 'failed',
+          'retry_count': 1,
+        }),
+      ];
+      final remote = <String, Map<String, dynamic>>{};
+      final service = SyncErrorLogService(
+        backend: backend,
+        online: () => true,
+        metadata: (_) async => {},
+        writer: (id, data) async {
+          remote[id] = data;
+        },
+      );
+      await service.start();
+      expect(remote.values.single['attention_required'], isTrue);
+      service.observeQueue(
+        'mutation',
+        pending: 0,
+        failed: 1,
+        syncing: false,
+        processed: 0,
+        total: 1,
+      );
+      await service.refreshQueueDiagnostics();
+      service.observeQueue(
+        'mutation',
+        pending: 1,
+        failed: 0,
+        syncing: true,
+        processed: 0,
+        total: 1,
+      );
+      backend.values[scope] = [
+        jsonEncode({
+          'id': 'a',
+          'is_blocked': false,
+          'last_error': null,
+          'retry_count': 1,
+        }),
+      ];
+      service.observeQueue(
+        'mutation',
+        pending: 1,
+        failed: 0,
+        syncing: false,
+        processed: 0,
+        total: 1,
+      );
+      await waitFor(() => remote.values.single['attention_required'] == false);
+      expect(backend.values[scope], hasLength(1));
+    },
+  );
+  test(
+    '17 blocked actions stay 17 across changed errors and legacy backfill',
+    () async {
+      final backend = MemoryLogs();
+      const scope = 'offline_mutation_queue_v1::signed_out';
+      final entries = List.generate(
+        17,
+        (i) => <String, dynamic>{
+          'id': 'action$i',
+          'kind': 'bookingUpdate',
+          'target_id': '$i',
+          'created_at': '2026-09-19T10:00:00Z',
+          'retry_count': 3,
+          'is_blocked': true,
+          'last_error': 'Original error',
+        },
+      );
+      backend.values[scope] = entries.map(jsonEncode).toList();
+      final remote = <String, Map<String, dynamic>>{};
+      var online = false;
+      final service = SyncErrorLogService(
+        backend: backend,
+        online: () => online,
+        metadata: (_) async => {},
+        writer: (id, data) async {
+          remote[id] = data;
+        },
+        deleter: (id) async {
+          remote.remove(id);
+        },
+      );
+      await service.start();
+      expect(reports(backend), hasLength(17));
+      await service.capture(
+        source: 'offline_mutation_queue_service.dart',
+        operation: 'changed operation label',
+        entryId: 'action0',
+        target: '0',
+        owner: 'signed_out',
+        error: 'Different error',
+        stack: 'different stack',
+        attempt: 4,
+      );
+      expect(reports(backend), hasLength(17));
+      entries[0]['retry_count'] = 4;
+      entries[0]['last_error'] = 'Different error';
+      backend.values[scope] = entries.map(jsonEncode).toList();
+      await service.refreshQueueDiagnostics();
+      online = true;
+      await service.flush();
+      expect(
+        remote.values.where((r) => r['attention_required'] == true),
+        hasLength(17),
+      );
+      // Resuming an action without completing it changes its attention state,
+      // but does not delete the action or its diagnostic record.
+      entries[0]['is_blocked'] = false;
+      entries[0]['last_error'] = null;
+      backend.values[scope] = entries.map(jsonEncode).toList();
+      await service.refreshQueueDiagnostics();
+      await service.flush();
+      expect(
+        remote.values.where((r) => r['attention_required'] == true),
+        hasLength(16),
+      );
+      expect(backend.values[scope], hasLength(17));
+      entries.removeLast();
+      backend.values[scope] = entries.map(jsonEncode).toList();
+      await service.resolveQueueEntries(scope, {'action16'});
+      await service.flush();
+      expect(
+        remote.values.where((r) => r['attention_required'] == true),
+        hasLength(15),
+      );
+    },
+  );
+  test(
+    'only sync errors are captured; legacy general logs are not uploaded',
+    () async {
+      final backend = MemoryLogs();
+      final writes = <Map<String, dynamic>>[];
+      var online = false;
+      final service = SyncErrorLogService(
+        backend: backend,
+        online: () => online,
+        metadata: (_) async => {'user_id': '13'},
+        writer: (_, data) async => writes.add(data),
+      );
+      await service.start();
+      for (final kind in [
+        'foreground_failure',
+        'displayed_error',
+        'network_transition',
+        'queue_recovered',
+        'online_queue_activity',
+      ]) {
+        await service.capture(
+          source: 'test',
+          operation: 'test',
+          entryId: kind,
+          target: 'test',
+          error: 'test',
+          stack: '',
+          attempt: 1,
+          kind: kind,
+        );
+      }
+      expect(reports(backend), isEmpty);
+      await capture(service, entry: 'legacy');
+      final legacy =
+          Map<String, dynamic>.from(jsonDecode(reports(backend).single) as Map)
+            ..['kind'] = 'displayed_error'
+            ..remove('queue_scope');
+      await SyncDiagnosticOutbox(backend).put(legacy);
+      await capture(service, entry: 'real-queue-error');
+      online = true;
+      await service.flush();
+      expect(writes, hasLength(1));
+      expect(writes.single['queue_entry_id'], 'real-queue-error');
+      await service.flush();
+      expect(writes, hasLength(1));
+    },
+  );
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -408,7 +626,7 @@ void main() {
     },
   );
   test(
-    'foreground reports preserve source and sanitize nested context',
+    'queue error reports preserve source and sanitize nested context',
     () async {
       final backend = MemoryLogs();
       final service = SyncErrorLogService(
@@ -420,6 +638,7 @@ void main() {
         const FormatException('invalid document'),
         StackTrace.fromString('save.dart:42'),
         source: 'save.dart',
+        kind: 'queue_failure',
         operation: 'save booking',
         target: 'bookings/7',
         details: {
@@ -434,7 +653,7 @@ void main() {
     },
   );
 
-  test('stalls restart observation on reconnect and report recovery', () async {
+  test('stalls retain reconnect context without recovery logs', () async {
     final backend = MemoryLogs();
     var time = DateTime.utc(2026, 9, 23);
     var online = false;
@@ -475,7 +694,7 @@ void main() {
       source: 'test',
       operation: 'barrier',
     );
-    expect(rows().where((r) => r['kind'] == 'queue_recovered'), hasLength(1));
+    expect(rows().where((r) => r['kind'] == 'queue_recovered'), isEmpty);
     final stalled = rows().firstWhere((r) => r['kind'] == 'queue_stalled');
     expect(stalled['details']['no_progress_seconds'], 91);
     expect(stalled['details']['recent_network_transitions'], isNotEmpty);

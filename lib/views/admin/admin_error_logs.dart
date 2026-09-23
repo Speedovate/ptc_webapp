@@ -3,13 +3,14 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:webapp/views/admin/admin_users.dart';
-import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/admin_modal_record_list.dart';
+import 'package:webapp/widgets/shared/app_page_loading.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 
 /// Read-only, on-demand diagnostics. No background listeners or automatic retries.
 class AdminErrorLogsView extends StatefulWidget {
@@ -18,10 +19,12 @@ class AdminErrorLogsView extends StatefulWidget {
     required this.user,
     this.firestore,
     this.onReportsLoaded,
+    this.refreshSignal,
   });
   final UserModel user;
   final FirebaseFirestore? firestore;
   final Future<void> Function()? onReportsLoaded;
+  final ValueListenable<int>? refreshSignal;
 
   @override
   State<AdminErrorLogsView> createState() => _AdminErrorLogsViewState();
@@ -32,7 +35,9 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
   final _users = <String, Map<String, dynamic>>{};
   final _expanded = <String>{};
   final _expandedDevices = <String>{};
-  final _summaries = <String, ({int count, Object? first, Object? last})>{};
+  final _summaries = <String, int>{};
+  final _deviceSummaries = <String, int>{};
+  String _deviceKey(String user, String device) => jsonEncode([user, device]);
   final _scroll = ScrollController();
   DocumentSnapshot<Map<String, dynamic>>? _cursor;
   bool _loading = false;
@@ -44,11 +49,22 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
   @override
   void initState() {
     super.initState();
+    widget.refreshSignal?.addListener(_refreshRequested);
     if (_allowed) _load();
+  }
+
+  bool _reloadRequested = false;
+  void _refreshRequested() {
+    if (_loading) {
+      _reloadRequested = true;
+      return;
+    }
+    unawaited(_load(refresh: true));
   }
 
   @override
   void dispose() {
+    widget.refreshSignal?.removeListener(_refreshRequested);
     _scroll.dispose();
     super.dispose();
   }
@@ -56,23 +72,20 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
   String _owner(Map<String, dynamic> row) =>
       row['user_id']?.toString() ?? 'signed_out';
 
-  Future<({int count, Object? first, Object? last})> _summary(String id) async {
-    final collection = _db.collection('sync_error_logs');
+  Future<int> _summary(String id, {String? deviceId}) async {
+    final collection = _db
+        .collection('sync_error_logs')
+        .where('attention_required', isEqualTo: true);
     final query = id == 'signed_out'
         ? collection.where('user_id', isNull: true)
         : collection.where('user_id', isEqualTo: id);
-    final results = await Future.wait<Object>([
-      query.count().get(),
-      query.orderBy('first_failed_at').limit(1).get(),
-      query.orderBy('last_failed_at', descending: true).limit(1).get(),
-    ]).timeout(const Duration(seconds: 8));
-    final first = (results[1] as QuerySnapshot<Map<String, dynamic>>).docs;
-    final last = (results[2] as QuerySnapshot<Map<String, dynamic>>).docs;
-    return (
-      count: (results[0] as AggregateQuerySnapshot).count ?? 0,
-      first: first.isEmpty ? null : first.first.data()['first_failed_at'],
-      last: last.isEmpty ? null : last.first.data()['last_failed_at'],
+    final scoped = deviceId == null
+        ? query
+        : query.where('device_id', isEqualTo: deviceId);
+    final result = await scoped.count().get().timeout(
+      const Duration(seconds: 8),
     );
+    return result.count ?? 0;
   }
 
   Future<void> _load({bool refresh = false}) async {
@@ -84,14 +97,47 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
     try {
       Query<Map<String, dynamic>> query = _db
           .collection('sync_error_logs')
+          .where('attention_required', isEqualTo: true)
           .orderBy('last_failed_at', descending: true);
       if (!refresh && _cursor != null) {
         query = query.startAfterDocument(_cursor!);
       }
-      final page = await query
-          .limit(15)
-          .get()
-          .timeout(const Duration(seconds: 12));
+      QuerySnapshot<Map<String, dynamic>>? fetchedPage;
+      try {
+        fetchedPage = await query
+            .limit(15)
+            .get()
+            .timeout(const Duration(seconds: 12));
+      } on TimeoutException {
+        // Verify emptiness independently when the document query stalls.
+        // A timeout alone must never hide existing errors as an empty list.
+        final count = await _db
+            .collection('sync_error_logs')
+            .where('attention_required', isEqualTo: true)
+            .count()
+            .get()
+            .timeout(const Duration(seconds: 8));
+        if ((count.count ?? -1) != 0) rethrow;
+      }
+      final page = fetchedPage;
+      if (!mounted || !_allowed) return;
+      // An empty page is a completed read. Do not wait for user metadata or
+      // aggregate counts before settling the empty/end-of-list state.
+      if (page == null || page.docs.isEmpty) {
+        setState(() {
+          if (refresh || page == null) {
+            _logs.clear();
+            _summaries.clear();
+            _deviceSummaries.clear();
+            _cursor = null;
+          }
+          _hasMore = false;
+          _loading = false;
+        });
+        final notify = widget.onReportsLoaded;
+        if (notify != null) unawaited(notify());
+        return;
+      }
       final rows = page.docs
           .map((doc) => {...doc.data(), 'id': doc.id})
           .toList();
@@ -119,7 +165,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
           .toSet()
           .where((id) => refresh || !_summaries.containsKey(id));
       String? summaryError;
-      final summaries = await Future.wait(
+      final summariesFuture = Future.wait(
         summaryIds.map((id) async {
           try {
             return MapEntry(id, await _summary(id));
@@ -129,17 +175,40 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
           }
         }),
       );
+      final deviceIds = <String, ({String user, String device})>{
+        for (final row in rows)
+          _deviceKey(
+            _owner(row),
+            '${row['device_id'] ?? 'Device not recorded'}',
+          ): (
+            user: _owner(row),
+            device: '${row['device_id'] ?? 'Device not recorded'}',
+          ),
+      };
+      final deviceSummaries = await Future.wait(
+        deviceIds.entries.map((entry) async {
+          try {
+            return MapEntry(
+              entry.key,
+              await _summary(entry.value.user, deviceId: entry.value.device),
+            );
+          } catch (error) {
+            summaryError = 'Could not load device totals: $error';
+            return null;
+          }
+        }),
+      );
+      final summaries = await summariesFuture;
       if (!mounted || !_allowed) return;
       setState(() {
         if (refresh) {
           _logs.clear();
           _summaries.clear();
+          _deviceSummaries.clear();
         }
-        _summaries.addEntries(
-          summaries
-              .whereType<
-                MapEntry<String, ({int count, Object? first, Object? last})>
-              >(),
+        _summaries.addEntries(summaries.whereType<MapEntry<String, int>>());
+        _deviceSummaries.addEntries(
+          deviceSummaries.whereType<MapEntry<String, int>>(),
         );
         _error = summaryError;
         final byId = {for (final row in _logs) row['id']: row};
@@ -158,9 +227,21 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
       final notify = widget.onReportsLoaded;
       if (notify != null) unawaited(notify());
     } catch (error) {
-      if (mounted) setState(() => _error = '$error');
+      if (mounted) {
+        setState(
+          () => _error = error is TimeoutException
+              ? 'Unable to load error logs. Please try again.'
+              : '$error',
+        );
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+        if (_reloadRequested) {
+          _reloadRequested = false;
+          unawaited(_load(refresh: true));
+        }
+      }
     }
   }
 
@@ -224,13 +305,6 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
     }
   }
 
-  String _date(Object? value) {
-    final date = value is Timestamp
-        ? value.toDate()
-        : DateTime.tryParse('$value');
-    return date == null ? '—' : AdminUsersView.formatCreatedAt(date.toLocal());
-  }
-
   void _details(Map<String, dynamic> row) {
     final data = _copyData(row);
     showDialog<void>(
@@ -257,13 +331,46 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
   @override
   Widget build(BuildContext context) {
     if (!_allowed) return const Center(child: Text('Admin access required'));
+    Widget errorState() => AdminListItemCard(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SelectableText(_error!),
+          TextButton(
+            onPressed: _loading ? null : () => _load(refresh: true),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+    if (_logs.isEmpty) {
+      return AppPageLoadingOverlay(
+        isVisible: _loading,
+        message: 'Loading error logs ...',
+        child: _loading
+            ? const SizedBox.expand()
+            : SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: _error != null
+                    ? errorState()
+                    : const AdminListItemCard(
+                        padding: EdgeInsets.all(24),
+                        child: AdminListStateText(message: 'No error logs.'),
+                      ),
+              ),
+      );
+    }
     final groups = <String, List<Map<String, dynamic>>>{};
     for (final row in _logs) {
       groups.putIfAbsent(_owner(row), () => []).add(row);
     }
     String device(Map<String, dynamic> log) =>
         '${log['device_id'] ?? 'Device not recorded'}';
-    String deviceKey(String user, String id) => jsonEncode([user, id]);
+    String deviceKey(String user, String id) => _deviceKey(user, id);
+    String deviceLabel(String user, String id) =>
+        'Device $id (${_deviceSummaries[deviceKey(user, id)] ?? "—"} Errors)';
     final devices = <String, List<Map<String, dynamic>>>{};
     final rows = <({String user, String? device, Map<String, dynamic>? log})>[];
     for (final group in groups.entries) {
@@ -319,112 +426,50 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
           horizontalOnDesktop: true,
           trailingActions: true,
           selectableCells: true,
-          wrappingColumn: 4,
-          columnExtraWidths: const {7: 100},
-          titles: const [
-            'ID',
-            'Name',
-            'Role',
-            'Device ID',
-            'Errors',
-            'Created',
-            'Updated',
-            'Actions',
-          ],
+          wrappingColumn: 3,
+          columnExtraWidths: const {4: 100},
+          titles: const ['ID', 'Name', 'Role', 'Errors', 'Actions'],
           itemCount: rows.length,
+          hiddenColumnsAt: (i) =>
+              rows[i].device != null ? const {0, 2} : const <int>{},
+          fullWidthRowColumnAt: (i) =>
+              rows[i].device != null && rows[i].log == null ? 1 : null,
           rowGroupKey: (i) => rows[i].user,
-          scrollHeader: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${_logs.length} loaded reports',
-                  style: const TextStyle(color: AppColors.textSecondary),
-                ),
-              ),
-              Tooltip(
-                message: 'Refresh',
-                child: AdminListActionButton(
-                  icon: Icons.refresh,
-                  onTap: _loading ? null : () => _load(refresh: true),
-                ),
-              ),
-            ],
-          ),
-          scrollFooter: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                ? Column(
-                    children: [
-                      SelectableText(_error!),
-                      TextButton(
-                        onPressed: () => _load(refresh: true),
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  )
-                : Text(
-                    _logs.isEmpty
-                        ? 'No error logs'
-                        : _hasMore
-                        ? 'Pull up to load more'
-                        : 'All reports loaded',
-                  ),
-          ),
+          dividerAfterRow: (i) {
+            final row = rows[i];
+            if (row.device == null) return false;
+            if (row.log == null) return expanded(row.user, row.device);
+            return i + 1 < rows.length &&
+                rows[i + 1].user == row.user &&
+                rows[i + 1].log == null;
+          },
+          scrollHeader: const SizedBox.shrink(),
+          scrollFooter: _loading
+              ? const AppPageLoading(compact: true)
+              : _error != null
+              ? errorState()
+              : null,
           valuesAt: (i) {
             final row = rows[i];
             final log = row.log;
             final first = groups[row.user]!.first;
             final summary = _summaries[row.user];
             if (log == null && row.device != null) {
-              final reports = devices[deviceKey(row.user, row.device!)]!;
-              final dates =
-                  reports
-                      .map((r) => DateTime.tryParse('${r['first_failed_at']}'))
-                      .whereType<DateTime>()
-                      .toList()
-                    ..sort();
-              final latest =
-                  reports
-                      .map((r) => DateTime.tryParse('${r['last_failed_at']}'))
-                      .whereType<DateTime>()
-                      .toList()
-                    ..sort();
-              return [
-                '—',
-                'Device',
-                '—',
-                row.device!,
-                '${reports.length} loaded',
-                dates.isEmpty
-                    ? '—'
-                    : '${_date(dates.first.toIso8601String())}*',
-                latest.isEmpty
-                    ? '—'
-                    : '${_date(latest.last.toIso8601String())}*',
-                '',
-              ];
+              return ['', deviceLabel(row.user, row.device!), '', '', ''];
             }
             return log == null
                 ? [
                     row.user == 'signed_out' ? '—' : row.user,
                     _name(row.user, first),
                     _role(row.user, first),
-                    '—',
-                    summary == null ? '—' : '${summary.count}',
-                    _date(summary?.first),
-                    _date(summary?.last),
+                    summary == null ? '—' : '$summary Errors',
                     '',
                   ]
                 : [
                     '—',
                     preview('${log['operation'] ?? log['source'] ?? 'Error'}'),
-                    _role(row.user, log),
-                    '${log['device_id'] ?? '—'}',
+                    '',
                     preview('${log['error'] ?? '—'}'),
-                    _date(log['first_failed_at']),
-                    _date(log['last_failed_at']),
                     '',
                   ];
           },
@@ -437,30 +482,12 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                 child: Text(
                   row.device == null
                       ? _name(row.user, groups[row.user]!.first)
-                      : 'Device',
+                      : deviceLabel(row.user, row.device!),
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               );
             }
-            if (log == null && row.device != null && (col == 5 || col == 6)) {
-              final reports = devices[deviceKey(row.user, row.device!)]!;
-              final key = col == 5 ? 'first_failed_at' : 'last_failed_at';
-              final dates =
-                  reports
-                      .map((r) => DateTime.tryParse('${r[key]}'))
-                      .whereType<DateTime>()
-                      .toList()
-                    ..sort();
-              return Tooltip(
-                message: 'Based on loaded reports for this device',
-                child: SelectableText(
-                  dates.isEmpty
-                      ? '—'
-                      : '${_date((col == 5 ? dates.first : dates.last).toIso8601String())}*',
-                ),
-              );
-            }
-            if (col != 7) return null;
+            if (col != 4) return null;
             return Row(
               mainAxisSize: MainAxisSize.min,
               children: [

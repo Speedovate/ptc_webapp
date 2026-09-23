@@ -1,7 +1,7 @@
 name: webapp
 description: "PALTRANCO Web App"
 publish_to: 'none'
-version: 1.0.1+10
+version: 1.0.1+11
 
 environment:
   sdk: ^3.11.5
