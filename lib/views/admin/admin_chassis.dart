@@ -778,7 +778,9 @@ class _AdminChassisViewState extends State<AdminChassisView>
                               isActive: isActive.value,
                               currentStatus: selectedStatus,
                               bookingReferenceId: selectedBookingId,
-                              driverReferenceId: selectedDriverId,
+                              driverReferenceId: selectedBookingId == null
+                                  ? null
+                                  : selectedDriverId,
                               location: location.text.trim().isEmpty
                                   ? null
                                   : location.text.trim(),
