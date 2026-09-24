@@ -175,6 +175,14 @@ Map<String, dynamic>? reconcileBookingHistory(
     if (!_equal({...local, 'fields': fields}, remote)) return null;
     normalized['$key'] = remote;
   }
+  final archived = _reconcileSupersededAssignment(
+    server,
+    pending,
+    normalized,
+    baseUpdatedAt!,
+    verifiedMake,
+  );
+  if (archived != null) return archived;
   // Remote-only events must be non-workflow amount/photo edits, never reassignment.
   for (final key in before.keys.where((key) => !after.containsKey(key))) {
     final event = before[key];
@@ -250,4 +258,136 @@ Map<String, dynamic>? reconcileBookingHistory(
     candidate['updated_at'] = server['updated_at'];
   }
   return candidate;
+}
+
+/// Retain a missed assignment as history only when the same actor subsequently
+/// assigned the same crew/chassis, changing at most pickup/drop-off schedule.
+Map<String, dynamic>? _reconcileSupersededAssignment(
+  Map<String, dynamic> server,
+  Map<String, dynamic> pending,
+  Map<String, dynamic> normalized,
+  String baseUpdatedAt,
+  Map<String, dynamic>? verifiedMake,
+) {
+  final history = server['status_outputs'] as Map;
+  final added = normalized.keys
+      .where((key) => !history.containsKey(key))
+      .toList();
+  if (added.isEmpty) {
+    final assignments = normalized.entries
+        .where(
+          (entry) =>
+              entry.value is Map &&
+              (entry.value as Map)['status_form'] is Map &&
+              ((entry.value as Map)['status_form']
+                      as Map)['current_status_key'] ==
+                  'pending' &&
+              ((entry.value as Map)['status_form'] as Map)['next_status_key'] ==
+                  'assigned',
+        )
+        .toList();
+    if (assignments.length != 1) return null;
+    final withoutArchived = {
+      ...server,
+      'status_outputs': Map<String, dynamic>.from(history)
+        ..remove(assignments.single.key),
+    };
+    final replay = reconcileBookingHistory(
+      withoutArchived,
+      pending,
+      baseUpdatedAt: baseUpdatedAt,
+      verifiedMake: verifiedMake,
+    );
+    return _equal(replay, server) ? Map<String, dynamic>.from(server) : null;
+  }
+  if (added.length != 1) return null;
+  final local = normalized[added.single];
+  final remoteAssignments = history.entries
+      .where(
+        (entry) =>
+            !normalized.containsKey(entry.key) &&
+            entry.value is Map &&
+            (entry.value as Map)['status_form'] != null,
+      )
+      .toList();
+  if (local is! Map || remoteAssignments.length != 1) return null;
+  final remote = remoteAssignments.single.value as Map;
+  final form = local['status_form'];
+  final localFields = local['fields'];
+  final remoteFields = remote['fields'];
+  if (form is! Map ||
+      localFields is! Map ||
+      remoteFields is! Map ||
+      form['current_status_key'] != 'pending' ||
+      form['next_status_key'] != 'assigned' ||
+      form['is_main_form'] != true ||
+      !_equal(form, remote['status_form']) ||
+      local['status_key'] != 'pending' ||
+      remote['status_key'] != 'pending' ||
+      '${local['submitted_by'] ?? ''}'.isEmpty ||
+      local['submitted_by'] != remote['submitted_by'] ||
+      local['submitted_role'] != remote['submitted_role']) {
+    return null;
+  }
+  final localTime = DateTime.tryParse('${local['submitted_at']}');
+  final remoteTime = DateTime.tryParse('${remote['submitted_at']}');
+  final serverTime = DateTime.tryParse('${server['updated_at']}');
+  if (localTime == null ||
+      remoteTime == null ||
+      serverTime == null ||
+      !remoteTime.isAfter(localTime) ||
+      remoteTime.isAfter(serverTime)) {
+    return null;
+  }
+  const schedule = {
+    'pick_up_date',
+    'pick_up_time',
+    'drop_off_date',
+    'drop_off_time',
+  };
+  const crew = {'driver_id', 'helper_id', 'chassis_id'};
+  for (final key in {...localFields.keys, ...remoteFields.keys}) {
+    if (!schedule.contains(key) && !crew.contains(key)) return null;
+    if (!schedule.contains(key) &&
+        !_equal(localFields[key], remoteFields[key])) {
+      return null;
+    }
+  }
+  for (final key in crew) {
+    if (pending[key] == null ||
+        pending[key] != server[key] ||
+        localFields[key] != pending[key] ||
+        remoteFields[key] != server[key]) {
+      return null;
+    }
+  }
+  for (final key in ['client_status', 'driver_status', 'helper_status']) {
+    if (pending[key] != 'assigned' || server[key] != 'assigned') return null;
+  }
+  final baseline = <String, dynamic>{
+    ...server,
+    'status_outputs': Map<String, dynamic>.from(history)
+      ..remove(remoteAssignments.single.key),
+    'updated_at': baseUpdatedAt,
+    for (final key in crew) key: null,
+    'vehicle_make_id': null,
+    for (final key in ['client_status', 'driver_status', 'helper_status'])
+      key: 'pending',
+  };
+  // Reuse the strict original-action and common-history/photo validation.
+  final validated = reconcileBookingHistory(
+    baseline,
+    pending,
+    baseUpdatedAt: baseUpdatedAt,
+    verifiedMake: verifiedMake,
+  );
+  if (validated == null) return null;
+  for (final key in {...validated.keys, ...server.keys}) {
+    if (key == 'status_outputs' || key == 'updated_at') continue;
+    if (!_equal(validated[key], server[key])) return null;
+  }
+  return {
+    ...server,
+    'status_outputs': {...history, added.single: local},
+  };
 }

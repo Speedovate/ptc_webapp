@@ -1,4 +1,5 @@
 class DispatcherAccessCapability {
+  static const ownKpiRead = 'own_kpi.read';
   static const pmKpiRead = 'pm_kpi.read';
   static const pmKpiUpdate = 'pm_kpi.update';
   static const fuelLedgerRead = 'fuel_ledger.read';
@@ -70,6 +71,7 @@ class DispatcherAccessCapability {
   static const syncUpdate = 'sync.update';
 
   static const values = <String>[
+    ownKpiRead,
     pmKpiRead,
     pmKpiUpdate,
     fuelLedgerRead,
@@ -209,6 +211,7 @@ const Map<String, bool> defaultClientAccessCapabilities = {
 };
 
 const Map<String, bool> defaultDriverAccessCapabilities = {
+  DispatcherAccessCapability.ownKpiRead: true,
   DispatcherAccessCapability.bookingsRead: true,
   DispatcherAccessCapability.bookingsUpdate: true,
   DispatcherAccessCapability.supportCreate: true,
@@ -223,6 +226,7 @@ const Map<String, bool> defaultDriverAccessCapabilities = {
 };
 
 const Map<String, bool> defaultHelperAccessCapabilities = {
+  DispatcherAccessCapability.ownKpiRead: true,
   DispatcherAccessCapability.bookingsRead: true,
   DispatcherAccessCapability.bookingsUpdate: true,
   DispatcherAccessCapability.supportCreate: true,

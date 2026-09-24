@@ -1653,6 +1653,16 @@ class OfflineMutationQueueService {
         );
         if (reconciled != null) {
           if (_sameDocument(reconciled, existingBooking.data())) return;
+          final historyOnly = _sameDocument(
+            {...reconciled}..remove('status_outputs'),
+            {...existingBooking.data()!}..remove('status_outputs'),
+          );
+          if (historyOnly) {
+            transaction.update(existingBooking.reference, {
+              'status_outputs': reconciled['status_outputs'],
+            });
+            return;
+          }
           document
             ..clear()
             ..addAll(reconciled);
@@ -1699,6 +1709,7 @@ class OfflineMutationQueueService {
         bookingDocument: document,
       );
 
+      String? displacedBookingId;
       DocumentSnapshot<Map<String, dynamic>>? nextChassis;
       DocumentSnapshot<Map<String, dynamic>>? previousChassis;
       if (previousChassisId != null && previousChassisId != nextChassisId) {
@@ -1719,6 +1730,12 @@ class OfflineMutationQueueService {
         final ownerBooking = ownerId != null && ownerId != entry.targetId
             ? (await transaction.get(_bookingsCollection.doc(ownerId))).data()
             : null;
+        displacedBookingId = chassisBookingToUnassign(
+          bookingId: entry.targetId,
+          booking: document,
+          chassis: nextChassis.data() ?? {},
+          ownerBooking: ownerBooking,
+        );
         if (!shouldProjectBookingOntoChassis(
           bookingId: entry.targetId,
           booking: document,
@@ -1730,6 +1747,12 @@ class OfflineMutationQueueService {
       }
 
       final now = document['updated_at']?.toString() ?? entry.createdAtIso;
+      if (displacedBookingId != null) {
+        transaction.update(_bookingsCollection.doc(displacedBookingId), {
+          'chassis_id': null,
+          'updated_at': now,
+        });
+      }
       if (previousChassisId != null &&
           previousChassisId != nextChassisId &&
           normalizeId(
@@ -1957,6 +1980,7 @@ class OfflineMutationQueueService {
           final chassisId = normalizeId(
             finalDocument['chassis_id']?.toString(),
           );
+          String? displacedBookingId;
           DocumentSnapshot<Map<String, dynamic>>? chassisSnapshot;
           if (chassisId != null) {
             chassisSnapshot = await transaction.get(
@@ -1977,6 +2001,12 @@ class OfflineMutationQueueService {
                       _bookingsCollection.doc(ownerId),
                     )).data()
                   : null;
+              displacedBookingId = chassisBookingToUnassign(
+                bookingId: finalId,
+                booking: finalDocument,
+                chassis: chassisSnapshot.data() ?? {},
+                ownerBooking: ownerBooking,
+              );
               if (!shouldProjectBookingOntoChassis(
                 bookingId: finalId,
                 booking: finalDocument,
@@ -1989,6 +2019,12 @@ class OfflineMutationQueueService {
           }
           final now =
               finalDocument['updated_at']?.toString() ?? entry.createdAtIso;
+          if (displacedBookingId != null) {
+            transaction.update(_bookingsCollection.doc(displacedBookingId), {
+              'chassis_id': null,
+              'updated_at': now,
+            });
+          }
           if (linkedChassis != null) {
             final chassisDocument = Map<String, dynamic>.from(linkedChassis)
               ..['current_booking_id'] = nextId;
@@ -2242,6 +2278,7 @@ class OfflineMutationQueueService {
           'Driver record is temporarily unavailable. Try again after its create syncs.',
         );
       }
+      String? displacedBookingId;
       final additionalLinks = <DocumentSnapshot<Map<String, dynamic>>>[];
       for (final rawId in payload['booking_link_ids'] as List? ?? const []) {
         final linkId = rawId.toString();
@@ -2268,9 +2305,20 @@ class OfflineMutationQueueService {
         final ownerBooking = ownerId != null && ownerId != nextBookingId
             ? (await transaction.get(_bookingsCollection.doc(ownerId))).data()
             : null;
+        final assignmentBooking = {
+          ...targetSnapshot.data()!,
+          'chassis_id': resolvedId,
+          'updated_at': rawChassis['updated_at'] ?? entry.createdAtIso,
+        };
+        displacedBookingId = chassisBookingToUnassign(
+          bookingId: nextBookingId,
+          booking: assignmentBooking,
+          chassis: currentChassis.data() ?? {},
+          ownerBooking: ownerBooking,
+        );
         if (!shouldProjectBookingOntoChassis(
           bookingId: nextBookingId,
-          booking: targetSnapshot.data()!,
+          booking: assignmentBooking,
           chassis: currentChassis.data() ?? {},
           ownerBooking: ownerBooking,
         )) {
@@ -2278,6 +2326,16 @@ class OfflineMutationQueueService {
             chassisDocument,
             currentChassis.data() ?? {},
           );
+        }
+        if (displacedBookingId != null) {
+          chassisDocument['current_status'] = 'loaded';
+          chassisDocument['current_driver_id'] = assignmentBooking['driver_id'];
+          final location = chassisLifecycleInstruction(
+            previousBookingStatus: null,
+            nextBookingStatus: 'ongoing',
+            bookingDocument: assignmentBooking,
+          )?.location;
+          if (location != null) chassisDocument['location'] = location;
         }
         final priorChassisId = int.tryParse(
           targetSnapshot.data()?['chassis_id']?.toString() ?? '',
@@ -2288,6 +2346,12 @@ class OfflineMutationQueueService {
           );
         }
       }
+      if (displacedBookingId != null) {
+        transaction.update(_bookingsCollection.doc(displacedBookingId), {
+          'chassis_id': null,
+          'updated_at': rawChassis['updated_at'] ?? entry.createdAtIso,
+        });
+      }
       if (nextBookingId != null && nextBookingId.isNotEmpty) {
         transaction.set(_bookingsCollection.doc(nextBookingId), {
           'chassis_id': resolvedId,
@@ -2295,6 +2359,7 @@ class OfflineMutationQueueService {
         }, SetOptions(merge: true));
       }
       for (final linked in additionalLinks) {
+        if (linked.id == displacedBookingId) continue;
         if (linked.data()?['chassis_id']?.toString() == resolvedId) continue;
         transaction.set(linked.reference, {
           'chassis_id': resolvedId,
@@ -2619,15 +2684,27 @@ class OfflineMutationQueueService {
                   'Sync conflict detected. This record changed remotely',
                 ));
         final createConflict =
-            !entry.bookingHistoryRechecked &&
+            !entry.bookingAssignmentHistoryRechecked &&
             entry.kind == _OfflineMutationKind.bookingCreate &&
             (entry.lastError ?? '').contains(
               'booking was edited while its create was syncing',
             );
-        if (entry.isBlocked && (boxed || bookingConflict || createConflict)) {
+        final chassisConflict =
+            !entry.chassisTransferRechecked &&
+            entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+            entry.collectionKey == 'bookings' &&
+            (entry.lastError ?? '').contains(
+              'chassis is active on another booking',
+            );
+        if (entry.isBlocked &&
+            (boxed || bookingConflict || createConflict || chassisConflict)) {
           changed = true;
           return entry.copyWith(
             isBlocked: false,
+            chassisTransferRechecked:
+                chassisConflict || entry.chassisTransferRechecked,
+            chassisConflictRechecked:
+                chassisConflict || entry.chassisConflictRechecked,
             boxedErrorRechecked: boxed || entry.boxedErrorRechecked,
             bookingConflictRechecked:
                 bookingConflict || entry.bookingConflictRechecked,
@@ -2637,6 +2714,8 @@ class OfflineMutationQueueService {
                 bookingConflict ||
                 createConflict ||
                 entry.bookingHistoryRechecked,
+            bookingAssignmentHistoryRechecked:
+                createConflict || entry.bookingAssignmentHistoryRechecked,
             clearLastError: true,
           );
         }
@@ -3134,6 +3213,9 @@ class _OfflineMutationEntry {
     this.bookingConflictRechecked = false,
     this.bookingContinuationRechecked = false,
     this.bookingHistoryRechecked = false,
+    this.chassisConflictRechecked = false,
+    this.chassisTransferRechecked = false,
+    this.bookingAssignmentHistoryRechecked = false,
     this.catalogPredecessorVersions = const [],
     this.lastError,
     this.diagnostics,
@@ -3152,6 +3234,9 @@ class _OfflineMutationEntry {
   final bool bookingConflictRechecked;
   final bool bookingContinuationRechecked;
   final bool bookingHistoryRechecked;
+  final bool chassisConflictRechecked;
+  final bool chassisTransferRechecked;
+  final bool bookingAssignmentHistoryRechecked;
   final List<String> catalogPredecessorVersions;
   final String? lastError;
   final String? diagnostics;
@@ -3165,6 +3250,9 @@ class _OfflineMutationEntry {
     bool? bookingConflictRechecked,
     bool? bookingContinuationRechecked,
     bool? bookingHistoryRechecked,
+    bool? chassisConflictRechecked,
+    bool? chassisTransferRechecked,
+    bool? bookingAssignmentHistoryRechecked,
     String? baseUpdatedAt,
     bool clearBaseUpdatedAt = false,
     String? lastError,
@@ -3190,6 +3278,13 @@ class _OfflineMutationEntry {
           bookingContinuationRechecked ?? this.bookingContinuationRechecked,
       bookingHistoryRechecked:
           bookingHistoryRechecked ?? this.bookingHistoryRechecked,
+      bookingAssignmentHistoryRechecked:
+          bookingAssignmentHistoryRechecked ??
+          this.bookingAssignmentHistoryRechecked,
+      chassisConflictRechecked:
+          chassisConflictRechecked ?? this.chassisConflictRechecked,
+      chassisTransferRechecked:
+          chassisTransferRechecked ?? this.chassisTransferRechecked,
       catalogPredecessorVersions: catalogPredecessorVersions,
       lastError: clearLastError ? null : (lastError ?? this.lastError),
       diagnostics: clearLastError ? null : (diagnostics ?? this.diagnostics),
@@ -3211,6 +3306,9 @@ class _OfflineMutationEntry {
       'booking_conflict_rechecked': bookingConflictRechecked,
       'booking_continuation_rechecked': bookingContinuationRechecked,
       'booking_history_rechecked': bookingHistoryRechecked,
+      'chassis_conflict_rechecked': chassisConflictRechecked,
+      'chassis_transfer_rechecked': chassisTransferRechecked,
+      'booking_assignment_history_rechecked': bookingAssignmentHistoryRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
       'last_error': lastError,
@@ -3242,6 +3340,10 @@ class _OfflineMutationEntry {
       bookingContinuationRechecked:
           map['booking_continuation_rechecked'] == true,
       bookingHistoryRechecked: map['booking_history_rechecked'] == true,
+      chassisConflictRechecked: map['chassis_conflict_rechecked'] == true,
+      chassisTransferRechecked: map['chassis_transfer_rechecked'] == true,
+      bookingAssignmentHistoryRechecked:
+          map['booking_assignment_history_rechecked'] == true,
       catalogPredecessorVersions:
           (map['catalog_predecessor_versions'] as List? ?? [])
               .whereType<String>()

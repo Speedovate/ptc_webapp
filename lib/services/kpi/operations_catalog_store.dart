@@ -40,6 +40,7 @@ class OperationsCatalogStore {
   Future<OperationsCatalog>? _loading;
   String? _owner;
   DateTime? _loadedAt;
+  int _editRevision = 0;
   bool get canRead => RoleAccessService.instance.canAccess(
     DispatcherAccessCapability.operationsCatalogRead,
   );
@@ -52,7 +53,9 @@ class OperationsCatalogStore {
   final FirestoreCacheStore _cache;
 
   Future<void> restore() async {
+    final revision = _editRevision;
     final owner = await _accountId();
+    if (revision != _editRevision) return;
     if (owner == null) {
       _owner = null;
       _loadedAt = null;
@@ -70,7 +73,7 @@ class OperationsCatalogStore {
     final cached = (await _cache.readDocumentMaps(
       'operations_catalog:$owner',
     ))?.firstOrNull;
-    if ((await _accountId()) != owner) {
+    if ((await _accountId()) != owner || revision != _editRevision) {
       return;
     }
     if (cached != null) {
@@ -91,7 +94,9 @@ class OperationsCatalogStore {
   }
 
   Future<OperationsCatalog> _load(bool force, {bool localOnly = false}) async {
+    final revision = _editRevision;
     final owner = await _accountId();
+    if (revision != _editRevision) return current;
     if (owner == null) {
       _owner = null;
       _loadedAt = null;
@@ -114,6 +119,7 @@ class OperationsCatalogStore {
     var document =
         (await _cache.readDocumentMaps(key))?.firstOrNull ??
         <String, dynamic>{};
+    if (revision != _editRevision) return current;
     _apply(document); // cached choices are visible before network finishes
     if (!localOnly && _online()) {
       try {
@@ -164,6 +170,7 @@ class OperationsCatalogStore {
                 .map((e) => e.value),
           ],
         };
+        if (revision != _editRevision) return current;
         await _cache.writeDocumentMaps(key, [document]);
       } on FirebaseException catch (e) {
         if (e.code == 'permission-denied' || e.code == 'unauthenticated') {
@@ -188,7 +195,9 @@ class OperationsCatalogStore {
       };
       document = {...pending.last, 'matrix_versions': versions.values.toList()};
     }
-    if ((await _accountId()) != owner) {
+    final currentOwner = await _accountId();
+    if (revision != _editRevision) return current;
+    if (currentOwner != owner) {
       _owner = null;
       _loadedAt = null;
       _apply({});
@@ -218,6 +227,8 @@ class OperationsCatalogStore {
     if (owner == null || !canEdit) {
       throw StateError('You do not have access to edit operations settings.');
     }
+    // An older read must not restore its snapshot after this edit is saved.
+    _editRevision++;
     final data =
         {
             ...next,
@@ -265,11 +276,13 @@ class OperationsCatalogStore {
       document: payload,
       baseUpdatedAt: previous['updated_at']?.toString(),
     );
+    _editRevision++;
     final cached = {
       ...data,
       'matrix_version_ids': payload['matrix_version_ids'],
     };
     await _cache.writeDocumentMaps('operations_catalog:$owner', [cached]);
+    _editRevision++;
     _apply({...cached, if (!savedOnline) 'local_sync_status': 'queued'});
     _loadedAt = null;
   }

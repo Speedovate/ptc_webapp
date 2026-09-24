@@ -1253,6 +1253,7 @@ class BookingRequest implements BookingRepository {
       bookingDocument: document,
     );
 
+    String? displacedBookingId;
     DocumentSnapshot<Map<String, dynamic>>? nextChassis;
     DocumentSnapshot<Map<String, dynamic>>? previousChassis;
     if (previousChassisId != null && previousChassisId != nextChassisId) {
@@ -1273,6 +1274,12 @@ class BookingRequest implements BookingRepository {
       final ownerBooking = ownerId != null && ownerId != bookingId
           ? (await transaction.get(_bookingsCollection.doc(ownerId))).data()
           : null;
+      displacedBookingId = chassisBookingToUnassign(
+        bookingId: bookingId,
+        booking: document,
+        chassis: nextChassis.data() ?? {},
+        ownerBooking: ownerBooking,
+      );
       if (!shouldProjectBookingOntoChassis(
         bookingId: bookingId,
         booking: document,
@@ -1286,6 +1293,12 @@ class BookingRequest implements BookingRepository {
     final now =
         document['updated_at']?.toString() ??
         DateTime.now().toUtc().toIso8601String();
+    if (displacedBookingId != null) {
+      transaction.update(_bookingsCollection.doc(displacedBookingId), {
+        'chassis_id': null,
+        'updated_at': now,
+      });
+    }
     if (previousChassisId != null &&
         previousChassisId != nextChassisId &&
         normalizeId(

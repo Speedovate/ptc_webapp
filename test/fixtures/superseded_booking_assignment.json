@@ -1,0 +1,284 @@
+{
+  "pending": {
+    "delivered_at": null,
+    "submission_key": "booking_8_9_1_1790042459964000",
+    "helper_id": "15",
+    "chassis_id": "9",
+    "billing_status": "unbilled",
+    "client_status": "assigned",
+    "status_outputs": {
+      "book__1790042459964000": {
+        "fields": {
+          "destination_barangay": "Bagong Pag-asa",
+          "destination": "Puerto Princesa City",
+          "waybill_photo": {
+            "download_url": "https://example.test/photo.jpg",
+            "name": "1000141789.jpg",
+            "pending_upload": true,
+            "size": 246301,
+            "pending_upload_id": "booking_upload_1790042468589000_36dcbb8c",
+            "mime_type": "image/jpeg"
+          },
+          "origin_barangay": "Tagburos",
+          "van_number": "DRYU2850372",
+          "waybill_number": "2MCCB03226001",
+          "representative_name": "redacted",
+          "van_size": "1",
+          "representative_phone": "redacted",
+          "origin": "Puerto Princesa City"
+        },
+        "status_form": {
+          "status_text": null,
+          "is_active": true,
+          "is_main_form": true,
+          "current_status_key": "book",
+          "id": "1",
+          "next_status_key": "pending",
+          "button_text": "Submit Booking",
+          "role": "client",
+          "roles": [
+            "client",
+            "admin",
+            "manager",
+            "dispatcher"
+          ],
+          "status_subtext": null
+        },
+        "submitted_role": "client",
+        "submitted_by": "8",
+        "submitted_at": "2026-09-22T10:00:59.964",
+        "submitted_roles": [
+          "client"
+        ],
+        "status_key": "book"
+      },
+      "pending__1790042535551000": {
+        "status_form": {
+          "current_status_key": "pending",
+          "id": "2",
+          "status_text": null,
+          "is_main_form": true,
+          "roles": [
+            "admin",
+            "manager",
+            "dispatcher"
+          ],
+          "next_status_key": "assigned",
+          "is_active": true,
+          "role": "admin",
+          "button_text": "Assign Booking",
+          "status_subtext": null
+        },
+        "status_key": "pending",
+        "fields": {
+          "chassis_id": "9",
+          "pick_up_date": "2026-09-22",
+          "drop_off_time": "1:00 PM",
+          "driver_id": "16",
+          "pick_up_time": "11:30 AM",
+          "helper_id": "15",
+          "drop_off_date": "2026-09-22"
+        },
+        "submitted_roles": [
+          "dispatcher"
+        ],
+        "submitted_at": "2026-09-22T10:02:15.551",
+        "submitted_by": "8",
+        "submitted_role": "dispatcher"
+      }
+    },
+    "id": "offline_booking_8_9_1_1790042459964000",
+    "client_id": "9",
+    "vehicle_make_id": null,
+    "updated_at": "2026-09-22T10:02:15.551",
+    "created_at": "2026-09-22T10:00:59.964",
+    "driver_id": "16",
+    "driver_status": "assigned",
+    "helper_status": "assigned"
+  },
+  "server": {
+    "vehicle_make_id": null,
+    "delivered_at": null,
+    "chassis_id": "9",
+    "driver_id": "16",
+    "driver_status": "assigned",
+    "helper_status": "assigned",
+    "id": "120",
+    "photo_cleanup_claims": [],
+    "client_id": "9",
+    "client_status": "assigned",
+    "status_outputs": {
+      "book__1790042459964000": {
+        "status_key": "book",
+        "submitted_roles": [
+          "client"
+        ],
+        "submitted_by": "8",
+        "fields": {
+          "destination": "Puerto Princesa City",
+          "waybill_photo": {
+            "storage_path": "bookings/120/status_outputs/book__1790042459964000/waybill_photo/1790042627135.jpg",
+            "size": 246301,
+            "width": 1080,
+            "height": 810,
+            "download_url": "https://example.test/photo.jpg",
+            "mime_type": "image/jpeg",
+            "name": "1000141789.jpg"
+          },
+          "origin": "Puerto Princesa City",
+          "representative_name": "redacted",
+          "representative_phone": "redacted",
+          "origin_barangay": "Tagburos",
+          "van_number": "DRYU2850372",
+          "van_size": "1",
+          "destination_barangay": "Bagong Pag-asa",
+          "waybill_number": "2MCCB03226001"
+        },
+        "submitted_role": "client",
+        "submitted_at": "2026-09-22T10:00:59.964",
+        "status_form": {
+          "role": "client",
+          "button_text": "Submit Booking",
+          "current_status_key": "book",
+          "status_subtext": null,
+          "next_status_key": "pending",
+          "id": "1",
+          "status_text": null,
+          "is_main_form": true,
+          "is_active": true,
+          "roles": [
+            "client",
+            "admin",
+            "manager",
+            "dispatcher"
+          ]
+        }
+      },
+      "pending__1790043080328000": {
+        "status_form": null,
+        "submitted_by": "8",
+        "submitted_role": "dispatcher",
+        "status_key": "pending",
+        "fields": {
+          "waybill_photo": {
+            "storage_path": "bookings/120/status_outputs/book__1790042459964000/waybill_photo/1790042627135.jpg",
+            "height": 810,
+            "size": 246301,
+            "mime_type": "image/jpeg",
+            "width": 1080,
+            "name": "1000141789.jpg",
+            "download_url": "https://example.test/photo.jpg"
+          },
+          "amount": "4120"
+        },
+        "submitted_at": "2026-09-22T10:11:20.328",
+        "submitted_roles": [
+          "dispatcher"
+        ]
+      },
+      "pending__1790055649619000": {
+        "submitted_roles": [
+          "dispatcher"
+        ],
+        "submitted_role": "dispatcher",
+        "submitted_by": "8",
+        "fields": {
+          "driver_id": "16",
+          "pick_up_date": "2026-09-22",
+          "drop_off_time": "2:30 PM",
+          "pick_up_time": "1:30 PM",
+          "helper_id": "15",
+          "drop_off_date": "2026-09-22",
+          "chassis_id": "9"
+        },
+        "status_key": "pending",
+        "submitted_at": "2026-09-22T13:40:49.619",
+        "status_form": {
+          "status_text": null,
+          "status_subtext": null,
+          "next_status_key": "assigned",
+          "role": "admin",
+          "is_main_form": true,
+          "button_text": "Assign Booking",
+          "current_status_key": "pending",
+          "id": "2",
+          "roles": [
+            "admin",
+            "manager",
+            "dispatcher"
+          ],
+          "is_active": true
+        }
+      }
+    },
+    "updated_at": "2026-09-22T13:40:49.619",
+    "created_at": "2026-09-22T10:00:59.964",
+    "helper_id": "15",
+    "submission_key": "booking_8_9_1_1790042459964000",
+    "photo_cleanup_paths": [],
+    "billing_status": "unbilled"
+  },
+  "source": {
+    "created_at": "2026-09-22T10:00:59.964",
+    "updated_at": "2026-09-22T10:00:59.964",
+    "driver_id": null,
+    "helper_status": "pending",
+    "driver_status": "pending",
+    "id": "offline_booking_8_9_1_1790042459964000",
+    "chassis_id": null,
+    "client_id": "9",
+    "client_status": "pending",
+    "status_outputs": {
+      "book__1790042459964000": {
+        "submitted_by": "8",
+        "submitted_role": "client",
+        "submitted_at": "2026-09-22T10:00:59.964",
+        "submitted_roles": [
+          "client"
+        ],
+        "status_key": "book",
+        "status_form": {
+          "next_status_key": "pending",
+          "button_text": "Submit Booking",
+          "is_active": true,
+          "role": "client",
+          "status_text": null,
+          "current_status_key": "book",
+          "roles": [
+            "client",
+            "admin",
+            "manager",
+            "dispatcher"
+          ],
+          "status_subtext": null,
+          "id": "1",
+          "is_main_form": true
+        },
+        "fields": {
+          "waybill_number": "2MCCB03226001",
+          "van_number": "DRYU2850372",
+          "destination_barangay": "Bagong Pag-asa",
+          "origin_barangay": "Tagburos",
+          "representative_name": "redacted",
+          "van_size": "1",
+          "origin": "Puerto Princesa City",
+          "waybill_photo": {
+            "mime_type": "image/jpeg",
+            "download_url": "https://example.test/photo.jpg",
+            "pending_upload_id": "booking_upload_1790042468589000_36dcbb8c",
+            "size": 246301,
+            "name": "1000141789.jpg",
+            "pending_upload": true
+          },
+          "destination": "Puerto Princesa City",
+          "representative_phone": "redacted"
+        }
+      }
+    },
+    "delivered_at": null,
+    "submission_key": "booking_8_9_1_1790042459964000",
+    "billing_status": "unbilled",
+    "vehicle_make_id": null,
+    "helper_id": null
+  }
+}

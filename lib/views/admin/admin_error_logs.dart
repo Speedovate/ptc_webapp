@@ -83,6 +83,8 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
         : collection.where('user_id', isEqualTo: id);
     final scoped = deviceId == null
         ? query
+        : deviceId == 'Device not recorded'
+        ? query.where('device_id', isNull: true)
         : query.where('device_id', isEqualTo: deviceId);
     final result = await scoped.count().get().timeout(
       const Duration(seconds: 8),
@@ -325,6 +327,40 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
   }) async {
     if (!_allowed || _copying) return;
     setState(() => _copying = true);
+    final displayed = _logs
+        .where(
+          (row) =>
+              _owner(row) == user &&
+              (id == null || row['id'] == id) &&
+              (device == null ||
+                  '${row['device_id'] ?? 'Device not recorded'}' == device),
+        )
+        .map(
+          (row) => {
+            ..._copyData(row),
+            'document_path': 'sync_error_logs/${row['id']}',
+            'data_source': 'displayed_snapshot',
+          },
+        )
+        .toList();
+    Map<String, dynamic> fallback(
+      String reason, {
+      Object? error,
+      StackTrace? stack,
+    }) => {
+      'report': 'Sync error log copy diagnostics',
+      'captured_at': DateTime.now().toUtc().toIso8601String(),
+      'user_id': user,
+      'device_id': device,
+      'document_id': id,
+      'source': 'admin_error_logs.dart::_copyFirestoreErrors',
+      'server_reports_verified': false,
+      'reason': reason,
+      if (error != null) 'fetch_error': '$error',
+      if (stack != null) 'fetch_stack_trace': '$stack',
+      'displayed_reports': displayed,
+      'page_error': _error,
+    };
     try {
       final collection = _db.collection('sync_error_logs');
       Map<String, dynamic> export(DocumentSnapshot<Map<String, dynamic>> doc) =>
@@ -355,7 +391,11 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
         query = user == 'signed_out'
             ? query.where('user_id', isNull: true)
             : query.where('user_id', isEqualTo: user);
-        if (device != null) query = query.where('device_id', isEqualTo: device);
+        if (device != null) {
+          query = device == 'Device not recorded'
+              ? query.where('device_id', isNull: true)
+              : query.where('device_id', isEqualTo: device);
+        }
         query = query.orderBy(FieldPath.documentId);
         final records = <Map<String, dynamic>>[];
         DocumentSnapshot<Map<String, dynamic>>? cursor;
@@ -370,14 +410,20 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
           cursor = page.docs.last;
           await Future<void>.delayed(Duration.zero);
         }
-        result = records;
+        result = records.isEmpty
+            ? fallback(
+                'No matching active reports returned by Firestore; displayed reports may have been resolved or removed.',
+              )
+            : records;
       }
       if (mounted && _allowed) await _copy(result);
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Could not copy complete Firestore reports: $error'),
+    } catch (error, stack) {
+      if (mounted && _allowed) {
+        await _copy(
+          fallback(
+            'Could not fetch current Firestore reports; includes the displayed snapshot only.',
+            error: error,
+            stack: stack,
           ),
         );
       }

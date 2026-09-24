@@ -1,3 +1,5 @@
+import 'offline_error_diagnostics.dart';
+
 /// Project the final booking stage onto its chassis. Queued edits can coalesce
 /// several transitions, and retries can start at the same stage. Never infer
 /// the physical state solely from the immediately preceding server stage.
@@ -154,8 +156,31 @@ bool shouldProjectBookingOntoChassis({
       isChassisReservation(ownerBooking?['client_status']?.toString())) {
     return true;
   }
-  throw StateError(
-    'Sync conflict: chassis is active on another booking. Its advance reservation is preserved; release the active booking before starting this one.',
+  if (chassisBookingToUnassign(
+        bookingId: bookingId,
+        booking: booking,
+        chassis: chassis,
+        ownerBooking: ownerBooking,
+      ) !=
+      null) {
+    return true;
+  }
+  throw OfflineSyncConflict(
+    'Sync conflict: chassis is active on another booking. '
+    'Chassis ${booking['chassis_id']} is linked to Booking $owner '
+    '(booking status: ${ownerBooking?['client_status'] ?? 'not recorded'}; '
+    'chassis status: ${chassis['current_status'] ?? 'not recorded'}). '
+    'Booking $bookingId remains queued; its original action time is preserved.',
+    {
+      'conflict_kind': 'chassis_ownership',
+      'booking_id': bookingId,
+      'chassis_id': booking['chassis_id'],
+      'owner_booking_id': owner,
+      'owner_booking_found': ownerBooking != null,
+      'server_chassis': chassis,
+      'owner_booking_document': ownerBooking,
+      'pending_booking_document': booking,
+    },
   );
 }
 
@@ -177,4 +202,53 @@ void preserveChassisPhysicalAssignment(
       document.remove(key);
     }
   }
+}
+
+/// A later Ongoing action transfers the chassis; reservation links are untouched.
+/// Missing ordering evidence remains a conflict rather than stealing ownership.
+String? chassisBookingToUnassign({
+  required String bookingId,
+  required Map<String, dynamic> booking,
+  required Map<String, dynamic> chassis,
+  Map<String, dynamic>? ownerBooking,
+}) {
+  final owner = chassis['current_booking_id']?.toString();
+  if (owner == null ||
+      owner == bookingId ||
+      booking['client_status'] != 'ongoing' ||
+      ownerBooking?['client_status'] != 'ongoing' ||
+      ownerBooking?['chassis_id']?.toString() !=
+          booking['chassis_id']?.toString()) {
+    return null;
+  }
+  DateTime? instant(Object? value) {
+    final text = value?.toString() ?? '';
+    final parsed = DateTime.tryParse(text);
+    if (parsed == null) return null;
+    // Legacy action timestamps are Philippine wall-clock values without offset.
+    return parsed.isUtc || RegExp(r'[+-]\d\d:\d\d$').hasMatch(text)
+        ? parsed.toUtc()
+        : DateTime.utc(
+            parsed.year,
+            parsed.month,
+            parsed.day,
+            parsed.hour,
+            parsed.minute,
+            parsed.second,
+            parsed.millisecond,
+            parsed.microsecond,
+          ).subtract(const Duration(hours: 8));
+  }
+
+  final action = instant(booking['updated_at']);
+  final previous = instant(ownerBooking?['updated_at']);
+  final physical = instant(chassis['updated_at']);
+  if (action == null ||
+      previous == null ||
+      physical == null ||
+      !action.isAfter(previous) ||
+      !action.isAfter(physical)) {
+    return null;
+  }
+  return owner;
 }

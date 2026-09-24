@@ -68,6 +68,69 @@ class _StalledQuery implements Query<Map<String, dynamic>> {
 }
 
 void main() {
+  for (final removed in [false, true]) {
+    testWidgets('copy missing-device reports; removed after display=$removed', (
+      tester,
+    ) async {
+      final db = FakeFirebaseFirestore();
+      await db.collection('sync_error_logs').doc('timeout').set({
+        'attention_required': true,
+        'user_id': '8',
+        'role': 'dispatcher',
+        'last_failed_at': '2026-09-24T00:00:00Z',
+        'error': 'TimeoutException after 0:00:10.000000: Future not completed',
+        'details': {'operation': 'bookingPhotoUpload', 'target': 'bookings/83'},
+      });
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map)['text'];
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AdminErrorLogsView(
+              user: const UserModel(role: 'admin'),
+              firestore: db,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Expand errors'));
+      await tester.pumpAndSettle();
+      if (removed) {
+        await db.collection('sync_error_logs').doc('timeout').delete();
+      }
+      await tester.tap(find.byTooltip('Copy all device errors'));
+      await tester.pumpAndSettle();
+      expect(copied, isNot('[]'));
+      expect(copied, contains('TimeoutException'));
+      expect(copied, contains('bookingPhotoUpload'));
+      final data = jsonDecode(copied!);
+      if (removed) {
+        expect(data['server_reports_verified'], false);
+        expect(data['displayed_reports'], hasLength(1));
+      } else {
+        expect(data, hasLength(1));
+        expect(
+          data.first['firestore_data']['details']['target'],
+          'bookings/83',
+        );
+      }
+    });
+  }
   testWidgets('device copy fetches all 117 server documents and every field', (
     tester,
   ) async {

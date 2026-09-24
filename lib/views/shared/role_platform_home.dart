@@ -1,3 +1,6 @@
+import 'package:webapp/requests/booking.request.dart';
+import 'package:webapp/views/shared/crew_kpi_tracking.dart';
+import 'package:webapp/services/kpi/crew_kpi_store.dart';
 import 'package:webapp/widgets/shared/inline_detail_host.dart';
 import 'package:webapp/widgets/shared/paged_data_sliver.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
@@ -65,6 +68,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
   void initState() {
     super.initState();
     _shellUser = widget.user;
+    _roleAccessService.addListener(_permissionsChanged);
     _log(
       'main entry init loggedIn=${widget.user.id != null} user=${widget.user.id ?? "-"} role=${widget.user.role ?? "-"} section=${_viewModel.selectedSection.title}',
     );
@@ -74,6 +78,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
   void didUpdateWidget(covariant RolePlatformHome oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user.id != widget.user.id ||
+        oldWidget.user.role != widget.user.role ||
         oldWidget.user.updatedAt != widget.user.updatedAt) {
       _shellUser = widget.user;
       _retainedSections.clear();
@@ -81,6 +86,24 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
         'user updated loggedIn=${widget.user.id != null} user=${widget.user.id ?? "-"} role=${widget.user.role ?? "-"}',
       );
     }
+  }
+
+  void _permissionsChanged() {
+    if (!mounted) return;
+    setState(() {
+      _retainedSections.remove(RolePlatformSection.kpiTracking);
+      if (!CrewKpiStore.canView(_shellUser)) {
+        if (_viewModel.selectedSection == RolePlatformSection.kpiTracking) {
+          _viewModel.selectSection(RolePlatformSection.home);
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _roleAccessService.removeListener(_permissionsChanged);
+    super.dispose();
   }
 
   Future<void> _saveProfileChanges(ProfilePendingProfileChanges changes) async {
@@ -237,6 +260,13 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
           icon: Icons.account_circle_rounded,
           isCompact: isCompact,
         ),
+        if (CrewKpiStore.canView(_shellUser))
+          _sectionItem(
+            vm: vm,
+            section: RolePlatformSection.kpiTracking,
+            icon: Icons.assessment_outlined,
+            isCompact: isCompact,
+          ),
       ],
     );
   }
@@ -274,6 +304,42 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
 
   Widget _buildSelectedSection(RolePlatformSection section) {
     return switch (section) {
+      RolePlatformSection.kpiTracking => CrewKpiTrackingView(
+        key: ValueKey('crew-kpi:${_shellUser.role}:${_shellUser.id}'),
+        user: _shellUser,
+        onOpenBooking:
+            _roleAccessService.canAccess('bookings.read', role: _shellUser.role)
+            ? (id) async {
+                final accountId = _shellUser.id;
+                final role = _shellUser.role;
+                final bookings = await BookingRequest.instance.getBookings();
+                if (!mounted ||
+                    _shellUser.id != accountId ||
+                    _shellUser.role != role ||
+                    !CrewKpiStore.canView(_shellUser) ||
+                    !_roleAccessService.canAccess(
+                      'bookings.read',
+                      role: role,
+                    )) {
+                  return;
+                }
+                final booking = bookings
+                    .where(
+                      (b) =>
+                          b.id == id &&
+                          (role == 'driver' ? b.driver?.id : b.helper?.id) ==
+                              accountId,
+                    )
+                    .firstOrNull;
+                if (booking == null) return;
+                setState(() {
+                  _selectedHistoryBooking = booking;
+                  _retainedSections.remove(RolePlatformSection.history);
+                });
+                _viewModel.selectSection(RolePlatformSection.history);
+              }
+            : null,
+      ),
       RolePlatformSection.home =>
         isClientScopedRole(widget.user.role)
             ? ClientBookingHomeView(

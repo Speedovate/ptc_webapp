@@ -362,6 +362,7 @@ class ChassisRequest {
               'Sync conflict: chassis now belongs to another booking.',
             );
           }
+          String? displacedBookingId;
           DocumentSnapshot<Map<String, dynamic>>? priorChassisSnapshot;
           if (chassis.bookingReferenceId != null) {
             final targetBooking = _firestore
@@ -380,9 +381,20 @@ class ChassisRequest {
                     _firestore.collection('bookings').doc(ownerId),
                   )).data()
                 : null;
+            final assignmentBooking = {
+              ...targetSnapshot.data()!,
+              'chassis_id': '${chassis.id}',
+              'updated_at': now,
+            };
+            displacedBookingId = chassisBookingToUnassign(
+              bookingId: chassis.bookingReferenceId!,
+              booking: assignmentBooking,
+              chassis: currentChassis.data() ?? {},
+              ownerBooking: ownerBooking,
+            );
             if (!shouldProjectBookingOntoChassis(
               bookingId: chassis.bookingReferenceId!,
-              booking: targetSnapshot.data()!,
+              booking: assignmentBooking,
               chassis: currentChassis.data() ?? {},
               ownerBooking: ownerBooking,
             )) {
@@ -390,6 +402,17 @@ class ChassisRequest {
                 writeDocument,
                 currentChassis.data() ?? {},
               );
+            }
+            if (displacedBookingId != null) {
+              writeDocument['current_status'] = 'loaded';
+              writeDocument['current_driver_id'] =
+                  assignmentBooking['driver_id'];
+              final location = chassisLifecycleInstruction(
+                previousBookingStatus: null,
+                nextBookingStatus: 'ongoing',
+                bookingDocument: assignmentBooking,
+              )?.location;
+              if (location != null) writeDocument['location'] = location;
             }
             final priorChassisId = int.tryParse(
               targetSnapshot.data()?['chassis_id']?.toString() ?? '',
@@ -399,6 +422,12 @@ class ChassisRequest {
                 _collection.doc('$priorChassisId'),
               );
             }
+          }
+          if (displacedBookingId != null) {
+            transaction.update(
+              _firestore.collection('bookings').doc(displacedBookingId),
+              {'chassis_id': null, 'updated_at': now},
+            );
           }
           if (chassis.bookingReferenceId != null) {
             transaction.set(
