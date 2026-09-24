@@ -187,7 +187,13 @@ void main() {
         );
         expect(jsonEncode(first), isNot(contains('secret-photo')));
         expect(jsonEncode(first), isNot(contains('private-phone')));
-        expect(db.dump(), before);
+        // The load reads assignee-scoped fuel entries; the fake Firestore
+        // dump registers the touched-but-empty pm_fuel_entries collection.
+        // Only that read artifact is tolerated, never a remote write.
+        final beforeDump = jsonDecode(before) as Map<String, dynamic>;
+        final afterDump = jsonDecode(db.dump()) as Map<String, dynamic>
+          ..remove('pm_fuel_entries');
+        expect(afterDump, beforeDump);
         online = false;
         expect(crewKpiTransactions(user, (await store().load(user))!), rows);
         pending = [

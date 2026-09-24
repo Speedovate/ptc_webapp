@@ -19,6 +19,20 @@
       ]
     },
     {
+      "collectionGroup": "manage_notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "user_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "platform",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "sync_error_logs",
       "queryScope": "COLLECTION",
       "fields": [

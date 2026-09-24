@@ -75,7 +75,12 @@ void main() {
         expect(list.showTitlesRow, width >= 900);
         expect(find.text('Mainar'), findsNothing);
         expect(find.text('13 | Mainar'), findsOneWidget);
-        expect(find.text('Fuel'), findsNothing);
+        // The Fuel toolbar entry is icon-only below 520px, so its label only
+        // appears at desktop widths.
+        expect(
+          find.text('Fuel'),
+          width >= 520 ? findsOneWidget : findsNothing,
+        );
         expect(find.text('Revenue'), findsNothing);
         expect(find.text('Rules'), findsNothing);
         final action = list.cellBuilder!(0, 5) as AdminListActionButton;

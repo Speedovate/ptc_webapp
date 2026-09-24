@@ -176,7 +176,7 @@ void main() {
       expect(location.active, false);
       expect(
         value
-            .matrixFor(DateTime.now())
+            .matrixFor(kpiDate(DateTime.now()))
             .rates
             .firstWhere((r) => r.name == 'San Manuel')
             .active,
