@@ -431,7 +431,19 @@ class _AdminChassisViewState extends State<AdminChassisView>
             locationWidth = flexibleWidths[2];
             tableWidth = contentWidth;
           }
-          final useWideTable = tableWidth <= contentWidth;
+          // Desktop: use the wide table whenever the viewport is wide enough,
+          // regardless of measured column totals. This matches the other admin
+          // list pages (users/bookings): a fixed desktop breakpoint decides
+          // "desktop table" instead of a measured-fit that can collapse the
+          // whole page when a single column is a few pixels too wide.
+          final useWideTable = constraints.maxWidth >= 760;
+          // LazySliverList rows keep their flexible column widths (which have
+          // already been reduced to fit contentWidth above), so a desktop
+          // breakpoint alone is the trigger — matches users/bookings. There is
+          // no extra horizontal-scroll wrapper because the flexible columns
+          // already reduce to contentWidth, keeping the table scroll-free like
+          // the other admin pages.
+
           return AppPageLoadingOverlay(
             isVisible: _isLoadingChassis && _items.isEmpty,
             message: 'Loading chassis ...',
