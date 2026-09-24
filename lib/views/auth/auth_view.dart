@@ -2058,11 +2058,14 @@ class _AuthHeaderCameraButton extends StatelessWidget {
               fit: StackFit.expand,
               children: [
                 if (hasPreview)
-                  Image.memory(
-                    previewBytes!,
+                  Image(
+                    image: ResizeImage(
+                      MemoryImage(previewBytes!),
+                      width: 112,
+                      height: 112,
+                      policy: ResizeImagePolicy.fit,
+                    ),
                     key: ValueKey<int>(previewBytes!.length),
-                    cacheWidth: 112,
-                    cacheHeight: 112,
                     fit: BoxFit.cover,
                     gaplessPlayback: true,
                     filterQuality: FilterQuality.medium,

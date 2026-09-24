@@ -17,7 +17,7 @@ class AppCachedNetworkImage extends StatefulWidget {
     required this.imageUrl,
     this.width,
     this.height,
-    this.fit,
+    this.fit = BoxFit.cover,
     this.alignment = Alignment.center,
     this.errorBuilder,
     this.cacheWidth,
@@ -247,16 +247,19 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
   Widget _buildMemoryImage(String dataUrl) {
     final cacheWidth = _resolvedCacheWidth(context);
     final cacheHeight = _resolvedCacheHeight(context);
-    return Image.memory(
-      _decodeDataUrlBytes(dataUrl),
+    return Image(
+      image: ResizeImage(
+        MemoryImage(_decodeDataUrlBytes(dataUrl)),
+        width: cacheWidth,
+        height: cacheHeight,
+        policy: ResizeImagePolicy.fit,
+      ),
       // Do not retain an entire base64 image in the widget key.
       key: ValueKey<String>(
         'mem:${dataUrl.hashCode}|${widget.width}|${widget.height}',
       ),
       width: widget.width,
       height: widget.height,
-      cacheWidth: cacheWidth,
-      cacheHeight: cacheHeight,
       fit: widget.fit,
       alignment: widget.alignment,
       errorBuilder: (context, error, stackTrace) {
@@ -337,15 +340,18 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
       if (_hasError) {
         return _buildErrorFallback(_lastError);
       }
-      return Image.network(
-        _resolvedImageUrl,
+      return Image(
+        image: ResizeImage(
+          NetworkImage(_resolvedImageUrl),
+          width: _resolvedCacheWidth(context),
+          height: _resolvedCacheHeight(context),
+          policy: ResizeImagePolicy.fit,
+        ),
         key: ValueKey<String>(
           '$_resolvedImageUrl|${widget.width}|${widget.height}',
         ),
         width: widget.width,
         height: widget.height,
-        cacheWidth: _resolvedCacheWidth(context),
-        cacheHeight: _resolvedCacheHeight(context),
         fit: widget.fit,
         alignment: widget.alignment,
         errorBuilder: (context, error, stackTrace) {

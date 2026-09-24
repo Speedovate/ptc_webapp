@@ -440,7 +440,13 @@ class SupportRequest {
           _firestore,
           _threadReadCollection(normalizedUserId).doc(normalizedThreadId),
           nextDocument,
-        ).timeout(const Duration(seconds: 6));
+        ).timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => throw TimeoutException(
+            'Firestore did not acknowledge the support read marker for '
+            '$normalizedUserId/$normalizedThreadId within 30 seconds.',
+          ),
+        );
       } on TimeoutException catch (_) {
         await _offlineMutationQueueService.queueSupportThreadReadMarker(
           userId: normalizedUserId,

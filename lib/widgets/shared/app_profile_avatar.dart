@@ -111,11 +111,14 @@ class AppProfileAvatar extends StatelessWidget {
     required int cacheDimension,
   }) {
     if (memoryBytes != null && memoryBytes.isNotEmpty) {
-      return Image.memory(
-        memoryBytes,
+      return Image(
+        image: ResizeImage(
+          MemoryImage(memoryBytes),
+          width: cacheDimension,
+          height: cacheDimension,
+          policy: ResizeImagePolicy.fit,
+        ),
         fit: BoxFit.cover,
-        cacheWidth: cacheDimension,
-        cacheHeight: cacheDimension,
       );
     }
 

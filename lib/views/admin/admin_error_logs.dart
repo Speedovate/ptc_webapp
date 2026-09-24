@@ -71,6 +71,9 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
     super.dispose();
   }
 
+  String _errorCountLabel(int? count) =>
+      '${count ?? "—"} ${count == 1 ? "Error" : "Errors"}';
+
   String _owner(Map<String, dynamic> row) =>
       row['user_id']?.toString() ?? 'signed_out';
 
@@ -587,7 +590,9 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                 row.device!,
                 '',
                 '',
-                '${_deviceSummaries[deviceKey(row.user, row.device!)] ?? "—"} Errors',
+                _errorCountLabel(
+                  _deviceSummaries[deviceKey(row.user, row.device!)],
+                ),
                 '',
               ];
             }
@@ -596,7 +601,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                     row.user == 'signed_out' ? '—' : row.user,
                     _name(row.user, first),
                     _role(row.user, first),
-                    summary == null ? '—' : '$summary Errors',
+                    summary == null ? '—' : _errorCountLabel(summary),
                     '',
                   ]
                 : [
@@ -638,7 +643,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: SelectableText(
-                  '${count ?? "—"} Errors',
+                  _errorCountLabel(count),
                   style: const TextStyle(color: AppColors.danger),
                 ),
               );

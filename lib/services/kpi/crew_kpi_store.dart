@@ -86,6 +86,25 @@ class CrewKpiStore {
     final makes = {
       for (final d in result[1].docs) d.id: {...d.data(), 'id': d.id},
     };
+    // Fuel is visible only for trucks currently assigned to this crew member.
+    final assignedMakeIds = result[1].docs.map((d) => d.id).toSet();
+    final fuel = <Map<String, dynamic>>[];
+    for (final id in assignedMakeIds) {
+      final prefix = '${base64Url.encode(utf8.encode(id)).replaceAll('=', '')}_';
+      final docs = await query(db.collection('pm_fuel_entries')
+          .where(FieldPath.documentId, isGreaterThanOrEqualTo: prefix)
+          .where(FieldPath.documentId, isLessThan: '$prefix~'));
+      for (final doc in docs.docs) {
+        final row = doc.data();
+        if (row['make_id']?.toString() != id) continue;
+        fuel.add({
+          'id': doc.id, 'make_id': id, 'pm': makes[id]?['code'] ?? id,
+          for (final key in ['day', 'reference', 'supplier', 'liters',
+            'price_per_liter', 'amount', 'notes', 'status', 'created_at', 'updated_at'])
+            key: row[key],
+        });
+      }
+    }
     // Explicit historical PMs may no longer have this crew member assigned.
     final ids = bookings
         .map((b) => b['vehicle_make_id']?.toString())
@@ -137,7 +156,7 @@ class CrewKpiStore {
             }
           }
         } else {
-          // Never persist someone else's pay or PM revenue/fuel in this cache.
+          // Never persist someone else's pay or PM revenue in this cache.
           final allRates = (data['trip_rates'] as List? ?? [])
               .whereType<Map>()
               .toList();
@@ -181,6 +200,20 @@ class CrewKpiStore {
         .doc('settings')
         .get(const GetOptions(source: Source.server))
         .timeout(const Duration(seconds: 12));
+    final catalogData = <String, dynamic>{...?catalog.data()};
+    final published = await Future.wait([
+      for (final id in (catalogData['matrix_version_ids'] as List? ?? []).toSet())
+        db.collection('operations_catalog').doc('matrix_$id')
+            .get(const GetOptions(source: Source.server))
+            .timeout(const Duration(seconds: 12)),
+    ]);
+    if (published.any((doc) => !doc.exists)) {
+      throw StateError('Trip matrix version is unavailable.');
+    }
+    catalogData['matrix_versions'] = [
+      ...(catalogData['matrix_versions'] as List? ?? []),
+      ...published.map((doc) => doc.data()!),
+    ];
     final rules = await db
         .collection('pm_kpi_records')
         .doc('ZmxlZXQ_settings')
@@ -200,7 +233,9 @@ class CrewKpiStore {
           .toList(),
       'records': records,
       'incidents': incidents,
-      'catalog': catalog.data() ?? {},
+      'catalog': catalogData,
+      'fuel': fuel,
+      'assigned_make_ids': assignedMakeIds.toList(),
       'rating_rules': rules.data()?['rating_rules'] ?? {},
     };
     await _check(user);

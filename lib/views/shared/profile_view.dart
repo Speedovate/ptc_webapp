@@ -998,13 +998,16 @@ class _LicensePreview extends StatelessWidget {
           );
         },
         child: _LicenseImageFrame(
-          child: Image.memory(
-            memoryBytes!,
+          child: Image(
+            image: ResizeImage(
+              MemoryImage(memoryBytes!),
+              width: 1280,
+              height: 880,
+              policy: ResizeImagePolicy.fit,
+            ),
             width: double.infinity,
             height: 220,
-            cacheWidth: 1280,
-            cacheHeight: 880,
-            fit: BoxFit.contain,
+            fit: BoxFit.cover,
           ),
         ),
       );
@@ -1034,7 +1037,7 @@ class _LicensePreview extends StatelessWidget {
               height: 220,
               cacheWidth: 1280,
               cacheHeight: 880,
-              fit: BoxFit.contain,
+              fit: BoxFit.cover,
               errorBuilder: (context, error) {
                 return const _LicenseImageFallback(
                   icon: Icons.broken_image_rounded,

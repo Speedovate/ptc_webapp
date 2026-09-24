@@ -44,6 +44,7 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
   bool loading = true, active = true, rerun = false;
   String? error;
   String mode = 'Monthly', search = '';
+  bool showingFuel = false;
   DateTime month = kpiDate(DateTime.now());
   int week = 1, visible = 15;
   late KpiPeriod range = KpiPeriod.month(month.year, month.month);
@@ -179,6 +180,14 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
           ),
         ),
         const SizedBox(width: 12),
+        AdminListNewButton(
+          controlHeight: adminFilterFieldMinHeight, surfaceRadius: 16,
+          iconOnly: constraints.maxWidth < 520,
+          label: showingFuel ? 'Transactions' : 'Fuel',
+          icon: showingFuel ? Icons.receipt_long : Icons.local_gas_station,
+          onTap: () => filter(() { showingFuel = !showingFuel; search = ''; }),
+        ),
+        const SizedBox(width: 12),
         AdminListDynamicFiltersPanel(
           iconOnly: constraints.maxWidth < 520,
           menuAnchorKey: toolbarKey,
@@ -292,6 +301,16 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
     final salary = selected
         .where((r) => r['type'] == 'Salary')
         .fold<double>(0, (s, r) => s + (r['amount'] as num? ?? 0));
+    final bookingCount = selected.where((r) => r['type'] == 'Share')
+        .map((r) => r['booking_id']).whereType<String>().toSet().length;
+    final periodFuel = (data?['fuel'] as List? ?? []).whereType<Map>().where((r) {
+      final date = DateTime.tryParse('${r['day']}T00:00:00Z');
+      return date != null && (period?.contains(date) ?? true);
+    }).toList()..sort((a, b) => '${b['day']} ${b['created_at']} ${b['id']}'
+        .compareTo('${a['day']} ${a['created_at']} ${a['id']}'));
+    final fuelRows = periodFuel.where((r) => search.trim().isEmpty ||
+        ['pm','day','reference','supplier','notes','status'].map((key) => r[key])
+          .join(' ').toLowerCase().contains(search.trim().toLowerCase())).toList();
     final incidents = (data?['incidents'] as List? ?? [])
         .whereType<Map>()
         .where((r) {
@@ -335,7 +354,7 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
               n.metrics.extentAfter < 240 &&
               n is ScrollUpdateNotification &&
               (n.scrollDelta ?? 0) > 0 &&
-              visible < matches.length) {
+              visible < (showingFuel ? fuelRows.length : matches.length)) {
             setState(() => visible += 15);
           }
           return false;
@@ -343,7 +362,7 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
         child: AdminModalRecordList(
           horizontalOnDesktop: true,
           selectableCells: true,
-          trailingActions: true,
+          trailingActions: !showingFuel,
           showTitlesRow: MediaQuery.sizeOf(context).width >= 900,
           scrollHeader: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -371,6 +390,7 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
                         'Accidents',
                         '${count('accidents')} (${rules.accidentsRating(count('accidents'))})',
                       ],
+                      ['Bookings', '$bookingCount'],
                       ['Shares', money(shares)],
                       ['Salary', money(salary)],
                       ['Total', money(shares + salary)],
@@ -408,9 +428,9 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
           emptyMessage: data == null && error == null
               ? 'No cached KPI data. Connect online to load your KPI.'
               : search.isNotEmpty
-              ? 'No matching transactions.'
-              : 'No delivered trips in this period.',
-          titles: const [
+              ? (showingFuel ? 'No matching fuel requests.' : 'No matching transactions.')
+              : showingFuel ? 'No fuel requests in this period.' : 'No delivered trips in this period.',
+          titles: showingFuel ? const ['PM', 'Date', 'Reference', 'Supplier', 'Liters', 'Price / Liter', 'Amount', 'Notes / Route', 'Status'] : const [
             'Label',
             'Amount',
             'Type',
@@ -418,10 +438,19 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
             'DateTime',
             'Actions',
           ],
-          itemCount: rows.length,
-          columnExtraWidths: const {5: 48},
-          rowGroupKey: (i) => rows[i].day,
+          itemCount: showingFuel ? fuelRows.length.clamp(0, visible) : rows.length,
+          columnExtraWidths: showingFuel ? const {} : const {5: 48},
+          rowGroupKey: showingFuel ? null : (i) => rows[i].day,
           valuesAt: (i) {
+            if (showingFuel) {
+              final r = fuelRows[i];
+              return ['${r['pm'] ?? '—'}', date('${r['day']}'),
+                '${r['reference'] ?? '—'}', '${r['supplier'] ?? '—'}',
+                '${r['liters'] ?? '—'}',
+                kpiMoney(r['price_per_liter']) == null ? '—' : money(kpiMoney(r['price_per_liter'])!),
+                kpiMoney(r['amount']) == null ? '—' : money(kpiMoney(r['amount'])!),
+                '${r['notes'] ?? '—'}', '${r['status'] ?? 'active'}'];
+            }
             final row = rows[i];
             final tx = row.transaction;
             final group = days[row.day]!;
@@ -455,6 +484,7 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
                   ];
           },
           cellBuilder: (i, col) {
+            if (showingFuel) return null;
             final row = rows[i];
             final tx = row.transaction;
             if (col == 0 &&

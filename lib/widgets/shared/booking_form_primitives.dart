@@ -669,13 +669,13 @@ class _BookingPhotoFieldInputState extends State<BookingPhotoFieldInput> {
                               previewBytes,
                               width: double.infinity,
                               cacheWidth: 900,
-                              fit: BoxFit.fitWidth,
+                              fit: BoxFit.cover,
                             )
                           else if (previewUrl?.isNotEmpty == true)
                             AppCachedNetworkImage(
                               imageUrl: previewUrl!,
                               width: double.infinity,
-                              fit: BoxFit.fitWidth,
+                              fit: BoxFit.cover,
                               errorBuilder: (context, error) {
                                 return const _BookingPhotoPreviewFallback(
                                   height: 180,

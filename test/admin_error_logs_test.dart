@@ -422,7 +422,7 @@ void main() {
     expect(tester.getTopLeft(find.text('$device')).dx, userLeft);
     expect(tester.getTopLeft(find.text('Action $device')).dx, userLeft);
     expect(
-      tester.getTopLeft(find.text('1 Errors').first).dx,
+      tester.getTopLeft(find.text('1 Error').first).dx,
       tester.getTopLeft(find.text('2 Errors')).dx,
     );
     expect(find.text('Action ${device == 'A' ? 'B' : 'A'}'), findsNothing);

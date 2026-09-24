@@ -93,7 +93,7 @@ class OfflineMutationQueueService {
             title: OfflineQueueItem.action(entry.kind.name),
             recordLabel:
                 entry.kind == _OfflineMutationKind.supportThreadReadMarkerUpsert
-                ? 'Support conversation'
+                ? 'Support conversation ${entry.payload['thread_id'] ?? entry.targetId}'
                 : OfflineQueueItem.record(
                     entry.collectionKey ??
                         (entry.kind.name.startsWith('user')
@@ -689,7 +689,9 @@ class OfflineMutationQueueService {
             'thread_id': threadId,
             'document': document,
           },
-          createdAtIso: DateTime.now().toUtc().toIso8601String(),
+          createdAtIso:
+              document['updated_at']?.toString() ??
+              DateTime.now().toUtc().toIso8601String(),
           retryCount: 0,
         ),
       );

@@ -2837,10 +2837,13 @@ class _PendingAttachmentPreviewCard extends StatelessWidget {
                   border: Border.all(color: AppColors.primaryBorder),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Image.memory(
-                  attachment.bytes,
-                  cacheWidth: 184,
-                  cacheHeight: 184,
+                child: Image(
+                  image: ResizeImage(
+                    MemoryImage(attachment.bytes),
+                    width: 184,
+                    height: 184,
+                    policy: ResizeImagePolicy.fit,
+                  ),
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) {
                     return Container(

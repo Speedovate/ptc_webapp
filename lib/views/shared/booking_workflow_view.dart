@@ -1197,7 +1197,7 @@ class _WorkflowWaybillPhotoCard extends StatelessWidget {
         child: AppCachedNetworkImage(
           imageUrl: imageUrl,
           width: double.infinity,
-          fit: BoxFit.fitWidth,
+          fit: BoxFit.cover,
           errorBuilder: (context, error) {
             return Container(
               width: double.infinity,

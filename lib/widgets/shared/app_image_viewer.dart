@@ -95,13 +95,16 @@ Future<void> showAppImageViewer(
                               height: constraints.maxHeight,
                               child: Center(
                                 child: hasMemoryImage
-                                    ? Image.memory(
-                                        memoryBytes,
+                                    ? Image(
+                                        image: ResizeImage(
+                                          MemoryImage(memoryBytes),
+                                          width: cacheWidth,
+                                          height: cacheHeight,
+                                          policy: ResizeImagePolicy.fit,
+                                        ),
                                         width: constraints.maxWidth,
                                         height: constraints.maxHeight,
-                                        cacheWidth: cacheWidth,
-                                        cacheHeight: cacheHeight,
-                                        fit: BoxFit.contain,
+                                        fit: BoxFit.cover,
                                       )
                                     : AppCachedNetworkImage(
                                         imageUrl: resolvedImageUrl!,
@@ -109,7 +112,7 @@ Future<void> showAppImageViewer(
                                         height: constraints.maxHeight,
                                         cacheWidth: cacheWidth,
                                         cacheHeight: cacheHeight,
-                                        fit: BoxFit.contain,
+                                        fit: BoxFit.cover,
                                         errorBuilder: (context, error) {
                                           return const _AppImageViewerFallback(
                                             icon: Icons.broken_image_rounded,
