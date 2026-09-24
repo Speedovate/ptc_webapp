@@ -300,12 +300,6 @@ class _AdminChassisViewState extends State<AdminChassisView>
                     '-',
               )
               .fold<String>('-', AdminListMeasurements.longerText);
-          final sampleCreated = visible
-              .map((item) => AdminUsersView.formatCreatedAt(item.createdAt))
-              .fold<String>('-', AdminListMeasurements.longerText);
-          final sampleUpdated = visible
-              .map((item) => AdminUsersView.formatUpdatedAt(item.updatedAt))
-              .fold<String>('-', AdminListMeasurements.longerText);
           final idWidth = _resolvedChassisColumnWidth(
             context,
             textScaler,
@@ -348,13 +342,7 @@ class _AdminChassisViewState extends State<AdminChassisView>
             sampleLocation,
             _ChassisStyles.value,
           );
-          final createdWidth = _resolvedChassisColumnWidth(
-            context,
-            textScaler,
-            'Created',
-            sampleCreated,
-            _ChassisStyles.value,
-          );
+
           final statusWidth = _resolvedChassisStatusColumnWidth(
             context,
             textScaler,
@@ -369,13 +357,7 @@ class _AdminChassisViewState extends State<AdminChassisView>
                 const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
               ) +
               16;
-          final updatedWidth = _resolvedChassisColumnWidth(
-            context,
-            textScaler,
-            'Updated',
-            sampleUpdated,
-            _ChassisStyles.value,
-          );
+
           final actionsWidth =
               AdminListMeasurements.maxValue(
                 192,
@@ -396,8 +378,6 @@ class _AdminChassisViewState extends State<AdminChassisView>
               locationWidth +
               statusWidth +
               elapsedWidth +
-              createdWidth +
-              updatedWidth +
               actionsWidth +
               34; // 16px card padding and 1px border on each side.
           // Keep identifiers, pills and actions at their measured widths.
@@ -515,8 +495,6 @@ class _AdminChassisViewState extends State<AdminChassisView>
                         locationWidth: locationWidth,
                         statusWidth: statusWidth,
                         elapsedWidth: elapsedWidth,
-                        createdWidth: createdWidth,
-                        updatedWidth: updatedWidth,
                         actionsWidth: actionsWidth,
                       ),
                     if (useWideTable) const SizedBox(height: 14),
@@ -569,8 +547,6 @@ class _AdminChassisViewState extends State<AdminChassisView>
                                   locationWidth: locationWidth,
                                   statusWidth: statusWidth,
                                   elapsedWidth: elapsedWidth,
-                                  createdWidth: createdWidth,
-                                  updatedWidth: updatedWidth,
                                   actionsWidth: actionsWidth,
                                   actions: _chassisActions(entry.value),
                                   onOpenBooking: () => _openBooking(
@@ -1188,8 +1164,7 @@ class _ChassisHeaderRow extends StatelessWidget {
     required this.locationWidth,
     required this.statusWidth,
     required this.elapsedWidth,
-    required this.createdWidth,
-    required this.updatedWidth,
+
     required this.actionsWidth,
   });
 
@@ -1201,8 +1176,7 @@ class _ChassisHeaderRow extends StatelessWidget {
   final double locationWidth;
   final double statusWidth;
   final double elapsedWidth;
-  final double createdWidth;
-  final double updatedWidth;
+
   final double actionsWidth;
 
   @override
@@ -1245,14 +1219,6 @@ class _ChassisHeaderRow extends StatelessWidget {
             width: elapsedWidth,
             child: const AdminListHeaderCell(label: 'Time'),
           ),
-          AdminListFixedSlot(
-            width: createdWidth,
-            child: const AdminListHeaderCell(label: 'Created'),
-          ),
-          AdminListFixedSlot(
-            width: updatedWidth,
-            child: const AdminListHeaderCell(label: 'Updated'),
-          ),
           AdminListTrailingActionsLane(
             width: actionsWidth,
             child: const AdminListHeaderCell(
@@ -1282,8 +1248,7 @@ class _ChassisDesktopRow extends StatelessWidget {
     required this.locationWidth,
     required this.statusWidth,
     required this.elapsedWidth,
-    required this.createdWidth,
-    required this.updatedWidth,
+
     required this.actionsWidth,
     required this.actions,
     required this.onOpenBooking,
@@ -1303,8 +1268,7 @@ class _ChassisDesktopRow extends StatelessWidget {
   final double locationWidth;
   final double statusWidth;
   final double elapsedWidth;
-  final double createdWidth;
-  final double updatedWidth;
+
   final double actionsWidth;
   final List<Widget> actions;
   final VoidCallback onOpenBooking;
@@ -1376,26 +1340,6 @@ class _ChassisDesktopRow extends StatelessWidget {
             width: elapsedWidth,
             child: AdminListBodyCell(child: elapsed),
           ),
-          AdminListFixedSlot(
-            width: createdWidth,
-            child: AdminListBodyCell(
-              child: Text(
-                AdminUsersView.formatCreatedAt(item.createdAt),
-                style: _ChassisStyles.value,
-                softWrap: true,
-              ),
-            ),
-          ),
-          AdminListFixedSlot(
-            width: updatedWidth,
-            child: AdminListBodyCell(
-              child: Text(
-                AdminUsersView.formatUpdatedAt(item.updatedAt),
-                style: _ChassisStyles.value,
-                softWrap: true,
-              ),
-            ),
-          ),
           AdminListTrailingActionsLane(
             width: actionsWidth,
             child: AdminListBodyCell(
@@ -1454,8 +1398,6 @@ class _ChassisResponsiveCard extends StatelessWidget {
             ('Client', client.display, false),
             ('Driver', driver.display, false),
             ('Location', _chassisLocationLabel(item), false),
-            ('Created', AdminUsersView.formatCreatedAt(item.createdAt), false),
-            ('Updated', AdminUsersView.formatUpdatedAt(item.updatedAt), false),
           ];
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
