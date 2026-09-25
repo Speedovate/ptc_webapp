@@ -12,6 +12,7 @@ import 'package:webapp/models/status_form.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/chassis.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/services/status_field_option_resolver.dart';
@@ -2471,6 +2472,8 @@ class _WorkflowFieldCard extends StatelessWidget {
           items: effectiveOptions.map((item) {
             final label = optionSourceKey == statusFieldOptionSourceVehicleSizes
                 ? VehicleRequest.instance.displayVehicleSizeLabel(item)
+                : optionSourceKey == statusFieldOptionSourceChassis
+                ? ChassisRequest.instance.displayChassisLabel(item)
                 : item;
             return DropdownMenuItem<String>(
               value: item,
