@@ -2,6 +2,7 @@ import 'sync_error_log_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'booking_photo_cleanup.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
+import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'package:webapp/models/offline_queue_item.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -129,11 +130,14 @@ class OfflineCleanupQueueService {
   Future<void> queueDeleteByPath(String storagePath) =>
       _enqueue(_OfflineCleanupKind.deleteByPath, storagePath);
 
-  Future<void> queueBookingPhotoDelete(String bookingId, String path) =>
-      _enqueue(
-        _OfflineCleanupKind.bookingPhoto,
-        jsonEncode({'booking_id': bookingId, 'path': path}),
-      );
+  Future<void> queueBookingPhotoDelete(String bookingId, String path) async {
+    final target = _bookingPhotoTargetFromValues(bookingId, path);
+    if (target == null) return;
+    await _enqueue(
+      _OfflineCleanupKind.bookingPhoto,
+      jsonEncode({'booking_id': target.bookingId, 'path': target.path}),
+    );
+  }
 
   Future<void> queueDeleteFolder(
     String storagePath, {
@@ -237,41 +241,55 @@ class OfflineCleanupQueueService {
   Future<void> _applyEntry(_OfflineCleanupEntry entry) async {
     switch (entry.kind) {
       case _OfflineCleanupKind.bookingPhoto:
-        final target = jsonDecode(entry.targetPath) as Map;
-        final ref = (_providedFirestore ?? FirebaseFirestore.instance)
-            .collection('bookings')
-            .doc(target['booking_id'] as String);
-        final path = target['path'] as String;
+        final target = _parseBookingPhotoTarget(entry.targetPath);
+        // A persisted malformed target is terminal. Retrying it can never make
+        // a blank or unsafe Storage path valid.
+        if (target == null) return;
         final firestore = _providedFirestore ?? FirebaseFirestore.instance;
-        final claimed = await firestore
-            .runTransaction<bool>((transaction) async {
-              final snapshot = await transaction.get(ref);
-              final data = snapshot.data();
-              if (!snapshot.exists ||
-                  data?['photo_cleanup_paths'] is! List ||
-                  !(data!['photo_cleanup_paths'] as List).contains(path) ||
-                  BookingPhotoCleanup.references(
-                    data['status_outputs'],
-                  ).contains(path)) {
-                return false;
-              }
-              transaction.update(ref, {
-                'photo_cleanup_claims': FieldValue.arrayUnion([path]),
-              });
-              return true;
-            })
-            .timeout(const Duration(seconds: 10));
+        final ref = firestore.collection('bookings').doc(target.bookingId);
+
+        // Preflight recovered work against the current server state before
+        // reopening a transaction for work another attempt already completed.
+        // Fresh work skips the extra read; the transaction recheck below always
+        // decides, and read failures still flow through the transient path.
+        if (entry.retryCount > 0 || entry.lastError != null) {
+          final current = await ref
+              .get(const GetOptions(source: Source.server))
+              .timeout(const Duration(seconds: 10));
+          if (_bookingsDeletableNow(current.data(), target.path) != true) {
+            return;
+          }
+        }
+
+        final claimed = await runTransactionWithOriginalErrors<bool>(
+          firestore,
+          (transaction) async {
+            final snapshot = await transaction.get(ref);
+            if (_bookingsDeletableNow(snapshot.data(), target.path) != true) {
+              return false;
+            }
+            transaction.update(ref, {
+              'photo_cleanup_claims': FieldValue.arrayUnion([target.path]),
+            });
+            return true;
+          },
+        ).timeout(const Duration(seconds: 10));
         if (!claimed) return;
-        await _deleteByPathNow(path).timeout(const Duration(seconds: 20));
+        await _deleteByPathNow(
+          target.path,
+        ).timeout(const Duration(seconds: 20));
         await ref
             .update({
-              'photo_cleanup_paths': FieldValue.arrayRemove([path]),
+              'photo_cleanup_paths': FieldValue.arrayRemove([target.path]),
             })
             .timeout(const Duration(seconds: 10));
+        return;
       case _OfflineCleanupKind.deleteByPath:
         await _deleteByPathNow(entry.targetPath);
+        return;
       case _OfflineCleanupKind.deleteFolder:
         await _deleteFolderRecursively(entry.targetPath);
+        return;
     }
   }
 
@@ -308,6 +326,80 @@ class OfflineCleanupQueueService {
         rethrow;
       }
     }
+  }
+
+  /// Returns true only when the persisted path is still a pending, unclaimed
+  /// deletion. A null result means the work is already resolved (or the server
+  /// state is malformed) and must be retired instead of retried.
+  static bool? _bookingsDeletableNow(
+    Map<String, dynamic>? booking,
+    String path,
+  ) {
+    if (booking == null) return false;
+    final cleanupPaths = booking['photo_cleanup_paths'];
+    if (cleanupPaths is! List) return null;
+    if (!cleanupPaths.whereType<String>().contains(path)) return false;
+    if (BookingPhotoCleanup.references(
+      booking['status_outputs'],
+    ).contains(path)) {
+      return false;
+    }
+    final claims = booking['photo_cleanup_claims'];
+    if (claims == null) return true;
+    if (claims is! List) return null;
+    return !claims.whereType<String>().contains(path);
+  }
+
+  _BookingPhotoTarget? _parseBookingPhotoTarget(String raw) {
+    Object? decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } catch (_) {
+      return null;
+    }
+    if (decoded is! Map) return null;
+    final bookingId = decoded['booking_id'];
+    final path = decoded['path'];
+    if ((bookingId is! String && bookingId is! num) || path is! String) {
+      return null;
+    }
+    return _bookingPhotoTargetFromValues(bookingId.toString(), path);
+  }
+
+  _BookingPhotoTarget? _bookingPhotoTargetFromValues(
+    String bookingId,
+    String path,
+  ) {
+    final normalizedId = normalizeId(bookingId);
+    final normalizedPath = path.trim();
+    if (normalizedId == null ||
+        !RegExp(r'^\d+$').hasMatch(normalizedId) ||
+        int.tryParse(normalizedId) == 0 ||
+        !_isSafeBookingPhotoPath(normalizedId, normalizedPath)) {
+      return null;
+    }
+    return _BookingPhotoTarget(bookingId: normalizedId, path: normalizedPath);
+  }
+
+  bool _isSafeBookingPhotoPath(String bookingId, String path) {
+    final prefix = 'bookings/$bookingId/status_outputs/';
+    if (!path.startsWith(prefix) ||
+        path.contains('//') ||
+        path.contains('\\') ||
+        path.contains('?') ||
+        path.contains('#') ||
+        path.endsWith('/')) {
+      return false;
+    }
+    if (path.codeUnits.any((unit) => unit < 32)) return false;
+    final segments = path.split('/');
+    return segments.length >= 6 &&
+        segments[0] == 'bookings' &&
+        segments[1] == bookingId &&
+        segments[2] == 'status_outputs' &&
+        segments.every(
+          (segment) => segment.isNotEmpty && segment != '.' && segment != '..',
+        );
   }
 
   Future<List<_OfflineCleanupEntry>> _readEntries() async {
@@ -427,15 +519,17 @@ class OfflineCleanupQueueService {
           continue;
         }
         await _applyEntry(entry);
-        confirmedSuccesses.addAll({
-          if (entry.retryCount > 0 || entry.lastError != null) entry.id,
-        });
+        // A terminal no-op (malformed target, already claimed, or already
+        // removed) is also a completed action and must clear old diagnostics.
+        confirmedSuccesses.add(entry.id);
       } catch (error, stackTrace) {
         final normalizedError = normalizeUserErrorText(
           error.toString(),
           fallback: 'Something went wrong. Please try again.',
         );
-        final delaySeconds = _isRetryable(normalizedError)
+        final retryable =
+            error is TimeoutException || _isRetryable(normalizedError);
+        final delaySeconds = retryable
             ? min(1200, 20 * pow(2, min(entry.retryCount, 6)).toInt())
             : 1200;
         remaining.add(
@@ -524,6 +618,10 @@ class OfflineCleanupQueueService {
     return normalized.contains('internet connection') ||
         normalized.contains('temporarily unavailable') ||
         normalized.contains('request took too long') ||
+        normalized.contains('timeoutexception') ||
+        normalized.contains('timeout') ||
+        normalized.contains('future not completed') ||
+        normalized.contains('network') ||
         normalized.contains('try again');
   }
 
@@ -535,6 +633,13 @@ class OfflineCleanupQueueService {
 }
 
 enum _OfflineCleanupKind { deleteByPath, deleteFolder, bookingPhoto }
+
+class _BookingPhotoTarget {
+  const _BookingPhotoTarget({required this.bookingId, required this.path});
+
+  final String bookingId;
+  final String path;
+}
 
 class _OfflineCleanupEntry {
   const _OfflineCleanupEntry({

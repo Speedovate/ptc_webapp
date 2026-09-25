@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -169,28 +170,130 @@ void main() {
   );
 
   test(
-    'already missing object is acknowledged without retaining failed work',
+    'malformed booking photo target is terminal and is not retried',
     () async {
-      var online = false;
       final backend = MemoryBackend();
-      final storage = _Storage()
-        ..onDelete = (_) async {
-          throw FirebaseException(
-            plugin: 'firebase_storage',
-            code: 'object-not-found',
-          );
-        };
+      final storage = _Storage();
+      final db = FakeFirebaseFirestore();
+      await backend.writeStringList(queueKey, [
+        jsonEncode({
+          'id': 'bookingPhoto_bad',
+          'kind': 'bookingPhoto',
+          'target_path': jsonEncode({'booking_id': '148', 'path': ''}),
+          'created_at': '2026-09-25T06:04:19.637Z',
+          'retry_count': 1,
+          'last_error': 'TimeoutException after 0:00:10.000000',
+        }),
+      ]);
       final queue = OfflineCleanupQueueService(
         backend: backend,
         storage: storage,
-        isOnline: () => online,
+        firestore: db,
+        isOnline: () => true,
       );
-      await queue.queueDeleteByPath('photos/missing.png');
-      online = true;
+
       await queue.flushPendingCleanups();
+
       expect(await backend.readStringList(queueKey), isEmpty);
+      expect(storage.deleted, isEmpty);
     },
   );
+
+  test('booking photo enqueue rejects blank and mismatched paths', () async {
+    final backend = MemoryBackend();
+    final queue = OfflineCleanupQueueService(
+      backend: backend,
+      storage: _Storage(),
+      isOnline: () => false,
+    );
+
+    await queue.queueBookingPhotoDelete('148', '');
+    await queue.queueBookingPhotoDelete(
+      '148',
+      'bookings/149/status_outputs/book__1/waybill_photo/old.jpg',
+    );
+
+    expect(await backend.readStringList(queueKey), isEmpty);
+  });
+
+  test(
+    'claimed booking photo drains after server preflight without deletion',
+    () async {
+      const path =
+          'bookings/148/status_outputs/book__1790316138146000/waybill_photo/old.jpg';
+      final backend = MemoryBackend();
+      final db = FakeFirebaseFirestore();
+      final storage = _Storage();
+      await db.collection('bookings').doc('148').set({
+        'id': '148',
+        'photo_cleanup_paths': [path],
+        'photo_cleanup_claims': [path],
+        'status_outputs': <String, dynamic>{},
+      });
+      await backend.writeStringList(queueKey, [
+        jsonEncode({
+          'id': 'bookingPhoto_claimed',
+          'kind': 'bookingPhoto',
+          'target_path': jsonEncode({'booking_id': '148', 'path': path}),
+          'created_at': '2026-09-25T06:04:19.637Z',
+          'retry_count': 1,
+          'last_error': 'TimeoutException after 0:00:10.000000',
+        }),
+      ]);
+      final queue = OfflineCleanupQueueService(
+        backend: backend,
+        storage: storage,
+        firestore: db,
+        isOnline: () => true,
+      );
+
+      await queue.flushPendingCleanups();
+
+      expect(await backend.readStringList(queueKey), isEmpty);
+      expect(storage.deleted, isEmpty);
+    },
+  );
+
+  test('booking photo timeout remains retryable', () async {
+    const path =
+        'bookings/148/status_outputs/book__1790316138146000/waybill_photo/old.jpg';
+    final backend = MemoryBackend();
+    final db = FakeFirebaseFirestore();
+    final storage = _Storage()
+      ..onDelete = (_) async {
+        throw TimeoutException('network timeout');
+      };
+    await db.collection('bookings').doc('148').set({
+      'id': '148',
+      'photo_cleanup_paths': [path],
+      'photo_cleanup_claims': <String>[],
+      'status_outputs': <String, dynamic>{},
+    });
+    await backend.writeStringList(queueKey, [
+      jsonEncode({
+        'id': 'bookingPhoto_timeout',
+        'kind': 'bookingPhoto',
+        'target_path': jsonEncode({'booking_id': '148', 'path': path}),
+        'created_at': '2026-09-25T06:04:19.637Z',
+        'retry_count': 0,
+      }),
+    ]);
+    final queue = OfflineCleanupQueueService(
+      backend: backend,
+      storage: storage,
+      firestore: db,
+      isOnline: () => true,
+    );
+
+    await queue.flushPendingCleanups();
+
+    final retained = jsonDecode(
+      (await backend.readStringList(queueKey)).single,
+    );
+    expect(retained['retry_count'], 1);
+    expect(retained['error_diagnostics'], contains('TimeoutException'));
+    expect(retained['next_retry_at'], isNotNull);
+  });
 }
 
 class _Storage extends Fake implements FirebaseStorage {

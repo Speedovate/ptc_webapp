@@ -109,6 +109,300 @@ bool _equal(Object? a, Object? b) {
   return a == b;
 }
 
+const _bookingActionStages = {
+  'pending',
+  'assigned',
+  'ongoing',
+  'delivered',
+  'check',
+  'empty',
+  'return',
+  'cancelled',
+  'confirm',
+};
+
+const _physicalBookingStages = {
+  'ongoing',
+  'delivered',
+  'check',
+  'empty',
+  'return',
+};
+
+/// Chassis states that mean the asset is physically committed to a booking.
+/// `ready` is a reservation, so it can be displaced by a reservation.
+const _activeChassisStatuses = {'loaded', 'empty', 'return'};
+
+const _bookingStageRanks = {
+  'pending': 0,
+  'assigned': 10,
+  'ongoing': 20,
+  'delivered': 30,
+  'check': 40,
+  'empty': 50,
+  'return': 60,
+  'cancelled': 70,
+  'confirm': 80,
+};
+
+const _bookingWorkflowFields = {
+  'id',
+  'submission_key',
+  'updated_at',
+  'client_status',
+  'driver_status',
+  'helper_status',
+  'delivered_at',
+  'chassis_id',
+  'status_outputs',
+  'photo_cleanup_paths',
+  'photo_cleanup_claims',
+  'media_synced_at',
+  'local_sync_status',
+};
+
+/// Returns true only when a newer server action proves that the queued action
+/// is already represented in history. A timestamp alone is not enough: the
+/// booking identity, event identity, workflow form, and all unrelated fields
+/// must still agree.
+bool isProvenSupersededBookingAction(
+  Map<String, dynamic> server,
+  Map<String, dynamic> pending, {
+  required String? baseUpdatedAt,
+}) {
+  if (!_sameBookingIdentity(server, pending)) return false;
+  final base = _bookingInstant(baseUpdatedAt);
+  final remote = _bookingInstant(server['updated_at']);
+  if (base == null || remote == null || !remote.isAfter(base)) return false;
+  if (!_onlyBookingWorkflowFieldsDiffer(server, pending)) return false;
+
+  final serverEvents = _bookingEvents(server);
+  final pendingEvents = _bookingEvents(pending);
+  if (serverEvents.isEmpty || pendingEvents.isEmpty) return false;
+  if (!_serverStageCanSupersede(server['client_status'])) return false;
+
+  for (final entry in pendingEvents.entries) {
+    final serverEvent = serverEvents[entry.key];
+    if (serverEvent != null && !_equal(serverEvent, entry.value)) {
+      return false;
+    }
+  }
+
+  final pendingOnly = pendingEvents.entries
+      .where((entry) => !serverEvents.containsKey(entry.key))
+      .toList(growable: false);
+  if (pendingOnly.isEmpty) {
+    // The local history is byte-for-byte present on the server. Cleanup
+    // metadata may legitimately differ because it is server-managed.
+    return true;
+  }
+
+  final pendingTimes = <DateTime>[];
+  for (final entry in pendingOnly) {
+    final event = entry.value;
+    if (!_isForwardWorkflowEvent(event)) return false;
+    final time = _bookingInstant(event['submitted_at']);
+    if (time == null) return false;
+    pendingTimes.add(time);
+  }
+  final latestPending = pendingTimes.reduce(
+    (latest, value) => value.isAfter(latest) ? value : latest,
+  );
+  final hasLaterServerEvent = serverEvents.values.any((event) {
+    if (!_isForwardWorkflowEvent(event)) return false;
+    final time = _bookingInstant(event['submitted_at']);
+    return time != null && time.isAfter(latestPending);
+  });
+  return hasLaterServerEvent;
+}
+
+/// Proves that an old booking action cannot reclaim a chassis that is already
+/// owned by a later physical booking. This never authorizes a write; callers
+/// use it only to retire the stale action and preserve the active owner.
+bool isProvenSupersededChassisAction({
+  required Map<String, dynamic> pending,
+  required Map<String, dynamic> serverBooking,
+  required Map<String, dynamic> chassis,
+  required Map<String, dynamic> ownerBooking,
+  required String? baseUpdatedAt,
+}) {
+  if (!_sameBookingIdentity(serverBooking, pending)) return false;
+  final pendingStage = _physicalStage(pending['client_status']);
+  final ownerStage = _physicalStage(ownerBooking['client_status']);
+  final chassisStatus = _normalizedText(chassis['current_status']);
+  final ownerChassis = _normalizedText(ownerBooking['chassis_id']);
+  final chassisId = _normalizedText(chassis['id']);
+  final pendingChassis = _normalizedText(pending['chassis_id']);
+  final serverChassis = _normalizedText(serverBooking['chassis_id']);
+  final ownerId = _normalizedText(chassis['current_booking_id']);
+  final bookingId = _normalizedText(serverBooking['id']);
+  if (pendingStage == null ||
+      ownerStage == null ||
+      !_activeChassisStatuses.contains(chassisStatus) ||
+      ownerId == null ||
+      ownerId == bookingId ||
+      ownerChassis == null ||
+      chassisId == null ||
+      ownerChassis != chassisId ||
+      pendingChassis != chassisId ||
+      (serverChassis != null && serverChassis != pendingChassis) ||
+      !_onlyBookingWorkflowFieldsDiffer(serverBooking, pending)) {
+    return false;
+  }
+
+  final pendingEvents = _bookingEvents(pending);
+  final ownerEvents = _bookingEvents(ownerBooking);
+  final pendingEventTimes = pendingEvents.values
+      .map(_bookingEventTime)
+      .whereType<DateTime>()
+      .toList(growable: false);
+  final ownerEventTimes = ownerEvents.values
+      .map(_bookingEventTime)
+      .whereType<DateTime>()
+      .toList(growable: false);
+  if (pendingEventTimes.isEmpty || ownerEventTimes.isEmpty) return false;
+  final pendingTime = _latestInstant([
+    _bookingInstant(pending['updated_at']),
+    ...pendingEventTimes,
+  ]);
+  final ownerTime = _latestInstant([
+    _bookingInstant(ownerBooking['updated_at']),
+    ...ownerEventTimes,
+  ]);
+  final base = _bookingInstant(baseUpdatedAt);
+  if (pendingTime == null ||
+      ownerTime == null ||
+      base == null ||
+      !ownerTime.isAfter(base)) {
+    return false;
+  }
+
+  // Physical progression is required: the owner must be further along in the
+  // physical workflow, or it must have progressed after the stale action.
+  final pendingRank = _bookingStageRanks[pendingStage]!;
+  final ownerRank = _bookingStageRanks[ownerStage]!;
+  return ownerRank > pendingRank || ownerTime.isAfter(pendingTime);
+}
+
+bool _sameBookingIdentity(
+  Map<String, dynamic> server,
+  Map<String, dynamic> pending,
+) {
+  final identity = _normalizedText(server['submission_key']);
+  final bookingId = _normalizedText(server['id']);
+  return identity != null &&
+      bookingId != null &&
+      identity == _normalizedText(pending['submission_key']) &&
+      bookingId == _normalizedText(pending['id']);
+}
+
+bool _onlyBookingWorkflowFieldsDiffer(
+  Map<String, dynamic> server,
+  Map<String, dynamic> pending,
+) {
+  for (final key in {...server.keys, ...pending.keys}) {
+    if (_bookingWorkflowFields.contains(key)) continue;
+    if (!_sameNullableValue(server[key], pending[key])) return false;
+  }
+  return true;
+}
+
+Map<String, Map<String, dynamic>> _bookingEvents(
+  Map<String, dynamic> document,
+) {
+  final outputs = document['status_outputs'];
+  if (outputs is! Map) return const {};
+  final events = <String, Map<String, dynamic>>{};
+  for (final entry in outputs.entries) {
+    final key = _normalizedText(entry.key);
+    final value = entry.value;
+    if (key == null || value is! Map) continue;
+    events[key] = Map<String, dynamic>.from(value);
+  }
+  return events;
+}
+
+bool _isForwardWorkflowEvent(Map<String, dynamic> event) {
+  final form = event['status_form'];
+  final fields = event['fields'];
+  final status = _normalizedText(event['status_key']);
+  final from = _normalizedText(form is Map ? form['current_status_key'] : null);
+  final to = _normalizedText(form is Map ? form['next_status_key'] : null);
+  final fromRank = from == null ? null : _bookingStageRanks[from];
+  final toRank = to == null ? null : _bookingStageRanks[to];
+  return status != null &&
+      _bookingActionStages.contains(status) &&
+      form is Map &&
+      fields is Map &&
+      form['is_main_form'] == true &&
+      _normalizedText(event['submitted_by']) != null &&
+      fromRank != null &&
+      toRank != null &&
+      toRank > fromRank &&
+      _bookingInstant(event['submitted_at']) != null;
+}
+
+bool _serverStageCanSupersede(Object? value) {
+  final stage = _normalizedText(value);
+  return stage != null &&
+      _bookingActionStages.contains(stage) &&
+      stage != 'pending' &&
+      stage != 'assigned';
+}
+
+String? _physicalStage(Object? value) {
+  final stage = _normalizedText(value)?.toLowerCase();
+  return stage != null && _physicalBookingStages.contains(stage) ? stage : null;
+}
+
+DateTime? _bookingEventTime(Map<String, dynamic> event) =>
+    _isForwardWorkflowEvent(event)
+    ? _bookingInstant(event['submitted_at'])
+    : null;
+
+DateTime? _latestInstant(Iterable<DateTime?> values) {
+  DateTime? latest;
+  for (final value in values) {
+    if (value != null && (latest == null || value.isAfter(latest))) {
+      latest = value;
+    }
+  }
+  return latest;
+}
+
+DateTime? parseBookingSyncTimestamp(Object? value) => _bookingInstant(value);
+
+DateTime? _bookingInstant(Object? value) {
+  final text = _normalizedText(value);
+  if (text == null) return null;
+  final parsed = DateTime.tryParse(text);
+  if (parsed == null) return null;
+  final hasOffset =
+      text.endsWith('Z') || RegExp(r'[+-]\d{2}:?\d{2}$').hasMatch(text);
+  if (hasOffset) return parsed.toUtc();
+  // Legacy Firestore action timestamps are Philippine wall-clock values.
+  return DateTime.utc(
+    parsed.year,
+    parsed.month,
+    parsed.day,
+    parsed.hour,
+    parsed.minute,
+    parsed.second,
+    parsed.millisecond,
+    parsed.microsecond,
+  ).subtract(const Duration(hours: 8));
+}
+
+String? _normalizedText(Object? value) {
+  final text = value?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
+}
+
+bool _sameNullableValue(Object? first, Object? second) {
+  if (first == null || second == null) return first == null && second == null;
+  return _equal(first, second);
+}
+
 /// Merge an independently recorded forward action with later amount/photo edits.
 /// Existing event contents and unrelated booking fields are never overwritten.
 Map<String, dynamic>? reconcileBookingHistory(

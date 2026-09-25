@@ -159,21 +159,39 @@ void main() {
         );
         await db.collection('bookings').doc('10').set({
           'id': '10',
-          'photo_cleanup_paths': ['old-path'],
+          'photo_cleanup_paths': [
+            'bookings/10/status_outputs/book__1/waybill_photo/old.jpg',
+          ],
           'status_outputs': outputs(
-            referenced ? {'storage_path': 'old-path'} : null,
+            referenced
+                ? {
+                    'storage_path':
+                        'bookings/10/status_outputs/book__1/waybill_photo/old.jpg',
+                  }
+                : null,
           ),
         });
-        await queue.queueBookingPhotoDelete('10', 'old-path');
+        await queue.queueBookingPhotoDelete(
+          '10',
+          'bookings/10/status_outputs/book__1/waybill_photo/old.jpg',
+        );
         online = true;
         await queue.flushPendingCleanups();
-        expect(storage.deleted, referenced ? isEmpty : ['old-path']);
+        expect(
+          storage.deleted,
+          referenced
+              ? isEmpty
+              : ['bookings/10/status_outputs/book__1/waybill_photo/old.jpg'],
+        );
         final saved = (await db.collection('bookings').doc('10').get()).data()!;
         if (!referenced) {
           expect(saved['photo_cleanup_paths'], isEmpty);
           expect(
             () => BookingPhotoCleanup.prepare({
-              'status_outputs': outputs({'storage_path': 'old-path'}),
+              'status_outputs': outputs({
+                'storage_path':
+                    'bookings/10/status_outputs/book__1/waybill_photo/old.jpg',
+              }),
             }, saved),
             throwsStateError,
           );

@@ -274,7 +274,9 @@ class _AdminChassisViewState extends State<AdminChassisView>
               .fold<String>('-', AdminListMeasurements.longerText);
           final sampleDriver = visible
               .map(
-                (item) => _driverContactForId(item.driverReferenceId).display,
+                (item) => item.bookingReferenceId == null
+                    ? '-'
+                    : _driverContactForId(item.driverReferenceId).display,
               )
               .fold<String>('-', AdminListMeasurements.longerText);
           final sampleBooking = visible
@@ -504,9 +506,11 @@ class _AdminChassisViewState extends State<AdminChassisView>
                         final client = _clientContactForBooking(
                           entry.value.bookingReferenceId,
                         );
-                        final driver = _driverContactForId(
-                          entry.value.driverReferenceId,
-                        );
+                        final driver = entry.value.bookingReferenceId == null
+                            ? const _ChassisContact.empty()
+                            : _driverContactForId(
+                                entry.value.driverReferenceId,
+                              );
                         return Padding(
                           padding: EdgeInsets.only(
                             bottom: entry.key == visible.length - 1 ? 0 : 12,
@@ -728,7 +732,12 @@ class _AdminChassisViewState extends State<AdminChassisView>
     final isActive = ValueNotifier<bool>(item?.isActive ?? true);
     var selectedStatus = item?.currentStatus ?? Chassis.ready;
     var selectedBookingId = item?.bookingReferenceId?.toString();
-    var selectedDriverId = item?.driverReferenceId?.toString();
+    // Auto-resolve: a chassis without a booking has no driver, even when a
+    // stale current_driver_id exists in the source data.
+    var selectedDriverId = item?.bookingReferenceId == null ||
+            selectedBookingId == null
+        ? null
+        : item?.driverReferenceId?.toString();
     var isSaving = false;
     final saved = await showAppDialog<bool>(
       context: context,
