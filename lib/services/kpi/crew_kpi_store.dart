@@ -83,54 +83,103 @@ class CrewKpiStore {
     final bookings = result[0].docs
         .map((d) => {...d.data(), 'id': d.id})
         .toList();
+    // A deactivated make is not a current assignment. Legacy makes without an
+    // `is_active` value keep their assignment, so only an explicit `false`
+    // removes a truck.
     final makes = {
-      for (final d in result[1].docs) d.id: {...d.data(), 'id': d.id},
+      for (final d in result[1].docs)
+        if (d.data()['is_active'] != false) d.id: {...d.data(), 'id': d.id},
     };
     // Fuel is visible only for trucks currently assigned to this crew member.
-    final assignedMakeIds = result[1].docs.map((d) => d.id).toSet();
+    final assignedMakeIds = makes.keys.toSet();
     final fuel = <Map<String, dynamic>>[];
     for (final id in assignedMakeIds) {
-      final prefix = '${base64Url.encode(utf8.encode(id)).replaceAll('=', '')}_';
-      final docs = await query(db.collection('pm_fuel_entries')
-          .where(FieldPath.documentId, isGreaterThanOrEqualTo: prefix)
-          .where(FieldPath.documentId, isLessThan: '$prefix~'));
+      final prefix =
+          '${base64Url.encode(utf8.encode(id)).replaceAll('=', '')}_';
+      final docs = await query(
+        db
+            .collection('pm_fuel_entries')
+            .where(FieldPath.documentId, isGreaterThanOrEqualTo: prefix)
+            .where(FieldPath.documentId, isLessThan: '$prefix~'),
+      );
       for (final doc in docs.docs) {
         final row = doc.data();
         if (row['make_id']?.toString() != id) continue;
         fuel.add({
-          'id': doc.id, 'make_id': id, 'pm': makes[id]?['code'] ?? id,
-          for (final key in ['day', 'reference', 'supplier', 'liters',
-            'price_per_liter', 'amount', 'notes', 'status', 'created_at', 'updated_at'])
+          'id': doc.id,
+          'make_id': id,
+          'pm': makes[id]?['code'] ?? id,
+          for (final key in [
+            'day',
+            'reference',
+            'supplier',
+            'liters',
+            'price_per_liter',
+            'amount',
+            'notes',
+            'status',
+            'created_at',
+            'updated_at',
+          ])
             key: row[key],
         });
       }
     }
-    // Explicit historical PMs may no longer have this crew member assigned.
-    final ids = bookings
-        .map((b) => b['vehicle_make_id']?.toString())
-        .whereType<String>()
-        .toSet();
-    // Previously confirmed legacy assignments retain their historical PM.
+    // A booking that names a truck keeps its own confirmed rates readable after
+    // the crew member is reassigned, but a historical booking never becomes a
+    // current assignment and never exposes another driver's day.
+    final workedDaysByMake = <String, Set<String>>{};
+    for (final b in bookings) {
+      final makeId = b['vehicle_make_id']?.toString() ?? '';
+      if (makeId.isEmpty) continue;
+      final delivered = kpiDeliveredAt(
+        Booking.fromMap({
+          ...Map<String, dynamic>.from(b),
+          'driver': {'id': b['driver_id']},
+          'helper': {'id': b['helper_id']},
+          'vehicle_make': {'id': makeId},
+        }),
+      );
+      if (delivered == null) continue;
+      workedDaysByMake
+          .putIfAbsent(makeId, () => <String>{})
+          .add(kpiDayKey(delivered));
+    }
+    final recordMakeIds = <String>{
+      ...assignedMakeIds,
+      for (final b in bookings)
+        if ((b['vehicle_make_id']?.toString() ?? '').isNotEmpty)
+          b['vehicle_make_id'].toString(),
+    };
+    // Previously confirmed legacy assignments retain their historical PM. Only
+    // the legacy date/code rule inside `confirmedLegacyBookingPm` may use these.
+    final legacyMakeIds = <String>{};
     for (final b in bookings) {
       final created = DateTime.tryParse('${b['created_at']}');
       if (created != null && created.isBefore(DateTime.utc(2026, 9, 22))) {
-        if ('${b['driver_id']}' == '17') ids.add('2');
-        if ('${b['driver_id']}' == '12') ids.add('3');
+        if ('${b['driver_id']}' == '17') legacyMakeIds.add('2');
+        if ('${b['driver_id']}' == '12') legacyMakeIds.add('3');
       }
     }
-    for (final id in ids.where(
-      (id) => id.isNotEmpty && !makes.containsKey(id),
-    )) {
+    final unassigned = <String, Map<String, dynamic>>{};
+    for (final id in {
+      ...recordMakeIds,
+      ...legacyMakeIds,
+    }.where((id) => id.isNotEmpty && !makes.containsKey(id))) {
       final doc = await db
           .collection('vehicle_makes')
           .doc(id)
           .get(const GetOptions(source: Source.server))
           .timeout(const Duration(seconds: 12));
-      if (doc.exists) makes[id] = {...doc.data()!, 'id': id};
+      if (doc.exists) unassigned[id] = {...doc.data()!, 'id': id};
     }
     final records = <Map<String, dynamic>>[];
     final incidents = <Map<String, dynamic>>[];
-    for (final id in makes.keys) {
+    for (final id in {...makes.keys, ...unassigned.keys}) {
+      // An unassigned truck only contributes the days this crew member worked.
+      final ownWorkedDays = assignedMakeIds.contains(id)
+          ? null
+          : workedDaysByMake[id] ?? const <String>{};
       final prefix =
           '${base64Url.encode(utf8.encode(id)).replaceAll('=', '')}_';
       final docs = await query(
@@ -156,6 +205,10 @@ class CrewKpiStore {
             }
           }
         } else {
+          if (ownWorkedDays != null &&
+              !ownWorkedDays.contains('${data['day']}')) {
+            continue;
+          }
           // Never persist someone else's pay or PM revenue in this cache.
           final allRates = (data['trip_rates'] as List? ?? [])
               .whereType<Map>()
@@ -202,8 +255,11 @@ class CrewKpiStore {
         .timeout(const Duration(seconds: 12));
     final catalogData = <String, dynamic>{...?catalog.data()};
     final published = await Future.wait([
-      for (final id in (catalogData['matrix_version_ids'] as List? ?? []).toSet())
-        db.collection('operations_catalog').doc('matrix_$id')
+      for (final id
+          in (catalogData['matrix_version_ids'] as List? ?? []).toSet())
+        db
+            .collection('operations_catalog')
+            .doc('matrix_$id')
             .get(const GetOptions(source: Source.server))
             .timeout(const Duration(seconds: 12)),
     ]);
@@ -228,9 +284,15 @@ class CrewKpiStore {
               'code': m['code'],
               'driver_id': m['driver_id'],
               'helper_id': m['helper_id'],
+              'is_active': m['is_active'],
             },
           )
           .toList(),
+      'legacy_makes': [
+        for (final id in legacyMakeIds)
+          if (makes[id] != null || unassigned[id] != null)
+            {'id': id, 'code': (makes[id] ?? unassigned[id]!)['code']},
+      ],
       'records': records,
       'incidents': incidents,
       'catalog': catalogData,
@@ -316,15 +378,28 @@ List<Map<String, dynamic>> crewKpiTransactions(
   final catalog = OperationsCatalog(
     Map<String, dynamic>.from(data['catalog'] as Map? ?? {}),
   );
+  // Only currently assigned, active trucks can resolve a booking. A deactivated
+  // make is never an assignment, and a legacy `null` flag keeps its assignment.
   final makes = [
     for (final m in (data['makes'] as List? ?? []).whereType<Map>())
-      VehicleMake(
-        id: '${m['id']}',
-        code: m['code']?.toString(),
-        driver: UserModel(id: m['driver_id']?.toString()),
-        helper: UserModel(id: m['helper_id']?.toString()),
-      ),
+      if (m['is_active'] != false)
+        VehicleMake(
+          id: '${m['id']}',
+          code: m['code']?.toString(),
+          driver: UserModel(id: m['driver_id']?.toString()),
+          helper: UserModel(id: m['helper_id']?.toString()),
+          isActive: m['is_active'] as bool?,
+        ),
   ];
+  // Owner-confirmed historical trucks stay available to the legacy date/code
+  // rule only, never to the current driver+helper pair match.
+  final legacyMakes = [
+    for (final m in (data['legacy_makes'] as List? ?? []).whereType<Map>())
+      VehicleMake(id: '${m['id']}', code: m['code']?.toString()),
+  ];
+  VehicleMake? resolvePm(Booking booking) =>
+      resolveBookingPm(booking, makes) ??
+      confirmedLegacyBookingPm(booking, legacyMakes);
   final grouped = <String, List<KpiTrip>>{};
   final seen = <String>{};
   for (final raw in (data['bookings'] as List? ?? []).whereType<Map>()) {
@@ -362,7 +437,7 @@ List<Map<String, dynamic>> crewKpiTransactions(
     double? confirmedDaily;
     final pmRecords = <String, Map>{};
     for (final trip in trips) {
-      final pm = resolveBookingPm(trip.booking, makes)?.id;
+      final pm = resolvePm(trip.booking)?.id;
       final record = (data['records'] as List? ?? [])
           .whereType<Map>()
           .where((r) => r['make_id'] == pm && r['day'] == entry.key)
@@ -377,7 +452,7 @@ List<Map<String, dynamic>> crewKpiTransactions(
           .firstOrNull;
       final rate = selected ?? matchKpiTripRate(trip, matrix.rates).rate;
       final currentSignatures = trips
-          .where((t) => resolveBookingPm(t.booking, makes)?.id == pm)
+          .where((t) => resolvePm(t.booking)?.id == pm)
           .map((t) => t.signature)
           .toSet();
       final savedSignatures = (record?['trip_rates'] as List? ?? [])

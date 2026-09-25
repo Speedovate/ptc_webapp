@@ -46,6 +46,15 @@ Future<void> showOfflineQueueItems(
       if (!RoleAccessService.instance.canAccess('sync.read')) {
         throw StateError('You do not have access to resolve sync conflicts.');
       }
+      if (id.startsWith(OfflineCleanupQueueService.claimedCleanupPrefix)) {
+        // A claimed cleanup resolves against the server claim, not the local
+        // queue, so it never goes through the mutation queue.
+        await OfflineCleanupQueueService.instance.resolveClaimedCleanup(
+          id,
+          keepLocal: keepLocal,
+        );
+        return;
+      }
       if (keepLocal) {
         await OfflineMutationQueueService.instance.retryBlockedConflict(id);
       } else {

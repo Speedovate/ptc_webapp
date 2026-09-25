@@ -10,6 +10,7 @@ class AdminIconActionButton extends StatefulWidget {
     this.size = 38,
     this.iconSize = 18,
     this.borderRadius = 12,
+    this.animateInteraction = true,
   });
 
   final IconData icon;
@@ -19,6 +20,7 @@ class AdminIconActionButton extends StatefulWidget {
   final double size;
   final double iconSize;
   final double borderRadius;
+  final bool animateInteraction;
 
   @override
   State<AdminIconActionButton> createState() => _AdminIconActionButtonState();
@@ -67,21 +69,39 @@ class _AdminIconActionButtonState extends State<AdminIconActionButton> {
                     ? null
                     : () => _isPressed.value = false,
                 onTap: widget.onTap,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 120),
-                  curve: Curves.easeOut,
-                  width: widget.size,
-                  height: widget.size,
-                  decoration: BoxDecoration(
-                    color: color,
-                    borderRadius: BorderRadius.circular(widget.borderRadius),
-                  ),
-                  child: Icon(
-                    widget.icon,
-                    size: widget.iconSize,
-                    color: widget.iconColor,
-                  ),
-                ),
+                child: widget.animateInteraction
+                    ? AnimatedContainer(
+                        duration: const Duration(milliseconds: 120),
+                        curve: Curves.easeOut,
+                        width: widget.size,
+                        height: widget.size,
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(
+                            widget.borderRadius,
+                          ),
+                        ),
+                        child: Icon(
+                          widget.icon,
+                          size: widget.iconSize,
+                          color: widget.iconColor,
+                        ),
+                      )
+                    : Container(
+                        width: widget.size,
+                        height: widget.size,
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(
+                            widget.borderRadius,
+                          ),
+                        ),
+                        child: Icon(
+                          widget.icon,
+                          size: widget.iconSize,
+                          color: widget.iconColor,
+                        ),
+                      ),
               );
             },
           );

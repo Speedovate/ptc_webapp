@@ -27,9 +27,12 @@ void main() {
           await provider.evict();
           final stream = provider.resolve(ImageConfiguration.empty);
           final completed = Completer<ImageInfo>();
-          final listener = ImageStreamListener((info, _) {
-            if (!completed.isCompleted) completed.complete(info);
-          }, onError: (Object e, StackTrace? s) => completed.completeError(e, s));
+          final listener = ImageStreamListener(
+            (info, _) {
+              if (!completed.isCompleted) completed.complete(info);
+            },
+            onError: (Object e, StackTrace? s) => completed.completeError(e, s),
+          );
           stream.addListener(listener);
           try {
             return await completed.future.timeout(const Duration(seconds: 5));

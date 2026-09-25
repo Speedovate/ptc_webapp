@@ -77,13 +77,11 @@ void main() {
         expect(find.text('13 | Mainar'), findsOneWidget);
         // The Fuel toolbar entry is icon-only below 520px, so its label only
         // appears at desktop widths.
-        expect(
-          find.text('Fuel'),
-          width >= 520 ? findsOneWidget : findsNothing,
-        );
+        expect(find.text('Fuel'), width >= 520 ? findsOneWidget : findsNothing);
         expect(find.text('Revenue'), findsNothing);
         expect(find.text('Rules'), findsNothing);
         final action = list.cellBuilder!(0, 5) as AdminListActionButton;
+        expect(action.animateInteraction, isFalse);
         action.onTap!();
         await tester.pumpAndSettle();
         list = tester.widget<AdminModalRecordList>(

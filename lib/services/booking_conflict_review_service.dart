@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'booking_id_resolver.dart';
 
 enum BookingConflictChoice { keepNumeric, useTemporary }
@@ -157,7 +158,8 @@ class BookingConflictReviewService {
     }
     final target = preview.targetId!;
     final key = preview.source!['submission_key'].toString();
-    await _db.runTransaction<void>(
+    await runTransactionWithOriginalErrors<void>(
+      _db,
       (tx) async {
         final actor = await tx.get(_db.collection('users').doc(adminId));
         if (actor.data()?['role'] != 'admin' ||

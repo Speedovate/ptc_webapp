@@ -1,5 +1,6 @@
 import 'package:webapp/services/booking_chassis_lifecycle.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
+import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'package:webapp/utils/cached_snapshot_documents.dart';
 import 'package:webapp/services/offline_reference_mapper.dart';
 import 'dart:async';
@@ -284,7 +285,9 @@ class ChassisRequest {
         !OfflineReferenceMapper.hasTemporaryReferences({
           'booking_id': chassis.bookingReferenceId,
         })) {
-      await _firestore.runTransaction<void>((transaction) async {
+      await runTransactionWithOriginalErrors<void>(_firestore, (
+        transaction,
+      ) async {
         if (chassis.bookingReferenceId != null) {
           transaction.set(
             _firestore
@@ -348,126 +351,130 @@ class ChassisRequest {
     required String? previousBookingId,
   }) async {
     final now = DateTime.now().toUtc().toIso8601String();
-    final savedDocument = await _firestore
-        .runTransaction<Map<String, dynamic>>((transaction) async {
-          final writeDocument = Map<String, dynamic>.from(document);
-          final currentChassis = await transaction.get(
-            _collection.doc('${chassis.id}'),
-          );
-          if (chassis.bookingReferenceId == null &&
-              currentChassis.data()?['current_booking_id'] != null &&
-              currentChassis.data()?['current_booking_id']?.toString() !=
-                  previousBookingId) {
-            throw StateError(
-              'Sync conflict: chassis now belongs to another booking.',
+    final savedDocument =
+        await runTransactionWithOriginalErrors<Map<String, dynamic>>(
+          _firestore,
+          (transaction) async {
+            final writeDocument = Map<String, dynamic>.from(document);
+            final currentChassis = await transaction.get(
+              _collection.doc('${chassis.id}'),
             );
-          }
-          String? displacedBookingId;
-          DocumentSnapshot<Map<String, dynamic>>? priorChassisSnapshot;
-          if (chassis.bookingReferenceId != null) {
-            final targetBooking = _firestore
-                .collection('bookings')
-                .doc('${chassis.bookingReferenceId}');
-            final targetSnapshot = await transaction.get(targetBooking);
-            if (!targetSnapshot.exists) {
-              throw StateError('The selected booking no longer exists.');
-            }
-            final ownerId = currentChassis
-                .data()?['current_booking_id']
-                ?.toString();
-            final ownerBooking =
-                ownerId != null && ownerId != chassis.bookingReferenceId
-                ? (await transaction.get(
-                    _firestore.collection('bookings').doc(ownerId),
-                  )).data()
-                : null;
-            final assignmentBooking = {
-              ...targetSnapshot.data()!,
-              'chassis_id': '${chassis.id}',
-              'updated_at': now,
-            };
-            displacedBookingId = chassisBookingToUnassign(
-              bookingId: chassis.bookingReferenceId!,
-              booking: assignmentBooking,
-              chassis: currentChassis.data() ?? {},
-              ownerBooking: ownerBooking,
-            );
-            if (!shouldProjectBookingOntoChassis(
-              bookingId: chassis.bookingReferenceId!,
-              booking: assignmentBooking,
-              chassis: currentChassis.data() ?? {},
-              ownerBooking: ownerBooking,
-            )) {
-              preserveChassisPhysicalAssignment(
-                writeDocument,
-                currentChassis.data() ?? {},
+            if (chassis.bookingReferenceId == null &&
+                currentChassis.data()?['current_booking_id'] != null &&
+                currentChassis.data()?['current_booking_id']?.toString() !=
+                    previousBookingId) {
+              throw StateError(
+                'Sync conflict: chassis now belongs to another booking.',
               );
             }
-            if (displacedBookingId != null) {
-              writeDocument['current_status'] = 'loaded';
-              writeDocument['current_driver_id'] =
-                  assignmentBooking['driver_id'];
-              final location = chassisLifecycleInstruction(
-                previousBookingStatus: null,
-                nextBookingStatus: 'ongoing',
-                bookingDocument: assignmentBooking,
-              )?.location;
-              if (location != null) writeDocument['location'] = location;
-            }
-            final priorChassisId = int.tryParse(
-              targetSnapshot.data()?['chassis_id']?.toString() ?? '',
-            );
-            if (priorChassisId != null && priorChassisId != chassis.id) {
-              priorChassisSnapshot = await transaction.get(
-                _collection.doc('$priorChassisId'),
-              );
-            }
-          }
-          if (displacedBookingId != null) {
-            transaction.update(
-              _firestore.collection('bookings').doc(displacedBookingId),
-              {'chassis_id': null, 'updated_at': now},
-            );
-          }
-          if (chassis.bookingReferenceId != null) {
-            transaction.set(
-              _firestore
+            String? displacedBookingId;
+            DocumentSnapshot<Map<String, dynamic>>? priorChassisSnapshot;
+            if (chassis.bookingReferenceId != null) {
+              final targetBooking = _firestore
                   .collection('bookings')
-                  .doc('${chassis.bookingReferenceId}'),
-              <String, dynamic>{
+                  .doc('${chassis.bookingReferenceId}');
+              final targetSnapshot = await transaction.get(targetBooking);
+              if (!targetSnapshot.exists) {
+                throw StateError('The selected booking no longer exists.');
+              }
+              final ownerId = currentChassis
+                  .data()?['current_booking_id']
+                  ?.toString();
+              final ownerBooking =
+                  ownerId != null && ownerId != chassis.bookingReferenceId
+                  ? (await transaction.get(
+                      _firestore.collection('bookings').doc(ownerId),
+                    )).data()
+                  : null;
+              final assignmentBooking = {
+                ...targetSnapshot.data()!,
                 'chassis_id': '${chassis.id}',
                 'updated_at': now,
-              },
-              SetOptions(merge: true),
-            );
-          }
-          if (priorChassisSnapshot?.exists == true &&
-              priorChassisSnapshot!.data()?['current_booking_id']?.toString() ==
-                  chassis.bookingReferenceId) {
-            transaction.set(priorChassisSnapshot.reference, {
-              'current_booking_id': FieldValue.delete(),
-              'current_driver_id': FieldValue.delete(),
-              'current_status': Chassis.ready,
-              'updated_at': now,
-            }, SetOptions(merge: true));
-          }
-          transaction.set(_collection.doc('${chassis.id}'), writeDocument);
-          transaction.set(
-            _firestore.collection('manage_cache').doc(resourceKey),
-            {'version': now, 'updated_at': now},
-            SetOptions(merge: true),
-          );
-          if (previousBookingId != chassis.bookingReferenceId ||
-              chassis.bookingReferenceId != null) {
+              };
+              displacedBookingId = chassisBookingToUnassign(
+                bookingId: chassis.bookingReferenceId!,
+                booking: assignmentBooking,
+                chassis: currentChassis.data() ?? {},
+                ownerBooking: ownerBooking,
+              );
+              if (!shouldProjectBookingOntoChassis(
+                bookingId: chassis.bookingReferenceId!,
+                booking: assignmentBooking,
+                chassis: currentChassis.data() ?? {},
+                ownerBooking: ownerBooking,
+              )) {
+                preserveChassisPhysicalAssignment(
+                  writeDocument,
+                  currentChassis.data() ?? {},
+                );
+              }
+              if (displacedBookingId != null) {
+                writeDocument['current_status'] = 'loaded';
+                writeDocument['current_driver_id'] =
+                    assignmentBooking['driver_id'];
+                final location = chassisLifecycleInstruction(
+                  previousBookingStatus: null,
+                  nextBookingStatus: 'ongoing',
+                  bookingDocument: assignmentBooking,
+                )?.location;
+                if (location != null) writeDocument['location'] = location;
+              }
+              final priorChassisId = int.tryParse(
+                targetSnapshot.data()?['chassis_id']?.toString() ?? '',
+              );
+              if (priorChassisId != null && priorChassisId != chassis.id) {
+                priorChassisSnapshot = await transaction.get(
+                  _collection.doc('$priorChassisId'),
+                );
+              }
+            }
+            if (displacedBookingId != null) {
+              transaction.update(
+                _firestore.collection('bookings').doc(displacedBookingId),
+                {'chassis_id': null, 'updated_at': now},
+              );
+            }
+            if (chassis.bookingReferenceId != null) {
+              transaction.set(
+                _firestore
+                    .collection('bookings')
+                    .doc('${chassis.bookingReferenceId}'),
+                <String, dynamic>{
+                  'chassis_id': '${chassis.id}',
+                  'updated_at': now,
+                },
+                SetOptions(merge: true),
+              );
+            }
+            if (priorChassisSnapshot?.exists == true &&
+                priorChassisSnapshot!
+                        .data()?['current_booking_id']
+                        ?.toString() ==
+                    chassis.bookingReferenceId) {
+              transaction.set(priorChassisSnapshot.reference, {
+                'current_booking_id': FieldValue.delete(),
+                'current_driver_id': FieldValue.delete(),
+                'current_status': Chassis.ready,
+                'updated_at': now,
+              }, SetOptions(merge: true));
+            }
+            transaction.set(_collection.doc('${chassis.id}'), writeDocument);
             transaction.set(
-              _firestore.collection('manage_cache').doc('bookings'),
+              _firestore.collection('manage_cache').doc(resourceKey),
               {'version': now, 'updated_at': now},
               SetOptions(merge: true),
             );
-          }
-          return writeDocument;
-        })
-        .timeout(_writeTimeout);
+            if (previousBookingId != chassis.bookingReferenceId ||
+                chassis.bookingReferenceId != null) {
+              transaction.set(
+                _firestore.collection('manage_cache').doc('bookings'),
+                {'version': now, 'updated_at': now},
+                SetOptions(merge: true),
+              );
+            }
+            return writeDocument;
+          },
+        ).timeout(_writeTimeout);
     document
       ..clear()
       ..addAll(savedDocument);

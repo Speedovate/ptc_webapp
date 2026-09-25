@@ -38,11 +38,13 @@ class RolePlatformHome extends StatefulWidget {
     required this.user,
     required this.onLogout,
     this.isQuickLoggedIn = false,
+    this.kpiStore,
   });
 
   final UserModel user;
   final VoidCallback onLogout;
   final bool isQuickLoggedIn;
+  final CrewKpiStore? kpiStore;
 
   @override
   State<RolePlatformHome> createState() => _RolePlatformHomeState();
@@ -52,6 +54,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
   final RolePlatformHomeViewModel _viewModel = RolePlatformHomeViewModel();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final AuthRepository _authRepository = AuthRequest.instance;
+  late final CrewKpiStore _crewKpiStore = widget.kpiStore ?? CrewKpiStore();
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   Booking? _selectedHistoryBooking;
   late UserModel _shellUser;
@@ -307,6 +310,7 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
       RolePlatformSection.kpiTracking => CrewKpiTrackingView(
         key: ValueKey('crew-kpi:${_shellUser.role}:${_shellUser.id}'),
         user: _shellUser,
+        store: _crewKpiStore,
         onOpenBooking:
             _roleAccessService.canAccess('bookings.read', role: _shellUser.role)
             ? (id) async {
@@ -406,6 +410,12 @@ class _RolePlatformHomeState extends State<RolePlatformHome> {
                 logoutLabel: widget.isQuickLoggedIn ? 'Go Back' : 'Logout',
                 onSaveProfileChanges: _canUpdateProfile
                     ? _saveProfileChanges
+                    : null,
+                kpiStore: _crewKpiStore,
+                onOpenKpiTracking: CrewKpiStore.canView(_shellUser)
+                    ? () => _viewModel.selectSection(
+                        RolePlatformSection.kpiTracking,
+                      )
                     : null,
               ),
               const SizedBox(height: 12),

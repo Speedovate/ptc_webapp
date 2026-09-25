@@ -10,6 +10,7 @@ initializeApp();
 const db = getFirestore();
 const staffRoles = ['admin', 'manager', 'dispatcher'];
 const {supportRecipients, supportPreview} = require('./support-notifications');
+const {chassisCheckNotice} = require('./chassis-notices');
 
 // Sends a booking-created notification without changing Firestore. Foreground
 // users receive alert.mp3 from the Flutter booking alert service.
@@ -114,14 +115,27 @@ exports.notifyChassisCheck = onDocumentUpdated(
 
     const bookingId = String(after.id || event.params.bookingId);
     const chassisId = String(after.chassis_id).trim();
+    // The chassis on a booking is the vehicle that ran the trip, which says
+    // nothing about whether it still belongs to this trip. A late status report
+    // can name a vehicle another booking has since taken, so confirm the
+    // assignment before telling staff which chassis to look at.
+    const chassisSnapshot = await db.collection('chassis').doc(chassisId).get();
+    const notice = chassisCheckNotice(
+      {...after, id: bookingId},
+      chassisSnapshot.exists ? chassisSnapshot.data() : null,
+    );
     await getMessaging().sendEachForMulticast({
       tokens,
       data: {
         notificationId: `chassis-check-${bookingId}`,
         bookingId,
-        chassisId,
-        title: 'Check Chassis',
-        body: `Booking ${bookingId}: chassis #${chassisId} needs client confirmation.`,
+        chassisId: notice.chassisId,
+        // Lets any client tell a confirmed vehicle from one that needs a call to
+        // dispatch, instead of trusting the chassis number on the booking.
+        chassisVerified: String(notice.chassisVerified),
+        heldByBookingId: notice.heldByBookingId,
+        title: notice.title,
+        body: notice.body,
         url: 'https://paltranco.vercel.app/',
       },
       webpush: {

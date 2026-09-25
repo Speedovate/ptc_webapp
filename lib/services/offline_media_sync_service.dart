@@ -1,5 +1,6 @@
 import 'sync_error_log_service.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
+import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'package:webapp/utils/copy_document_fields.dart';
 import 'package:webapp/models/offline_queue_item.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
@@ -29,13 +30,17 @@ class OfflineMediaSyncService {
     PhotoStorageService? photoStorageService,
     SupportStorageService? supportStorageService,
     bool Function()? isOnline,
+    Duration flushTimeout = const Duration(minutes: 2),
+    Duration localStorageTimeout = const Duration(seconds: 30),
   }) : _backend = backend ?? createBookingStorageBackend(),
        _providedFirestore = firestore,
        _photoStorageService =
            photoStorageService ?? PhotoStorageService.instance,
        _supportStorageService =
            supportStorageService ?? SupportStorageService.instance,
-       _isOnline = isOnline ?? currentNetworkStatus;
+       _isOnline = isOnline ?? currentNetworkStatus,
+       _flushTimeout = flushTimeout,
+       _localStorageTimeout = localStorageTimeout;
 
   static final OfflineMediaSyncService instance = OfflineMediaSyncService();
 
@@ -55,9 +60,15 @@ class OfflineMediaSyncService {
   final ImageUploadProcessor _imageUploadProcessor =
       ImageUploadProcessor.instance;
   final AuthStorageBackend _authStorage = createAuthStorageBackend();
+  final Duration _flushTimeout;
+  final Duration _localStorageTimeout;
 
   bool _isInitialized = false;
   bool _isFlushing = false;
+
+  /// Incremented per flush. A flush that outlives its timeout and a newer flush
+  /// must not publish status over the newer attempt.
+  int _flushGeneration = 0;
   Future<void> _queueMutationChain = Future<void>.value();
   Timer? _retryTimer;
   StreamSubscription<bool>? _networkSubscription;
@@ -238,7 +249,14 @@ class OfflineMediaSyncService {
       await _refreshStatusFromStorage();
       return;
     }
-    await _backend.initialize();
+    // A device store that never answers must not leave this queue permanently
+    // uninitialized: every later timer, resume, and enqueue would keep waiting
+    // on the same pending read with nothing reported to the user.
+    await _backend.initialize().timeout(
+      _localStorageTimeout,
+      onTimeout: () =>
+          throw TimeoutException('Local media queue storage did not respond.'),
+    );
     await _refreshStatusFromStorage();
     _retryTimer ??= Timer.periodic(_retryInterval, (_) {
       if (!isAppVisible()) return;
@@ -362,35 +380,35 @@ class OfflineMediaSyncService {
       return;
     }
     _isFlushing = true;
+    final generation = ++_flushGeneration;
     var shouldFlushAgainImmediately = false;
     try {
-      await _queueMutationChain;
-      if (!_isOnline()) {
-        final entries = await _readEntries();
-        _setStatus(
-          _currentStatus.copyWith(
-            pendingCount: entries.length,
-            isSyncing: false,
-            processedInBatch: 0,
-            totalInBatch: 0,
-          ),
-        );
-        return;
-      }
-      final currentStorageKey = await _resolvedStorageKey();
-      final storageKeys = await _allKnownStorageKeys();
-      for (final storageKey in storageKeys) {
-        final flushed = await _flushPendingOperationsForStorageKey(
-          storageKey,
-          updateStatus: storageKey == currentStorageKey,
-        );
-        shouldFlushAgainImmediately =
-            shouldFlushAgainImmediately || flushed.shouldFlushAgainImmediately;
-      }
-      await _refreshStatusFromStorage();
+      // A Storage or Firestore call that never answers must not hold the flush
+      // lock for the rest of the session. Persisted entries stay queued and the
+      // retry timer, reconnect signal, or next enqueue makes another attempt.
+      shouldFlushAgainImmediately = await _flushBounded(
+        generation,
+      ).timeout(_flushTimeout);
+    } on TimeoutException catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'offline_media_sync_service.dart',
+          operation: 'media flush timeout',
+          kind: 'media_flush_timeout',
+        ),
+      );
+      _setStatus(
+        _currentStatus.copyWith(
+          isSyncing: false,
+          processedInBatch: 0,
+          totalInBatch: 0,
+        ),
+      );
     } finally {
       _isFlushing = false;
-      if (_currentStatus.isSyncing) {
+      if (_currentStatus.isSyncing && generation == _flushGeneration) {
         _setStatus(
           _currentStatus.copyWith(
             isSyncing: false,
@@ -403,6 +421,47 @@ class OfflineMediaSyncService {
         unawaited(flushPendingOperations());
       }
     }
+  }
+
+  void _setStatusForGeneration(
+    int generation,
+    OfflineQueueStatusSnapshot nextStatus,
+  ) {
+    if (generation != _flushGeneration) {
+      return;
+    }
+    _setStatus(nextStatus);
+  }
+
+  Future<bool> _flushBounded(int generation) async {
+    await _queueMutationChain;
+    if (!_isOnline()) {
+      final entries = await _readEntries();
+      _setStatusForGeneration(
+        generation,
+        _currentStatus.copyWith(
+          pendingCount: entries.length,
+          isSyncing: false,
+          processedInBatch: 0,
+          totalInBatch: 0,
+        ),
+      );
+      return false;
+    }
+    final currentStorageKey = await _resolvedStorageKey();
+    final storageKeys = await _allKnownStorageKeys();
+    var shouldFlushAgainImmediately = false;
+    for (final storageKey in storageKeys) {
+      final flushed = await _flushPendingOperationsForStorageKey(
+        storageKey,
+        updateStatus: storageKey == currentStorageKey,
+        generation: generation,
+      );
+      shouldFlushAgainImmediately =
+          shouldFlushAgainImmediately || flushed.shouldFlushAgainImmediately;
+    }
+    await _refreshStatusFromStorage();
+    return shouldFlushAgainImmediately;
   }
 
   _OfflineMediaQueueEntry? _photoPredecessor(
@@ -498,8 +557,18 @@ class OfflineMediaSyncService {
     ).resolveResourceReferences({'user_id': entry.userId}, scope: scope);
     final userId = references['user_id']?.toString();
     final fieldKey = entry.fieldKey;
-    if (bytesBase64 == null || userId == null || fieldKey == null) {
-      return true;
+    if (bytesBase64 == null) {
+      // The stored bytes are gone, so this upload can never complete. Keep the
+      // entry visible with an error instead of dropping a queued photo.
+      throw StateError(
+        'This queued photo no longer has its stored image data. '
+        'Review it before retrying.',
+      );
+    }
+    if (userId == null || fieldKey == null) {
+      throw StateError(
+        'Record identity is temporarily unavailable. Try again after its create syncs.',
+      );
     }
 
     final currentUser = await _usersCollection.doc(userId).get();
@@ -516,7 +585,9 @@ class OfflineMediaSyncService {
       mimeType: entry.mimeType,
       size: entry.size,
     );
-    final applied = await _firestore.runTransaction<bool>((transaction) async {
+    final applied = await runTransactionWithOriginalErrors<bool>(_firestore, (
+      transaction,
+    ) async {
       final userRef = _usersCollection.doc(userId);
       final snapshot = await transaction.get(userRef);
       if (!snapshot.exists) {
@@ -564,7 +635,9 @@ class OfflineMediaSyncService {
         }, scope: scope);
     final senderUserId = references['sender_user_id']?.toString();
     if (threadId == null || senderUserId == null) {
-      return;
+      throw StateError(
+        'Record identity is temporarily unavailable. Try again after its create syncs.',
+      );
     }
     final threadDoc = _supportCollection.doc(threadId);
     final threadDocument = entry.threadDocument == null
@@ -590,7 +663,9 @@ class OfflineMediaSyncService {
       for (final key in linkedDocument.keys) {
         threadDocument[key] = linkedDocument[key];
       }
-      await _firestore.runTransaction((transaction) async {
+      await runTransactionWithOriginalErrors<void>(_firestore, (
+        transaction,
+      ) async {
         final existing = await transaction.get(threadDoc);
         final existingId = existing.data()?['booking_id']?.toString();
         final finalId = threadDocument['booking_id']?.toString();
@@ -670,7 +745,7 @@ class OfflineMediaSyncService {
         ? 'Sent an attachment'
         : 'Sent ${uploadedAttachments.length} attachments';
 
-    await _firestore.runTransaction<void>((tx) async {
+    await runTransactionWithOriginalErrors<void>(_firestore, (tx) async {
       final existingMessage = await tx.get(messageDoc);
       final currentThread = await tx.get(threadDoc);
       if (existingMessage.exists) {
@@ -772,6 +847,7 @@ class OfflineMediaSyncService {
   Future<_ScopedMediaFlushResult> _flushPendingOperationsForStorageKey(
     String storageKey, {
     required bool updateStatus,
+    required int generation,
   }) async {
     // Persist exact predecessor links for legacy pending photos before removing
     // any successfully synced predecessor from the queue.
@@ -808,7 +884,8 @@ class OfflineMediaSyncService {
     );
     if (!hasDueWork) {
       if (updateStatus) {
-        _setStatus(
+        _setStatusForGeneration(
+          generation,
           _currentStatus.copyWith(
             pendingCount: entries.length,
             failedCount: entries
@@ -824,7 +901,8 @@ class OfflineMediaSyncService {
     final entriesById = {for (final entry in entries) entry.id: entry};
     final originalEntryIds = entriesById.keys.toSet();
     if (updateStatus) {
-      _setStatus(
+      _setStatusForGeneration(
+        generation,
         _currentStatus.copyWith(
           pendingCount: entries.length,
           isSyncing: entries.isNotEmpty,
@@ -906,7 +984,8 @@ class OfflineMediaSyncService {
       } finally {
         processed++;
         if (updateStatus) {
-          _setStatus(
+          _setStatusForGeneration(
+            generation,
             _currentStatus.copyWith(
               pendingCount: remaining.length + (entries.length - processed),
               isSyncing: true,
@@ -941,7 +1020,8 @@ class OfflineMediaSyncService {
         latestEntries.isNotEmpty &&
         latestEntries.length < entries.length;
     if (updateStatus) {
-      _setStatus(
+      _setStatusForGeneration(
+        generation,
         _currentStatus.copyWith(
           pendingCount: latestEntries.length,
           isSyncing: false,

@@ -24,13 +24,17 @@ class BookingOfflineUploadQueueService {
     FirebaseFirestore? firestore,
     PhotoStorageService? photoStorageService,
     Future<void> Function()? flushMutations,
+    OfflineMutationQueueService? mutationQueue,
+    Duration mutationFlushTimeout = _defaultMutationFlushTimeout,
   }) : _backend = backend ?? createBookingStorageBackend(),
        _providedFirestore = firestore,
        _photoStorageService =
            photoStorageService ?? PhotoStorageService.instance,
        _flushMutations =
            flushMutations ??
-           OfflineMutationQueueService.instance.flushPendingMutations;
+           OfflineMutationQueueService.instance.flushPendingMutations,
+       _mutationQueue = mutationQueue ?? OfflineMutationQueueService.instance,
+       _mutationFlushTimeout = mutationFlushTimeout;
 
   static final BookingOfflineUploadQueueService instance =
       BookingOfflineUploadQueueService();
@@ -39,6 +43,10 @@ class BookingOfflineUploadQueueService {
   static const _currentUserIdKey = 'paltranco_current_user_id';
   static const _knownSessionUserIdsKey = 'paltranco_known_session_user_ids';
   static const _retryInterval = Duration(seconds: 20);
+  static const _mutationCheckTimeout = Duration(seconds: 15);
+  static const _localStoreTimeout = Duration(seconds: 20);
+  static const _escalateWaitAfterCycles = 3;
+  static const _defaultMutationFlushTimeout = Duration(minutes: 2);
 
   final BookingStorageBackend _backend;
   final FirebaseFirestore? _providedFirestore;
@@ -46,12 +54,15 @@ class BookingOfflineUploadQueueService {
       _providedFirestore ?? FirebaseFirestore.instance;
   final PhotoStorageService _photoStorageService;
   final Future<void> Function() _flushMutations;
+  final OfflineMutationQueueService _mutationQueue;
+  final Duration _mutationFlushTimeout;
   final ImageUploadProcessor _imageUploadProcessor =
       ImageUploadProcessor.instance;
   final AuthStorageBackend _authStorage = createAuthStorageBackend();
 
   bool _isInitialized = false;
   bool _isFlushing = false;
+  final Map<String, int> _waitCycles = <String, int>{};
   Timer? _retryTimer;
   StreamSubscription<bool>? _networkSubscription;
   final StreamController<OfflineQueueStatusSnapshot> _statusController =
@@ -84,6 +95,9 @@ class BookingOfflineUploadQueueService {
             hasError: entry.lastError?.isNotEmpty == true,
             errorMessage: entry.lastError,
             diagnostics: entry.diagnostics,
+            pendingMessage: _PhotoWaitReason.fromKey(
+              entry.waitReason,
+            )?.pendingMessage,
           ),
         )
         .toList(growable: false);
@@ -122,7 +136,14 @@ class BookingOfflineUploadQueueService {
       await _refreshStatusFromStorage();
       return;
     }
-    await _backend.initialize();
+    // A device store that never answers must not leave this queue permanently
+    // uninitialized: every later timer, resume, and enqueue would keep waiting
+    // on the same pending read with nothing reported to the user.
+    await _backend.initialize().timeout(
+      _localStoreTimeout,
+      onTimeout: () =>
+          throw TimeoutException('Local photo queue storage did not respond.'),
+    );
     await _refreshStatusFromStorage();
     _retryTimer ??= Timer.periodic(_retryInterval, (_) {
       if (!isAppVisible()) return;
@@ -238,18 +259,23 @@ class BookingOfflineUploadQueueService {
     // must not both proceed into the same upload batch.
     _isFlushing = true;
     try {
-      // Persist pending-upload markers before replacing them with storage URLs.
-      await _flushMutations();
-      _markPendingAsSyncing();
-      final currentStorageKey = await _resolvedStorageKey();
-      final storageKeys = await _allKnownStorageKeys();
-      for (final storageKey in storageKeys) {
-        await _flushPendingUploadsForStorageKey(
-          storageKey,
-          updateStatus: storageKey == currentStorageKey,
-        );
-      }
-      await _refreshStatusFromStorage();
+      await _runFlushCycle();
+    } on TimeoutException catch (error) {
+      // Release the flush lock on a stalled dependency so the next timer,
+      // resume, or reconnect can try again. Entries are only removed after a
+      // confirmed apply, so an abandoned cycle never loses queued photos.
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          StackTrace.current,
+          source: 'booking_offline_upload_queue_service.dart',
+          operation: 'bookingPhotoUploadCycle',
+          details: {
+            'mutation_flush_timeout_seconds': _mutationFlushTimeout.inSeconds,
+            'released_flush_lock': true,
+          },
+        ),
+      );
     } finally {
       _isFlushing = false;
       if (_currentStatus.isSyncing) {
@@ -262,6 +288,29 @@ class BookingOfflineUploadQueueService {
         );
       }
     }
+  }
+
+  Future<void> _runFlushCycle() async {
+    // Persist pending-upload markers before replacing them with storage URLs.
+    // The booking mutation flush has no internal deadline, so bound it here:
+    // a stall there would otherwise hold this queue's flush lock forever and
+    // silently disable every later retry.
+    await _flushMutations().timeout(
+      _mutationFlushTimeout,
+      onTimeout: () => throw TimeoutException(
+        'Queued booking changes did not sync in time; photos will retry.',
+      ),
+    );
+    _markPendingAsSyncing();
+    final currentStorageKey = await _resolvedStorageKey();
+    final storageKeys = await _allKnownStorageKeys();
+    for (final storageKey in storageKeys) {
+      await _flushPendingUploadsForStorageKey(
+        storageKey,
+        updateStatus: storageKey == currentStorageKey,
+      );
+    }
+    await _refreshStatusFromStorage();
   }
 
   Future<bool> _applyUploadedPhoto({
@@ -332,6 +381,100 @@ class BookingOfflineUploadQueueService {
     }
   }
 
+  /// Returns true when a queued booking mutation still owns this booking, and
+  /// null when the check itself could not finish. A failure here must never be
+  /// read as "no pending write": uploading early would patch a booking that
+  /// has no placeholder for this photo yet.
+  Future<bool?> _hasPendingBookingMutation(
+    String bookingId,
+    String storageKey,
+  ) async {
+    try {
+      return await _mutationQueue
+          .hasPendingBookingMutation(bookingId, storageKey: storageKey)
+          .timeout(_mutationCheckTimeout);
+    } on TimeoutException {
+      return null;
+    } on Object {
+      return true;
+    }
+  }
+
+  /// A booking document written after this photo was staged can no longer
+  /// carry its marker, and no queued booking write remains to restore it.
+  bool _bookingOutlivedStagedPhoto(
+    Map<String, dynamic> booking,
+    _PendingBookingUploadEntry entry,
+  ) {
+    final bookingUpdatedAt = DateTime.tryParse('${booking['updated_at']}');
+    final stagedAt = DateTime.tryParse(entry.createdAtIso);
+    if (bookingUpdatedAt == null || stagedAt == null) {
+      return false;
+    }
+    return bookingUpdatedAt.isAfter(stagedAt);
+  }
+
+  /// Records why this entry stayed on the device. A wait is normal for a few
+  /// cycles while the booking write lands, so only the first wait and a change
+  /// of reason are written back. Once the same wait survives
+  /// `_escalateWaitAfterCycles` flush cycles it becomes a recorded error, so
+  /// the entry surfaces in the queued actions list and the admin error log
+  /// instead of waiting silently forever.
+  ///
+  /// The cycle count is kept in memory on purpose: persisting it every cycle
+  /// would rewrite the stored base64 photo on every retry, and a count that is
+  /// only written back on escalation can never reach that threshold.
+  Future<_WaitOutcome> _noteWait(
+    _PendingBookingUploadEntry entry,
+    _PhotoWaitReason reason, {
+    required String storageKey,
+  }) async {
+    final waitCount = (_waitCycles[entry.id] ?? entry.waitCount) + 1;
+    _waitCycles[entry.id] = waitCount;
+    final reasonChanged = entry.waitReason != reason.key;
+    final escalate =
+        entry.lastError == null && waitCount > _escalateWaitAfterCycles;
+    final lastError =
+        entry.lastError ??
+        (escalate
+            ? 'This photo is still waiting: ${reason.explanation}. '
+                  'Open the booking, check the photo field, and retry the upload.'
+            : null);
+    String? diagnostics = entry.diagnostics;
+    if (escalate) {
+      diagnostics = await offlineErrorDiagnostics(
+        error: StateError(
+          'Queued booking photo made no progress: ${reason.explanation}.',
+        ),
+        stack: StackTrace.current,
+        source: 'booking_offline_upload_queue_service.dart',
+        operation: 'bookingPhotoUpload',
+        entryId: entry.id,
+        target:
+            'bookings/${entry.bookingId}/${entry.statusKey}/${entry.fieldKey}',
+        owner: storageKey.substring('$_storageKey::'.length),
+        actionAt: entry.createdAtIso,
+        attempt: entry.retryCount + 1,
+        context: {
+          'wait_reason': reason.key,
+          'wait_cycles': waitCount,
+          'booking_status': entry.statusKey,
+          'field_key': entry.fieldKey,
+          'media_size': entry.size,
+        },
+      );
+    }
+    return _WaitOutcome(
+      entry.copyWith(
+        waitCount: waitCount,
+        waitReason: reason.key,
+        lastError: lastError,
+        diagnostics: diagnostics,
+      ),
+      persisted: waitCount == 1 || reasonChanged || escalate,
+    );
+  }
+
   Future<List<_PendingBookingUploadEntry>> _readEntries() async {
     final rawEntries = await _backend.readStringList(
       await _resolvedStorageKey(),
@@ -382,7 +525,7 @@ class BookingOfflineUploadQueueService {
     final entries = await _readEntriesForStorageKey(storageKey);
     return const OfflineQueueStatusSnapshot.idle().copyWith(
       pendingCount: entries.length,
-      failedCount: 0,
+      failedCount: entries.where((entry) => entry.lastError != null).length,
     );
   }
 
@@ -441,42 +584,115 @@ class BookingOfflineUploadQueueService {
             firestore: _firestore,
           ).resolve(entry.bookingId);
           if (resolved == null) {
-            remaining.add(entry);
+            final wait = await _noteWait(
+              entry,
+              _PhotoWaitReason.temporaryBookingId,
+              storageKey: storageKey,
+            );
+            mutated = mutated || wait.persisted;
+            remaining.add(wait.entry);
             continue;
           }
           entry = entry.copyWith(bookingId: resolved);
         }
-        if (await OfflineMutationQueueService.instance
-                .hasPendingBookingMutation(entry.bookingId) ||
-            (sourceEntry.bookingId != entry.bookingId &&
-                await OfflineMutationQueueService.instance
-                    .hasPendingBookingMutation(sourceEntry.bookingId))) {
-          remaining.add(entry);
+        final hasPendingMutation = await _hasPendingBookingMutation(
+          entry.bookingId,
+          storageKey,
+        );
+        final hasProvisionalMutation = sourceEntry.bookingId != entry.bookingId
+            ? await _hasPendingBookingMutation(
+                sourceEntry.bookingId,
+                storageKey,
+              )
+            : hasPendingMutation;
+        final checkUnanswered =
+            hasPendingMutation == null || hasProvisionalMutation == null;
+        // A queued booking write owns this booking: the photo placeholder it
+        // carries is not on the server yet, so uploading now would patch a
+        // field that does not exist.
+        if (checkUnanswered ||
+            hasPendingMutation == true ||
+            hasProvisionalMutation == true) {
+          final wait = await _noteWait(
+            entry,
+            checkUnanswered
+                ? _PhotoWaitReason.mutationCheckTimedOut
+                : _PhotoWaitReason.bookingMutationPending,
+            storageKey: storageKey,
+          );
+          mutated = mutated || wait.persisted;
+          remaining.add(wait.entry);
           continue;
         }
         final markerSnapshot = await _bookingsCollection
             .doc(entry.bookingId)
             .get()
             .timeout(const Duration(seconds: 10));
+        if (!markerSnapshot.exists) {
+          // The booking write that carries this photo has not landed yet.
+          // Keep the bytes, but record why so the queue is never silent.
+          final wait = await _noteWait(
+            entry,
+            _PhotoWaitReason.bookingMissing,
+            storageKey: storageKey,
+          );
+          mutated = mutated || wait.persisted;
+          remaining.add(wait.entry);
+          continue;
+        }
+        final markerData = markerSnapshot.data() ?? <String, dynamic>{};
         final markerField = _fieldValueFromStatusOutputs(
-          _statusOutputsFromBooking(markerSnapshot.data() ?? {}),
+          _statusOutputsFromBooking(markerData),
           statusKey: entry.statusKey,
           fieldKey: entry.fieldKey,
         );
-        if (!markerSnapshot.exists || markerField == null) {
-          remaining.add(entry);
-          continue;
-        }
         if (_pendingUploadId(markerField) != entry.id) {
-          if (entry.waitingForCommit) {
-            remaining.add(entry);
+          final superseded =
+              !entry.waitingForCommit ||
+              _bookingOutlivedStagedPhoto(markerData, entry);
+          if (superseded) {
+            // The placeholder that owned this entry is gone and no queued
+            // booking write can bring it back. Reclaim the queued bytes
+            // instead of waiting forever for a marker that never returns.
+            mutated = true;
+            unawaited(
+              SyncErrorLogService.instance.report(
+                StateError(
+                  'Dropped a queued booking photo that the server no longer accepts.',
+                ),
+                StackTrace.current,
+                source: 'booking_offline_upload_queue_service.dart',
+                operation: 'bookingPhotoUpload',
+                target:
+                    'bookings/${entry.bookingId}/${entry.statusKey}/${entry.fieldKey}',
+                owner: storageKey.substring('$_storageKey::'.length),
+                kind: 'queue_reclaimed',
+                details: {
+                  'reason': markerField == null
+                      ? 'photo_field_missing'
+                      : 'marker_superseded',
+                  'server_photo_pending_upload_id':
+                      _pendingUploadId(markerField) ?? 'none',
+                  'queued_photo_id': entry.id,
+                  'booking_updated_at': markerData['updated_at']?.toString(),
+                  'photo_staged_at': entry.createdAtIso,
+                },
+              ),
+            );
             continue;
           }
-          // This field was superseded. Do not upload or replace its newer value.
-          mutated = true;
+          final wait = await _noteWait(
+            entry,
+            markerField == null
+                ? _PhotoWaitReason.photoFieldMissing
+                : _PhotoWaitReason.markerSuperseded,
+            storageKey: storageKey,
+          );
+          mutated = mutated || wait.persisted;
+          remaining.add(wait.entry);
           continue;
         }
-        entry = entry.copyWith(waitingForCommit: false);
+        entry = entry.copyWith(waitingForCommit: false, clearWaitReason: true);
         final upload = await _photoStorageService
             .uploadBookingPhoto(
               bytes: base64Decode(entry.bytesBase64),
@@ -502,7 +718,10 @@ class BookingOfflineUploadQueueService {
 
         if (applied) {
           confirmedSuccesses.addAll({
-            if (entry.retryCount > 0 || entry.lastError != null) entry.id,
+            if (entry.retryCount > 0 ||
+                entry.lastError != null ||
+                entry.waitCount > 0)
+              entry.id,
           });
         }
         mutated = true;
@@ -530,6 +749,9 @@ class BookingOfflineUploadQueueService {
         );
         if (_isRetryableUploadError(normalizedError) ||
             normalizedError.toLowerCase().contains('sync conflict')) {
+          // Persist the failure. Without this the entry keeps retrying with no
+          // stored error, so the wait is indistinguishable from a fresh one.
+          mutated = true;
           remaining.add(
             entry.copyWith(
               retryCount: entry.retryCount + 1,
@@ -542,6 +764,9 @@ class BookingOfflineUploadQueueService {
               entry.waitingForCommit ||
               await _shouldKeepEntryAfterFailure(entry);
           if (shouldKeep) {
+            // Persist the failure so a permanently failing upload is visible in
+            // the queued actions list instead of retrying with no record.
+            mutated = true;
             remaining.add(
               entry.copyWith(
                 retryCount: entry.retryCount + 1,
@@ -550,7 +775,31 @@ class BookingOfflineUploadQueueService {
               ),
             );
           } else {
+            // The queued photo cannot be applied to this booking any more.
+            // Reclaim the bytes, but never without a record: a silent discard
+            // looks identical to a successful upload.
             mutated = true;
+            unawaited(
+              SyncErrorLogService.instance.report(
+                StateError(
+                  'Dropped a queued booking photo that no longer applies.',
+                ),
+                StackTrace.current,
+                source: 'booking_offline_upload_queue_service.dart',
+                operation: 'bookingPhotoUpload',
+                target:
+                    'bookings/${entry.bookingId}/${entry.statusKey}/${entry.fieldKey}',
+                owner: storageKey.substring('$_storageKey::'.length),
+                kind: 'queue_reclaimed',
+                details: {
+                  'reason': 'upload_failed_permanently',
+                  'error': normalizedError,
+                  'queued_photo_id': entry.id,
+                  'photo_staged_at': entry.createdAtIso,
+                  'attempt': entry.retryCount + 1,
+                },
+              ),
+            );
           }
         }
       } finally {
@@ -577,6 +826,8 @@ class BookingOfflineUploadQueueService {
           ...remaining,
         ];
         await _writeEntriesForStorageKey(storageKey, merged);
+        final mergedIds = merged.map((entry) => entry.id).toSet();
+        _waitCycles.removeWhere((id, _) => !mergedIds.contains(id));
       });
     }
 
@@ -590,6 +841,9 @@ class BookingOfflineUploadQueueService {
       _setStatus(
         _currentStatus.copyWith(
           pendingCount: remaining.length,
+          failedCount: remaining
+              .where((entry) => entry.lastError != null)
+              .length,
           isSyncing: false,
           processedInBatch: remaining.isEmpty ? entries.length : 0,
           totalInBatch: remaining.isEmpty ? entries.length : 0,
@@ -601,7 +855,12 @@ class BookingOfflineUploadQueueService {
 
   Future<void> _refreshStatusFromStorage() async {
     final entries = await _readEntries();
-    _setStatus(_currentStatus.copyWith(pendingCount: entries.length));
+    _setStatus(
+      _currentStatus.copyWith(
+        pendingCount: entries.length,
+        failedCount: entries.where((entry) => entry.lastError != null).length,
+      ),
+    );
   }
 
   void _markPendingAsSyncing() {
@@ -695,6 +954,8 @@ class _PendingBookingUploadEntry {
     this.lastError,
     this.diagnostics,
     this.waitingForCommit = false,
+    this.waitCount = 0,
+    this.waitReason,
   });
 
   final String id;
@@ -711,12 +972,21 @@ class _PendingBookingUploadEntry {
   final String? diagnostics;
   final bool waitingForCommit;
 
+  /// Flush cycles that made no progress for this entry. A wait is not a
+  /// failure, but an endless wait without a recorded reason is
+  /// indistinguishable from a stalled queue.
+  final int waitCount;
+  final String? waitReason;
+
   _PendingBookingUploadEntry copyWith({
     int? retryCount,
     String? lastError,
     String? diagnostics,
     String? bookingId,
     bool? waitingForCommit,
+    int? waitCount,
+    String? waitReason,
+    bool clearWaitReason = false,
   }) {
     return _PendingBookingUploadEntry(
       id: id,
@@ -732,6 +1002,8 @@ class _PendingBookingUploadEntry {
       retryCount: retryCount ?? this.retryCount,
       lastError: lastError ?? this.lastError,
       diagnostics: diagnostics ?? this.diagnostics,
+      waitCount: waitCount ?? this.waitCount,
+      waitReason: clearWaitReason ? null : waitReason ?? this.waitReason,
     );
   }
 
@@ -749,6 +1021,8 @@ class _PendingBookingUploadEntry {
       'created_at': createdAtIso,
       'retry_count': retryCount,
       'last_error': lastError,
+      'wait_count': waitCount,
+      if (waitReason != null) 'wait_reason': waitReason,
       if (diagnostics != null) 'error_diagnostics': diagnostics,
     };
   }
@@ -772,6 +1046,71 @@ class _PendingBookingUploadEntry {
           : int.tryParse(map['retry_count']?.toString() ?? '') ?? 0,
       lastError: map['last_error']?.toString(),
       diagnostics: map['error_diagnostics']?.toString(),
+      waitCount: map['wait_count'] is num
+          ? (map['wait_count'] as num).toInt()
+          : int.tryParse(map['wait_count']?.toString() ?? '') ?? 0,
+      waitReason: map['wait_reason']?.toString(),
     );
   }
+}
+
+/// Why a flush cycle kept a photo on this device instead of uploading it.
+/// Recorded on the entry so the queue can explain itself instead of waiting
+/// forever behind one generic status line.
+enum _PhotoWaitReason {
+  temporaryBookingId(
+    'temporary_booking_id',
+    'the saved booking has no server ID yet',
+    'Waiting for the booking ID to sync',
+  ),
+  bookingMutationPending(
+    'booking_mutation_pending',
+    'the booking changes carrying this photo are still queued',
+    'Waiting for the booking update to sync',
+  ),
+  bookingMissing(
+    'booking_missing',
+    'the booking is not on the server yet',
+    'Waiting for the booking to reach the server',
+  ),
+  photoFieldMissing(
+    'photo_field_missing',
+    'the booking on the server no longer has this photo field',
+    'The server has no matching photo field',
+  ),
+  markerSuperseded(
+    'marker_superseded',
+    'this booking field already holds a newer photo',
+    'A newer photo is already saved in this field',
+  ),
+  mutationCheckTimedOut(
+    'mutation_check_timed_out',
+    'the booking queue did not answer in time',
+    'Waiting for the booking queue to respond',
+  );
+
+  const _PhotoWaitReason(this.key, this.explanation, this.pendingMessage);
+
+  final String key;
+  final String explanation;
+  final String pendingMessage;
+
+  static _PhotoWaitReason? fromKey(String? key) {
+    if (key == null) return null;
+    for (final reason in values) {
+      if (reason.key == key) return reason;
+    }
+    return null;
+  }
+}
+
+class _WaitOutcome {
+  const _WaitOutcome(this.entry, {required this.persisted});
+
+  final _PendingBookingUploadEntry entry;
+
+  /// True when the stored entry changed enough to be worth rewriting the
+  /// queue. Repeated waits with the same reason are not persisted, so a stuck
+  /// photo never rewrites its own base64 payload every cycle.
+  final bool persisted;
 }

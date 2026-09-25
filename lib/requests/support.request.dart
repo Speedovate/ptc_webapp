@@ -13,6 +13,7 @@ import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/services/firestore_public_document_fetcher.dart';
+import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
@@ -1063,7 +1064,7 @@ class SupportRequest {
       'updated_at': now.toIso8601String(),
       'is_active': true,
     };
-    await _firestore.runTransaction<void>((tx) async {
+    await runTransactionWithOriginalErrors<void>(_firestore, (tx) async {
       final existingMessage = await tx.get(messageDoc);
       final currentThread = await tx.get(threadDoc);
       if (existingMessage.exists) return;

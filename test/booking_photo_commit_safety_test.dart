@@ -186,6 +186,7 @@ void main() {
         final saved = (await db.collection('bookings').doc('10').get()).data()!;
         if (!referenced) {
           expect(saved['photo_cleanup_paths'], isEmpty);
+          expect(saved['photo_cleanup_claims'], isEmpty);
           expect(
             () => BookingPhotoCleanup.prepare({
               'status_outputs': outputs({
@@ -193,7 +194,7 @@ void main() {
                     'bookings/10/status_outputs/book__1/waybill_photo/old.jpg',
               }),
             }, saved),
-            throwsStateError,
+            returnsNormally,
           );
         }
       },

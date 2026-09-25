@@ -189,12 +189,11 @@ void main() {
       (await db.collection('users').doc('7').get()).data()!['name'],
       'Remote',
     );
-    expect(
-      jsonDecode(
-        (await backend.readStringList(storageKey)).single,
-      )['is_blocked'],
-      true,
-    );
+    // The queued snapshot lost the race against a newer server version, so it is
+    // retired instead of blocking every later edit for this person behind a
+    // snapshot that can never win. The newer document stays exactly as it was,
+    // and the drop is reported as a `queue_edit_superseded` sync error.
+    expect(await backend.readStringList(storageKey), isEmpty);
   });
   test(
     'resource aliases survive restart and stay isolated by user scope',

@@ -52,9 +52,7 @@ class AuthViewModel extends BaseViewModel {
       notifyListeners();
       return null;
     } catch (error) {
-      errorMessage = exactUserErrorMessage(
-        error,
-      );
+      errorMessage = exactUserErrorMessage(error);
       notifyListeners();
       return null;
     } finally {

@@ -1062,6 +1062,261 @@ void main() {
         expect(photoService.uploadCalls, 0);
       },
     );
+
+    test(
+      'records why a queued photo is waiting and surfaces it after repeated no-progress cycles',
+      () async {
+        final auth = createAuthStorageBackend();
+        await auth.initialize();
+        await auth.writeString('paltranco_current_user_id', '7');
+        await auth.writeStringList('paltranco_known_session_user_ids', ['7']);
+        addTearDown(() async {
+          await auth.remove('paltranco_current_user_id');
+          await auth.remove('paltranco_known_session_user_ids');
+        });
+        final firestore = FakeFirebaseFirestore();
+        final backend = _MemoryBookingStorageBackend();
+        final photoService = _FakeBookingPhotoStorageService();
+        final service = BookingOfflineUploadQueueService(
+          firestore: firestore,
+          backend: backend,
+          photoStorageService: photoService,
+          flushMutations: () async {},
+        );
+        const key = 'booking_pending_upload_queue_v1::7';
+        final stagedAt = DateTime.utc(2026, 6, 29, 8);
+        await backend.writeStringList(key, [
+          jsonEncode({
+            'id': 'photo_a',
+            'booking_id': '145',
+            'status_key': 'delivered__1',
+            'field_key': 'proof',
+            'bytes_base64': base64Encode([1, 2, 3]),
+            'file_name': 'proof.png',
+            'mime_type': 'image/png',
+            'size': 3,
+            'created_at': stagedAt.toIso8601String(),
+            'retry_count': 0,
+            'waiting_for_commit': true,
+          }),
+        ]);
+
+        await service.initialize();
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        await service.flushPendingUploads();
+
+        final waiting =
+            jsonDecode((await backend.readStringList(key)).single)
+                as Map<String, dynamic>;
+        expect(waiting['wait_reason'], 'booking_missing');
+        expect(waiting['wait_count'], greaterThanOrEqualTo(1));
+        expect(waiting['last_error'], isNull);
+        expect(photoService.uploadCalls, 0);
+
+        final waitingItem = (await service.readPendingItems('7')).single;
+        expect(waitingItem.statusLabel, contains('Waiting for the booking'));
+        expect(waitingItem.hasError, isFalse);
+
+        for (var cycle = 0; cycle < 4; cycle++) {
+          await service.flushPendingUploads();
+        }
+
+        final stuck =
+            jsonDecode((await backend.readStringList(key)).single)
+                as Map<String, dynamic>;
+        expect(stuck['wait_count'], greaterThan(3));
+        expect('${stuck['last_error']}', contains('still waiting'));
+        expect('${stuck['error_diagnostics']}', contains('wait_reason'));
+        expect(photoService.uploadCalls, 0);
+
+        final stuckItem = (await service.readPendingItems('7')).single;
+        expect(stuckItem.statusLabel, 'Waiting to retry');
+        expect(stuckItem.errorMessage, isNotNull);
+      },
+    );
+
+    test(
+      'reclaims a queued photo the server already replaced and waits when the booking is still older',
+      () async {
+        final firestore = FakeFirebaseFirestore();
+        final backend = _MemoryBookingStorageBackend();
+        final photoService = _FakeBookingPhotoStorageService();
+        final service = BookingOfflineUploadQueueService(
+          firestore: firestore,
+          backend: backend,
+          photoStorageService: photoService,
+          flushMutations: () async {},
+        );
+        const key = 'booking_pending_upload_queue_v1::signed_out';
+        final stagedAt = DateTime.utc(2026, 6, 29, 8);
+        await backend.writeStringList(key, [
+          jsonEncode({
+            'id': 'photo_a',
+            'booking_id': '144',
+            'status_key': 'delivered__1',
+            'field_key': 'proof',
+            'bytes_base64': base64Encode([1, 2, 3]),
+            'file_name': 'proof.png',
+            'mime_type': 'image/png',
+            'size': 3,
+            'created_at': stagedAt.toIso8601String(),
+            'retry_count': 0,
+            'waiting_for_commit': true,
+          }),
+        ]);
+        // The booking moved past the staged photo, so no queued booking write
+        // can restore its marker and this entry can never be applied.
+        await firestore.collection('bookings').doc('144').set({
+          'id': '144',
+          'updated_at': stagedAt
+              .add(const Duration(minutes: 5))
+              .toIso8601String(),
+          'status_outputs': {
+            'delivered__1': {
+              'fields': {
+                'proof': {
+                  'pending_upload': true,
+                  'pending_upload_id': 'photo_b',
+                },
+              },
+            },
+          },
+        });
+
+        await service.initialize();
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        await service.flushPendingUploads();
+
+        expect(await backend.readStringList(key), isEmpty);
+        expect(photoService.uploadCalls, 0);
+        final saved = (await firestore.collection('bookings').doc('144').get())
+            .data()!;
+        expect(
+          (((saved['status_outputs'] as Map)['delivered__1'] as Map)['fields']
+              as Map)['proof']['pending_upload_id'],
+          'photo_b',
+        );
+
+        // A booking older than the staged photo may still be the write that
+        // carries this marker, so the entry waits instead of being reclaimed.
+        await firestore.collection('bookings').doc('144').set({
+          'id': '144',
+          'updated_at': stagedAt
+              .subtract(const Duration(hours: 1))
+              .toIso8601String(),
+          'status_outputs': {
+            'delivered__1': {
+              'fields': {
+                'proof': {
+                  'pending_upload': true,
+                  'pending_upload_id': 'photo_b',
+                },
+              },
+            },
+          },
+        });
+        await backend.writeStringList(key, [
+          jsonEncode({
+            'id': 'photo_a',
+            'booking_id': '144',
+            'status_key': 'delivered__1',
+            'field_key': 'proof',
+            'bytes_base64': base64Encode([1, 2, 3]),
+            'file_name': 'proof.png',
+            'mime_type': 'image/png',
+            'size': 3,
+            'created_at': stagedAt.toIso8601String(),
+            'retry_count': 0,
+            'waiting_for_commit': true,
+          }),
+        ]);
+        await service.flushPendingUploads();
+
+        final waiting =
+            jsonDecode((await backend.readStringList(key)).single)
+                as Map<String, dynamic>;
+        expect(waiting['wait_reason'], 'marker_superseded');
+        expect(waiting['last_error'], isNull);
+        expect(photoService.uploadCalls, 0);
+      },
+    );
+
+    test(
+      'releases the flush lock when the booking mutation flush never answers',
+      () async {
+        final firestore = FakeFirebaseFirestore();
+        final backend = _MemoryBookingStorageBackend();
+        final photoService = _FakeBookingPhotoStorageService();
+        var mutationFlushCalls = 0;
+        final stalled = Completer<void>();
+        final service = BookingOfflineUploadQueueService(
+          firestore: firestore,
+          backend: backend,
+          photoStorageService: photoService,
+          flushMutations: () {
+            mutationFlushCalls++;
+            return stalled.future;
+          },
+          mutationFlushTimeout: const Duration(milliseconds: 200),
+        );
+        const key = 'booking_pending_upload_queue_v1::signed_out';
+        await backend.writeStringList(key, [
+          jsonEncode({
+            'id': 'photo_a',
+            'booking_id': '1',
+            'status_key': 'delivered',
+            'field_key': 'proof',
+            'bytes_base64': base64Encode([1, 2, 3]),
+            'file_name': 'proof.png',
+            'mime_type': 'image/png',
+            'size': 3,
+            'created_at': '2026-06-29T08:00:00.000Z',
+            'retry_count': 0,
+          }),
+        ]);
+        await firestore.collection('bookings').doc('1').set({
+          'id': '1',
+          'updated_at': '2026-06-29T08:00:00.000Z',
+          'status_outputs': {
+            'delivered': {
+              'fields': {
+                'proof': {
+                  'pending_upload': true,
+                  'pending_upload_id': 'photo_a',
+                },
+              },
+            },
+          },
+        });
+
+        await service.initialize();
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        expect(
+          stalled.isCompleted,
+          isFalse,
+          reason: 'the stalled dependency must still be pending',
+        );
+        expect(
+          await backend.readStringList(key),
+          hasLength(1),
+          reason: 'a stalled cycle must keep the queued photo',
+        );
+
+        // A wedged lock would make every later timer and resume event return
+        // without touching the queue again.
+        await service.flushPendingUploads();
+        expect(
+          mutationFlushCalls,
+          greaterThanOrEqualTo(2),
+          reason: 'a timed-out cycle must release the flush lock',
+        );
+
+        stalled.complete();
+        await service.flushPendingUploads();
+        expect(await backend.readStringList(key), isEmpty);
+        expect(photoService.uploadCalls, 1);
+      },
+    );
   });
 
   group('OfflineMediaSyncService', () {

@@ -700,6 +700,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                     onTap: () => log == null
                         ? toggle(row.user, row.device)
                         : _details(log),
+                    animateInteraction: log == null ? false : true,
                   ),
                 ),
               ],

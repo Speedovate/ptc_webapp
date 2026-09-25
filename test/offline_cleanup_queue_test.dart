@@ -217,13 +217,13 @@ void main() {
   });
 
   test(
-    'claimed booking photo drains after server preflight without deletion',
+    'claimed booking photo remains visible when the object still exists',
     () async {
       const path =
           'bookings/148/status_outputs/book__1790316138146000/waybill_photo/old.jpg';
       final backend = MemoryBackend();
       final db = FakeFirebaseFirestore();
-      final storage = _Storage();
+      final storage = _Storage()..onExists = (_) async => true;
       await db.collection('bookings').doc('148').set({
         'id': '148',
         'photo_cleanup_paths': [path],
@@ -249,7 +249,52 @@ void main() {
 
       await queue.flushPendingCleanups();
 
+      final retained = jsonDecode(
+        (await backend.readStringList(queueKey)).single,
+      );
+      expect(retained['last_error'], contains('cleanup is still claimed'));
+      expect(retained['next_retry_at'], isNotNull);
+      expect(storage.deleted, isEmpty);
+    },
+  );
+
+  test(
+    'recoverable claimed booking photo finalizes bookkeeping when object is gone',
+    () async {
+      const path =
+          'bookings/148/status_outputs/book__1790316138146000/waybill_photo/old.jpg';
+      final backend = MemoryBackend();
+      final db = FakeFirebaseFirestore();
+      final storage = _Storage()..onExists = (_) async => false;
+      await db.collection('bookings').doc('148').set({
+        'id': '148',
+        'photo_cleanup_paths': [path],
+        'photo_cleanup_claims': [path],
+        'status_outputs': <String, dynamic>{},
+      });
+      await backend.writeStringList(queueKey, [
+        jsonEncode({
+          'id': 'bookingPhoto_claimed_absent',
+          'kind': 'bookingPhoto',
+          'target_path': jsonEncode({'booking_id': '148', 'path': path}),
+          'created_at': '2026-09-25T06:04:19.637Z',
+          'retry_count': 1,
+          'last_error': 'TimeoutException after 0:00:10.000000',
+        }),
+      ]);
+      final queue = OfflineCleanupQueueService(
+        backend: backend,
+        storage: storage,
+        firestore: db,
+        isOnline: () => true,
+      );
+
+      await queue.flushPendingCleanups();
+
       expect(await backend.readStringList(queueKey), isEmpty);
+      final booking = (await db.collection('bookings').doc('148').get()).data();
+      expect(booking?['photo_cleanup_paths'], isEmpty);
+      expect(booking?['photo_cleanup_claims'], isEmpty);
       expect(storage.deleted, isEmpty);
     },
   );
@@ -294,11 +339,192 @@ void main() {
     expect(retained['error_diagnostics'], contains('TimeoutException'));
     expect(retained['next_retry_at'], isNotNull);
   });
+
+  group('claimed cleanup review', () {
+    const path =
+        'bookings/148/status_outputs/book__1790316138146000/waybill_photo/old.jpg';
+
+    Future<_ClaimedCleanup> seed({
+      required MemoryBackend backend,
+      required FakeFirebaseFirestore db,
+      required _Storage storage,
+      required String entryId,
+    }) async {
+      await db.collection('bookings').doc('148').set({
+        'id': '148',
+        'photo_cleanup_paths': [path],
+        'photo_cleanup_claims': [path],
+        'status_outputs': <String, dynamic>{},
+      });
+      await backend.writeStringList(queueKey, [
+        jsonEncode({
+          'id': entryId,
+          'kind': 'bookingPhoto',
+          'target_path': jsonEncode({'booking_id': '148', 'path': path}),
+          'created_at': '2026-09-25T06:04:19.637Z',
+          'retry_count': 2,
+          'last_error':
+              'Bad state: Sync conflict: cleanup is still claimed and the '
+              'photo exists. Review the queued cleanup before retrying.',
+        }),
+      ]);
+      return _ClaimedCleanup(entryId);
+    }
+
+    test('a claimed cleanup is offered as a review item', () async {
+      final backend = MemoryBackend();
+      final db = FakeFirebaseFirestore();
+      final storage = _Storage()..onExists = (_) async => true;
+      final queued = await seed(
+        backend: backend,
+        db: db,
+        storage: storage,
+        entryId: 'bookingPhoto_review',
+      );
+      final queue = OfflineCleanupQueueService(
+        backend: backend,
+        storage: storage,
+        firestore: db,
+        isOnline: () => false,
+      );
+
+      final item = (await queue.readPendingItems('signed_out')).single;
+      expect(item.isBlocked, isTrue);
+      expect(
+        item.conflictId,
+        '${OfflineCleanupQueueService.claimedCleanupPrefix}${queued.entryId}',
+      );
+      expect(item.statusLabel, 'Needs review');
+    });
+
+    test(
+      'a plain retry never deletes a claimed object that still exists',
+      () async {
+        final backend = MemoryBackend();
+        final db = FakeFirebaseFirestore();
+        final storage = _Storage()..onExists = (_) async => true;
+        await seed(
+          backend: backend,
+          db: db,
+          storage: storage,
+          entryId: 'bookingPhoto_plain_retry',
+        );
+        final queue = OfflineCleanupQueueService(
+          backend: backend,
+          storage: storage,
+          firestore: db,
+          isOnline: () => true,
+        );
+
+        await queue.flushPendingCleanups();
+
+        expect(storage.deleted, isEmpty);
+        final booking = (await db.collection('bookings').doc('148').get())
+            .data();
+        expect(booking?['photo_cleanup_claims'], [path]);
+      },
+    );
+
+    test(
+      'keeping the local change deletes the claimed object and unblocks',
+      () async {
+        final backend = MemoryBackend();
+        final db = FakeFirebaseFirestore();
+        final storage = _Storage()..onExists = (_) async => true;
+        final queued = await seed(
+          backend: backend,
+          db: db,
+          storage: storage,
+          entryId: 'bookingPhoto_keep',
+        );
+        final queue = OfflineCleanupQueueService(
+          backend: backend,
+          storage: storage,
+          firestore: db,
+          isOnline: () => true,
+        );
+
+        final resolved = await queue.resolveClaimedCleanup(
+          '${OfflineCleanupQueueService.claimedCleanupPrefix}${queued.entryId}',
+          keepLocal: true,
+          storageKey: queueKey,
+        );
+        expect(resolved, isTrue);
+        await queue.flushPendingCleanups();
+
+        expect(storage.deleted, [path]);
+        expect(await backend.readStringList(queueKey), isEmpty);
+        final booking = (await db.collection('bookings').doc('148').get())
+            .data();
+        expect(booking?['photo_cleanup_claims'], isEmpty);
+        expect(booking?['photo_cleanup_paths'], isEmpty);
+      },
+    );
+
+    test('discarding the cleanup also releases the server claim', () async {
+      final backend = MemoryBackend();
+      final db = FakeFirebaseFirestore();
+      final storage = _Storage()..onExists = (_) async => true;
+      final queued = await seed(
+        backend: backend,
+        db: db,
+        storage: storage,
+        entryId: 'bookingPhoto_discard',
+      );
+      final queue = OfflineCleanupQueueService(
+        backend: backend,
+        storage: storage,
+        firestore: db,
+        isOnline: () => true,
+      );
+
+      final resolved = await queue.resolveClaimedCleanup(
+        '${OfflineCleanupQueueService.claimedCleanupPrefix}${queued.entryId}',
+        keepLocal: false,
+        storageKey: queueKey,
+      );
+
+      expect(resolved, isTrue);
+      expect(await backend.readStringList(queueKey), isEmpty);
+      expect(storage.deleted, isEmpty);
+      final booking = (await db.collection('bookings').doc('148').get()).data();
+      expect(
+        booking?['photo_cleanup_claims'],
+        isEmpty,
+        reason: 'a discarded cleanup must not leave the booking blocked',
+      );
+      expect(booking?['photo_cleanup_paths'], isEmpty);
+    });
+
+    test('resolving an unknown cleanup entry reports no work', () async {
+      final queue = OfflineCleanupQueueService(
+        backend: MemoryBackend(),
+        storage: _Storage(),
+        firestore: FakeFirebaseFirestore(),
+        isOnline: () => false,
+      );
+      expect(
+        await queue.resolveClaimedCleanup(
+          'cleanup:missing',
+          keepLocal: true,
+          storageKey: queueKey,
+        ),
+        isFalse,
+      );
+    });
+  });
+}
+
+class _ClaimedCleanup {
+  const _ClaimedCleanup(this.entryId);
+
+  final String entryId;
 }
 
 class _Storage extends Fake implements FirebaseStorage {
   final deleted = <String>[];
   Future<void> Function(String) onDelete = (_) async {};
+  Future<bool> Function(String) onExists = (_) async => true;
   @override
   Reference ref([String? path]) => _Reference(this, path!);
 }
@@ -308,6 +534,19 @@ class _Reference extends Fake implements Reference {
   @override
   final _Storage storage;
   final String path;
+  @override
+  Future<FullMetadata> getMetadata() async {
+    final exists = await storage.onExists(path);
+    if (!exists) {
+      throw FirebaseException(
+        plugin: 'firebase_storage',
+        code: 'object-not-found',
+        message: 'Object not found',
+      );
+    }
+    return FullMetadata({'fullPath': path});
+  }
+
   @override
   Future<void> delete() async {
     storage.deleted.add(path);

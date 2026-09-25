@@ -21,10 +21,16 @@ class OfflineCleanupQueueService {
     FirebaseStorage? storage,
     FirebaseFirestore? firestore,
     bool Function()? isOnline,
+    Duration operationTimeout = const Duration(seconds: 30),
+    Duration flushTimeout = const Duration(minutes: 2),
+    Duration localStorageTimeout = const Duration(seconds: 30),
   }) : _backend = backend ?? createBookingStorageBackend(),
        _providedStorage = storage,
        _providedFirestore = firestore,
-       _isOnline = isOnline ?? currentNetworkStatus;
+       _isOnline = isOnline ?? currentNetworkStatus,
+       _operationTimeout = operationTimeout,
+       _flushTimeout = flushTimeout,
+       _localStorageTimeout = localStorageTimeout;
 
   static final OfflineCleanupQueueService instance =
       OfflineCleanupQueueService();
@@ -34,16 +40,31 @@ class OfflineCleanupQueueService {
   static const _knownSessionUserIdsKey = 'paltranco_known_session_user_ids';
   static const _retryInterval = Duration(seconds: 20);
 
+  /// Namespaces a cleanup review id so the queue dialog can route the action to
+  /// this queue instead of the mutation queue.
+  static const claimedCleanupPrefix = 'cleanup:';
+
   final BookingStorageBackend _backend;
   final FirebaseStorage? _providedStorage;
   final FirebaseFirestore? _providedFirestore;
   final bool Function() _isOnline;
+  final Duration _operationTimeout;
+  final Duration _flushTimeout;
+  final Duration _localStorageTimeout;
   Future<void> _queueMutationTail = Future<void>.value();
   FirebaseStorage get _storage => _providedStorage ?? FirebaseStorage.instance;
   final AuthStorageBackend _authStorage = createAuthStorageBackend();
 
   bool _isInitialized = false;
   Future<void>? _flushFuture;
+
+  /// Incremented per flush. A flush that outlives its timeout and a newer flush
+  /// must not publish status over the newer attempt.
+  int _flushGeneration = 0;
+
+  /// Entry ids the user explicitly confirmed may act on a claim whose object
+  /// still exists. Kept in memory so a plain retry never does.
+  final Set<String> _confirmedClaimRetries = <String>{};
   Timer? _retryTimer;
   StreamSubscription<bool>? _networkSubscription;
   final StreamController<OfflineQueueStatusSnapshot> _statusController =
@@ -65,18 +86,112 @@ class OfflineCleanupQueueService {
       _storageKeyForUserId(userId),
     );
     return entries
-        .map(
-          (entry) => OfflineQueueItem(
+        .map((entry) {
+          // A cleanup that is still claimed while its object exists cannot
+          // resolve itself. It is surfaced as a review item so the queued
+          // work has an explicit resolution instead of retrying forever.
+          final needsReview = isClaimedCleanupReview(entry.lastError);
+          return OfflineQueueItem(
             title: 'Remove stored files',
             recordLabel: 'File cleanup',
             createdAt: DateTime.tryParse(entry.createdAtIso),
             hasError: entry.lastError?.isNotEmpty == true,
+            isBlocked: needsReview,
+            conflictId: needsReview ? '$claimedCleanupPrefix${entry.id}' : null,
             errorMessage: entry.lastError,
             diagnostics: entry.diagnostics,
             nextRetryAt: entry.nextRetryAt,
-          ),
-        )
+          );
+        })
         .toList(growable: false);
+  }
+
+  /// A claimed cleanup whose object still exists needs a human decision: retry
+  /// the deletion, or discard the queued work and release the server claim.
+  static bool isClaimedCleanupReview(String? lastError) =>
+      (lastError ?? '').contains('cleanup is still claimed');
+
+  /// Retry a claimed cleanup with an explicit instruction to delete the object,
+  /// or discard the queued work and release both server bookkeeping fields.
+  /// Returns false when the entry no longer exists for this account.
+  Future<bool> resolveClaimedCleanup(
+    String conflictId, {
+    required bool keepLocal,
+    String? storageKey,
+  }) async {
+    final entryId = conflictId.startsWith(claimedCleanupPrefix)
+        ? conflictId.substring(claimedCleanupPrefix.length)
+        : conflictId;
+    if (entryId.isEmpty) {
+      return false;
+    }
+    final scope = storageKey ?? await _resolvedStorageKey();
+    final entries = await _readEntriesForStorageKey(scope);
+    final entry = entries.where((entry) => entry.id == entryId).firstOrNull;
+    if (entry == null) {
+      return false;
+    }
+    if (keepLocal) {
+      // The user confirmed the deletion, so the next attempt may act on a
+      // claim that still holds an existing object.
+      _confirmedClaimRetries.add(entryId);
+      await _serializeQueueMutation(() async {
+        await _writeEntriesForStorageKey(scope, [
+          for (final candidate in entries)
+            if (candidate.id == entryId)
+              candidate.copyWith(
+                clearLastError: true,
+                clearDiagnostics: true,
+                clearNextRetryAt: true,
+                retryCount: 0,
+              )
+            else
+              candidate,
+        ]);
+      });
+      unawaited(flushPendingCleanups());
+      return true;
+    }
+
+    // Discarding the local work item must also release the server claim, or the
+    // booking stays blocked for every other device.
+    final target = _parseBookingPhotoTarget(entry.targetPath);
+    if (target != null) {
+      final firestore = _providedFirestore ?? FirebaseFirestore.instance;
+      final ref = firestore.collection('bookings').doc(target.bookingId);
+      await runTransactionWithOriginalErrors<void>(firestore, (
+        transaction,
+      ) async {
+        final snapshot = await transaction.get(ref);
+        if (snapshot.data() == null) {
+          return;
+        }
+        transaction.update(ref, {
+          'photo_cleanup_paths': FieldValue.arrayRemove([target.path]),
+          'photo_cleanup_claims': FieldValue.arrayRemove([target.path]),
+        });
+      }).timeout(_operationTimeout);
+    }
+    _confirmedClaimRetries.remove(entryId);
+    await _serializeQueueMutation(() async {
+      final latest = await _readEntriesForStorageKey(scope);
+      final retained = latest
+          .where((candidate) => candidate.id != entryId)
+          .toList(growable: false);
+      await _writeEntriesForStorageKey(scope, retained);
+      _setStatus(
+        _currentStatus.copyWith(
+          pendingCount: retained.length,
+          failedCount: retained
+              .where((candidate) => candidate.lastError != null)
+              .length,
+        ),
+      );
+    });
+    unawaited(
+      SyncErrorLogService.instance.resolveQueueEntries(scope, {entryId}),
+    );
+    return true;
   }
 
   Future<Map<String, OfflineQueueStatusSnapshot>> readScopedStatuses({
@@ -112,7 +227,15 @@ class OfflineCleanupQueueService {
       await _refreshStatusFromStorage();
       return;
     }
-    await _backend.initialize();
+    // A device store that never answers must not leave this queue permanently
+    // uninitialized: every later retry, resume, and enqueue would keep waiting on
+    // the same pending read with nothing reported to the user.
+    await _backend.initialize().timeout(
+      _localStorageTimeout,
+      onTimeout: () => throw TimeoutException(
+        'Local cleanup queue storage did not respond.',
+      ),
+    );
     await _refreshStatusFromStorage();
     _retryTimer ??= Timer.periodic(_retryInterval, (_) {
       if (!isAppVisible()) return;
@@ -202,10 +325,33 @@ class OfflineCleanupQueueService {
     if (!_isOnline()) {
       return;
     }
-    final flush = _flushPendingCleanupsInternal();
+    final generation = ++_flushGeneration;
+    final flush = _flushPendingCleanupsInternal(
+      generation,
+    ).timeout(_flushTimeout);
     _flushFuture = flush;
     try {
       await flush;
+    } on TimeoutException catch (error, stack) {
+      // A stuck local read, Storage request, or Firestore callback must not
+      // hold the cleanup lock forever. The entry remains persisted and the
+      // normal retry timer/network signal can make another bounded attempt.
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'offline_cleanup_queue_service.dart',
+          operation: 'cleanup flush timeout',
+          kind: 'cleanup_flush_timeout',
+        ),
+      );
+      _setStatus(
+        _currentStatus.copyWith(
+          isSyncing: false,
+          processedInBatch: 0,
+          totalInBatch: 0,
+        ),
+      );
     } finally {
       if (identical(_flushFuture, flush)) {
         _flushFuture = null;
@@ -213,7 +359,17 @@ class OfflineCleanupQueueService {
     }
   }
 
-  Future<void> _flushPendingCleanupsInternal() async {
+  void _setStatusForGeneration(
+    int generation,
+    OfflineQueueStatusSnapshot nextStatus,
+  ) {
+    if (generation != _flushGeneration) {
+      return;
+    }
+    _setStatus(nextStatus);
+  }
+
+  Future<void> _flushPendingCleanupsInternal(int generation) async {
     try {
       await _queueMutationTail;
       final currentStorageKey = await _resolvedStorageKey();
@@ -222,11 +378,12 @@ class OfflineCleanupQueueService {
         await _flushPendingCleanupsForStorageKey(
           storageKey,
           updateStatus: storageKey == currentStorageKey,
+          generation: generation,
         );
       }
       await _refreshStatusFromStorage();
     } finally {
-      if (_currentStatus.isSyncing) {
+      if (_currentStatus.isSyncing && generation == _flushGeneration) {
         _setStatus(
           _currentStatus.copyWith(
             isSyncing: false,
@@ -238,13 +395,13 @@ class OfflineCleanupQueueService {
     }
   }
 
-  Future<void> _applyEntry(_OfflineCleanupEntry entry) async {
+  Future<_CleanupApplyResult> _applyEntry(_OfflineCleanupEntry entry) async {
     switch (entry.kind) {
       case _OfflineCleanupKind.bookingPhoto:
         final target = _parseBookingPhotoTarget(entry.targetPath);
         // A persisted malformed target is terminal. Retrying it can never make
         // a blank or unsafe Storage path valid.
-        if (target == null) return;
+        if (target == null) return _CleanupApplyResult.alreadyResolved;
         final firestore = _providedFirestore ?? FirebaseFirestore.instance;
         final ref = firestore.collection('bookings').doc(target.bookingId);
 
@@ -256,8 +413,17 @@ class OfflineCleanupQueueService {
           final current = await ref
               .get(const GetOptions(source: Source.server))
               .timeout(const Duration(seconds: 10));
-          if (_bookingsDeletableNow(current.data(), target.path) != true) {
-            return;
+          final state = _bookingCleanupState(current.data(), target.path);
+          if (state != _BookingCleanupState.pending) {
+            if (state == _BookingCleanupState.claimed) {
+              return _recoverClaimedBookingPhoto(
+                ref,
+                target.path,
+                entryId: entry.id,
+                cleanupQueuedAtIso: entry.createdAtIso,
+              );
+            }
+            return _CleanupApplyResult.alreadyResolved;
           }
         }
 
@@ -265,7 +431,8 @@ class OfflineCleanupQueueService {
           firestore,
           (transaction) async {
             final snapshot = await transaction.get(ref);
-            if (_bookingsDeletableNow(snapshot.data(), target.path) != true) {
+            if (_bookingCleanupState(snapshot.data(), target.path) !=
+                _BookingCleanupState.pending) {
               return false;
             }
             transaction.update(ref, {
@@ -274,23 +441,147 @@ class OfflineCleanupQueueService {
             return true;
           },
         ).timeout(const Duration(seconds: 10));
-        if (!claimed) return;
+        if (!claimed) {
+          return _recoverClaimedBookingPhoto(
+            ref,
+            target.path,
+            entryId: entry.id,
+            cleanupQueuedAtIso: entry.createdAtIso,
+          );
+        }
         await _deleteByPathNow(
           target.path,
         ).timeout(const Duration(seconds: 20));
+        // A claim is only a lease for the delete operation. Once Storage has
+        // confirmed deletion, remove both the work item and the claim in the
+        // same Firestore update. Leaving either field behind can block future
+        // booking edits or make a later retry falsely appear complete.
         await ref
             .update({
               'photo_cleanup_paths': FieldValue.arrayRemove([target.path]),
+              'photo_cleanup_claims': FieldValue.arrayRemove([target.path]),
             })
             .timeout(const Duration(seconds: 10));
-        return;
+        return _CleanupApplyResult.deleted;
       case _OfflineCleanupKind.deleteByPath:
-        await _deleteByPathNow(entry.targetPath);
-        return;
+        await _deleteByPathNow(entry.targetPath).timeout(_operationTimeout);
+        return _CleanupApplyResult.deleted;
       case _OfflineCleanupKind.deleteFolder:
-        await _deleteFolderRecursively(entry.targetPath);
-        return;
+        await _deleteFolderRecursively(
+          entry.targetPath,
+        ).timeout(_operationTimeout);
+        return _CleanupApplyResult.deleted;
     }
+  }
+
+  /// A retry can encounter a claim left by an earlier attempt. Never delete a
+  /// path merely because it is claimed: first decide whether the object that is
+  /// still there is the one this cleanup was queued to remove.
+  ///
+  /// Storage records when an object was created, and the entry records when the
+  /// cleanup was queued. An object that predates the cleanup is the superseded
+  /// photo the entry was created for, so the deletion can be finished without a
+  /// human. An object created *after* the cleanup means the path was written
+  /// again, and deleting it would destroy current content: that case still
+  /// needs an explicit confirmation.
+  Future<_CleanupApplyResult> _recoverClaimedBookingPhoto(
+    DocumentReference<Map<String, dynamic>> ref,
+    String path, {
+    String? entryId,
+    String? cleanupQueuedAtIso,
+  }) async {
+    final current = await ref
+        .get(const GetOptions(source: Source.server))
+        .timeout(const Duration(seconds: 10));
+    final state = _bookingCleanupState(current.data(), path);
+    if (state != _BookingCleanupState.claimed) {
+      return state == _BookingCleanupState.pending
+          ? (_throwCleanupRace(path))
+          : _CleanupApplyResult.alreadyResolved;
+    }
+
+    final object = await _storageObjectAge(path);
+    if (object.exists) {
+      final queuedAt = DateTime.tryParse(cleanupQueuedAtIso ?? '');
+      // Only positive proof allows an unattended delete: the object must have a
+      // creation time, the cleanup must have a queue time, and the object must
+      // be older than the cleanup. Anything unknown - a metadata response with
+      // no timestamp, a missing queue time - is treated as "might be current
+      // content" and needs the explicit confirmation instead.
+      final isSupersededObject =
+          object.createdAt != null &&
+          queuedAt != null &&
+          !object.createdAt!.isAfter(queuedAt);
+      if (!isSupersededObject) {
+        // The path holds content this cleanup cannot prove is superseded, so
+        // deleting now could destroy a current photo. Require the explicit
+        // confirmation the queued-actions list sets for this id.
+        if (entryId == null || !_confirmedClaimRetries.remove(entryId)) {
+          throw StateError(
+            'Sync conflict: cleanup is still claimed and the photo at this path '
+            'cannot be proven older than the cleanup. Review the queued cleanup '
+            'before retrying.',
+          );
+        }
+      }
+      await _deleteByPathNow(path).timeout(_operationTimeout);
+    }
+
+    final finalized = await runTransactionWithOriginalErrors<bool>(
+      _firestoreOrProvided(),
+      (transaction) async {
+        final snapshot = await transaction.get(ref);
+        final latestState = _bookingCleanupState(snapshot.data(), path);
+        if (latestState == _BookingCleanupState.notPending ||
+            latestState == _BookingCleanupState.referenced ||
+            latestState == _BookingCleanupState.malformed) {
+          return false;
+        }
+        if (latestState != _BookingCleanupState.claimed) {
+          throw StateError(
+            'Sync conflict: cleanup claim changed while it was being recovered.',
+          );
+        }
+        transaction.update(ref, {
+          'photo_cleanup_paths': FieldValue.arrayRemove([path]),
+          'photo_cleanup_claims': FieldValue.arrayRemove([path]),
+        });
+        return true;
+      },
+    ).timeout(const Duration(seconds: 10));
+    return finalized
+        ? _CleanupApplyResult.deleted
+        : _CleanupApplyResult.alreadyResolved;
+  }
+
+  FirebaseFirestore _firestoreOrProvided() =>
+      _providedFirestore ?? FirebaseFirestore.instance;
+
+  /// Whether the object at [path] is still there, and when it was written.
+  /// [createdAt] is null when the object exists but Storage reported no
+  /// creation time; that is deliberately not the same as "absent".
+  Future<({bool exists, DateTime? createdAt})> _storageObjectAge(
+    String path,
+  ) async {
+    try {
+      final metadata = await _storage
+          .ref(path)
+          .getMetadata()
+          .timeout(const Duration(seconds: 10));
+      return (exists: true, createdAt: metadata.timeCreated);
+    } on FirebaseException catch (error) {
+      if (error.code == 'object-not-found') {
+        return (exists: false, createdAt: null);
+      }
+      rethrow;
+    }
+  }
+
+  Never _throwCleanupRace(String path) {
+    throw StateError(
+      'Sync conflict: cleanup state changed while processing $path. '
+      'The queue will retry without deleting the photo.',
+    );
   }
 
   Future<void> _deleteByPathNow(String storagePath) async {
@@ -328,26 +619,30 @@ class OfflineCleanupQueueService {
     }
   }
 
-  /// Returns true only when the persisted path is still a pending, unclaimed
-  /// deletion. A null result means the work is already resolved (or the server
-  /// state is malformed) and must be retired instead of retried.
-  static bool? _bookingsDeletableNow(
+  /// Classifies the server state before acting on a cleanup path. In
+  /// particular, `claimed` is not equivalent to `notPending`: it may mean that
+  /// a previous delete committed but its bookkeeping update timed out.
+  static _BookingCleanupState _bookingCleanupState(
     Map<String, dynamic>? booking,
     String path,
   ) {
-    if (booking == null) return false;
+    if (booking == null) return _BookingCleanupState.notPending;
     final cleanupPaths = booking['photo_cleanup_paths'];
-    if (cleanupPaths is! List) return null;
-    if (!cleanupPaths.whereType<String>().contains(path)) return false;
+    if (cleanupPaths is! List) return _BookingCleanupState.malformed;
+    if (!cleanupPaths.whereType<String>().contains(path)) {
+      return _BookingCleanupState.notPending;
+    }
     if (BookingPhotoCleanup.references(
       booking['status_outputs'],
     ).contains(path)) {
-      return false;
+      return _BookingCleanupState.referenced;
     }
     final claims = booking['photo_cleanup_claims'];
-    if (claims == null) return true;
-    if (claims is! List) return null;
-    return !claims.whereType<String>().contains(path);
+    if (claims == null) return _BookingCleanupState.pending;
+    if (claims is! List) return _BookingCleanupState.malformed;
+    return claims.whereType<String>().contains(path)
+        ? _BookingCleanupState.claimed
+        : _BookingCleanupState.pending;
   }
 
   _BookingPhotoTarget? _parseBookingPhotoTarget(String raw) {
@@ -472,6 +767,7 @@ class OfflineCleanupQueueService {
   Future<void> _flushPendingCleanupsForStorageKey(
     String storageKey, {
     required bool updateStatus,
+    required int generation,
   }) async {
     final entries = await _readEntriesForStorageKey(storageKey);
     final now = DateTime.now().toUtc();
@@ -480,7 +776,8 @@ class OfflineCleanupQueueService {
     );
     if (!hasDueWork) {
       if (updateStatus) {
-        _setStatus(
+        _setStatusForGeneration(
+          generation,
           _currentStatus.copyWith(
             pendingCount: entries.length,
             failedCount: entries
@@ -495,7 +792,8 @@ class OfflineCleanupQueueService {
     }
     final originalIds = entries.map((entry) => entry.id).toSet();
     if (updateStatus) {
-      _setStatus(
+      _setStatusForGeneration(
+        generation,
         _currentStatus.copyWith(
           pendingCount: entries.length,
           isSyncing: entries.isNotEmpty,
@@ -518,7 +816,7 @@ class OfflineCleanupQueueService {
           remaining.add(entry);
           continue;
         }
-        await _applyEntry(entry);
+        await _applyEntry(entry).timeout(_operationTimeout);
         // A terminal no-op (malformed target, already claimed, or already
         // removed) is also a completed action and must clear old diagnostics.
         confirmedSuccesses.add(entry.id);
@@ -556,7 +854,8 @@ class OfflineCleanupQueueService {
       } finally {
         processed++;
         if (updateStatus) {
-          _setStatus(
+          _setStatusForGeneration(
+            generation,
             _currentStatus.copyWith(
               pendingCount: remaining.length + (entries.length - processed),
               isSyncing: true,
@@ -584,9 +883,13 @@ class OfflineCleanupQueueService {
       ),
     );
     if (updateStatus) {
-      _setStatus(
+      _setStatusForGeneration(
+        generation,
         _currentStatus.copyWith(
           pendingCount: remaining.length,
+          failedCount: remaining
+              .where((entry) => entry.lastError != null)
+              .length,
           isSyncing: false,
           processedInBatch: remaining.isEmpty ? entries.length : 0,
           totalInBatch: remaining.isEmpty ? entries.length : 0,
@@ -634,6 +937,16 @@ class OfflineCleanupQueueService {
 
 enum _OfflineCleanupKind { deleteByPath, deleteFolder, bookingPhoto }
 
+enum _CleanupApplyResult { deleted, alreadyResolved }
+
+enum _BookingCleanupState {
+  pending,
+  claimed,
+  notPending,
+  referenced,
+  malformed,
+}
+
 class _BookingPhotoTarget {
   const _BookingPhotoTarget({required this.bookingId, required this.path});
 
@@ -667,6 +980,9 @@ class _OfflineCleanupEntry {
     String? lastError,
     String? diagnostics,
     DateTime? nextRetryAt,
+    bool clearLastError = false,
+    bool clearDiagnostics = false,
+    bool clearNextRetryAt = false,
   }) {
     return _OfflineCleanupEntry(
       id: id,
@@ -674,9 +990,9 @@ class _OfflineCleanupEntry {
       targetPath: targetPath,
       createdAtIso: createdAtIso,
       retryCount: retryCount ?? this.retryCount,
-      lastError: lastError ?? this.lastError,
-      diagnostics: diagnostics ?? this.diagnostics,
-      nextRetryAt: nextRetryAt ?? this.nextRetryAt,
+      lastError: clearLastError ? null : lastError ?? this.lastError,
+      diagnostics: clearDiagnostics ? null : diagnostics ?? this.diagnostics,
+      nextRetryAt: clearNextRetryAt ? null : nextRetryAt ?? this.nextRetryAt,
     );
   }
 

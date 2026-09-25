@@ -133,6 +133,7 @@ class _BookingConflictReviewDialogState
                     ),
                   ),
                   ExpansionTile(
+                    expansionAnimationStyle: AnimationStyle.noAnimation,
                     title: const Text('Full records and workflow history'),
                     children: [
                       Builder(

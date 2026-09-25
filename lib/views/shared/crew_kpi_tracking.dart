@@ -181,11 +181,15 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
         ),
         const SizedBox(width: 12),
         AdminListNewButton(
-          controlHeight: adminFilterFieldMinHeight, surfaceRadius: 16,
+          controlHeight: adminFilterFieldMinHeight,
+          surfaceRadius: 16,
           iconOnly: constraints.maxWidth < 520,
           label: showingFuel ? 'Transactions' : 'Fuel',
           icon: showingFuel ? Icons.receipt_long : Icons.local_gas_station,
-          onTap: () => filter(() { showingFuel = !showingFuel; search = ''; }),
+          onTap: () => filter(() {
+            showingFuel = !showingFuel;
+            search = '';
+          }),
         ),
         const SizedBox(width: 12),
         AdminListDynamicFiltersPanel(
@@ -301,16 +305,32 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
     final salary = selected
         .where((r) => r['type'] == 'Salary')
         .fold<double>(0, (s, r) => s + (r['amount'] as num? ?? 0));
-    final bookingCount = selected.where((r) => r['type'] == 'Share')
-        .map((r) => r['booking_id']).whereType<String>().toSet().length;
-    final periodFuel = (data?['fuel'] as List? ?? []).whereType<Map>().where((r) {
-      final date = DateTime.tryParse('${r['day']}T00:00:00Z');
-      return date != null && (period?.contains(date) ?? true);
-    }).toList()..sort((a, b) => '${b['day']} ${b['created_at']} ${b['id']}'
-        .compareTo('${a['day']} ${a['created_at']} ${a['id']}'));
-    final fuelRows = periodFuel.where((r) => search.trim().isEmpty ||
-        ['pm','day','reference','supplier','notes','status'].map((key) => r[key])
-          .join(' ').toLowerCase().contains(search.trim().toLowerCase())).toList();
+    final bookingCount = selected
+        .where((r) => r['type'] == 'Share')
+        .map((r) => r['booking_id'])
+        .whereType<String>()
+        .toSet()
+        .length;
+    final periodFuel =
+        (data?['fuel'] as List? ?? []).whereType<Map>().where((r) {
+          final date = DateTime.tryParse('${r['day']}T00:00:00Z');
+          return date != null && (period?.contains(date) ?? true);
+        }).toList()..sort(
+          (a, b) => '${b['day']} ${b['created_at']} ${b['id']}'.compareTo(
+            '${a['day']} ${a['created_at']} ${a['id']}',
+          ),
+        );
+    final fuelRows = periodFuel
+        .where(
+          (r) =>
+              search.trim().isEmpty ||
+              ['pm', 'day', 'reference', 'supplier', 'notes', 'status']
+                  .map((key) => r[key])
+                  .join(' ')
+                  .toLowerCase()
+                  .contains(search.trim().toLowerCase()),
+        )
+        .toList();
     final incidents = (data?['incidents'] as List? ?? [])
         .whereType<Map>()
         .where((r) {
@@ -428,28 +448,55 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
           emptyMessage: data == null && error == null
               ? 'No cached KPI data. Connect online to load your KPI.'
               : search.isNotEmpty
-              ? (showingFuel ? 'No matching fuel requests.' : 'No matching transactions.')
-              : showingFuel ? 'No fuel requests in this period.' : 'No delivered trips in this period.',
-          titles: showingFuel ? const ['PM', 'Date', 'Reference', 'Supplier', 'Liters', 'Price / Liter', 'Amount', 'Notes / Route', 'Status'] : const [
-            'Label',
-            'Amount',
-            'Type',
-            'Status',
-            'DateTime',
-            'Actions',
-          ],
-          itemCount: showingFuel ? fuelRows.length.clamp(0, visible) : rows.length,
+              ? (showingFuel
+                    ? 'No matching fuel requests.'
+                    : 'No matching transactions.')
+              : showingFuel
+              ? 'No fuel requests in this period.'
+              : 'No delivered trips in this period.',
+          titles: showingFuel
+              ? const [
+                  'PM',
+                  'Date',
+                  'Reference',
+                  'Supplier',
+                  'Liters',
+                  'Price / Liter',
+                  'Amount',
+                  'Notes / Route',
+                  'Status',
+                ]
+              : const [
+                  'Label',
+                  'Amount',
+                  'Type',
+                  'Status',
+                  'DateTime',
+                  'Actions',
+                ],
+          itemCount: showingFuel
+              ? fuelRows.length.clamp(0, visible)
+              : rows.length,
           columnExtraWidths: showingFuel ? const {} : const {5: 48},
           rowGroupKey: showingFuel ? null : (i) => rows[i].day,
           valuesAt: (i) {
             if (showingFuel) {
               final r = fuelRows[i];
-              return ['${r['pm'] ?? '—'}', date('${r['day']}'),
-                '${r['reference'] ?? '—'}', '${r['supplier'] ?? '—'}',
+              return [
+                '${r['pm'] ?? '—'}',
+                date('${r['day']}'),
+                '${r['reference'] ?? '—'}',
+                '${r['supplier'] ?? '—'}',
                 '${r['liters'] ?? '—'}',
-                kpiMoney(r['price_per_liter']) == null ? '—' : money(kpiMoney(r['price_per_liter'])!),
-                kpiMoney(r['amount']) == null ? '—' : money(kpiMoney(r['amount'])!),
-                '${r['notes'] ?? '—'}', '${r['status'] ?? 'active'}'];
+                kpiMoney(r['price_per_liter']) == null
+                    ? '—'
+                    : money(kpiMoney(r['price_per_liter'])!),
+                kpiMoney(r['amount']) == null
+                    ? '—'
+                    : money(kpiMoney(r['amount'])!),
+                '${r['notes'] ?? '—'}',
+                '${r['status'] ?? 'active'}',
+              ];
             }
             final row = rows[i];
             final tx = row.transaction;
@@ -503,6 +550,7 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
                 onTap: () => setState(() {
                   if (!expanded.remove(row.day)) expanded.add(row.day);
                 }),
+                animateInteraction: false,
               );
             }
             return null;

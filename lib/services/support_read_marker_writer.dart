@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:webapp/services/firestore_transaction_errors.dart';
 
 // Foreground timeout does not cancel Firestore. Replays of the same action
 // must await that original transaction instead of starting concurrent copies.
@@ -27,7 +28,7 @@ Future<void> _write(
   DocumentReference<Map<String, dynamic>> reference,
   Map<String, dynamic> document,
 ) async {
-  await firestore.runTransaction((transaction) async {
+  await runTransactionWithOriginalErrors<void>(firestore, (transaction) async {
     final existing = await transaction.get(reference);
     final previous = existing.data();
     final incomingTime = DateTime.tryParse(

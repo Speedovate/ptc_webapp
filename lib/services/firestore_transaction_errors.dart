@@ -8,22 +8,28 @@ bool isBoxedTransactionError(String message) => message.toLowerCase().contains(
 /// a JS error. Do not replace commit/network failures with a prior retry error.
 Future<T> runTransactionWithOriginalErrors<T>(
   FirebaseFirestore firestore,
-  Future<T> Function(Transaction) action,
-) async {
+  Future<T> Function(Transaction) action, {
+  Duration timeout = const Duration(seconds: 30),
+  int maxAttempts = 5,
+}) async {
   Object? callbackError;
   StackTrace? callbackStack;
   try {
-    return await firestore.runTransaction<T>((transaction) async {
-      callbackError = null;
-      callbackStack = null;
-      try {
-        return await action(transaction);
-      } catch (error, stack) {
-        callbackError = error;
-        callbackStack = stack;
-        rethrow;
-      }
-    });
+    return await firestore.runTransaction<T>(
+      (transaction) async {
+        callbackError = null;
+        callbackStack = null;
+        try {
+          return await action(transaction);
+        } catch (error, stack) {
+          callbackError = error;
+          callbackStack = stack;
+          rethrow;
+        }
+      },
+      timeout: timeout,
+      maxAttempts: maxAttempts,
+    );
   } catch (error) {
     if (callbackError != null && isBoxedTransactionError(error.toString())) {
       Error.throwWithStackTrace(callbackError!, callbackStack!);

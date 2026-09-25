@@ -79,10 +79,7 @@ void main() {
         accountNumber: '1234567890',
       );
 
-      expect(
-        dashboardExportFileName(configBase),
-        'BS-12345-Regular.docx',
-      );
+      expect(dashboardExportFileName(configBase), 'BS-12345-Regular.docx');
       expect(
         dashboardExportFileName(
           DashboardExportConfig(

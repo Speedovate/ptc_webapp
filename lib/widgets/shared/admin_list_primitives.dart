@@ -1233,6 +1233,7 @@ class AdminListActionButton extends StatelessWidget {
     this.size = 40,
     this.iconSize = 18,
     this.borderRadius = 12,
+    this.animateInteraction = true,
   });
 
   final IconData icon;
@@ -1242,6 +1243,7 @@ class AdminListActionButton extends StatelessWidget {
   final double size;
   final double iconSize;
   final double borderRadius;
+  final bool animateInteraction;
 
   @override
   Widget build(BuildContext context) {
@@ -1254,6 +1256,7 @@ class AdminListActionButton extends StatelessWidget {
       size: size,
       iconSize: iconSize,
       borderRadius: borderRadius,
+      animateInteraction: animateInteraction,
     );
   }
 }

@@ -13,6 +13,9 @@ import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
 import 'package:webapp/utils/functions.dart';
 
+/// Bounded so one unresponsive device store cannot hold the status strip open.
+const _queueStatusReadTimeout = Duration(seconds: 20);
+
 @immutable
 class OfflineQueueStatusSnapshot {
   const OfflineQueueStatusSnapshot({
@@ -185,26 +188,8 @@ class OfflineSyncStatusService extends ChangeNotifier {
         .whereType<String>()
         .toSet()
         .toList();
-    final bookingStatuses = await BookingOfflineUploadQueueService.instance
-        .readScopedStatuses(
-          userIds: normalizedUserIds,
-          includeSignedOut: includeSignedOut,
-        );
-    final mediaStatuses = await OfflineMediaSyncService.instance
-        .readScopedStatuses(
-          userIds: normalizedUserIds,
-          includeSignedOut: includeSignedOut,
-        );
-    final mutationStatuses = await OfflineMutationQueueService.instance
-        .readScopedStatuses(
-          userIds: normalizedUserIds,
-          includeSignedOut: includeSignedOut,
-        );
-    final cleanupStatuses = await OfflineCleanupQueueService.instance
-        .readScopedStatuses(
-          userIds: normalizedUserIds,
-          includeSignedOut: includeSignedOut,
-        );
+    final (bookingStatuses, mediaStatuses, mutationStatuses, cleanupStatuses) =
+        await _readAllQueueScopes(normalizedUserIds, includeSignedOut);
 
     final bookingAggregate = _aggregateQueueStatuses(bookingStatuses.values);
     final mediaAggregate = _aggregateQueueStatuses(mediaStatuses.values);
@@ -218,6 +203,97 @@ class OfflineSyncStatusService extends ChangeNotifier {
       mutationStatus: mutationAggregate,
       cleanupStatus: cleanupAggregate,
     );
+  }
+
+  /// One stalled queue must not blank the whole status strip, and no queue read
+  /// may hold the strip open forever. Every read is bounded; an unreadable queue
+  /// is reported and falls back to its last known counts instead of appearing
+  /// empty.
+  Future<
+    (
+      Map<String, OfflineQueueStatusSnapshot>,
+      Map<String, OfflineQueueStatusSnapshot>,
+      Map<String, OfflineQueueStatusSnapshot>,
+      Map<String, OfflineQueueStatusSnapshot>,
+    )
+  >
+  _readAllQueueScopes(
+    List<String> normalizedUserIds,
+    bool includeSignedOut,
+  ) async {
+    final currentScope = await _currentScopeKey();
+    final results = await Future.wait([
+      _readQueueScopes(
+        label: 'booking photo',
+        lastKnown: BookingOfflineUploadQueueService.instance.currentStatus,
+        read: () =>
+            BookingOfflineUploadQueueService.instance.readScopedStatuses(
+              userIds: normalizedUserIds,
+              includeSignedOut: includeSignedOut,
+            ),
+        fallbackScope: currentScope,
+      ),
+      _readQueueScopes(
+        label: 'media',
+        lastKnown: OfflineMediaSyncService.instance.currentStatus,
+        read: () => OfflineMediaSyncService.instance.readScopedStatuses(
+          userIds: normalizedUserIds,
+          includeSignedOut: includeSignedOut,
+        ),
+        fallbackScope: currentScope,
+      ),
+      _readQueueScopes(
+        label: 'mutation',
+        lastKnown: OfflineMutationQueueService.instance.currentStatus,
+        read: () => OfflineMutationQueueService.instance.readScopedStatuses(
+          userIds: normalizedUserIds,
+          includeSignedOut: includeSignedOut,
+        ),
+        fallbackScope: currentScope,
+      ),
+      _readQueueScopes(
+        label: 'cleanup',
+        lastKnown: OfflineCleanupQueueService.instance.currentStatus,
+        read: () => OfflineCleanupQueueService.instance.readScopedStatuses(
+          userIds: normalizedUserIds,
+          includeSignedOut: includeSignedOut,
+        ),
+        fallbackScope: currentScope,
+      ),
+    ]);
+    return (results[0], results[1], results[2], results[3]);
+  }
+
+  Future<String> _currentScopeKey() async {
+    final userId = normalizeId(
+      await _authStorage.readString('paltranco_current_user_id'),
+    );
+    return userId ?? 'signed_out';
+  }
+
+  Future<Map<String, OfflineQueueStatusSnapshot>> _readQueueScopes({
+    required String label,
+    required Future<Map<String, OfflineQueueStatusSnapshot>> Function() read,
+    required OfflineQueueStatusSnapshot lastKnown,
+    required String fallbackScope,
+  }) async {
+    try {
+      return await read().timeout(_queueStatusReadTimeout);
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'offline_sync_status_service.dart',
+          operation: 'read $label queue status',
+          kind: 'queue_status_read_failed',
+        ),
+      );
+      if (lastKnown.pendingCount <= 0 && lastKnown.failedCount <= 0) {
+        return const {};
+      }
+      return {fallbackScope: lastKnown};
+    }
   }
 
   Future<OfflineSyncStatusSnapshot> readKnownSessionSnapshot({
@@ -256,26 +332,8 @@ class OfflineSyncStatusService extends ChangeNotifier {
       }
     }
 
-    final bookingStatuses = await BookingOfflineUploadQueueService.instance
-        .readScopedStatuses(
-          userIds: normalizedUserIds,
-          includeSignedOut: includeSignedOut,
-        );
-    final mediaStatuses = await OfflineMediaSyncService.instance
-        .readScopedStatuses(
-          userIds: normalizedUserIds,
-          includeSignedOut: includeSignedOut,
-        );
-    final mutationStatuses = await OfflineMutationQueueService.instance
-        .readScopedStatuses(
-          userIds: normalizedUserIds,
-          includeSignedOut: includeSignedOut,
-        );
-    final cleanupStatuses = await OfflineCleanupQueueService.instance
-        .readScopedStatuses(
-          userIds: normalizedUserIds,
-          includeSignedOut: includeSignedOut,
-        );
+    final (bookingStatuses, mediaStatuses, mutationStatuses, cleanupStatuses) =
+        await _readAllQueueScopes(normalizedUserIds, includeSignedOut);
 
     final scopeKeys = <String>{
       ...bookingStatuses.keys,

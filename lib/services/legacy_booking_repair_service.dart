@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'booking_id_resolver.dart';
 
 /// Uses the existing authoritative booking snapshot. No listener, timer, or
@@ -126,7 +127,8 @@ class LegacyBookingRepairService {
             .map((d) => int.tryParse(d['id']?.toString() ?? '') ?? 0)
             .fold<int>(0, max) +
         1;
-    final result = await _db.runTransaction<String>(
+    final result = await runTransactionWithOriginalErrors<String>(
+      _db,
       (tx) async {
         final current = await tx.get(sourceRef);
         final existingReport = await tx.get(reportRef);

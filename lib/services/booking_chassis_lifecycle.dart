@@ -250,5 +250,10 @@ String? chassisBookingToUnassign({
       !action.isAfter(physical)) {
     return null;
   }
+  // The queued action time is client-authored, so a future-dated payload could
+  // otherwise win the ordering comparison against genuine server timestamps.
+  if (action.isAfter(DateTime.now().toUtc().add(const Duration(minutes: 5)))) {
+    return null;
+  }
   return owner;
 }

@@ -11,6 +11,7 @@ class OfflineQueueItem {
     this.errorMessage,
     this.diagnostics,
     this.nextRetryAt,
+    this.pendingMessage,
   });
   final String? conflictId;
   final String? collectionKey;
@@ -23,10 +24,16 @@ class OfflineQueueItem {
   final String? diagnostics;
   final DateTime? nextRetryAt;
 
+  /// Why a queued action is still on this device. Shown instead of the generic
+  /// sync line so a wait is never indistinguishable from a stalled queue.
+  final String? pendingMessage;
+
   String get statusLabel => isBlocked
       ? 'Needs review'
       : hasError
       ? 'Waiting to retry'
+      : pendingMessage?.isNotEmpty == true
+      ? 'Saved on this device · $pendingMessage'
       : 'Saved on this device · Waiting to sync';
 
   static String record(String collection, String id) {

@@ -161,6 +161,12 @@ void main() {
       SyncErrorLogService.requiresAttention('booking_pending_upload_queue_v1', {
         'last_error': 'Failed',
       }),
+      isTrue,
+    );
+    expect(
+      SyncErrorLogService.requiresAttention('booking_pending_upload_queue_v1', {
+        'last_error': null,
+      }),
       isFalse,
     );
   });
@@ -963,6 +969,49 @@ void main() {
       expect(
         backend.values['${SyncErrorLogService.storageKey}_quarantine'],
         hasLength(2),
+      );
+    },
+  );
+
+  test(
+    'a queued edit retired by a newer server version is persisted, not dropped',
+    () async {
+      // This report is the only trace that the person's edit never landed, so it
+      // must survive the kind filter and reach the server like any other
+      // persisted queue failure.
+      final backend = MemoryLogs();
+      final remote = <Map<String, dynamic>>[];
+      var online = false;
+      final service = SyncErrorLogService(
+        backend: backend,
+        online: () => online,
+        metadata: (_) async => {},
+        writer: (_, data) async {
+          remote.add(data);
+        },
+      );
+      await service.capture(
+        source: 'offline_mutation_queue_service.dart',
+        operation: 'apply queued user upsert',
+        entryId: 'users/12',
+        target: 'users/12',
+        owner: '12',
+        error: 'Queued profile edit was dropped: a newer version was saved.',
+        stack: 'package:webapp/services/offline_mutation_queue_service.dart:1',
+        attempt: 4,
+        kind: 'queue_edit_superseded',
+        details: {'base_updated_at': '2026-09-23T10:12:38.902Z'},
+      );
+      expect(
+        reports(backend).map((row) => jsonDecode(row)['kind']),
+        contains('queue_edit_superseded'),
+        reason: 'the kind must pass the sync-error filter to be persisted',
+      );
+      online = true;
+      await service.start();
+      expect(
+        remote.map((row) => row['kind']),
+        contains('queue_edit_superseded'),
       );
     },
   );

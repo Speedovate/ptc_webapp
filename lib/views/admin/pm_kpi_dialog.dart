@@ -1926,6 +1926,7 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                                 ? Icons.expand_less
                                 : Icons.expand_more,
                             onTap: () => toggleDay(day),
+                            animateInteraction: false,
                           ),
                         );
                       }
@@ -2459,6 +2460,7 @@ class _KpiFinancialTable extends StatelessWidget {
             children: [
               _KpiFinancialTable(columns: [columns.first]),
               ExpansionTile(
+                expansionAnimationStyle: AnimationStyle.noAnimation,
                 tilePadding: EdgeInsets.zero,
                 title: const Text('Compare Week 1–4'),
                 children: [

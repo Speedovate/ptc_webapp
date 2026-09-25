@@ -14,6 +14,7 @@ import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/services/app_session_reset.dart';
 import 'package:webapp/services/firebase_auth_bridge_service.dart';
 import 'package:webapp/services/firestore_public_document_fetcher.dart';
+import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/offline_media_sync_service.dart';
@@ -1230,6 +1231,9 @@ class AuthRequest implements AuthRepository {
           try {
             await _persistUserDirect(
               currentUser.copyWith(isOnline: false, updatedAt: DateTime.now()),
+              // Signing out is the one edit whose whole point is presence, so it
+              // must survive being queued while offline.
+              syncPresence: true,
             );
           } catch (_) {}
         }());
@@ -1579,7 +1583,10 @@ class AuthRequest implements AuthRepository {
     return freshUser;
   }
 
-  Future<UserModel> _persistUserDirect(UserModel user) async {
+  Future<UserModel> _persistUserDirect(
+    UserModel user, {
+    bool syncPresence = false,
+  }) async {
     final normalizedId = normalizeId(user.id);
     if (normalizedId == null) {
       throw const AuthFailure('User ID is required.');
@@ -1604,6 +1611,11 @@ class AuthRequest implements AuthRepository {
         userId: normalizedId,
         document: document,
         baseUpdatedAt: baseUpdatedAtIso,
+        syncPresence: syncPresence,
+        // Persist the pre-edit document so the replay can merge this edit over
+        // anything the office saves in the meantime, instead of having to drop
+        // the whole snapshot because one field moved.
+        baseDocument: existing == null ? null : _toFirestoreMap(existing),
       );
     }
     await _cache.upsertDocument(
@@ -1644,54 +1656,80 @@ class AuthRequest implements AuthRepository {
       } catch (_) {}
     }
 
+    Object? sdkError;
+    StackTrace? sdkStack;
     try {
       final sdkTimeout = kIsWeb
           ? const Duration(seconds: 8)
           : _remoteUserWriteTimeout;
-      await _firestore
-          .runTransaction((transaction) async {
-            final reference = _usersCollection.doc(userId);
-            final existing = await transaction.get(reference);
-            final receipts = existing.data()?['offline_photo_uploads'];
-            transaction.set(reference, {
-              ...document,
-              if (receipts is Map) 'offline_photo_uploads': receipts,
-            });
-          })
-          .timeout(
-            sdkTimeout,
-            onTimeout: () => throw TimeoutException(
-              'users remote write timeout for $userId',
-            ),
-          );
+      await runTransactionWithOriginalErrors<void>(_firestore, (
+        transaction,
+      ) async {
+        final reference = _usersCollection.doc(userId);
+        final existing = await transaction.get(reference);
+        final receipts = existing.data()?['offline_photo_uploads'];
+        transaction.set(reference, {
+          ...?existing.data(),
+          ...document,
+          if (receipts is Map) 'offline_photo_uploads': receipts,
+        }, SetOptions(merge: true));
+      }).timeout(
+        sdkTimeout,
+        onTimeout: () =>
+            throw TimeoutException('users remote write timeout for $userId'),
+      );
       return;
+    } catch (error, stack) {
+      if (!kIsWeb) {
+        unawaited(
+          SyncErrorLogService.instance.report(
+            error,
+            stack,
+            source: 'auth.request.dart',
+            operation: 'users transaction upsert',
+            target: 'users/$userId',
+          ),
+        );
+        rethrow;
+      }
+      // Flutter Web can box a rejected transaction Future. The transaction
+      // wrapper has recovered the original error, but the REST fallback is
+      // still allowed to complete the write. Do not report a false failure
+      // until both paths have failed.
+      sdkError = error;
+      sdkStack = stack;
+    }
+
+    try {
+      final patched = await _firestorePublicDocumentFetcher
+          .patchDocument(
+            'users/$userId',
+            fields: document,
+            updateMaskFieldPaths: document.keys.toList(growable: false),
+          )
+          .timeout(
+            const Duration(seconds: 4),
+            onTimeout: () =>
+                throw TimeoutException('users rest patch timeout for $userId'),
+          );
+      if (!patched) {
+        throw StateError('users rest patch returned false for $userId');
+      }
     } catch (error, stack) {
       unawaited(
         SyncErrorLogService.instance.report(
           error,
           stack,
           source: 'auth.request.dart',
-          operation: 'request failure',
+          operation: 'users SDK transaction then REST patch',
+          target: 'users/$userId',
+          details: {
+            'sdk_error': sdkError.toString(),
+            'sdk_stack': sdkStack.toString(),
+          },
         ),
       );
-      if (!kIsWeb) {
-        rethrow;
-      }
-    }
-
-    final patched = await _firestorePublicDocumentFetcher
-        .patchDocument(
-          'users/$userId',
-          fields: document,
-          updateMaskFieldPaths: document.keys.toList(growable: false),
-        )
-        .timeout(
-          const Duration(seconds: 4),
-          onTimeout: () =>
-              throw TimeoutException('users rest patch timeout for $userId'),
-        );
-    if (!patched) {
-      throw Exception('users rest patch returned false for $userId');
+      rethrow;
     }
   }
 

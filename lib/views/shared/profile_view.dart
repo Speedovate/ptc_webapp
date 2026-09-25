@@ -10,7 +10,9 @@ import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/repositories/interfaces/vehicle_catalog_repository.dart';
 import 'package:webapp/services/role_access_service.dart';
+import 'package:webapp/services/kpi/crew_kpi_store.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/views/shared/crew_kpi_profile_summary.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/app_cached_network_image.dart';
 import 'package:webapp/widgets/shared/app_image_source_picker.dart';
@@ -81,6 +83,9 @@ class ProfileView extends StatefulWidget {
     this.onBusinessDetailsPressed,
     this.vehicleCatalogRepository,
     this.authRepository,
+    this.kpiStore,
+    this.onOpenKpiTracking,
+    this.showKpiSummary = true,
   });
 
   final UserModel user;
@@ -101,16 +106,31 @@ class ProfileView extends StatefulWidget {
   final VoidCallback? onBusinessDetailsPressed;
   final VehicleCatalogRepository? vehicleCatalogRepository;
   final AuthRepository? authRepository;
+  final CrewKpiStore? kpiStore;
+  final VoidCallback? onOpenKpiTracking;
+  final bool showKpiSummary;
 
   @override
   State<ProfileView> createState() => _ProfileViewState();
 }
 
+class _CachedAssignedMakes {
+  const _CachedAssignedMakes(this.makes, this.cachedAt);
+
+  final List<VehicleMake> makes;
+  final DateTime cachedAt;
+}
+
 class _ProfileViewState extends State<ProfileView> {
-  static final Map<String, VehicleMake?> _assignedMakeCacheByDriverId = {};
+  /// Only seeds the first paint. Entries expire quickly so a reassignment made
+  /// in another session is picked up without a full app restart.
+  static const _assignmentCacheTtl = Duration(minutes: 2);
+  static final Map<String, _CachedAssignedMakes> _assignedMakeCacheByUser = {};
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
-  VehicleMake? _assignedMake;
-  bool _isLoadingAssignedMake = true;
+  List<VehicleMake> _assignedMakes = const [];
+  bool _isLoadingAssignedMakes = true;
+  String? _assignedMakeError;
+  int _assignmentRequest = 0;
   ProfilePendingImageUpload? _pendingPhotoUpload;
   ProfilePendingImageUpload? _pendingLicenseUpload;
   bool _isSavingProfileChanges = false;
@@ -123,23 +143,29 @@ class _ProfileViewState extends State<ProfileView> {
   @override
   void initState() {
     super.initState();
-    final driverId = widget.user.id?.trim() ?? '';
-    if (driverId.isNotEmpty &&
-        _assignedMakeCacheByDriverId.containsKey(driverId)) {
-      _assignedMake = _assignedMakeCacheByDriverId[driverId];
-      _isLoadingAssignedMake = false;
+    final userId = widget.user.id?.trim() ?? '';
+    final role = _normalizedRole;
+    if (userId.isNotEmpty && _isCrewRole) {
+      final cached = _liveAssignedMakeCache(role, userId);
+      if (cached != null) {
+        _assignedMakes = cached;
+        _isLoadingAssignedMakes = false;
+      }
     }
-    _loadAssignedMake();
+    unawaited(_loadAssignedMakes());
   }
 
   @override
   void didUpdateWidget(covariant ProfileView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user.id != widget.user.id ||
-        oldWidget.user.role != widget.user.role) {
+        _normalizedRoleFor(oldWidget.user) != _normalizedRole ||
+        oldWidget.vehicleCatalogRepository != widget.vehicleCatalogRepository) {
       _pendingPhotoUpload = null;
       _pendingLicenseUpload = null;
-      _loadAssignedMake();
+      _assignedMakes = const [];
+      _assignedMakeError = null;
+      unawaited(_loadAssignedMakes());
       return;
     }
     if (oldWidget.user.photo != widget.user.photo) {
@@ -155,39 +181,154 @@ class _ProfileViewState extends State<ProfileView> {
 
   bool get _canUpdateProfile => widget.onSaveProfileChanges != null;
 
-  Future<void> _loadAssignedMake() async {
-    final driverId = widget.user.id?.trim();
-    if (widget.user.role != 'driver' || driverId == null || driverId.isEmpty) {
+  String get _assignedMakeLabel {
+    if (_isLoadingAssignedMakes && _assignedMakes.isEmpty) {
+      return 'Loading...';
+    }
+    if (_assignedMakes.isEmpty) {
+      return _assignedMakeError == null ? 'Not assigned' : 'Unavailable';
+    }
+    return _assignedMakes.map(_vehicleMakeLabel).join('\n');
+  }
+
+  /// The vehicle type always comes from a current `VehicleMake` record. A stale
+  /// type on the user document is never treated as an assignment.
+  String _assignedVehicleTypeLabel() {
+    final types = _assignedMakes
+        .map((make) => make.type?.name?.trim())
+        .whereType<String>()
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (types.isNotEmpty) {
+      return types.join('\n');
+    }
+    return 'Not set';
+  }
+
+  String _vehicleTypeLabelForMake(VehicleMake make) {
+    final type = make.type?.name?.trim();
+    if (type != null && type.isNotEmpty) {
+      return type;
+    }
+    return 'Not set';
+  }
+
+  static String _vehicleMakeLabel(VehicleMake make) {
+    final code = make.code?.trim();
+    if (code != null && code.isNotEmpty) {
+      return code;
+    }
+    final id = make.id?.trim();
+    return id == null || id.isEmpty
+        ? 'Unnamed vehicle make'
+        : 'Vehicle Make $id';
+  }
+
+  String get _normalizedRole => normalizeRoleKey(widget.user.role);
+
+  String _normalizedRoleFor(UserModel user) => normalizeRoleKey(user.role);
+
+  bool get _isCrewRole =>
+      _normalizedRole == 'driver' || _normalizedRole == 'helper';
+
+  String _assignmentCacheKey(String role, String userId) => '$role:$userId';
+
+  List<VehicleMake>? _liveAssignedMakeCache(String role, String userId) {
+    final entry = _assignedMakeCacheByUser[_assignmentCacheKey(role, userId)];
+    if (entry == null) {
+      return null;
+    }
+    if (DateTime.now().toUtc().difference(entry.cachedAt) >
+        _assignmentCacheTtl) {
+      _assignedMakeCacheByUser.remove(_assignmentCacheKey(role, userId));
+      return null;
+    }
+    return entry.makes;
+  }
+
+  Future<void> _loadAssignedMakes() async {
+    final request = ++_assignmentRequest;
+    final userId = widget.user.id?.trim() ?? '';
+    final role = _normalizedRole;
+    if (!_isCrewRole || userId.isEmpty) {
       if (mounted) {
         setState(() {
-          _assignedMake = null;
-          _isLoadingAssignedMake = false;
+          _assignedMakes = const [];
+          _assignedMakeError = null;
+          _isLoadingAssignedMakes = false;
         });
       }
       return;
     }
 
-    setState(() {
-      _isLoadingAssignedMake = true;
-    });
+    final cacheKey = _assignmentCacheKey(role, userId);
+    final cached = _liveAssignedMakeCache(role, userId);
+    if (cached != null && _assignedMakes.isEmpty) {
+      _assignedMakes = cached;
+    }
+    if (mounted) {
+      setState(() {
+        _isLoadingAssignedMakes = true;
+        _assignedMakeError = null;
+      });
+    }
 
     try {
       final makes = await _vehicleCatalogRepository.getMakes().timeout(
-        const Duration(seconds: 6),
-        onTimeout: () => const <VehicleMake>[],
+        const Duration(seconds: 8),
+        onTimeout: () => throw TimeoutException('vehicle makes load timeout'),
       );
-      final match = makes.where((item) => item.driver?.id == driverId);
-      if (!mounted) {
+      final matches =
+          makes
+              .where(
+                (item) =>
+                    item.isActive != false &&
+                    (role == 'driver'
+                        ? item.driver?.id?.trim() == userId
+                        : item.helper?.id?.trim() == userId),
+              )
+              .toList(growable: false)
+            ..sort((a, b) {
+              final code = (a.code ?? a.id ?? '').compareTo(
+                b.code ?? b.id ?? '',
+              );
+              return code != 0 ? code : (a.id ?? '').compareTo(b.id ?? '');
+            });
+      if (!mounted ||
+          request != _assignmentRequest ||
+          widget.user.id?.trim() != userId ||
+          _normalizedRole != role) {
+        return;
+      }
+      final assigned = List<VehicleMake>.unmodifiable(matches);
+      _assignedMakeCacheByUser[cacheKey] = _CachedAssignedMakes(
+        assigned,
+        DateTime.now().toUtc(),
+      );
+      setState(() {
+        _assignedMakes = assigned;
+        _assignedMakeError = null;
+      });
+    } catch (_) {
+      if (!mounted ||
+          request != _assignmentRequest ||
+          widget.user.id?.trim() != userId ||
+          _normalizedRole != role) {
         return;
       }
       setState(() {
-        _assignedMake = match.isEmpty ? null : match.first;
-        _assignedMakeCacheByDriverId[driverId] = _assignedMake;
+        _assignedMakes = _liveAssignedMakeCache(role, userId) ?? const [];
+        _assignedMakeError =
+            'The assigned vehicle could not be refreshed right now.';
       });
     } finally {
-      if (mounted) {
+      if (mounted &&
+          request == _assignmentRequest &&
+          widget.user.id?.trim() == userId &&
+          _normalizedRole == role) {
         setState(() {
-          _isLoadingAssignedMake = false;
+          _isLoadingAssignedMakes = false;
         });
       }
     }
@@ -304,6 +445,12 @@ class _ProfileViewState extends State<ProfileView> {
     final roleLabel = _formatRole(user.role);
     final driver = user.asDriver;
     final showDriverFields = driver != null;
+    final showCrewAssignment = _isCrewRole;
+    final showKpiSummary =
+        widget.showKpiSummary &&
+        widget.isCurrentUserView &&
+        showCrewAssignment &&
+        CrewKpiStore.canView(user);
     final hasLicensePreview =
         _pendingLicenseUpload != null ||
         _hasLicensePreviewValue(driver?.license);
@@ -312,13 +459,30 @@ class _ProfileViewState extends State<ProfileView> {
     final joinedLabel = _formatDateTime(user.createdAt);
     final updatedLabel = _formatDateTime(user.updatedAt);
     final businessUser = widget.businessUser;
+    final assignmentRows = <_InfoRow>[];
+    if (_assignedMakes.isEmpty) {
+      assignmentRows.addAll([
+        _InfoRow(label: 'Vehicle make code', value: _assignedMakeLabel),
+        _InfoRow(label: 'Vehicle type', value: _assignedVehicleTypeLabel()),
+      ]);
+    } else {
+      for (final make in _assignedMakes) {
+        assignmentRows.addAll([
+          _InfoRow(label: 'Vehicle make code', value: _vehicleMakeLabel(make)),
+          _InfoRow(
+            label: 'Vehicle type',
+            value: _vehicleTypeLabelForMake(make),
+          ),
+        ]);
+      }
+    }
     final content = Padding(
       padding: widget.padding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (showDriverFields)
-            AppRefreshStrip(isVisible: _isLoadingAssignedMake),
+          if (showCrewAssignment)
+            AppRefreshStrip(isVisible: _isLoadingAssignedMakes),
           _ProfileIdentityHeader(
             user: user,
             roleLabel: roleLabel,
@@ -404,18 +568,30 @@ class _ProfileViewState extends State<ProfileView> {
                   label: 'Online',
                   value: (user.isOnline ?? false) ? 'Online' : 'Offline',
                 ),
-              if (showDriverFields)
-                _InfoRow(
-                  label: 'Vehicle make code',
-                  value: _valueOrNotSet(_assignedMake?.code),
-                ),
-              if (showDriverFields)
-                _InfoRow(
-                  label: 'Vehicle type',
-                  value: _valueOrNotSet(driver.vehicleType?.name),
-                ),
             ],
           ),
+          if (showCrewAssignment) ...[
+            const SizedBox(height: 18),
+            const AdminSectionTitle(title: 'Vehicle assignment'),
+            const SizedBox(height: 10),
+            _InfoGroupContent(rows: assignmentRows),
+            if (_assignedMakeError != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _assignedMakeError!,
+                style: const TextStyle(color: AppColors.danger, fontSize: 12),
+              ),
+            ],
+          ],
+          if (showKpiSummary) ...[
+            const SizedBox(height: 18),
+            CrewKpiProfileSummary(
+              key: const ValueKey('profile-kpi-summary'),
+              user: user,
+              store: widget.kpiStore,
+              onOpenTracking: widget.onOpenKpiTracking,
+            ),
+          ],
           if (showDriverFields) ...[
             const SizedBox(height: 18),
             Row(

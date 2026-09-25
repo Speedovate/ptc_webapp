@@ -71,24 +71,26 @@ void main() {
         await queue.flushPendingMutations();
         final saved = await backend.readStringList(storageKey);
         if (occupied) {
-          expect(saved, hasLength(1));
-          final entry = jsonDecode(saved.single);
-          expect(entry['is_blocked'], true);
-          expect(entry['chassis_conflict_rechecked'], true);
-          expect(entry['payload'], pending);
-          expect(entry['error_diagnostics'], contains('server_chassis'));
-          expect(
-            entry['error_diagnostics'],
-            contains('owner_booking_document'),
-          );
-          expect(entry['last_error'], contains('Booking 999'));
-          expect(
-            (await db.collection('bookings').doc('83').get()).data(),
-            server,
-          );
+          // The vehicle is physically on another trip. That says nothing about
+          // whether this trip started, so the queue records the progress and
+          // leaves the chassis with the booking that holds it, instead of
+          // wedging the entry until someone resolves it by hand.
+          expect(saved, isEmpty);
+          final actual = (await db.collection('bookings').doc('83').get())
+              .data()!;
+          expect(actual['client_status'], 'ongoing');
+          expect(actual['driver_status'], 'ongoing');
+          expect(actual['helper_status'], 'ongoing');
+          expect(actual['updated_at'], pending['updated_at']);
+          expect(actual['status_outputs'], pending['status_outputs']);
+          // No evidence proves this chassis moved to a newer trip, so the
+          // server's own link stands as the historical record of the trip. The
+          // live assignment lives on the chassis document, which is untouched.
+          expect(actual['chassis_id'], server['chassis_id']);
           expect(
             (await db.collection('chassis').doc('9').get()).data(),
             chassis,
+            reason: 'the active chassis owner must be left alone',
           );
         } else {
           expect(saved, isEmpty);

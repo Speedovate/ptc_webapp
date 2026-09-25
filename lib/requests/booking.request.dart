@@ -26,6 +26,7 @@ import 'package:webapp/repositories/interfaces/booking_repository.dart';
 import 'package:webapp/services/booking_offline_upload_queue_service.dart';
 import 'package:webapp/services/booking_chassis_lifecycle.dart';
 import 'package:webapp/services/firestore_public_document_fetcher.dart';
+import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'package:webapp/services/network_status_events.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/offline_queue_coordinator_service.dart';
@@ -1191,21 +1192,20 @@ class BookingRequest implements BookingRepository {
           'fields=${document.keys.length}',
     );
     try {
-      await _firestore
-          .runTransaction<void>(
-            (transaction) => _writeBookingAndChassisTransaction(
-              transaction: transaction,
-              bookingId: bookingId,
-              document: document,
-              creating: creating,
-            ),
-          )
-          .timeout(
-            _remoteSaveTimeout,
-            onTimeout: () => throw TimeoutException(
-              'booking remote write timeout for $bookingId',
-            ),
-          );
+      await runTransactionWithOriginalErrors<void>(
+        _firestore,
+        (transaction) => _writeBookingAndChassisTransaction(
+          transaction: transaction,
+          bookingId: bookingId,
+          document: document,
+          creating: creating,
+        ),
+      ).timeout(
+        _remoteSaveTimeout,
+        onTimeout: () => throw TimeoutException(
+          'booking remote write timeout for $bookingId',
+        ),
+      );
       BookingPhotoCleanup.schedule(bookingId, document);
       _writeTrace(
         () =>
@@ -2118,44 +2118,46 @@ class BookingRequest implements BookingRepository {
     );
     final bootstrapNextId = await _bootstrapNextBookingIdIfCounterMissing();
     _log(() => 'booking id reservation start key=$submissionKey');
-    final reservation = await _firestore
-        .runTransaction<_BookingIdReservation>((transaction) async {
-          final idempotencySnapshot = await transaction.get(idempotencyRef);
-          final priorId = int.tryParse(
-            idempotencySnapshot.data()?['document_id']?.toString() ?? '',
-          );
-          if (priorId != null && priorId > 0) {
-            return _BookingIdReservation('$priorId', reused: true);
-          }
+    final reservation =
+        await runTransactionWithOriginalErrors<_BookingIdReservation>(
+          _firestore,
+          (transaction) async {
+            final idempotencySnapshot = await transaction.get(idempotencyRef);
+            final priorId = int.tryParse(
+              idempotencySnapshot.data()?['document_id']?.toString() ?? '',
+            );
+            if (priorId != null && priorId > 0) {
+              return _BookingIdReservation('$priorId', reused: true);
+            }
 
-          final counterSnapshot = await transaction.get(_bookingsCounterRef);
-          final counterNextId = int.tryParse(
-            counterSnapshot.data()?['next_id']?.toString() ?? '',
-          );
-          var reservedId = counterNextId ?? bootstrapNextId;
-          // Do not query the full bookings collection before every create.
-          // This keeps the ID reservation to small document reads and avoids
-          // the web SDK collection-read timeout seen on booking submission.
-          while ((await transaction.get(
-            _bookingsCollection.doc('$reservedId'),
-          )).exists) {
-            reservedId++;
-          }
-          final nowIso = DateTime.now().toIso8601String();
-          transaction.set(_bookingsCounterRef, {
-            'next_id': reservedId + 1,
-            'updated_at': nowIso,
-          }, SetOptions(merge: true));
-          transaction.set(idempotencyRef, {
-            'kind': 'idempotency',
-            'resource_key': 'bookings',
-            'document_id': '$reservedId',
-            'submission_key': submissionKey,
-            'created_at': nowIso,
-          });
-          return _BookingIdReservation('$reservedId');
-        })
-        .timeout(
+            final counterSnapshot = await transaction.get(_bookingsCounterRef);
+            final counterNextId = int.tryParse(
+              counterSnapshot.data()?['next_id']?.toString() ?? '',
+            );
+            var reservedId = counterNextId ?? bootstrapNextId;
+            // Do not query the full bookings collection before every create.
+            // This keeps the ID reservation to small document reads and avoids
+            // the web SDK collection-read timeout seen on booking submission.
+            while ((await transaction.get(
+              _bookingsCollection.doc('$reservedId'),
+            )).exists) {
+              reservedId++;
+            }
+            final nowIso = DateTime.now().toIso8601String();
+            transaction.set(_bookingsCounterRef, {
+              'next_id': reservedId + 1,
+              'updated_at': nowIso,
+            }, SetOptions(merge: true));
+            transaction.set(idempotencyRef, {
+              'kind': 'idempotency',
+              'resource_key': 'bookings',
+              'document_id': '$reservedId',
+              'submission_key': submissionKey,
+              'created_at': nowIso,
+            });
+            return _BookingIdReservation('$reservedId');
+          },
+        ).timeout(
           _webNextIdTimeout,
           onTimeout: () =>
               throw TimeoutException('booking id reservation timeout'),

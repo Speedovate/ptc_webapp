@@ -30,11 +30,15 @@ class OfflineMutationQueueService {
     bool Function()? isOnline,
     Future<void> Function(String userId, String scope, DateTime actionAt)?
     queueUserAssetCleanup,
+    Duration flushTimeout = const Duration(minutes: 2),
+    Duration localStorageTimeout = const Duration(seconds: 30),
   }) : _backend = backend ?? createBookingStorageBackend(),
        _providedFirestore = firestore,
        _isOnline = isOnline ?? currentNetworkStatus,
        _queueUserAssetCleanup =
-           queueUserAssetCleanup ?? _defaultUserAssetCleanup;
+           queueUserAssetCleanup ?? _defaultUserAssetCleanup,
+       _flushTimeout = flushTimeout,
+       _localStorageTimeout = localStorageTimeout;
 
   final Future<void> Function(String userId, String scope, DateTime actionAt)
   _queueUserAssetCleanup;
@@ -57,7 +61,6 @@ class OfflineMutationQueueService {
   static const _currentUserIdKey = 'paltranco_current_user_id';
   static const _knownSessionUserIdsKey = 'paltranco_known_session_user_ids';
   static const _retryInterval = Duration(seconds: 20);
-  static const _localStorageTimeout = Duration(seconds: 30);
   static const _remoteMutationTimeout = Duration(seconds: 30);
 
   final BookingStorageBackend _backend;
@@ -66,9 +69,15 @@ class OfflineMutationQueueService {
   FirebaseFirestore get _firestore =>
       _providedFirestore ?? FirebaseFirestore.instance;
   final AuthStorageBackend _authStorage = createAuthStorageBackend();
+  final Duration _flushTimeout;
+  final Duration _localStorageTimeout;
 
   bool _isInitialized = false;
   Future<void>? _flushFuture;
+
+  /// Incremented per flush. A flush that outlives its timeout and a newer flush
+  /// must not publish status over the newer attempt.
+  int _flushGeneration = 0;
   Timer? _retryTimer;
   StreamSubscription<bool>? _networkSubscription;
   final StreamController<OfflineQueueStatusSnapshot> _statusController =
@@ -181,41 +190,44 @@ class OfflineMutationQueueService {
       counterRef: counterRef,
       collection: collection,
     );
-    final reservation = await _firestore.runTransaction<String>((
-      transaction,
-    ) async {
-      final idempotencyRef = _idManagementCollection.doc(
-        _idempotencyDocumentId(collectionKey, normalizedKey),
-      );
-      final idempotencySnapshot = await transaction.get(idempotencyRef);
-      final reserved = int.tryParse(
-        idempotencySnapshot.data()?['document_id']?.toString() ?? '',
-      );
-      if (reserved != null && reserved > 0) {
-        return '$reserved';
-      }
-      final counterSnapshot = await transaction.get(counterRef);
-      var nextId =
-          int.tryParse(counterSnapshot.data()?['next_id']?.toString() ?? '') ??
-          bootstrapNextId ??
-          1;
-      while ((await transaction.get(collection.doc('$nextId'))).exists) {
-        nextId++;
-      }
-      final now = DateTime.now().toUtc().toIso8601String();
-      transaction.set(counterRef, {
-        'next_id': nextId + 1,
-        'updated_at': now,
-      }, SetOptions(merge: true));
-      transaction.set(idempotencyRef, {
-        'kind': 'idempotency',
-        'resource_key': collectionKey,
-        'submission_key': normalizedKey,
-        'document_id': '$nextId',
-        'created_at': now,
-      });
-      return '$nextId';
-    });
+    final reservation = await runTransactionWithOriginalErrors<String>(
+      _firestore,
+      (transaction) async {
+        final idempotencyRef = _idManagementCollection.doc(
+          _idempotencyDocumentId(collectionKey, normalizedKey),
+        );
+        final idempotencySnapshot = await transaction.get(idempotencyRef);
+        final reserved = int.tryParse(
+          idempotencySnapshot.data()?['document_id']?.toString() ?? '',
+        );
+        if (reserved != null && reserved > 0) {
+          return '$reserved';
+        }
+        final counterSnapshot = await transaction.get(counterRef);
+        var nextId =
+            int.tryParse(
+              counterSnapshot.data()?['next_id']?.toString() ?? '',
+            ) ??
+            bootstrapNextId ??
+            1;
+        while ((await transaction.get(collection.doc('$nextId'))).exists) {
+          nextId++;
+        }
+        final now = DateTime.now().toUtc().toIso8601String();
+        transaction.set(counterRef, {
+          'next_id': nextId + 1,
+          'updated_at': now,
+        }, SetOptions(merge: true));
+        transaction.set(idempotencyRef, {
+          'kind': 'idempotency',
+          'resource_key': collectionKey,
+          'submission_key': normalizedKey,
+          'document_id': '$nextId',
+          'created_at': now,
+        });
+        return '$nextId';
+      },
+    );
     return reservation;
   }
 
@@ -422,7 +434,14 @@ class OfflineMutationQueueService {
     if (_isInitialized) {
       return;
     }
-    await _backend.initialize();
+    // A device store that never answers must not leave this queue permanently
+    // uninitialized: every later timer, resume, and enqueue would keep waiting
+    // on the same pending read with nothing reported to the user.
+    await _backend.initialize().timeout(
+      _localStorageTimeout,
+      onTimeout: () =>
+          throw TimeoutException('Local sync queue storage did not respond.'),
+    );
     await _refreshStatusFromStorage();
     _retryTimer ??= Timer.periodic(_retryInterval, (_) {
       if (!isAppVisible()) return;
@@ -460,16 +479,24 @@ class OfflineMutationQueueService {
     return next;
   }
 
+  /// [syncPresence] marks a queued write whose `is_online` value is the point of
+  /// the edit, such as signing out while offline. Every other user snapshot only
+  /// *mirrors* the presence it happened to observe, and replaying that stale
+  /// value would put a crew member who has since signed out back online.
   Future<void> queueUserUpsert({
     required String userId,
     required Map<String, dynamic> document,
     String? baseUpdatedAt,
+    bool syncPresence = false,
+    Map<String, dynamic>? baseDocument,
   }) async {
     return queueCollectionDocumentUpsert(
       collectionKey: 'users',
       documentId: userId,
       document: document,
       baseUpdatedAt: baseUpdatedAt,
+      replayPresence: syncPresence,
+      baseDocument: baseDocument,
     );
   }
 
@@ -504,16 +531,20 @@ class OfflineMutationQueueService {
     });
   }
 
-  Future<bool> hasPendingUserMutation(String userId) async {
+  Future<bool> hasPendingUserMutation(
+    String userId, {
+    String? storageKey,
+  }) async {
     await initialize();
     final normalizedUserId = normalizeId(userId);
     if (normalizedUserId == null) {
       return false;
     }
-    final entries = await _readEntries();
+    final entries = await _readEntriesForStorageKey(
+      storageKey ?? await _resolvedStorageKey(),
+    );
     return entries.any(
       (entry) =>
-          !entry.isBlocked &&
           ((entry.collectionKey == 'users' &&
                   (entry.kind ==
                           _OfflineMutationKind.collectionDocumentUpsert ||
@@ -538,22 +569,33 @@ class OfflineMutationQueueService {
 
   /// A queued delivery photo may only be uploaded after its booking mutation
   /// has reached Firestore, otherwise its follow-up photo patch has no
-  /// placeholder field to update.
-  Future<bool> hasPendingBookingMutation(String bookingId) async {
+  /// placeholder field to update. Blocked entries are included deliberately:
+  /// their booking write may still be reviewed and applied later, so treating
+  /// them as absent could upload the photo against the wrong document state.
+  Future<bool> hasPendingBookingMutation(
+    String bookingId, {
+    String? storageKey,
+  }) async {
     await initialize();
     final normalizedBookingId = normalizeId(bookingId);
     if (normalizedBookingId == null) {
       return false;
     }
-    final entries = await _readEntries();
-    return entries.any(
-      (entry) =>
-          !entry.isBlocked &&
-          entry.targetId == normalizedBookingId &&
-          (entry.kind == _OfflineMutationKind.bookingCreate ||
-              (entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
-                  entry.collectionKey == 'bookings')),
+    final entries = await _readEntriesForStorageKey(
+      storageKey ?? await _resolvedStorageKey(),
     );
+    return entries.any((entry) {
+      final targetMatches =
+          entry.targetId == normalizedBookingId ||
+          normalizeId(entry.payload['id']?.toString()) == normalizedBookingId;
+      final isBookingMutation =
+          entry.kind == _OfflineMutationKind.bookingCreate ||
+          entry.kind == _OfflineMutationKind.bookingBillingStatusUpdate ||
+          (entry.collectionKey == 'bookings' &&
+              (entry.kind == _OfflineMutationKind.collectionDocumentCreate ||
+                  entry.kind == _OfflineMutationKind.collectionDocumentUpsert));
+      return targetMatches && isBookingMutation;
+    });
   }
 
   Future<void> queueBookingBillingStatusUpdate({
@@ -810,6 +852,8 @@ class OfflineMutationQueueService {
     required String documentId,
     required Map<String, dynamic> document,
     String? baseUpdatedAt,
+    bool replayPresence = false,
+    Map<String, dynamic>? baseDocument,
   }) async {
     await initialize();
     return _serializeQueueMutation(() async {
@@ -881,13 +925,27 @@ class OfflineMutationQueueService {
                     entry.kind == _OfflineMutationKind.userUpsert)) &&
             entry.targetId == documentId,
       );
+      // Coalescing a profile edit into a queued sign-out must not undo the
+      // sign-out. The new snapshot only mirrors the presence it happened to see,
+      // so the queued sign-out's own value is carried forward with it.
+      var presenceIsIntentional = replayPresence;
+      var payload = document;
+      final queued = previous;
+      if (collectionKey == 'users' &&
+          !replayPresence &&
+          (queued?.replayPresence ?? false) &&
+          queued!.payload.containsKey('is_online')) {
+        payload = Map<String, dynamic>.from(document)
+          ..['is_online'] = queued.payload['is_online'];
+        presenceIsIntentional = true;
+      }
       entries.add(
         _OfflineMutationEntry(
           id: _nextEntryId('vehicle_upsert'),
           kind: _OfflineMutationKind.collectionDocumentUpsert,
           targetId: documentId,
           collectionKey: collectionKey,
-          payload: document,
+          payload: payload,
           catalogPredecessorVersions:
               collectionKey == 'operations_catalog' &&
                   previous != null &&
@@ -898,6 +956,14 @@ class OfflineMutationQueueService {
           baseUpdatedAt: previous != null
               ? previous.baseUpdatedAt
               : baseUpdatedAt,
+          // Coalescing a profile edit into a queued sign-out must not lose the
+          // sign-out, so an intentional presence change is sticky.
+          replayPresence: presenceIsIntentional,
+          // Keep the oldest base: it is the version the whole coalesced edit
+          // chain is measured against.
+          basePayload: (queued?.basePayload ?? baseDocument) != null
+              ? Map<String, dynamic>.from(queued?.basePayload ?? baseDocument!)
+              : null,
           createdAtIso: DateTime.now().toUtc().toIso8601String(),
           retryCount: 0,
         ),
@@ -1235,10 +1301,34 @@ class OfflineMutationQueueService {
       return;
     }
 
-    final flush = _flushPendingMutationsInternal();
+    final generation = ++_flushGeneration;
+    final flush = _flushPendingMutationsInternal(
+      generation,
+    ).timeout(_flushTimeout);
     _flushFuture = flush;
     try {
       await flush;
+    } on TimeoutException catch (error, stack) {
+      // Release the single-flight lock even when a provider callback never
+      // settles. Persisted entries remain available for the next bounded
+      // attempt; individual Firestore writes retain their own timeouts and
+      // conflict checks.
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'offline_mutation_queue_service.dart',
+          operation: 'mutation flush timeout',
+          kind: 'mutation_flush_timeout',
+        ),
+      );
+      _setStatus(
+        _currentStatus.copyWith(
+          isSyncing: false,
+          processedInBatch: 0,
+          totalInBatch: 0,
+        ),
+      );
     } finally {
       if (identical(_flushFuture, flush)) {
         _flushFuture = null;
@@ -1246,8 +1336,18 @@ class OfflineMutationQueueService {
     }
   }
 
-  Future<void> _flushPendingMutationsInternal() async {
-    _markPendingAsSyncing();
+  void _setStatusForGeneration(
+    int generation,
+    OfflineQueueStatusSnapshot nextStatus,
+  ) {
+    if (generation != _flushGeneration) {
+      return;
+    }
+    _setStatus(nextStatus);
+  }
+
+  Future<void> _flushPendingMutationsInternal(int generation) async {
+    _markPendingAsSyncing(generation);
     try {
       final currentStorageKey = await _resolvedStorageKey();
       final storageKeys = await _allKnownStorageKeys();
@@ -1255,11 +1355,12 @@ class OfflineMutationQueueService {
         await _flushPendingMutationsForStorageKey(
           storageKey,
           updateStatus: storageKey == currentStorageKey,
+          generation: generation,
         );
       }
       await _refreshStatusFromStorage();
     } finally {
-      if (_currentStatus.isSyncing) {
+      if (_currentStatus.isSyncing && generation == _flushGeneration) {
         _setStatus(
           _currentStatus.copyWith(
             isSyncing: false,
@@ -1446,7 +1547,7 @@ class OfflineMutationQueueService {
     // Bound transaction size, and recheck membership ownership inside each one.
     for (var offset = 0; offset < refs.length; offset += 100) {
       final chunk = refs.skip(offset).take(100).toList();
-      await _firestore.runTransaction((tx) async {
+      await runTransactionWithOriginalErrors<void>(_firestore, (tx) async {
         final snapshots = <DocumentSnapshot<Map<String, dynamic>>>[];
         for (final ref in chunk) {
           snapshots.add(await tx.get(ref));
@@ -1477,6 +1578,7 @@ class OfflineMutationQueueService {
     Map<String, dynamic>? patch,
   }) async {
     final document = patch ?? entry.payload;
+    var supersededOnServer = false;
     await runTransactionWithOriginalErrors(_firestore, (tx) async {
       final ref = collection.doc(entry.targetId);
       final existing = await tx.get(ref);
@@ -1485,6 +1587,39 @@ class OfflineMutationQueueService {
         existing.data()?['updated_at']?.toString(),
       );
       final next = _parseSyncTimestamp(document['updated_at']?.toString());
+      if (collection.path == 'users' && existing.exists) {
+        // Already landed? With a persisted base, ask the merge which fields this
+        // device actually changed and compare only those: a field the office
+        // saved afterwards says nothing about whether the edit applied.
+        // `is_online` is server-owned presence, so a mirrored snapshot can
+        // neither prove nor break that; a queued sign-out is the one case where
+        // the value is the point of the edit, so it stays significant.
+        if (entry.basePayload != null) {
+          final changed = _mergeUserEditOverServer(
+            queued: document,
+            base: entry.basePayload,
+            server: existing.data() ?? const <String, dynamic>{},
+            replayPresence: entry.replayPresence,
+          );
+          if (changed.isNotEmpty &&
+              changed.entries.every(
+                (field) =>
+                    _sameDocument(existing.data()?[field.key], field.value),
+              )) {
+            // A converted-Future failure can happen after the commit, so the
+            // fields this edit owned are already on the server. Retire the
+            // queued snapshot without replacing anything.
+            return;
+          }
+        } else if (document.entries.every(
+          (field) =>
+              field.key == 'updated_at' ||
+              (field.key == 'is_online' && !entry.replayPresence) ||
+              _sameDocument(existing.data()?[field.key], field.value),
+        )) {
+          return;
+        }
+      }
       // KPI day IDs are deterministic. Concurrent first-time entries must
       // not overwrite another manager's confirmed record.
       if (const {
@@ -1511,6 +1646,33 @@ class OfflineMutationQueueService {
               ? remote != base
               : remote.isAfter(base)) &&
           remote != next) {
+        if (collection.path == 'users') {
+          // A queued user snapshot carries the whole document, not a diff, so
+          // replaying it wholesale would roll back whatever the office saved
+          // in the meantime. When the pre-edit document was persisted, merge
+          // properly instead: apply only the fields this device actually
+          // changed and that the server has not since touched, and leave every
+          // other field exactly as the server has it.
+          final merge = _mergeUserEditOverServer(
+            queued: document,
+            base: entry.basePayload,
+            server: existing.data() ?? const <String, dynamic>{},
+            replayPresence: entry.replayPresence,
+          );
+          if (merge.isNotEmpty) {
+            tx.set(ref, {
+              ...existing.data()!,
+              ...merge,
+            }, SetOptions(merge: true));
+            return;
+          }
+          // Nothing this device changed survived the office's newer save, and
+          // keeping the entry blocked would wedge every later edit for this
+          // person behind a snapshot that can never win. Retire it, and report
+          // the drop so the office can see the edit never landed.
+          supersededOnServer = true;
+          return;
+        }
         throw StateError(
           'Sync conflict: ${collection.path}/${entry.targetId} changed remotely. '
           'Original version: ${entry.baseUpdatedAt}; server version: ${existing.data()?['updated_at']}. '
@@ -1543,18 +1705,47 @@ class OfflineMutationQueueService {
       }
       if (patch != null) {
         tx.update(ref, patch);
+      } else if (collection.path == 'users') {
+        // User snapshots are merged so a late replay cannot erase fields added
+        // by another manager (or photo receipts written by another device).
+        // A mirrored presence value is never replayed: only a live session or an
+        // intentional queued sign-out may set it, so a stale `is_online: true`
+        // cannot resurrect a crew member who has already signed out.
+        final merged = <String, dynamic>{...?existing.data(), ...document};
+        if (!entry.replayPresence) merged.remove('is_online');
+        tx.set(ref, merged, SetOptions(merge: true));
       } else {
-        final receipts = existing.data()?['offline_photo_uploads'];
         tx.set(ref, {
           for (final e in document.entries)
             if (collection.path != 'operations_catalog' ||
                 e.key != 'matrix_versions')
               e.key: e.value,
-          if (collection.path == 'users' && receipts is Map)
-            'offline_photo_uploads': receipts,
         });
       }
     }).timeout(_remoteMutationTimeout);
+    if (supersededOnServer) {
+      // The entry retires above without a write, so this report is the only
+      // trace that the person's queued edit never reached the server.
+      unawaited(
+        SyncErrorLogService.instance.report(
+          StateError(
+            'Queued profile edit for ${collection.path}/${entry.targetId} was '
+            'dropped: a newer version was already saved on the server. The '
+            'server document was left exactly as it is.',
+          ),
+          StackTrace.current,
+          source: 'offline_mutation_queue_service.dart',
+          operation: 'apply queued user upsert',
+          target: '${collection.path}/${entry.targetId}',
+          kind: 'queue_edit_superseded',
+          details: {
+            'base_updated_at': entry.baseUpdatedAt,
+            'pending_updated_at': entry.payload['updated_at']?.toString(),
+            'entry_id': entry.id,
+          },
+        ),
+      );
+    }
   }
 
   Future<void> _publishCollectionVersion(String? collectionKey) async {
@@ -1628,8 +1819,7 @@ class OfflineMutationQueueService {
           );
           if (remoteVersion != null &&
               baseVersion != null &&
-              remoteVersion.isAfter(baseVersion) &&
-              remoteVersion != nextVersion) {
+              remoteVersion.isAfter(baseVersion)) {
             final serverContents =
                 Map<String, dynamic>.from(existingBooking.data()!)
                   ..remove('updated_at')
@@ -1639,7 +1829,37 @@ class OfflineMutationQueueService {
             if (_sameDocument(serverContents, pendingContents)) {
               // Already reflected on the server. Do not replay chassis transitions
               // or replace the server's timestamp with the old action timestamp.
+              // A converted-Future failure after the commit lands here as well:
+              // the server already carries this action's own version.
               return _BookingUpsertOutcome.alreadyApplied;
+            }
+            if (remoteVersion == nextVersion) {
+              // The server carries this action's own version but different
+              // contents, so another writer changed the booking inside it.
+              // Replaying here would silently resurrect the queued action.
+              throw OfflineSyncConflict(
+                'Sync conflict: booking changed remotely before applying this edit.',
+                {
+                  'base_updated_at': entry.baseUpdatedAt,
+                  'server_updated_at': existingBooking
+                      .data()?['updated_at']
+                      ?.toString(),
+                  'pending_updated_at': document['updated_at']?.toString(),
+                  'server_status': existingBooking.data()?['client_status'],
+                  'pending_status': document['client_status'],
+                  'differing_fields': [
+                    for (final key in {
+                      ...?existingBooking.data()?.keys,
+                      ...document.keys,
+                    })
+                      if (!_sameDocument(
+                        existingBooking.data()?[key],
+                        document[key],
+                      ))
+                        key,
+                  ],
+                },
+              );
             }
             Map<String, dynamic>? verifiedMake;
             final makeId = normalizeId(
@@ -1716,7 +1936,7 @@ class OfflineMutationQueueService {
           final previousChassisId = normalizeId(
             existingBooking.data()?['chassis_id']?.toString(),
           );
-          final nextChassisId = normalizeId(document['chassis_id']?.toString());
+          var nextChassisId = normalizeId(document['chassis_id']?.toString());
           final lifecycle = chassisLifecycleInstruction(
             previousBookingStatus: existingBooking
                 .data()?['client_status']
@@ -1749,30 +1969,64 @@ class OfflineMutationQueueService {
                   )).data()
                 : null;
             final serverBooking = existingBooking.data();
-            if (ownerBooking != null &&
-                serverBooking != null &&
-                isProvenSupersededChassisAction(
-                  pending: document,
-                  serverBooking: serverBooking,
-                  chassis: nextChassis.data() ?? const <String, dynamic>{},
-                  ownerBooking: ownerBooking,
-                  baseUpdatedAt: entry.baseUpdatedAt,
-                )) {
-              return _BookingUpsertOutcome.superseded;
-            }
-            displacedBookingId = chassisBookingToUnassign(
-              bookingId: entry.targetId,
-              booking: document,
-              chassis: nextChassis.data() ?? {},
-              ownerBooking: ownerBooking,
-            );
-            if (!shouldProjectBookingOntoChassis(
-              bookingId: entry.targetId,
-              booking: document,
-              chassis: nextChassis.data() ?? {},
-              ownerBooking: ownerBooking,
-            )) {
+            if (ownerBooking != null && serverBooking != null) {
+              // The chassis is genuinely held by another booking. Two questions
+              // are independent here, and only one of them is about the chassis:
+              //
+              //  * May this edit record the trip's status? Yes. The trip really
+              //    happened, and dropping the whole action would discard a
+              //    delivery form and its photo because a chassis number went
+              //    stale.
+              //  * May this edit claim the chassis? Never. It is on another
+              //    trip right now, and the trip that reported this edit cannot
+              //    know where the vehicle actually is.
+              //
+              // So the chassis projection is declined, the active owner is left
+              // completely untouched, and the rest of the document is written
+              // below. The booking's own link is then handled without inventing
+              // anything: a completed trip keeps the record of which vehicle ran
+              // it, because that is history and not a live claim. An unfinished
+              // trip does assert that the vehicle is on this run right now, and
+              // that claim is corrected when - and only when - the server proves
+              // the chassis has moved on. Anything unproven is left as the
+              // server has it.
+              final serverChassisId = serverBooking['chassis_id'];
+              final finishedTrip =
+                  _isCompletedTripStatus(document['client_status']) ||
+                  _isCompletedTripStatus(serverBooking['client_status']);
+              final provenOnAnotherTrip =
+                  !finishedTrip &&
+                  isProvenSupersededChassisAction(
+                    pending: document,
+                    serverBooking: serverBooking,
+                    chassis: nextChassis.data() ?? const <String, dynamic>{},
+                    ownerBooking: ownerBooking,
+                    baseUpdatedAt: entry.baseUpdatedAt,
+                  );
+              if (serverChassisId == null || provenOnAnotherTrip) {
+                document.remove('chassis_id');
+              } else {
+                document['chassis_id'] = serverChassisId;
+              }
+              // Nothing to project and nothing to release: this edit does not
+              // move the vehicle.
+              nextChassisId = previousChassisId;
               nextChassis = null;
+            } else {
+              displacedBookingId = chassisBookingToUnassign(
+                bookingId: entry.targetId,
+                booking: document,
+                chassis: nextChassis.data() ?? {},
+                ownerBooking: ownerBooking,
+              );
+              if (!shouldProjectBookingOntoChassis(
+                bookingId: entry.targetId,
+                booking: document,
+                chassis: nextChassis.data() ?? {},
+                ownerBooking: ownerBooking,
+              )) {
+                nextChassis = null;
+              }
             }
           }
 
@@ -2142,6 +2396,58 @@ class OfflineMutationQueueService {
     return resolvedId;
   }
 
+  /// The fields a queued user edit should write over a newer server document.
+  ///
+  /// A queued snapshot is a whole document, so writing it as-is would roll back
+  /// anything saved after the edit was made. With the pre-edit [base] in hand
+  /// the change is a real three-way merge: a field qualifies only when this
+  /// device changed it *and* the server still carries the pre-edit value. A
+  /// field both sides changed belongs to whoever saved last, so it is left
+  /// alone. Fields nobody touched are not part of the edit at all.
+  Map<String, dynamic> _mergeUserEditOverServer({
+    required Map<String, dynamic> queued,
+    required Map<String, dynamic>? base,
+    required Map<String, dynamic> server,
+    required bool replayPresence,
+  }) {
+    final applied = <String, dynamic>{};
+    if (base == null) return applied;
+    for (final field in queued.entries) {
+      if (field.key == 'updated_at' || field.key == 'id') continue;
+      // A mirrored presence value is not part of any edit; only an intentional
+      // queued sign-out may write it.
+      if (field.key == 'is_online' && !replayPresence) continue;
+      if (_sameDocument(base[field.key], field.value)) continue;
+      if (replayPresence && field.key == 'is_online') {
+        applied[field.key] = field.value;
+        continue;
+      }
+      // The server moved this field after the edit started: its value wins.
+      if (!_sameDocument(server[field.key], base[field.key])) continue;
+      applied[field.key] = field.value;
+    }
+    return applied;
+  }
+
+  /// A trip at or past `delivered` is finished. Its `chassis_id` records which
+  /// vehicle ran it, which is history rather than a live claim on that vehicle.
+  static bool _isCompletedTripStatus(Object? value) {
+    final rank = _tripStatusRanks['${value ?? ''}'];
+    return rank != null && rank >= _tripStatusRanks['delivered']!;
+  }
+
+  static const _tripStatusRanks = {
+    'pending': 0,
+    'assigned': 10,
+    'ongoing': 20,
+    'delivered': 30,
+    'check': 40,
+    'empty': 50,
+    'return': 60,
+    'cancelled': 70,
+    'confirm': 80,
+  };
+
   bool _sameDocument(Object? a, Object? b) {
     if (a is Map && b is Map) {
       return a.length == b.length &&
@@ -2184,7 +2490,7 @@ class OfflineMutationQueueService {
     final reservation = _idManagementCollection.doc(
       _idempotencyDocumentId(collectionKey, submissionKey),
     );
-    await _firestore.runTransaction<void>((tx) async {
+    await runTransactionWithOriginalErrors<void>(_firestore, (tx) async {
       final existing = await tx.get(collection.doc(finalId));
       final identity = await tx.get(reservation);
       final committed = identity.data()?['committed_document'];
@@ -2243,7 +2549,9 @@ class OfflineMutationQueueService {
       _idempotencyDocumentId('chassis', submissionKey),
     );
     final originalChassisDocument = Map<String, dynamic>.from(chassisDocument);
-    await _firestore.runTransaction<void>((transaction) async {
+    await runTransactionWithOriginalErrors<void>(_firestore, (
+      transaction,
+    ) async {
       final chassisDocument = Map<String, dynamic>.from(
         originalChassisDocument,
       );
@@ -2419,7 +2727,12 @@ class OfflineMutationQueueService {
           'updated_at': now,
         }, SetOptions(merge: true));
       }
-    });
+    }).timeout(
+      _remoteMutationTimeout,
+      onTimeout: () => throw TimeoutException(
+        'Queued chassis assignment for ${entry.targetId} did not complete in time.',
+      ),
+    );
     _traceChassis('sync transaction committed resolvedId=$resolvedId');
     return resolvedId;
   }
@@ -2427,7 +2740,9 @@ class OfflineMutationQueueService {
   Future<void> _applyChassisDelete(_OfflineMutationEntry entry) async {
     final bookingId = entry.payload['booking_id']?.toString().trim();
     final now = DateTime.now().toUtc().toIso8601String();
-    await _firestore.runTransaction<void>((transaction) async {
+    await runTransactionWithOriginalErrors<void>(_firestore, (
+      transaction,
+    ) async {
       final booking = bookingId == null || bookingId.isEmpty
           ? null
           : await transaction.get(_bookingsCollection.doc(bookingId));
@@ -2448,7 +2763,12 @@ class OfflineMutationQueueService {
           'updated_at': now,
         }, SetOptions(merge: true));
       }
-    });
+    }).timeout(
+      _remoteMutationTimeout,
+      onTimeout: () => throw TimeoutException(
+        'Queued chassis delete for ${entry.targetId} did not complete in time.',
+      ),
+    );
   }
 
   CollectionReference<Map<String, dynamic>>? _collectionForKey(
@@ -2692,6 +3012,7 @@ class OfflineMutationQueueService {
   Future<void> _flushPendingMutationsForStorageKey(
     String storageKey, {
     required bool updateStatus,
+    required int generation,
   }) async {
     final recoveredConflictIds = <String>{};
     final entries = await _serializeQueueMutation(() async {
@@ -2702,6 +3023,12 @@ class OfflineMutationQueueService {
         final hasBoxedError =
             isBoxedTransactionError(lastError) &&
             (entry.kind == _OfflineMutationKind.bookingCreate ||
+                (entry.collectionKey == 'users' &&
+                    const {
+                      _OfflineMutationKind.collectionDocumentUpsert,
+                      _OfflineMutationKind.collectionDocumentCreate,
+                      _OfflineMutationKind.userUpsert,
+                    }.contains(entry.kind)) ||
                 (entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
                     const {
                       'operations_catalog',
@@ -2780,7 +3107,8 @@ class OfflineMutationQueueService {
     final companions = linkedCreates.values.map((entry) => entry.id).toSet();
     final committedChassisCreates = <String, _OfflineMutationEntry>{};
     if (updateStatus) {
-      _setStatus(
+      _setStatusForGeneration(
+        generation,
         _currentStatus.copyWith(
           pendingCount: activeEntries.length,
           failedCount: entries.length - activeEntries.length,
@@ -2927,7 +3255,8 @@ class OfflineMutationQueueService {
       } finally {
         processed++;
         if (updateStatus) {
-          _setStatus(
+          _setStatusForGeneration(
+            generation,
             _currentStatus.copyWith(
               pendingCount:
                   remaining.where((entry) => !entry.isBlocked).length +
@@ -3038,7 +3367,8 @@ class OfflineMutationQueueService {
     );
 
     if (updateStatus) {
-      _setStatus(
+      _setStatusForGeneration(
+        generation,
         _currentStatus.copyWith(
           pendingCount: remaining.where((entry) => !entry.isBlocked).length,
           failedCount: remaining.where((entry) => entry.isBlocked).length,
@@ -3190,12 +3520,13 @@ class OfflineMutationQueueService {
     );
   }
 
-  void _markPendingAsSyncing() {
+  void _markPendingAsSyncing(int generation) {
     final pendingCount = _currentStatus.pendingCount;
     if (pendingCount <= 0 || _currentStatus.isSyncing) {
       return;
     }
-    _setStatus(
+    _setStatusForGeneration(
+      generation,
       _currentStatus.copyWith(
         isSyncing: true,
         processedInBatch: 0,
@@ -3264,6 +3595,14 @@ class _OfflineMutationEntry {
     this.conflictRecoveryAttempted = false,
     this.bookingAssignmentHistoryRechecked = false,
     this.catalogPredecessorVersions = const [],
+    // A user entry only replays `is_online` when presence was the point of the
+    // edit. Older persisted entries have no flag, so they keep the safe default
+    // of never resurrecting a stale presence value.
+    this.replayPresence = false,
+    // The document as it looked when the edit started. Without it a replay
+    // cannot tell which fields this device actually changed, so a three-way
+    // merge is impossible and any write would be a blind overwrite.
+    this.basePayload,
     this.lastError,
     this.diagnostics,
   });
@@ -3286,6 +3625,13 @@ class _OfflineMutationEntry {
   final bool conflictRecoveryAttempted;
   final bool bookingAssignmentHistoryRechecked;
   final List<String> catalogPredecessorVersions;
+
+  /// True when this entry's `is_online` value is an intentional presence change
+  /// (an offline sign-out) rather than a mirrored snapshot.
+  final bool replayPresence;
+
+  /// The pre-edit document, used to merge this edit over newer server fields.
+  final Map<String, dynamic>? basePayload;
   final String? lastError;
   final String? diagnostics;
 
@@ -3302,6 +3648,8 @@ class _OfflineMutationEntry {
     bool? chassisTransferRechecked,
     bool? conflictRecoveryAttempted,
     bool? bookingAssignmentHistoryRechecked,
+    bool? replayPresence,
+    Map<String, dynamic>? basePayload,
     String? baseUpdatedAt,
     bool clearBaseUpdatedAt = false,
     String? lastError,
@@ -3337,6 +3685,8 @@ class _OfflineMutationEntry {
       conflictRecoveryAttempted:
           conflictRecoveryAttempted ?? this.conflictRecoveryAttempted,
       catalogPredecessorVersions: catalogPredecessorVersions,
+      replayPresence: replayPresence ?? this.replayPresence,
+      basePayload: basePayload ?? this.basePayload,
       lastError: clearLastError ? null : (lastError ?? this.lastError),
       diagnostics: clearLastError ? null : (diagnostics ?? this.diagnostics),
     );
@@ -3363,6 +3713,8 @@ class _OfflineMutationEntry {
       'booking_assignment_history_rechecked': bookingAssignmentHistoryRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
+      'replay_presence': replayPresence,
+      'base_payload': basePayload,
       'last_error': lastError,
       if (diagnostics != null) 'error_diagnostics': diagnostics,
     };
@@ -3401,6 +3753,10 @@ class _OfflineMutationEntry {
           (map['catalog_predecessor_versions'] as List? ?? [])
               .whereType<String>()
               .toList(),
+      replayPresence: map['replay_presence'] == true,
+      basePayload: map['base_payload'] is Map
+          ? Map<String, dynamic>.from(map['base_payload'] as Map)
+          : null,
       lastError: map['last_error']?.toString(),
       diagnostics: map['error_diagnostics']?.toString(),
     );

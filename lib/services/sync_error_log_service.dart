@@ -388,7 +388,9 @@ class SyncErrorLogService {
     if (prefix == 'offline_mutation_queue_v1') {
       return entry['is_blocked'] == true;
     }
-    if (prefix == 'booking_pending_upload_queue_v1') return false;
+    // A photo wait is normally informational, but once the queue has recorded a
+    // retryable error it is no longer silent. Keep it in the review stream just
+    // like cleanup/media failures.
     return entry['last_error'] != null;
   }
 
@@ -528,6 +530,16 @@ class SyncErrorLogService {
     'persisted_queue_failure',
     'queue_stalled',
     'kpi_diagnostic',
+    // A discarded or stalled queue cycle is a sync failure the user must be
+    // able to see. Without this the report is dropped before it is persisted.
+    'queue_reclaimed',
+    'mutation_flush_timeout',
+    'cleanup_flush_timeout',
+    'media_flush_timeout',
+    'queue_status_read_failed',
+    // A queued edit that was retired because a newer server version won. No
+    // write happened, so this report is the only record that it was dropped.
+    'queue_edit_superseded',
   }.contains(kind);
 
   Future<void> capture({
