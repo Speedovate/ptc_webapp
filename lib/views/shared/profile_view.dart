@@ -446,11 +446,15 @@ class _ProfileViewState extends State<ProfileView> {
     final driver = user.asDriver;
     final showDriverFields = driver != null;
     final showCrewAssignment = _isCrewRole;
+    // A crew member always sees their own record. Anybody else needs the
+    // separately-togglable cross-crew KPI permission, which is off for every
+    // role but admin until an office grants it.
     final showKpiSummary =
         widget.showKpiSummary &&
-        widget.isCurrentUserView &&
         showCrewAssignment &&
-        CrewKpiStore.canView(user);
+        (widget.isCurrentUserView
+            ? CrewKpiStore.canView(user)
+            : CrewKpiStore.canReadAsRole(user));
     final hasLicensePreview =
         _pendingLicenseUpload != null ||
         _hasLicensePreviewValue(driver?.license);

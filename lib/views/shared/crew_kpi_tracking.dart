@@ -63,7 +63,25 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
         (widget.bookingChanges ??
                 BookingRequest.instance.watchBookings().map<void>((_) {}))
             .listen((_) => changed());
+    _seedFromMemory();
     unawaited(load());
+  }
+
+  /// Show the numbers this device already loaded on the very first frame. The
+  /// load below still refreshes from cache and then the server, so reopening the
+  /// screen never flashes a spinner over data that is already in hand.
+  void _seedFromMemory() {
+    if (!allowed) return;
+    final snapshot = CrewKpiStore.peek(widget.user);
+    if (snapshot == null) return;
+    final rows = (snapshot['records'] as List? ?? const [])
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+    if (rows.isEmpty) return;
+    data = Map<String, dynamic>.from(snapshot);
+    transactions = rows;
+    loading = false;
   }
 
   @override
@@ -305,12 +323,17 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
     final salary = selected
         .where((r) => r['type'] == 'Salary')
         .fold<double>(0, (s, r) => s + (r['amount'] as num? ?? 0));
-    final bookingCount = selected
-        .where((r) => r['type'] == 'Share')
-        .map((r) => r['booking_id'])
-        .whereType<String>()
-        .toSet()
-        .length;
+    final activePeriod = period;
+    final bookingProgress = activePeriod == null
+        ? (delivered: 0, total: 0)
+        : kpiBookingProgress(
+            (data?['bookings'] as List? ?? const []).whereType<Map>().map(
+              (row) => Map<String, dynamic>.from(row),
+            ),
+            period: activePeriod,
+            role: widget.user.role,
+            userId: widget.user.id,
+          );
     final periodFuel =
         (data?['fuel'] as List? ?? []).whereType<Map>().where((r) {
           final date = DateTime.tryParse('${r['day']}T00:00:00Z');
@@ -410,7 +433,10 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
                         'Accidents',
                         '${count('accidents')} (${rules.accidentsRating(count('accidents'))})',
                       ],
-                      ['Bookings', '$bookingCount'],
+                      [
+                        'Bookings',
+                        '${bookingProgress.delivered}/${bookingProgress.total}',
+                      ],
                       ['Shares', money(shares)],
                       ['Salary', money(salary)],
                       ['Total', money(shares + salary)],

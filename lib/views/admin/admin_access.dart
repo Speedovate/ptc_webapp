@@ -1338,6 +1338,7 @@ const TextStyle _checkboxLabelStyle = TextStyle(
 
 const Map<String, String> _permissionDisplayLabels = {
   DispatcherAccessCapability.ownKpiRead: 'KPI Tracking',
+  DispatcherAccessCapability.crewKpiRead: "view other crew's KPI",
   DispatcherAccessCapability.pmKpiRead: 'view-pm-kpi',
   DispatcherAccessCapability.pmKpiUpdate: 'update-pm-kpi',
   DispatcherAccessCapability.fuelLedgerRead: 'view-fuel-ledger',
@@ -1456,6 +1457,10 @@ final List<_AccessOption> _allAccessOptions = [
     'manage-user-login',
   ),
   const _AccessOption(DispatcherAccessCapability.ownKpiRead, 'KPI Tracking'),
+  const _AccessOption(
+    DispatcherAccessCapability.crewKpiRead,
+    "view other crew's KPI",
+  ),
   const _AccessOption(DispatcherAccessCapability.pmKpiRead, 'view-pm-kpi'),
   const _AccessOption(DispatcherAccessCapability.pmKpiUpdate, 'update-pm-kpi'),
   const _AccessOption(

@@ -38,28 +38,87 @@ class CrewKpiStore {
   final bool Function() _online;
   final Future<List<Map<String, dynamic>>> Function() _pending;
   FirebaseFirestore get db => _db ?? FirebaseFirestore.instance;
+
+  /// A KPI record only ever belongs to a driver or a helper.
+  static bool isCrewMember(UserModel user) =>
+      {'driver', 'helper'}.contains(user.role) && user.id?.isNotEmpty == true;
+
+  /// Whether [user] may read their own record.
   static bool canView(UserModel user) =>
-      {'driver', 'helper'}.contains(user.role) &&
-      user.id?.isNotEmpty == true &&
+      isCrewMember(user) &&
       RoleAccessService.instance.canAccess(
         DispatcherAccessCapability.ownKpiRead,
         role: user.role,
       );
+
+  /// Whether [viewer] may read [subject]'s record.
+  ///
+  /// Reading your own record needs `own_kpi.read` for your own role. Reading
+  /// somebody else's is a separate, separately-togglable permission, because the
+  /// record carries salary and shares. It is off for every role but admin until
+  /// an office enables it, so granting it is always a deliberate act.
+  static bool canReadAs(UserModel viewer, UserModel subject) {
+    if (!isCrewMember(subject)) return false;
+    final sameAccount =
+        viewer.id?.isNotEmpty == true &&
+        viewer.id == subject.id &&
+        viewer.role == subject.role;
+    if (sameAccount) return canView(subject);
+    return canReadAsRole(subject, viewerRole: viewer.role);
+  }
+
+  /// Role-only form of [canReadAs], for widgets that already know whether they
+  /// are showing the signed-in crew member's own record.
+  static bool canReadAsRole(UserModel subject, {String? viewerRole}) {
+    if (!isCrewMember(subject)) return false;
+    final role = viewerRole ?? RoleAccessService.instance.currentRoleKey;
+    if (role == null || role.isEmpty) return false;
+    return RoleAccessService.instance.canAccess(
+      DispatcherAccessCapability.crewKpiRead,
+      role: role,
+    );
+  }
+
   Future<void> _check(UserModel user) async {
     final current = await _currentUser();
-    if (current?.id != user.id ||
-        current?.role != user.role ||
-        !_allowed(user)) {
+    if (current == null || !_allowed(user) || !canReadAs(current, user)) {
       throw StateError('You do not have access to this KPI.');
     }
   }
 
-  String _key(UserModel user) => 'crew-kpi:v1:${user.role}:${user.id}';
+  static String _key(UserModel user) => 'crew-kpi:v1:${user.role}:${user.id}';
+
+  /// The last snapshot this device loaded, kept in memory so a freshly opened
+  /// screen can paint real numbers on its first frame. Reading the durable cache
+  /// is asynchronous, so without this every open would flash a spinner over data
+  /// the device already has. Never persisted and never shared: a snapshot only
+  /// exists here for an account that already passed [canReadAs].
+  static final Map<String, Map<String, dynamic>> _snapshots = {};
+
+  static Map<String, dynamic>? peek(UserModel user) => _snapshots[_key(user)];
+
+  static void remember(UserModel user, Map<String, dynamic>? snapshot) {
+    if (snapshot != null) _snapshots[_key(user)] = snapshot;
+  }
+
+  /// Drops every in-memory snapshot. Called on sign-out and on an account switch
+  /// so one crew member's numbers can never be painted for another.
+  static void forgetAll() => _snapshots.clear();
+
   Future<Map<String, dynamic>?> readCached(UserModel user) async {
     await _check(user);
+    // An account that is no longer allowed must not paint a remembered snapshot.
+    final current = await _currentUser();
+    if (current == null || !canReadAs(current, user)) {
+      _snapshots.remove(_key(user));
+      return null;
+    }
     final saved = (await _cache.readDocumentMaps(_key(user)))?.firstOrNull;
     await _check(user);
-    return saved == null ? null : _overlay(user, saved);
+    if (saved == null) return null;
+    final overlaid = await _overlay(user, saved);
+    remember(user, overlaid);
+    return overlaid;
   }
 
   Future<Map<String, dynamic>?> load(UserModel user) async {
@@ -303,7 +362,9 @@ class CrewKpiStore {
     await _check(user);
     await _cache.writeDocumentMaps(_key(user), [snapshot]);
     await _check(user);
-    return _overlay(user, snapshot);
+    final overlaid = await _overlay(user, snapshot);
+    remember(user, overlaid);
+    return overlaid;
   }
 
   Future<Map<String, dynamic>> _overlay(

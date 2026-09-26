@@ -255,6 +255,45 @@ DateTime? kpiDeliveredAt(Booking booking) {
   return first;
 }
 
+/// How much of a crew member's assigned work actually got delivered.
+///
+/// Both sides are anchored to the same date - the delivery date when the trip
+/// reached delivery, otherwise the date it was created - so a booking can only
+/// ever be counted once and `delivered` can never exceed `total`.
+({int delivered, int total}) kpiBookingProgress(
+  Iterable<Map<String, dynamic>> bookings, {
+  required KpiPeriod period,
+  String? role,
+  String? userId,
+  DateTime? now,
+}) {
+  final today = kpiDate(now ?? DateTime.now());
+  var delivered = 0;
+  var total = 0;
+  for (final raw in bookings) {
+    // A stale or shared snapshot must never let one crew member's trip count as
+    // another's, so the assignment is re-checked here rather than trusted.
+    if (role != null && userId != null && userId.isNotEmpty) {
+      final assigned = raw['${role}_id']?.toString().trim() ?? '';
+      if (assigned != userId) continue;
+    }
+    final booking = Booking.fromMap(raw);
+    final deliveredAt = kpiDeliveredAt(booking);
+    final date = kpiDate(
+      deliveredAt ??
+          booking.createdAt ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    );
+    if (date.isAfter(today) || !period.contains(date)) continue;
+    total++;
+    if (deliveredAt != null ||
+        Booking.isDeliveredWorkflowStatus(booking.clientStatus)) {
+      delivered++;
+    }
+  }
+  return (delivered: delivered, total: total);
+}
+
 class KpiDay {
   KpiDay(this.date, this.trips, this.record, {this.estimate});
   final KpiSalaryEstimate? estimate;

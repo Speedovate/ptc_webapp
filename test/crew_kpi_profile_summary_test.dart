@@ -135,13 +135,49 @@ void main() {
     },
   );
 
+  testWidgets('profile summary loads for a crew member viewed by admin', (
+    tester,
+  ) async {
+    // Admin holds the cross-crew KPI permission by default, so the office can
+    // audit a crew member's record from their profile. Every other role stays
+    // off until it is granted.
+    const user = UserModel(id: 'other-driver', role: 'driver');
+    final store = _SummaryStore(_summaryData(kpiDate(DateTime.now())));
+    RoleAccessService.instance.setCurrentUser(
+      const UserModel(id: 'admin-id', role: 'admin'),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ProfileView(
+              user: user,
+              scrollable: false,
+              padding: EdgeInsets.zero,
+              isCurrentUserView: false,
+              kpiStore: store,
+              vehicleCatalogRepository: _EmptyMakesRepository(),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('profile-kpi-summary')), findsOneWidget);
+    expect(find.text('Bookings'), findsOneWidget);
+    expect(store.cachedCalls + store.loadCalls, greaterThan(0));
+  });
+
   testWidgets(
-    'profile summary does not load for a crew member viewed by admin',
+    'profile summary does not load for a crew member viewed by a role without '
+    'the cross-crew KPI permission',
     (tester) async {
       const user = UserModel(id: 'other-driver', role: 'driver');
       final store = _SummaryStore(_summaryData(kpiDate(DateTime.now())));
       RoleAccessService.instance.setCurrentUser(
-        const UserModel(id: 'admin-id', role: 'admin'),
+        const UserModel(id: 'manager-id', role: 'manager'),
       );
 
       await tester.pumpWidget(

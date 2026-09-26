@@ -20,7 +20,8 @@ class CrewKpiSummaryMetrics {
     required this.period,
     required this.complaints,
     required this.accidents,
-    required this.bookings,
+    required this.bookingsDelivered,
+    required this.bookingsTotal,
     required this.shares,
     required this.salary,
     required this.complaintsRating,
@@ -49,13 +50,15 @@ class CrewKpiSummaryMetrics {
     final salary = rows
         .where((row) => row['type'] == 'Salary')
         .fold<double>(0, (sum, row) => sum + amountFor(row));
-    final bookings = rows
-        .where((row) => row['type'] == 'Share')
-        .map((row) => row['booking_id']?.toString())
-        .whereType<String>()
-        .where((id) => id.isNotEmpty)
-        .toSet()
-        .length;
+    final bookings = kpiBookingProgress(
+      (data['bookings'] as List? ?? const []).whereType<Map>().map(
+        (row) => Map<String, dynamic>.from(row),
+      ),
+      period: period,
+      role: user.role,
+      userId: user.id,
+      now: now,
+    );
 
     var complaints = 0;
     var accidents = 0;
@@ -76,7 +79,8 @@ class CrewKpiSummaryMetrics {
       period: period,
       complaints: complaints,
       accidents: accidents,
-      bookings: bookings,
+      bookingsDelivered: bookings.delivered,
+      bookingsTotal: bookings.total,
       shares: shares,
       salary: salary,
       complaintsRating: rules.complaintsRating(complaints),
@@ -87,7 +91,11 @@ class CrewKpiSummaryMetrics {
   final KpiPeriod period;
   final int complaints;
   final int accidents;
-  final int bookings;
+  final int bookingsDelivered;
+  final int bookingsTotal;
+
+  /// Delivered trips out of the trips assigned in the period.
+  String get bookingsLabel => '$bookingsDelivered/$bookingsTotal';
   final double shares;
   final double salary;
   final String complaintsRating;
@@ -140,7 +148,22 @@ class _CrewKpiProfileSummaryState extends State<CrewKpiProfileSummary> {
     _networkSubscription = (widget.network ?? networkStatusEvents())
         .distinct()
         .listen((_) => _changed());
+    // Paint what this device already knows on the first frame. The load below
+    // still runs and refreshes in the background, so the card is never a
+    // spinner over numbers we are holding.
+    _seedFromMemory();
     unawaited(load());
+  }
+
+  void _seedFromMemory() {
+    if (!_allowed) return;
+    final snapshot = CrewKpiStore.peek(widget.user);
+    if (snapshot == null) return;
+    _metrics = CrewKpiSummaryMetrics.fromData(
+      user: widget.user,
+      data: snapshot,
+    );
+    _loading = false;
   }
 
   @override
@@ -344,7 +367,7 @@ class _CrewKpiProfileSummaryState extends State<CrewKpiProfileSummary> {
         label: 'Accidents',
         value: '${metrics.accidents} (${metrics.accidentsRating})',
       ),
-      (label: 'Bookings', value: '${metrics.bookings}'),
+      (label: 'Bookings', value: metrics.bookingsLabel),
       (label: 'Shares', value: _formatMoney(metrics.shares)),
       (label: 'Salary', value: _formatMoney(metrics.salary)),
       (label: 'Total', value: _formatMoney(metrics.total)),

@@ -1,5 +1,11 @@
 class DispatcherAccessCapability {
   static const ownKpiRead = 'own_kpi.read';
+
+  /// Reading another crew member's KPI record. Separate from `ownKpiRead` so an
+  /// office can keep a role from auditing the crew while still letting everyone
+  /// see their own numbers. Off for every role except admin by default, because
+  /// the record includes salary and shares.
+  static const crewKpiRead = 'crew_kpi.read';
   static const pmKpiRead = 'pm_kpi.read';
   static const pmKpiUpdate = 'pm_kpi.update';
   static const fuelLedgerRead = 'fuel_ledger.read';
@@ -72,6 +78,7 @@ class DispatcherAccessCapability {
 
   static const values = <String>[
     ownKpiRead,
+    crewKpiRead,
     pmKpiRead,
     pmKpiUpdate,
     fuelLedgerRead,
@@ -145,6 +152,7 @@ final Map<String, bool> defaultAdminAccessCapabilities = {
 };
 
 const Map<String, bool> defaultDispatcherAccessCapabilities = {
+  DispatcherAccessCapability.crewKpiRead: false,
   DispatcherAccessCapability.dashboardRead: true,
   DispatcherAccessCapability.dashboardUpdateBilling: true,
   DispatcherAccessCapability.dashboardExport: true,
@@ -196,6 +204,7 @@ const Map<String, bool> defaultDispatcherAccessCapabilities = {
 };
 
 const Map<String, bool> defaultClientAccessCapabilities = {
+  DispatcherAccessCapability.crewKpiRead: false,
   DispatcherAccessCapability.bookingsCreate: true,
   DispatcherAccessCapability.bookingsRead: true,
   DispatcherAccessCapability.bookingsUpdate: true,
@@ -211,6 +220,7 @@ const Map<String, bool> defaultClientAccessCapabilities = {
 };
 
 const Map<String, bool> defaultDriverAccessCapabilities = {
+  DispatcherAccessCapability.crewKpiRead: false,
   DispatcherAccessCapability.ownKpiRead: true,
   DispatcherAccessCapability.bookingsRead: true,
   DispatcherAccessCapability.bookingsUpdate: true,
@@ -226,6 +236,7 @@ const Map<String, bool> defaultDriverAccessCapabilities = {
 };
 
 const Map<String, bool> defaultHelperAccessCapabilities = {
+  DispatcherAccessCapability.crewKpiRead: false,
   DispatcherAccessCapability.ownKpiRead: true,
   DispatcherAccessCapability.bookingsRead: true,
   DispatcherAccessCapability.bookingsUpdate: true,
