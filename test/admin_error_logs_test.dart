@@ -14,12 +14,83 @@ import 'package:webapp/widgets/shared/admin_modal_record_list.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 
+/// Stalls only the newest-first read, the way a slow composite index behaves.
+/// The cheap un-ordered read still answers, which is what the fallback uses.
+class _StalledOrderedReadFirestore extends FakeFirebaseFirestore {
+  @override
+  CollectionReference<Map<String, dynamic>> collection(String path) {
+    final ref = super.collection(path);
+    return path == 'sync_error_logs' ? _StalledOrderedCollection(ref) : ref;
+  }
+}
+
+/// Stalls every read on the collection, so neither path can answer.
 class _StalledReadFirestore extends FakeFirebaseFirestore {
   @override
   CollectionReference<Map<String, dynamic>> collection(String path) {
     final ref = super.collection(path);
     return path == 'sync_error_logs' ? _StalledCollection(ref) : ref;
   }
+}
+
+class _StalledOrderedCollection
+    implements CollectionReference<Map<String, dynamic>> {
+  _StalledOrderedCollection(this.ref);
+  final CollectionReference<Map<String, dynamic>> ref;
+  @override
+  Query<Map<String, dynamic>> orderBy(
+    Object field, {
+    bool descending = false,
+  }) => _StalledQuery(ref);
+  @override
+  AggregateQuery count() => ref.count();
+  @override
+  DocumentReference<Map<String, dynamic>> doc([String? path]) => ref.doc(path);
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.memberName == #where) {
+      return _StallsOnOrderQuery(
+        ref.where(
+          invocation.positionalArguments.first,
+          isEqualTo: invocation.namedArguments[#isEqualTo],
+        ),
+      );
+    }
+    return super.noSuchMethod(invocation);
+  }
+}
+
+/// Answers an un-ordered read normally, but stalls the moment an order is
+/// requested - the way a slow composite index behaves.
+class _StallsOnOrderQuery implements Query<Map<String, dynamic>> {
+  _StallsOnOrderQuery(this.ref);
+  final Query<Map<String, dynamic>> ref;
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    // Chained filters must keep working; only ordering stalls.
+    if (invocation.memberName == #where) {
+      return _StallsOnOrderQuery(
+        ref.where(
+          invocation.positionalArguments.first,
+          isEqualTo: invocation.namedArguments[#isEqualTo],
+        ),
+      );
+    }
+    return super.noSuchMethod(invocation);
+  }
+
+  @override
+  Query<Map<String, dynamic>> orderBy(
+    Object field, {
+    bool descending = false,
+  }) => _StalledQuery(ref);
+  @override
+  AggregateQuery count() => ref.count();
+  @override
+  Query<Map<String, dynamic>> limit(int count) => this;
+  @override
+  Future<QuerySnapshot<Map<String, dynamic>>> get([GetOptions? options]) =>
+      ref.get(options);
 }
 
 class _StalledCollection implements CollectionReference<Map<String, dynamic>> {
@@ -206,13 +277,19 @@ void main() {
     expect(first['firestore_data']['added_after_open'], true);
   });
   for (final hasLogs in [false, true]) {
-    testWidgets('stalled query verifies empty state, hasLogs=$hasLogs', (
-      tester,
-    ) async {
-      final db = _StalledReadFirestore();
+    testWidgets('a stalled ordered read still shows the reports, '
+        'hasLogs=$hasLogs', (tester) async {
+      // The newest-first read stalls, but the reports exist and the cheaper
+      // read answers. The page must show them rather than an error - the old
+      // fallback only checked emptiness, so it failed precisely when there was
+      // something to show.
+      final db = _StalledOrderedReadFirestore();
       if (hasLogs) {
         await db.collection('sync_error_logs').doc('existing').set({
           'attention_required': true,
+          'user_id': '8',
+          'role': 'dispatcher',
+          'last_failed_at': '2026-09-24T00:00:00Z',
           'error': 'saved',
         });
       }
@@ -229,15 +306,62 @@ void main() {
       expect(find.byType(AppPageLoading), findsOneWidget);
       await tester.pump(const Duration(seconds: 13));
       await tester.pumpAndSettle();
-      expect(find.byType(AppPageLoading), findsNothing);
+
       expect(
-        find.text('No error logs.'),
-        hasLogs ? findsNothing : findsOneWidget,
+        find.text('Retry'),
+        findsNothing,
+        reason: 'a slow read must not become an error the admin has to retry',
       );
-      expect(find.text('Retry'), hasLogs ? findsOneWidget : findsNothing);
-      expect(find.textContaining('TimeoutException'), findsNothing);
+      if (hasLogs) {
+        expect(
+          find.textContaining('quick unsorted read'),
+          findsOneWidget,
+          reason: 'the list must say it is complete but unsorted',
+        );
+        expect(
+          find.textContaining('No error logs'),
+          findsNothing,
+          reason: 'a report exists and must not be shown as an empty list',
+        );
+        expect(find.byType(AdminModalRecordList), findsOneWidget);
+      } else {
+        expect(find.textContaining('No error logs'), findsOneWidget);
+      }
     });
   }
+
+  testWidgets('when no read can answer, the failure is diagnosable', (
+    tester,
+  ) async {
+    // Both the ordered read and the cheap read stall. The page has nothing to
+    // show, so it must say so - and name the actual failure so the next report
+    // is not a dead end.
+    final db = _StalledReadFirestore();
+    await db.collection('sync_error_logs').doc('existing').set({
+      'attention_required': true,
+      'error': 'saved',
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AdminErrorLogsView(
+            user: const UserModel(role: 'admin'),
+            firestore: db,
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 22));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Retry'), findsOneWidget);
+    expect(
+      find.textContaining('TimeoutException'),
+      findsOneWidget,
+      reason: 'the real failure must reach the admin, not a generic message',
+    );
+  });
+
   testWidgets('initial loading resolves to the shared empty card', (
     tester,
   ) async {

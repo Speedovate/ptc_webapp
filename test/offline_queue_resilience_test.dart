@@ -438,6 +438,80 @@ void main() {
     );
   });
 
+  group('a stalled booking read never fails a captured photo', () {
+    const storageKey = 'booking_pending_upload_queue_v1::13';
+
+    test(
+      'a marker read that never answers becomes a visible wait, not a failure',
+      () async {
+        // Production shape: Dispatcher 8's phone timed out re-reading the booking
+        // to confirm the placeholder was still wanted, and the captured photo
+        // was reported as a hard queue_failure. The bytes were already safe, so
+        // a slow confirmation must only delay the upload.
+        final db = FakeFirebaseFirestore();
+        final backend = MemoryBackend();
+        final service = BookingOfflineUploadQueueService(
+          backend: backend,
+          firestore: db,
+          photoStorageService: _StalledPhotoStorage(),
+          flushMutations: () async {},
+          mutationQueue: OfflineMutationQueueService(
+            backend: MemoryBackend(),
+            firestore: db,
+            isOnline: () => false,
+          ),
+          // The confirmation read never answers.
+          bookingReader: (bookingId) async =>
+              throw TimeoutException('booking read never answered'),
+        );
+        await service.initialize();
+        await service.enqueueBookingPhoto(
+          bookingId: '1',
+          statusKey: 'book__1',
+          fieldKey: 'waybill_photo',
+          bytes: Uint8List.fromList(
+            img.encodePng(img.Image(width: 2, height: 2)),
+          ),
+          fileName: 'waybill.png',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        await service.flushPendingUploads();
+
+        final retained =
+            jsonDecode((await backend.readStringList(storageKey)).single)
+                as Map<String, dynamic>;
+        expect(
+          retained['last_error'],
+          isNot(contains('TimeoutException')),
+          reason: 'a slow confirmation must not be reported as a failure',
+        );
+        expect(
+          retained['wait_reason'],
+          'marker_check_timed_out',
+          reason: 'the wait must say why the upload has not happened yet',
+        );
+        expect(
+          retained['wait_count'],
+          greaterThanOrEqualTo(1),
+          reason: 'the stall has to be counted so it can escalate',
+        );
+        expect(
+          (await service.readPendingItems('13')).single.hasError,
+          isFalse,
+          reason: 'a delayed upload is not an error the crew has to act on',
+        );
+      },
+    );
+
+    test('a small confirmation read is given a phone-sized budget', () {
+      expect(
+        BookingOfflineUploadQueueService.markerCheckTimeout,
+        greaterThanOrEqualTo(const Duration(seconds: 15)),
+        reason: 'a mobile connection needs more than a token budget',
+      );
+    });
+  });
+
   group('upload failures stay visible', () {
     const storageKey = 'booking_pending_upload_queue_v1::13';
 

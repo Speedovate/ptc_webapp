@@ -26,6 +26,7 @@ class BookingOfflineUploadQueueService {
     Future<void> Function()? flushMutations,
     OfflineMutationQueueService? mutationQueue,
     Duration mutationFlushTimeout = _defaultMutationFlushTimeout,
+    Future<Map<String, dynamic>?> Function(String bookingId)? bookingReader,
   }) : _backend = backend ?? createBookingStorageBackend(),
        _providedFirestore = firestore,
        _photoStorageService =
@@ -34,15 +35,28 @@ class BookingOfflineUploadQueueService {
            flushMutations ??
            OfflineMutationQueueService.instance.flushPendingMutations,
        _mutationQueue = mutationQueue ?? OfflineMutationQueueService.instance,
-       _mutationFlushTimeout = mutationFlushTimeout;
+       _mutationFlushTimeout = mutationFlushTimeout,
+       _bookingReader = bookingReader;
 
   static final BookingOfflineUploadQueueService instance =
       BookingOfflineUploadQueueService();
+
+  /// Reads a booking to confirm a staged photo is still wanted. Injected so the
+  /// stalled-read path is testable without a hostile Firestore double, and so
+  /// the caller can decide how long a confirmation is worth waiting for.
+  final Future<Map<String, dynamic>?> Function(String bookingId)?
+  _bookingReader;
 
   static const _storageKey = 'booking_pending_upload_queue_v1';
   static const _currentUserIdKey = 'paltranco_current_user_id';
   static const _knownSessionUserIdsKey = 'paltranco_known_session_user_ids';
   static const _retryInterval = Duration(seconds: 20);
+
+  /// Re-reading the booking to confirm a placeholder is a small single-document
+  /// read, so it gets a generous budget. A phone on mobile data routinely needs
+  /// more than a few seconds, and a stalled confirmation must never be mistaken
+  /// for a failed upload.
+  static const markerCheckTimeout = Duration(seconds: 20);
   static const _mutationCheckTimeout = Duration(seconds: 15);
   static const _localStoreTimeout = Duration(seconds: 20);
   static const _escalateWaitAfterCycles = 3;
@@ -624,11 +638,32 @@ class BookingOfflineUploadQueueService {
           remaining.add(wait.entry);
           continue;
         }
-        final markerSnapshot = await _bookingsCollection
-            .doc(entry.bookingId)
-            .get()
-            .timeout(const Duration(seconds: 10));
-        if (!markerSnapshot.exists) {
+        // This read only confirms the placeholder is still wanted. A slow answer
+        // is not a failure: the bytes are already captured and safe, so a stalled
+        // read must become a visible wait and retry. Throwing here used to mark
+        // the photo failed - and lose an otherwise complete capture - on nothing
+        // more than a slow connection.
+        Map<String, dynamic>? markerData;
+        try {
+          final reader = _bookingReader;
+          markerData = reader != null
+              ? await reader(entry.bookingId).timeout(markerCheckTimeout)
+              : (await _bookingsCollection
+                        .doc(entry.bookingId)
+                        .get()
+                        .timeout(markerCheckTimeout))
+                    .data();
+        } catch (_) {
+          final wait = await _noteWait(
+            entry,
+            _PhotoWaitReason.markerCheckTimedOut,
+            storageKey: storageKey,
+          );
+          mutated = mutated || wait.persisted;
+          remaining.add(wait.entry);
+          continue;
+        }
+        if (markerData == null) {
           // The booking write that carries this photo has not landed yet.
           // Keep the bytes, but record why so the queue is never silent.
           final wait = await _noteWait(
@@ -640,7 +675,6 @@ class BookingOfflineUploadQueueService {
           remaining.add(wait.entry);
           continue;
         }
-        final markerData = markerSnapshot.data() ?? <String, dynamic>{};
         final markerField = _fieldValueFromStatusOutputs(
           _statusOutputsFromBooking(markerData),
           statusKey: entry.statusKey,
@@ -1087,6 +1121,11 @@ enum _PhotoWaitReason {
     'mutation_check_timed_out',
     'the booking queue did not answer in time',
     'Waiting for the booking queue to respond',
+  ),
+  markerCheckTimedOut(
+    'marker_check_timed_out',
+    'the booking could not be re-read to confirm this photo is still wanted',
+    'Waiting for the booking to be re-read',
   );
 
   const _PhotoWaitReason(this.key, this.explanation, this.pendingMessage);

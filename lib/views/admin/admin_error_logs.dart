@@ -44,6 +44,14 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
   bool _loading = false;
   bool _hasMore = true;
   String? _error;
+
+  /// True when the ordered read stalled and the reports shown came from the
+  /// cheaper unsorted read, so the list is complete but not newest-first.
+  bool _degraded = false;
+
+  /// Set when the per-user and per-device counters could not be read. The
+  /// reports are still listed; only those totals are missing.
+  String? _summaryNotice;
   bool _copying = false;
   bool get _allowed => widget.user.role?.trim().toLowerCase() == 'admin';
   FirebaseFirestore get _db => widget.firestore ?? FirebaseFirestore.instance;
@@ -100,6 +108,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
     setState(() {
       _loading = true;
       _error = null;
+      _summaryNotice = null;
     });
     try {
       Query<Map<String, dynamic>> query = _db
@@ -110,29 +119,41 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
         query = query.startAfterDocument(_cursor!);
       }
       QuerySnapshot<Map<String, dynamic>>? fetchedPage;
+      var degraded = false;
       try {
         fetchedPage = await query
             .limit(15)
             .get()
             .timeout(const Duration(seconds: 12));
-      } on TimeoutException {
-        // Verify emptiness independently when the document query stalls.
-        // A timeout alone must never hide existing errors as an empty list.
-        final count = await _db
-            .collection('sync_error_logs')
-            .where('attention_required', isEqualTo: true)
-            .count()
-            .get()
-            .timeout(const Duration(seconds: 8));
-        if ((count.count ?? -1) != 0) rethrow;
+      } on TimeoutException catch (timeout) {
+        // A stalled ordered query must not decide whether errors exist. The
+        // previous fallback only checked emptiness, so it happened to survive
+        // exactly when there was nothing to show and hard-failed the moment
+        // there was - the one case an admin opened this page for. Fall back to
+        // the cheap single-field read instead: unsorted, but the reports are
+        // visible, which is what matters.
+        try {
+          fetchedPage = await _db
+              .collection('sync_error_logs')
+              .where('attention_required', isEqualTo: true)
+              .limit(15)
+              .get()
+              .timeout(const Duration(seconds: 8));
+          degraded = true;
+        } catch (_) {
+          // Neither read completed. Surface what actually went wrong instead of
+          // a generic message, so the next report is diagnosable.
+          Error.throwWithStackTrace(timeout, StackTrace.current);
+        }
       }
       final page = fetchedPage;
       if (!mounted || !_allowed) return;
-      // An empty page is a completed read. Do not wait for user metadata or
-      // aggregate counts before settling the empty/end-of-list state.
-      if (page == null || page.docs.isEmpty) {
+      // Both the ordered read and the fallback always answer with a snapshot or
+      // rethrow, so reaching here means the read completed. An empty page is
+      // therefore a real empty result, not a stalled one.
+      if (page.docs.isEmpty) {
         setState(() {
-          if (refresh || page == null) {
+          if (refresh) {
             _logs.clear();
             _summaries.clear();
             _deviceSummaries.clear();
@@ -217,7 +238,11 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
         _deviceSummaries.addEntries(
           deviceSummaries.whereType<MapEntry<String, int>>(),
         );
-        _error = summaryError;
+        // A failed per-user or per-device counter must not replace the page.
+        // The reports themselves are already loaded and are the reason the admin
+        // opened this screen, so a missing count degrades that one column rather
+        // than hiding every report behind an error and a Retry button.
+        if (summaryError != null) _summaryNotice = summaryError;
         final byId = {for (final row in _logs) row['id']: row};
         for (final row in rows) {
           byId[row['id']] = row;
@@ -230,6 +255,10 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
             ? (refresh ? null : _cursor)
             : page.docs.last;
         _hasMore = page.docs.length == 15;
+        // The cheap read has no meaningful cursor to continue from, so paging
+        // stays off until the next ordered read succeeds.
+        if (degraded) _hasMore = false;
+        _degraded = degraded;
       });
       final notify = widget.onReportsLoaded;
       if (notify != null) unawaited(notify());
@@ -237,7 +266,9 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
       if (mounted) {
         setState(
           () => _error = error is TimeoutException
-              ? 'Unable to load error logs. Please try again.'
+              ? 'Unable to load error logs: the request timed out and the '
+                    'cheaper fallback read also did not answer. '
+                    '(${error.runtimeType})'
               : '$error',
         );
       }
@@ -489,13 +520,34 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                 padding: const EdgeInsets.all(24),
                 child: _error != null
                     ? errorState()
-                    : const AdminListItemCard(
-                        padding: EdgeInsets.all(24),
-                        child: AdminListStateText(message: 'No error logs.'),
+                    : AdminListItemCard(
+                        padding: const EdgeInsets.all(24),
+                        child: AdminListStateText(
+                          message: _degraded
+                              ? 'No error logs in the quick read. The sorted '
+                                    'read is still timing out.'
+                              : 'No error logs.',
+                        ),
                       ),
               ),
       );
     }
+    final notes = <String>[
+      if (_degraded)
+        'Showing a quick unsorted read. The newest-first read timed out, so '
+            'this list is complete but not ordered by date.',
+      if (_summaryNotice != null)
+        'Some error totals could not be loaded, so those counts are missing.',
+    ];
+    final degradedNotice = notes.isEmpty
+        ? const SizedBox.shrink()
+        : Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: AdminListItemCard(
+              padding: const EdgeInsets.all(12),
+              child: AdminListStateText(message: notes.join('\n\n')),
+            ),
+          );
     final groups = <String, List<Map<String, dynamic>>>{};
     for (final row in _logs) {
       groups.putIfAbsent(_owner(row), () => []).add(row);
@@ -574,7 +626,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                 rows[i + 1].user == row.user &&
                 rows[i + 1].log == null;
           },
-          scrollHeader: const SizedBox.shrink(),
+          scrollHeader: degradedNotice,
           scrollFooter: _loading
               ? const AppPageLoading(compact: true)
               : _error != null
