@@ -16,10 +16,6 @@ import 'package:webapp/widgets/shared/admin_modal_record_list.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 
-// Temporary tracing for the error-log chat action. Removed once the
-// wrong-target cause is confirmed.
-// ignore_for_file: avoid_print
-
 /// Read-only, on-demand diagnostics. No background listeners or automatic retries.
 class AdminErrorLogsView extends StatefulWidget {
   const AdminErrorLogsView({
@@ -358,7 +354,6 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
   /// reading an error can ask about it in the same place they read it.
   Future<void> _chatWith(String user) async {
     if (!_canChatWith(user)) return;
-    print('[chatdebug] error_logs row.user="$user" canChat=$_canChatWith');
     await openSupportDestination(
       context,
       user: widget.user,

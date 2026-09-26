@@ -30,10 +30,6 @@ import 'package:webapp/widgets/shared/app_profile_avatar.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/support_section_navigation_scope.dart';
 
-// Temporary tracing for the error-log chat action. Removed once the
-// wrong-target cause is confirmed.
-// ignore_for_file: avoid_print
-
 class SupportCenterView extends StatefulWidget {
   const SupportCenterView({
     super.key,
@@ -127,7 +123,6 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   final AppWarmupService _warmupService = AppWarmupService.instance;
   final TextEditingController _messageController = TextEditingController();
   final TextEditingController _adminSearchController = TextEditingController();
-  final ScrollController _chatScrollController = ScrollController();
   String _selectedTopicKey = supportTopicBooking;
   String? _selectedBookingId;
   String? _selectedThreadId;
@@ -145,6 +140,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   Map<String, String> _threadReadMarkersById = const <String, String>{};
   String? _pendingInitialAdminUserId;
   int _chatScrollRequestTick = 0;
+
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
   bool? _lastBlockingOverlayVisible;
 
@@ -251,9 +247,6 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     }
     _selectedBookingId = normalizeId(widget.initialBookingId);
     _pendingInitialAdminUserId = normalizeId(widget.initialUserId);
-    print(
-      '[chatdebug] initState pending=$_pendingInitialAdminUserId isAdmin=$_isAdmin',
-    );
     _selectedTopicKey =
         (widget.initialTopicKey?.trim().isNotEmpty == true
                 ? widget.initialTopicKey
@@ -271,12 +264,29 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     }
   }
 
+  /// Picking another conversation must not rebuild this view. A new instance
+  /// starts with an empty thread list, so the panel would collapse and then
+  /// stream its rows back in, which reads as the list animating on every tap.
+  @override
+  void didUpdateWidget(covariant SupportCenterView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final requested = normalizeId(widget.initialUserId);
+    if (requested == null ||
+        requested == normalizeId(oldWidget.initialUserId)) {
+      return;
+    }
+    // Same view, new target: resolve it against the list already in memory.
+    setState(() {
+      _pendingInitialAdminUserId = requested;
+    });
+    unawaited(_applyPendingInitialAdminUser(_adminUsers));
+  }
+
   @override
   void dispose() {
     PerformanceTrace.event('support-view', 'dispose');
     _messageController.dispose();
     _adminSearchController.dispose();
-    _chatScrollController.dispose();
     super.dispose();
   }
 
@@ -495,9 +505,6 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         'support-view',
         'admin users reused count=${_adminUsers.length}',
       );
-      print(
-        '[chatdebug] loadAdminUsers CACHED path count=${_adminUsers.length} pending="$_pendingInitialAdminUserId"',
-      );
       // Someone can arrive asking for one specific user. Reusing the cached
       // inbox must still honour that request, or the chat action silently
       // leaves the admin on whoever was open before.
@@ -527,9 +534,6 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         _cachedAdminUsers = List<UserModel>.from(filtered);
         _cachedHasLoadedAdminUsers = true;
       });
-      print(
-        '[chatdebug] loadAdminUsers FRESH path count=${filtered.length} pending="$_pendingInitialAdminUserId"',
-      );
       _log('load resolved section=support-users count=${filtered.length}');
       await _applyPendingInitialAdminUser(filtered);
     } catch (error) {
@@ -583,9 +587,6 @@ class _SupportCenterViewState extends State<SupportCenterView> {
 
   Future<void> _applyPendingInitialAdminUser(List<UserModel> users) async {
     final targetUserId = normalizeId(_pendingInitialAdminUserId);
-    print(
-      '[chatdebug] applyPending target="$targetUserId" stableSelection=$_hasStableAdminSelection selectedThread=$_selectedThreadId draftUser=${_selectedAdminDraftUser?.id}',
-    );
     if (targetUserId == null) {
       return;
     }
@@ -606,9 +607,6 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       // The inbox may still be arriving. Keep the request alive so the next
       // load can satisfy it, and only drop it once the list has resolved and
       // the id genuinely is not in it.
-      print(
-        '[chatdebug] applyPending TARGET NOT IN LIST resolved=$_cachedHasLoadedAdminUsers count=${users.length}',
-      );
       if (_cachedHasLoadedAdminUsers && users.isNotEmpty) {
         if (mounted) {
           setState(() {
@@ -636,17 +634,14 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         });
         return;
       }
-      print(
-        '[chatdebug] applyPending RESULT thread=${thread?.id} draftUser=${thread == null ? targetUser.id : null}',
-      );
       setState(() {
         _selectedThreadId = thread?.id;
         _selectedAdminDraftUser = thread == null ? targetUser : null;
         _pendingInitialAdminUserId = null;
         _showMobileChat = true;
       });
-      _requestScrollToLatest();
-    } catch (_) {
+      _requestScrollToLatest(/* _requestScrollToLatest(); */);
+    } catch (error) {
       if (!mounted) {
         _pendingInitialAdminUserId = null;
         return;
@@ -663,7 +658,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         _pendingInitialAdminUserId = null;
         _showMobileChat = true;
       });
-      _requestScrollToLatest();
+      _requestScrollToLatest(/* _requestScrollToLatest(); */);
     }
   }
 
@@ -791,7 +786,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       _selectedThreadId = thread.id;
       _showMobileChat = true;
     });
-    _requestScrollToLatest();
+    _requestScrollToLatest(/* _requestScrollToLatest(); */);
   }
 
   Future<void> _sendMessage() async {
@@ -837,7 +832,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
           _selectedThreadId = thread.id;
         });
         threadId = normalizeId(thread.id);
-        _requestScrollToLatest();
+        _requestScrollToLatest(/* _requestScrollToLatest(); */);
       } catch (error) {
         if (!mounted) {
           return;
@@ -879,7 +874,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       _messageController.clear();
       _pendingAttachments = const [];
     });
-    _requestScrollToLatest();
+    _requestScrollToLatest(/* _requestScrollToLatest(); */);
     try {
       final queuedForSync = await _supportRequest.sendMessageWithAttachments(
         threadId: threadId,
@@ -896,7 +891,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
           'Message queued. It will send once your internet is back.',
         );
       }
-      _requestScrollToLatest();
+      _requestScrollToLatest(/* _requestScrollToLatest(); */);
     } catch (error) {
       if (!mounted) {
         return;
@@ -947,7 +942,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         _showMobileChat = true;
       });
       unawaited(_markThreadReadFromThread(existingThread));
-      _requestScrollToLatest();
+      _requestScrollToLatest(/* _requestScrollToLatest(); */);
       return;
     }
 
@@ -956,7 +951,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       _selectedAdminDraftUser = user;
       _showMobileChat = true;
     });
-    _requestScrollToLatest();
+    _requestScrollToLatest(/* _requestScrollToLatest(); */);
   }
 
   @override
@@ -995,7 +990,13 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                 threads: threads,
                 preferredTopicKey: _selectedTopicKey,
                 preferredBookingId: _selectedBookingId,
-                allowEmptySelection: _selectedAdminDraftUser != null,
+                // A pending request is on its way to a definite answer. Falling
+                // back to the first thread here would plant a selection the
+                // admin never made, and that invented selection would then make
+                // the real answer look stale and get thrown away.
+                allowEmptySelection:
+                    _selectedAdminDraftUser != null ||
+                    normalizeId(_pendingInitialAdminUserId) != null,
               );
               return _buildSurface(
                 threads: threads,
@@ -1136,11 +1137,19 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                     ? _resolvedThreadRequesterUser(selectedThread)
                     : _supportAgentUser;
                 final supportUsersById = _supportUsersById();
+                // Identify the conversation by who it is with, never by whether
+                // the thread lookup has resolved. Keying on the thread id made
+                // the panel flip between "no thread" and "thread" the moment a
+                // chat opened, which tore the panel down, rebuilt it at the top
+                // of the history, and scrolled it down again on every rebuild.
+                final conversationKey =
+                    normalizeId(_selectedAdminDraftUser?.id) ??
+                    normalizeId(selectedCounterpartUser?.id) ??
+                    normalizeId(selectedThread?.id) ??
+                    'none';
                 final chatPanel = _SupportChatPanel(
                   key: ValueKey(
-                    '${selectedThread?.id ?? 'none'}:'
-                    '${_selectedAdminDraftUser?.id ?? 'draft-none'}:'
-                    '${widget.user.id ?? '-'}',
+                    'chat:$conversationKey:${widget.user.id ?? '-'}',
                   ),
                   currentUser: widget.user,
                   thread: selectedThread,
@@ -1179,7 +1188,6 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                     }
                     unawaited(_markThreadReadFromMessages(threadId, messages));
                   },
-                  scrollController: _chatScrollController,
                   scrollRequestTick: _chatScrollRequestTick,
                 );
                 return AdminListItemCard(
@@ -1245,7 +1253,6 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                                           ),
                                         );
                                       },
-                                      scrollController: _chatScrollController,
                                       scrollRequestTick: _chatScrollRequestTick,
                                     ),
                                   ),
@@ -2004,7 +2011,6 @@ class _SupportChatPanel extends StatefulWidget {
     required this.canCompose,
     required this.supportRequest,
     required this.onMessagesVisible,
-    required this.scrollController,
     required this.scrollRequestTick,
   });
 
@@ -2024,7 +2030,6 @@ class _SupportChatPanel extends StatefulWidget {
   final bool canCompose;
   final SupportRequest supportRequest;
   final ValueChanged<List<SupportMessage>> onMessagesVisible;
-  final ScrollController scrollController;
   final int scrollRequestTick;
 
   @override
@@ -2032,6 +2037,10 @@ class _SupportChatPanel extends StatefulWidget {
 }
 
 class _SupportChatPanelState extends State<_SupportChatPanel> {
+  /// Owned by the panel, which is keyed per conversation, so opening a chat
+  /// always starts a fresh scroll position at the newest message instead of
+  /// inheriting wherever the last conversation was left.
+  ScrollController _scrollController = ScrollController();
   int _lastMessageCount = 0;
   int _lastScrollRequestTick = 0;
   String? _lastLatestMessageSignature;
@@ -2046,6 +2055,7 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
       widget.messageController.text.trim().isNotEmpty,
     );
     widget.messageController.addListener(_handleComposerChanged);
+    _placeAtLatest();
   }
 
   @override
@@ -2064,6 +2074,17 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
     }
     if (normalizeId(oldWidget.thread?.id) != normalizeId(widget.thread?.id)) {
       _lastReadNotificationSignature = null;
+      _lastMessageCount = 0;
+      _lastLatestMessageSignature = null;
+      // A fresh controller, not a jump on the old one. A position carried over
+      // from a tall conversation points into the middle of the next one, and
+      // correcting it afterwards is the jump we are trying to remove.
+      final previous = _scrollController;
+      _scrollController = ScrollController();
+      if (previous.hasClients) {
+        previous.dispose();
+      }
+      _placeAtLatest();
     }
   }
 
@@ -2071,6 +2092,7 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
   void dispose() {
     widget.messageController.removeListener(_handleComposerChanged);
     _hasComposerContent.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -2093,16 +2115,32 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
     });
   }
 
+  /// The list is reversed, so offset 0 is the newest message. This waits for
+  /// the controller to attach: a panel mounting for the first time has no
+  /// clients on its opening frame, and bailing there would paint the oldest
+  /// history first.
+  void _placeAtLatest({int attempt = 0}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      if (!_scrollController.hasClients) {
+        if (attempt < 6) {
+          _placeAtLatest(attempt: attempt + 1);
+        }
+        return;
+      }
+      _scrollController.jumpTo(0);
+    });
+  }
+
   void _scrollToLatest() {
-    if (!widget.scrollController.hasClients) {
+    if (!_scrollController.hasClients) {
       return;
     }
-    final position = widget.scrollController.position;
-    widget.scrollController.animateTo(
-      position.maxScrollExtent,
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-    );
+    // The list is reversed, so offset 0 is the newest message and
+    // maxScrollExtent is the oldest history.
+    _scrollController.jumpTo(0);
   }
 
   @override
@@ -2276,24 +2314,39 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                       return Container(
                         color: const Color(0xFFF8F7FC),
                         child: ListView.builder(
+                          // Without a key of its own this list shares one
+                          // storage slot with every other unkeyed scrollable on
+                          // the page, so a conversation that was scrolled deep
+                          // handed its position to the next one opened.
                           key: PageStorageKey<String>(
-                            'support-thread-messages:${widget.currentUser.id ?? 'guest'}:${widget.thread!.id ?? 'unknown'}',
+                            'support-conversation:'
+                            '${widget.currentUser.id ?? 'guest'}:'
+                            '${widget.thread?.id ?? 'draft'}',
                           ),
-                          controller: widget.scrollController,
+                          controller: _scrollController,
+                          // Bottom-anchored, the way a conversation reads. The
+                          // list starts on the newest message instead of the
+                          // oldest, so opening a chat never scrolls at all.
+                          reverse: true,
                           padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
                           itemCount: messages.length,
                           itemBuilder: (context, index) {
-                            final message = messages[index];
+                            // With reverse, index 0 is drawn at the bottom, so
+                            // the visual position maps back to the message
+                            // order the grouping helpers already expect.
+                            final messageIndex = messages.length - 1 - index;
+                            final message = messages[messageIndex];
                             final isMine =
                                 normalizeId(message.senderUserId) ==
                                 normalizeId(widget.currentUser.id);
-                            final nextMessage = index < messages.length - 1
-                                ? messages[index + 1]
+                            final nextMessage =
+                                messageIndex < messages.length - 1
+                                ? messages[messageIndex + 1]
                                 : null;
                             final showTimestampHeader =
                                 _shouldShowSupportMessageTimestampHeader(
                                   messages: messages,
-                                  index: index,
+                                  index: messageIndex,
                                 );
                             final isFollowedBySameVisualGroup =
                                 nextMessage != null &&
@@ -2324,7 +2377,7 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                                 ],
                                 Padding(
                                   padding: EdgeInsets.only(
-                                    bottom: index == messages.length - 1
+                                    bottom: messageIndex == messages.length - 1
                                         ? 0
                                         : (isFollowedBySameVisualGroup
                                               ? 6
@@ -2345,7 +2398,7 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                                     showSenderMeta:
                                         _shouldShowSupportMessageSenderMeta(
                                           messages: messages,
-                                          index: index,
+                                          index: messageIndex,
                                           currentUser: widget.currentUser,
                                           primaryCounterpartUserId:
                                               widget.counterpartUser?.id ??
@@ -2354,7 +2407,7 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                                         ),
                                     showAvatar: _shouldShowSupportMessageAvatar(
                                       messages: messages,
-                                      index: index,
+                                      index: messageIndex,
                                       currentUser: widget.currentUser,
                                     ),
                                   ),

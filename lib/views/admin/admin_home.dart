@@ -49,10 +49,6 @@ import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/performance_trace.dart';
 
-// Temporary tracing for the error-log chat action. Removed once the
-// wrong-target cause is confirmed.
-// ignore_for_file: avoid_print
-
 class AdminHome extends StatefulWidget {
   const AdminHome({
     super.key,
@@ -131,7 +127,6 @@ class _AdminHomeState extends State<AdminHome> {
   String? _supportInitialTopicKey;
   String? _supportInitialBookingId;
   String? _supportInitialUserId;
-  int _supportViewTick = 0;
   Booking? _bookingInitialSelection;
   bool _hasVisitedBookings = false;
   Widget? _retainedDashboardSection;
@@ -139,11 +134,6 @@ class _AdminHomeState extends State<AdminHome> {
   final Map<String, Widget> _retainedSecondarySections = <String, Widget>{};
   final List<String> _secondarySectionRecency = <String>[];
   static const int _maxRetainedSecondarySections = 3;
-
-  Widget _chatDebugWrap(String message, Widget child) {
-    print('[chatdebug] $message');
-    return child;
-  }
 
   void _log(String message) {
     // Temporary debug logging removed.
@@ -483,19 +473,12 @@ class _AdminHomeState extends State<AdminHome> {
                       String? initialBookingId,
                       String? initialUserId,
                     }) {
-                      print(
-                        '[chatdebug] admin_home onOpenSupport initialUserId=$initialUserId',
-                      );
                       setState(() {
                         _supportInitialTopicKey = initialTopicKey;
                         _supportInitialBookingId = initialBookingId;
                         _supportInitialUserId = initialUserId;
-                        _supportViewTick++;
                       });
                       vm.selectSection(AdminSection.support);
-                      print(
-                        '[chatdebug] admin_home after setState tick=$_supportViewTick id=$_supportInitialUserId',
-                      );
                     },
                 child: BookingSectionNavigationScope(
                   onOpenBooking: (booking) {
@@ -987,18 +970,16 @@ class _AdminHomeState extends State<AdminHome> {
         onInitialEditHandled: _viewModel.clearPendingEditUser,
       ),
       AdminSection.access => const AdminAccessView(),
-      AdminSection.support => _chatDebugWrap(
-        'build support id=$_supportInitialUserId tick=$_supportViewTick',
-        SupportCenterView(
-          key: ValueKey(
-            'support:$_supportViewTick:${_supportInitialTopicKey ?? '-'}:${_supportInitialBookingId ?? '-'}:${_supportInitialUserId ?? '-'}',
-          ),
-          user: _shellUser,
-          embedded: true,
-          initialTopicKey: _supportInitialTopicKey,
-          initialBookingId: _supportInitialBookingId,
-          initialUserId: _supportInitialUserId,
-        ),
+      AdminSection.support => SupportCenterView(
+        // A stable key keeps this view alive between chat selections, so the
+        // loaded thread list is never thrown away and rebuilt in front of the
+        // admin. A new target arrives through didUpdateWidget instead.
+        key: const ValueKey('support-section'),
+        user: _shellUser,
+        embedded: true,
+        initialTopicKey: _supportInitialTopicKey,
+        initialBookingId: _supportInitialBookingId,
+        initialUserId: _supportInitialUserId,
       ),
       AdminSection.profile => PagedScrollObserver(
         child: LazyDataScrollView(
@@ -1121,7 +1102,7 @@ class _AdminHomeState extends State<AdminHome> {
       AdminSection.dashboard || AdminSection.bookings => null,
       AdminSection.vehicles => 'vehicles:${_resolvedVehiclesSection().name}',
       AdminSection.settings => 'settings:${_resolvedSettingsSection().name}',
-      AdminSection.support => 'support:$_supportViewTick',
+      AdminSection.support => 'support',
       _ => section.name,
     };
   }
