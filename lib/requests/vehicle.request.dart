@@ -147,6 +147,52 @@ class VehicleRequest implements VehicleCatalogRepository {
     }
   }
 
+  /// The make already filed under [code], or null. When online this asks the
+  /// server, because attaching a driver to a cached make that has since been
+  /// renamed or removed is how a second truck ends up with one code.
+  Future<VehicleMake?> findMakeByCode(String code) async {
+    final normalized = code.trim().toUpperCase();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    if (currentNetworkStatus()) {
+      try {
+        final snapshot = await _makesCollection
+            .get(const GetOptions(source: Source.server))
+            .timeout(
+              _startupTimeout,
+              onTimeout: () =>
+                  throw TimeoutException('vehicle make lookup timeout'),
+            );
+        for (final doc in snapshot.docs) {
+          final stored = (doc.get('code') ?? '')
+              .toString()
+              .trim()
+              .toUpperCase();
+          if (stored == normalized) {
+            final documentData = {...doc.data()};
+            documentData['id'] = documentData['id'] ?? doc.id;
+            return _makeFromFirestoreMap(
+              documentData,
+              typeById: const <String, VehicleCatalogItem>{},
+              userById: const <String, UserModel>{},
+            );
+          }
+        }
+        return null;
+      } catch (_) {
+        // Fall through to the cached list rather than failing the signup.
+      }
+    }
+    final cached = await getMakes();
+    for (final make in cached) {
+      if ((make.code ?? '').trim().toUpperCase() == normalized) {
+        return make;
+      }
+    }
+    return null;
+  }
+
   /// Whether [code] already names a vehicle. Codes are the identity a truck is
   /// called out by, so this has to be the server's answer and not the cache's:
   /// a stale cache would let a second driver claim a code that is already taken.
@@ -984,6 +1030,7 @@ class VehicleRequest implements VehicleCatalogRepository {
       'type_id': make.type?.id,
       'driver_id': make.driver?.id,
       'helper_id': make.helper?.id,
+      'investor_id': make.investorId,
       'is_active': make.isActive,
       'created_at': make.createdAt?.toIso8601String(),
       'updated_at': make.updatedAt?.toIso8601String(),
@@ -1009,6 +1056,7 @@ class VehicleRequest implements VehicleCatalogRepository {
           (normalizeId(map['helper_id']?.toString()) == null
               ? null
               : UserModel(id: map['helper_id'].toString(), role: 'helper')),
+      investorId: map['investor_id']?.toString(),
       isActive: map['is_active'] as bool?,
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),

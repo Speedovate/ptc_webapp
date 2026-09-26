@@ -11,6 +11,22 @@ class DispatcherAccessCapability {
   static const fuelLedgerRead = 'fuel_ledger.read';
   static const fuelLedgerUpdate = 'fuel_ledger.update';
   static const tripIncomeRead = 'trip_income.read';
+
+  /// An investor supplies trucks and their own crew, but Paltranco books,
+  /// dispatches and bills every trip. These are the read-only windows onto the
+  /// operation as scoped to one investor's own rows.
+  static const investorPortfolioRead = 'investor_portfolio.read';
+  static const investorTripsRead = 'investor_trips.read';
+  static const investorFleetRead = 'investor_fleet.read';
+  static const investorEarningsRead = 'investor_earnings.read';
+  static const investorReportsExport = 'investor_reports.export';
+
+  /// Handing out an investor account, and setting the commission rate. Both are
+  /// admin by default and only opened up deliberately, because either one puts
+  /// someone's money in play.
+  static const usersCreateInvestor = 'users.create_investor';
+  static const investorCommissionRateUpdate = 'investor_commission_rate.update';
+
   static const operationsCatalogRead = 'operations_catalog.read';
   static const operationsCatalogUpdate = 'operations_catalog.update';
 
@@ -84,6 +100,13 @@ class DispatcherAccessCapability {
     fuelLedgerRead,
     fuelLedgerUpdate,
     tripIncomeRead,
+    investorPortfolioRead,
+    investorTripsRead,
+    investorFleetRead,
+    investorEarningsRead,
+    investorReportsExport,
+    usersCreateInvestor,
+    investorCommissionRateUpdate,
     operationsCatalogRead,
     operationsCatalogUpdate,
 
@@ -140,6 +163,7 @@ class DispatcherAccessCapability {
 
 const builtInRoleKeys = <String>[
   'admin',
+  'investor',
   'dispatcher',
   'manager',
   'client',
@@ -251,10 +275,87 @@ const Map<String, bool> defaultHelperAccessCapabilities = {
   DispatcherAccessCapability.syncUpdate: true,
 };
 
+/// An investor reads their own operation and manages their own crew. They never
+/// see the office's tools, never see anyone's pay, and never touch another
+/// investor's rows. Everything unlisted stays false.
+const Map<String, bool> defaultInvestorAccessCapabilities = {
+  DispatcherAccessCapability.investorPortfolioRead: true,
+  DispatcherAccessCapability.investorTripsRead: true,
+  DispatcherAccessCapability.investorFleetRead: true,
+  DispatcherAccessCapability.investorEarningsRead: true,
+  DispatcherAccessCapability.investorReportsExport: true,
+
+  // Onboards their own drivers and helpers. Scoped to their own rows by
+  // ownsInvestorRow, never by capability alone.
+  DispatcherAccessCapability.usersCreate: true,
+  DispatcherAccessCapability.usersUpdate: true,
+  DispatcherAccessCapability.usersRead: true,
+
+  DispatcherAccessCapability.profileRead: true,
+  DispatcherAccessCapability.profileUpdate: true,
+  DispatcherAccessCapability.syncRead: true,
+
+  // Named explicitly so the deny is auditable rather than implied.
+  DispatcherAccessCapability.ownKpiRead: false,
+  DispatcherAccessCapability.crewKpiRead: false,
+  DispatcherAccessCapability.pmKpiRead: false,
+  DispatcherAccessCapability.pmKpiUpdate: false,
+  DispatcherAccessCapability.fuelLedgerRead: false,
+  DispatcherAccessCapability.fuelLedgerUpdate: false,
+  DispatcherAccessCapability.tripIncomeRead: false,
+  DispatcherAccessCapability.operationsCatalogRead: false,
+  DispatcherAccessCapability.operationsCatalogUpdate: false,
+  DispatcherAccessCapability.dashboardRead: false,
+  DispatcherAccessCapability.dashboardUpdateBilling: false,
+  DispatcherAccessCapability.dashboardExport: false,
+  DispatcherAccessCapability.bookingsCreate: false,
+  DispatcherAccessCapability.bookingsRead: false,
+  DispatcherAccessCapability.bookingsUpdate: false,
+  DispatcherAccessCapability.usersDelete: false,
+  DispatcherAccessCapability.usersImpersonate: false,
+  DispatcherAccessCapability.vehicleMakesCreate: false,
+  DispatcherAccessCapability.vehicleMakesRead: false,
+  DispatcherAccessCapability.vehicleMakesUpdate: false,
+  DispatcherAccessCapability.vehicleMakesDelete: false,
+  DispatcherAccessCapability.vehicleTypesCreate: false,
+  DispatcherAccessCapability.vehicleTypesRead: false,
+  DispatcherAccessCapability.vehicleTypesUpdate: false,
+  DispatcherAccessCapability.vehicleTypesDelete: false,
+  DispatcherAccessCapability.vehicleSizesCreate: false,
+  DispatcherAccessCapability.vehicleSizesRead: false,
+  DispatcherAccessCapability.vehicleSizesUpdate: false,
+  DispatcherAccessCapability.vehicleSizesDelete: false,
+  DispatcherAccessCapability.chassisCreate: false,
+  DispatcherAccessCapability.chassisRead: false,
+  DispatcherAccessCapability.chassisUpdate: false,
+  DispatcherAccessCapability.chassisDelete: false,
+  DispatcherAccessCapability.statusesCreate: false,
+  DispatcherAccessCapability.statusesRead: false,
+  DispatcherAccessCapability.statusesUpdate: false,
+  DispatcherAccessCapability.statusesDelete: false,
+  DispatcherAccessCapability.formsCreate: false,
+  DispatcherAccessCapability.formsRead: false,
+  DispatcherAccessCapability.formsUpdate: false,
+  DispatcherAccessCapability.formsDelete: false,
+  DispatcherAccessCapability.fieldsCreate: false,
+  DispatcherAccessCapability.fieldsRead: false,
+  DispatcherAccessCapability.fieldsUpdate: false,
+  DispatcherAccessCapability.fieldsDelete: false,
+  DispatcherAccessCapability.supportCreate: true,
+  DispatcherAccessCapability.supportRead: true,
+  DispatcherAccessCapability.supportUpdate: false,
+  DispatcherAccessCapability.roleAccessRead: false,
+  DispatcherAccessCapability.roleAccessUpdate: false,
+  DispatcherAccessCapability.usersCreateInvestor: false,
+  DispatcherAccessCapability.investorCommissionRateUpdate: false,
+  DispatcherAccessCapability.syncUpdate: false,
+};
+
 Map<String, bool> defaultAccessCapabilitiesForRole(String roleKey) {
   final normalizedRole = _normalizeRoleKey(roleKey) ?? '';
   final seededDefaults = switch (normalizedRole) {
     'admin' => defaultAdminAccessCapabilities,
+    'investor' => defaultInvestorAccessCapabilities,
     'dispatcher' => defaultDispatcherAccessCapabilities,
     'manager' => defaultDispatcherAccessCapabilities,
     'client' => defaultClientAccessCapabilities,

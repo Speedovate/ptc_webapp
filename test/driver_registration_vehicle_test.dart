@@ -141,6 +141,75 @@ void main() {
     );
   });
 
+  test(
+    'a driver attaching to a truck already on file reuses that make',
+    () async {
+      final harness = build();
+      // The investor already owns this truck and is onboarding a second driver
+      // onto it, so the code is legitimately taken.
+      await harness.firestore.collection('vehicle_makes').doc('4').set({
+        'id': '4',
+        'code': 'PM1',
+        'driver_id': '13',
+        'type_id': '1',
+        'is_active': true,
+        'created_at': '2026-09-01T00:00:00Z',
+        'updated_at': '2026-09-01T00:00:00Z',
+      });
+
+      final user = await harness.request.register(
+        driverModel(email: 'second@example.com', phone: '09171230010'),
+        vehicleCode: 'PM1',
+        attachToExistingVehicle: true,
+      );
+
+      final makes = await harness.firestore.collection('vehicle_makes').get();
+      // One truck, not two records for the same vehicle.
+      expect(makes.docs, hasLength(1));
+      expect(makes.docs.single.id, '4');
+      expect(makes.docs.single.get('driver_id'), user.id);
+      // The earlier driver is replaced on that truck, not duplicated onto a new one.
+      expect(makes.docs.single.get('code'), 'PM1');
+    },
+  );
+
+  test('attaching never invents a make when the code is not on file', () async {
+    final harness = build();
+
+    final user = await harness.request.register(
+      driverModel(email: 'fresh@example.com', phone: '09171230011'),
+      vehicleCode: 'PM9',
+      attachToExistingVehicle: true,
+    );
+
+    final makes = await harness.firestore.collection('vehicle_makes').get();
+    expect(makes.docs, hasLength(1));
+    expect(makes.docs.single.get('code'), 'PM9');
+    expect(makes.docs.single.get('driver_id'), user.id);
+  });
+
+  test('public sign-up still refuses a code it does not own', () async {
+    final harness = build();
+    await harness.firestore.collection('vehicle_makes').doc('4').set({
+      'id': '4',
+      'code': 'PM1',
+      'driver_id': '13',
+      'type_id': '1',
+      'is_active': true,
+    });
+
+    // No attach flag: this is a driver bringing their own truck, so a code that
+    // already belongs to somebody else must not be claimed.
+    await expectLater(
+      harness.request.register(
+        driverModel(email: 'greedy@example.com', phone: '09171230012'),
+        vehicleCode: 'PM1',
+      ),
+      throwsA(isA<AuthFailure>()),
+    );
+    expect((await harness.firestore.collection('users').get()).docs, isEmpty);
+  });
+
   test('a non-driver signup never opens a vehicle make', () async {
     final harness = build();
 

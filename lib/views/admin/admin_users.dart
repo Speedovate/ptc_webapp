@@ -12,6 +12,7 @@ import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/services/investor_scope.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/view_models/admin/admin_users.vm.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
@@ -731,6 +732,7 @@ class _AdminUsersViewState extends State<AdminUsersView> {
         title: _userDialogTitle('New', vm.draftNewUser),
         isEditing: false,
         canCreateAdminUsers: vm.canCreateAdminUsers,
+        canCreateInvestorUsers: vm.canCreateInvestorUsers,
         initialUser: vm.draftNewUser,
         generatedId: vm.nextUserId,
         onDraftChanged: vm.updateDraftNewUser,
@@ -2648,6 +2650,7 @@ class _UserFormDialog extends StatefulWidget {
     required this.isEditing,
     required this.clientOptions,
     this.canCreateAdminUsers = true,
+    this.canCreateInvestorUsers = false,
     this.initialUser,
     this.generatedId,
     this.onDraftChanged,
@@ -2658,6 +2661,7 @@ class _UserFormDialog extends StatefulWidget {
   final bool isEditing;
   final List<UserModel> clientOptions;
   final bool canCreateAdminUsers;
+  final bool canCreateInvestorUsers;
   final UserModel? initialUser;
   final String? generatedId;
   final ValueChanged<UserModel>? onDraftChanged;
@@ -2696,12 +2700,35 @@ class _UserFormDialogState extends State<_UserFormDialog> {
 
   bool get _isDriverRole => _roleValue == 'driver';
   bool get _supportsOnlineRole => _supportsOnlineRoleStatic(_roleValue);
+
+  /// Which roles this editor is allowed to hand out. Kept separate from which
+  /// role the user already holds, because those are different questions and
+  /// conflating them is what let any editor promote anyone to admin.
+  bool _canGrantRole(String role) {
+    if (normalizeRoleKey(role) == 'admin') {
+      return widget.canCreateAdminUsers;
+    }
+    // Investor is restricted by its own capability rather than by holding
+    // admin, because an office role may be granted the right to open investor
+    // accounts without being able to create admins.
+    if (InvestorScope.isInvestorRole(role)) {
+      return widget.canCreateInvestorUsers;
+    }
+    return true;
+  }
+
   List<String> get _roleOptions {
     final roles = RoleAccessService.instance.adminUserRoleKeys;
-    if (widget.isEditing || widget.canCreateAdminUsers) {
-      return roles;
+    final grantable = roles.where(_canGrantRole).toSet();
+    // Never hide the role they already hold, or saving an unrelated edit would
+    // silently demote someone.
+    final current = normalizeRoleKey(widget.initialUser?.role);
+    if (current.isNotEmpty) {
+      grantable.add(current);
     }
-    return roles.where((role) => role != 'admin').toList(growable: false);
+    return roles
+        .where((role) => grantable.contains(role))
+        .toList(growable: false);
   }
 
   List<DropdownMenuItem<String>> _vehicleTypeDropdownItems() {
@@ -2832,12 +2859,19 @@ class _UserFormDialogState extends State<_UserFormDialog> {
       AppSnackbar.showError(context, validationMessage);
       return;
     }
-    if (!widget.isEditing &&
-        !widget.canCreateAdminUsers &&
-        normalizeRoleKey(_roleValue) == 'admin') {
+    // No isEditing escape here. The old check let any editor promote anyone to
+    // admin simply by opening Edit on that user, because the guard only ran on
+    // the create path.
+    final normalizedRoleValue = normalizeRoleKey(_roleValue);
+    if (!_canGrantRole(normalizedRoleValue)) {
+      final roleName = normalizedRoleValue == 'admin'
+          ? 'admin'
+          : normalizedRoleValue;
       AppSnackbar.showError(
         context,
-        'Only admin users can create other admin users.',
+        widget.isEditing
+            ? 'Only admin users can change a user to $roleName.'
+            : 'Only admin users can create other $roleName users.',
       );
       return;
     }

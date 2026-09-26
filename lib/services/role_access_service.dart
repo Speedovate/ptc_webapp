@@ -68,8 +68,13 @@ class RoleAccessService extends ChangeNotifier {
 
   List<String> get adminUserRoleKeys => orderedKnownRoleKeys;
 
-  List<String> get workflowRoleKeys =>
-      orderedKnownRoleKeys.toList(growable: false);
+  /// Roles a booking status or form can name. An investor is deliberately not
+  /// one: Paltranco books, dispatches and advances every trip, so offering
+  /// 'investor' here would put a role into the Flows screens that no one is
+  /// ever going to be assigned in a status.
+  List<String> get workflowRoleKeys => orderedKnownRoleKeys
+      .where((role) => role != 'investor')
+      .toList(growable: false);
   bool get isInitialized => _isInitialized;
   String? get currentRoleKey => _currentRole;
 

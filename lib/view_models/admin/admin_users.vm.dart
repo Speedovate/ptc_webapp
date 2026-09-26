@@ -107,6 +107,27 @@ class AdminUsersViewModel extends BaseViewModel {
     return normalizeRoleKey(_currentUser?.role) == 'admin';
   }
 
+  /// Whether this account may open an investor account. Separate from
+  /// canCreateAdminUsers because the office can be granted the one without the
+  /// other.
+  bool get canCreateInvestorUsers => _roleAccessService.canAccess(
+    DispatcherAccessCapability.usersCreateInvestor,
+    role: _currentUser?.role,
+  );
+
+  /// Whether this account may hand out [role]. Only 'admin' is restricted
+  /// today, but the check lives here so a future restricted role is one line
+  /// rather than a new hunt through both write paths.
+  bool canGrantRole(String? role) =>
+      normalizeRoleKey(role) != 'admin' || canCreateAdminUsers;
+
+  void _assertCanGrantRole(String? role) {
+    if (canGrantRole(role)) {
+      return;
+    }
+    throw const AuthFailure('Only admin users can change a user to admin.');
+  }
+
   Future<void> loadUsers({UserModel? fallbackCurrentUser}) async {
     _ensureUsersRealtimeSubscription();
     _busyMessage = 'Loading users ...';
@@ -209,6 +230,9 @@ class AdminUsersViewModel extends BaseViewModel {
     if (!canUpdateUsers) {
       throw const AuthFailure('You do not have access to edit users.');
     }
+    // Previously unstated here, so any editor with users.update could promote
+    // anyone to admin just by saving them.
+    _assertCanGrantRole(user.role);
     _busyMessage = 'Saving user ...';
     setBusy(true);
     try {
@@ -240,7 +264,7 @@ class AdminUsersViewModel extends BaseViewModel {
     if (!canCreateUsers) {
       throw const AuthFailure('You do not have access to create users.');
     }
-    if (!canCreateAdminUsers && normalizeRoleKey(user.role) == 'admin') {
+    if (!canGrantRole(user.role)) {
       throw const AuthFailure('Only admin users can create other admin users.');
     }
     _busyMessage = 'Creating user ...';

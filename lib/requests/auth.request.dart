@@ -420,7 +420,16 @@ class AuthRequest implements AuthRepository {
   /// vehicle make is opened here so the truck is a real record from the start,
   /// carrying the new driver and deliberately no helper - assigning the helper
   /// is the office's decision, made from the admin screens.
-  Future<UserModel> register(UserModel user, {String? vehicleCode}) async {
+  /// [attachToExistingVehicle] is for the office onboarding a driver onto a
+  /// truck that already exists - an investor supplying their own fleet, or a
+  /// second driver on a truck the office already runs. Public sign-up leaves it
+  /// false, so a driver bringing a new truck is still refused a code that
+  /// belongs to somebody else.
+  Future<UserModel> register(
+    UserModel user, {
+    String? vehicleCode,
+    bool attachToExistingVehicle = false,
+  }) async {
     return _runAuthRequest(() async {
       await initialize();
       if (!currentNetworkStatus()) {
@@ -474,11 +483,23 @@ class AuthRequest implements AuthRepository {
         throw const AuthFailure('That phone number is already registered.');
       }
       final normalizedVehicleCode = vehicleCode?.trim().toUpperCase() ?? '';
+      VehicleMake? existingMakeForCode;
       if (normalizedRole == 'driver' && normalizedVehicleCode.isNotEmpty) {
-        final taken = await (_providedVehicleRequest ?? VehicleRequest.instance)
-            .isVehicleCodeTaken(normalizedVehicleCode);
-        if (taken) {
-          throw AuthFailure('That vehicle code is already taken.');
+        final vehicleRequest =
+            _providedVehicleRequest ?? VehicleRequest.instance;
+        if (attachToExistingVehicle) {
+          // Look the truck up rather than minting a second one with the same
+          // code, which would leave two records for one vehicle.
+          existingMakeForCode = await vehicleRequest.findMakeByCode(
+            normalizedVehicleCode,
+          );
+        } else {
+          final taken = await vehicleRequest.isVehicleCodeTaken(
+            normalizedVehicleCode,
+          );
+          if (taken) {
+            throw AuthFailure('That vehicle code is already taken.');
+          }
         }
       }
       final nextId = currentNetworkStatus()
@@ -590,15 +611,25 @@ class AuthRequest implements AuthRepository {
         // vehicle they brought. Open the make now; the helper stays empty until
         // the office assigns one.
         try {
-          await (_providedVehicleRequest ?? VehicleRequest.instance).saveMake(
-            VehicleMake(
-              code: normalizedVehicleCode,
-              type: _registeredVehicleType(savedUser),
-              driver: savedUser,
-              helper: null,
-              isActive: true,
-            ),
-          );
+          final vehicleRequest =
+              _providedVehicleRequest ?? VehicleRequest.instance;
+          if (existingMakeForCode != null) {
+            // Attach to the truck already on file. The helper stays as it is;
+            // only the driver is being placed.
+            await vehicleRequest.saveMake(
+              existingMakeForCode.copyWith(driver: savedUser),
+            );
+          } else {
+            await vehicleRequest.saveMake(
+              VehicleMake(
+                code: normalizedVehicleCode,
+                type: _registeredVehicleType(savedUser),
+                driver: savedUser,
+                helper: null,
+                isActive: true,
+              ),
+            );
+          }
         } catch (makeError, makeStack) {
           // Never silent: the office has to know a driver is missing a vehicle.
           unawaited(
