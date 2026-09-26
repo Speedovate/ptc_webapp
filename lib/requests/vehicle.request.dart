@@ -147,6 +147,48 @@ class VehicleRequest implements VehicleCatalogRepository {
     }
   }
 
+  /// Whether [code] already names a vehicle. Codes are the identity a truck is
+  /// called out by, so this has to be the server's answer and not the cache's:
+  /// a stale cache would let a second driver claim a code that is already taken.
+  /// Offline, where there is no server to ask, the cached list is the best
+  /// answer available and the queued write is what settles the collision.
+  Future<bool> isVehicleCodeTaken(String code) async {
+    final normalized = code.trim().toUpperCase();
+    if (normalized.isEmpty) {
+      return false;
+    }
+    if (currentNetworkStatus()) {
+      try {
+        // The whole collection, not a `where` on the code: codes written before
+        // the uppercase rule are still stored as typed, and an equality query
+        // would sail past them. The fleet is small enough to read outright.
+        final snapshot = await _makesCollection
+            .get(const GetOptions(source: Source.server))
+            .timeout(
+              _startupTimeout,
+              onTimeout: () =>
+                  throw TimeoutException('vehicle code check timeout'),
+            );
+        return snapshot.docs.any(
+          (doc) =>
+              (doc.get('code') ?? '').toString().trim().toUpperCase() ==
+              normalized,
+        );
+      } catch (error) {
+        // A failed lookup must not wave a signup through on a guess. Fall back to
+        // the cache, and let the caller decide what a cached answer is worth.
+        final cached = await getMakes();
+        return cached.any(
+          (make) => (make.code ?? '').trim().toUpperCase() == normalized,
+        );
+      }
+    }
+    final cached = await getMakes();
+    return cached.any(
+      (make) => (make.code ?? '').trim().toUpperCase() == normalized,
+    );
+  }
+
   @override
   Future<List<VehicleMake>> getMakes() async {
     return _runRequest(() async {

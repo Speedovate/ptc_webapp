@@ -215,6 +215,7 @@ class SyncErrorLogService {
     String? owner,
     String kind = 'foreground_failure',
     Map<String, dynamic> details = const {},
+    bool? attentionRequired,
   }) => capture(
     source: source,
     operation: operation,
@@ -225,6 +226,7 @@ class SyncErrorLogService {
     stack: stack.toString(),
     attempt: _now().microsecondsSinceEpoch,
     kind: kind,
+    attentionRequired: attentionRequired,
     details: {
       ...details,
       'error_type': error.runtimeType.toString(),

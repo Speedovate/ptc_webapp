@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
+import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
@@ -415,7 +416,11 @@ class AuthRequest implements AuthRepository {
   }
 
   @override
-  Future<UserModel> register(UserModel user) async {
+  /// [vehicleCode] is the vehicle a driver brings. When given, the driver's own
+  /// vehicle make is opened here so the truck is a real record from the start,
+  /// carrying the new driver and deliberately no helper - assigning the helper
+  /// is the office's decision, made from the admin screens.
+  Future<UserModel> register(UserModel user, {String? vehicleCode}) async {
     return _runAuthRequest(() async {
       await initialize();
       if (!currentNetworkStatus()) {
@@ -467,6 +472,14 @@ class AuthRequest implements AuthRepository {
       });
       if (phoneTaken) {
         throw const AuthFailure('That phone number is already registered.');
+      }
+      final normalizedVehicleCode = vehicleCode?.trim().toUpperCase() ?? '';
+      if (normalizedRole == 'driver' && normalizedVehicleCode.isNotEmpty) {
+        final taken = await (_providedVehicleRequest ?? VehicleRequest.instance)
+            .isVehicleCodeTaken(normalizedVehicleCode);
+        if (taken) {
+          throw AuthFailure('That vehicle code is already taken.');
+        }
       }
       final nextId = currentNetworkStatus()
           ? await _offlineMutationQueueService.reserveNumericDocumentId(
@@ -572,10 +585,49 @@ class AuthRequest implements AuthRepository {
             .then((_) {})
             .catchError((error, stackTrace) {}),
       );
+      if (normalizedRole == 'driver' && normalizedVehicleCode.isNotEmpty) {
+        // The driver is registered, so the account must not be left without the
+        // vehicle they brought. Open the make now; the helper stays empty until
+        // the office assigns one.
+        try {
+          await (_providedVehicleRequest ?? VehicleRequest.instance).saveMake(
+            VehicleMake(
+              code: normalizedVehicleCode,
+              type: _registeredVehicleType(savedUser),
+              driver: savedUser,
+              helper: null,
+              isActive: true,
+            ),
+          );
+        } catch (makeError, makeStack) {
+          // Never silent: the office has to know a driver is missing a vehicle.
+          unawaited(
+            SyncErrorLogService.instance.report(
+              makeError,
+              makeStack,
+              source: 'auth.request.dart',
+              operation: 'open registered driver vehicle',
+              target: 'vehicle_makes/$normalizedVehicleCode',
+              owner: savedUser.id,
+              kind: 'queue_failure',
+              details: {
+                'driver_id': savedUser.id,
+                'vehicle_code': normalizedVehicleCode,
+                'reason': 'driver registered without a vehicle make',
+              },
+            ),
+          );
+        }
+      }
       AppSessionReset.clearUserScopedState();
       return bridgedUser;
     }, fallback: 'We could not create your account right now. Please try again.');
   }
+
+  /// The vehicle type the driver picked at signup, so the new make carries the
+  /// same reference instead of a bare catalog id.
+  VehicleCatalogItem? _registeredVehicleType(UserModel user) =>
+      user.asDriver?.vehicleType;
 
   @override
   Future<UserModel> saveUser(UserModel user) async {

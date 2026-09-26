@@ -586,6 +586,10 @@ class BookingOfflineUploadQueueService {
     }
 
     var mutated = false;
+    // Ids whose queued work has reached an end state: uploaded, or legitimately
+    // reclaimed because the server already holds a newer photo. Either way the
+    // crew has nothing left to do, so the original failure report must stop
+    // asking for attention instead of lingering forever.
     final confirmedSuccesses = <String>{};
     final remaining = <_PendingBookingUploadEntry>[];
     var processed = 0;
@@ -689,6 +693,9 @@ class BookingOfflineUploadQueueService {
             // booking write can bring it back. Reclaim the queued bytes
             // instead of waiting forever for a marker that never returns.
             mutated = true;
+            // The photo was settled one way or another, so the failure that
+            // queued it must stop asking the admin to act on it.
+            confirmedSuccesses.add(entry.id);
             unawaited(
               SyncErrorLogService.instance.report(
                 StateError(
@@ -701,6 +708,9 @@ class BookingOfflineUploadQueueService {
                     'bookings/${entry.bookingId}/${entry.statusKey}/${entry.fieldKey}',
                 owner: storageKey.substring('$_storageKey::'.length),
                 kind: 'queue_reclaimed',
+                // The reclaim itself is the correct outcome, not a new problem,
+                // so it is recorded for audit without demanding attention.
+                attentionRequired: false,
                 details: {
                   'reason': markerField == null
                       ? 'photo_field_missing'
@@ -813,6 +823,7 @@ class BookingOfflineUploadQueueService {
             // Reclaim the bytes, but never without a record: a silent discard
             // looks identical to a successful upload.
             mutated = true;
+            confirmedSuccesses.add(entry.id);
             unawaited(
               SyncErrorLogService.instance.report(
                 StateError(
@@ -825,6 +836,9 @@ class BookingOfflineUploadQueueService {
                     'bookings/${entry.bookingId}/${entry.statusKey}/${entry.fieldKey}',
                 owner: storageKey.substring('$_storageKey::'.length),
                 kind: 'queue_reclaimed',
+                // A photo the server will never accept is a settled outcome, not
+                // an outstanding failure, so it must not keep asking for action.
+                attentionRequired: false,
                 details: {
                   'reason': 'upload_failed_permanently',
                   'error': normalizedError,

@@ -40,12 +40,21 @@ class AuthViewModel extends BaseViewModel {
     }
   }
 
-  Future<UserModel?> register(UserModel user) async {
+  /// [vehicleCode] is a driver's own vehicle. When present, registration also
+  /// opens that vehicle make with the new driver on it and no helper yet, so
+  /// the office can assign the helper from the admin screens.
+  Future<UserModel?> register({
+    required UserModel user,
+    String? vehicleCode,
+  }) async {
     setBusy(true);
     errorMessage = null;
     notifyListeners();
     try {
-      final registeredUser = await _repository.register(user);
+      final registeredUser = await _repository.register(
+        user,
+        vehicleCode: vehicleCode,
+      );
       return registeredUser;
     } on AuthFailure catch (error) {
       errorMessage = error.message;

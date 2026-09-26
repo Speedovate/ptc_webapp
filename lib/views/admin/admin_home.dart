@@ -14,9 +14,11 @@ import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/chassis.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/requests/booking.request.dart';
 import 'package:webapp/requests/chassis.request.dart';
+import 'package:webapp/requests/vehicle.request.dart';
 import 'package:webapp/requests/support.request.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:webapp/view_models/admin/admin_home.vm.dart';
@@ -76,10 +78,12 @@ class _AdminHomeState extends State<AdminHome> {
   late UserModel _shellUser;
   StreamSubscription<List<Booking>>? _bookingsBadgeSubscription;
   StreamSubscription<List<Chassis>>? _chassisBadgeSubscription;
+  StreamSubscription<void>? _makesBadgeSubscription;
   StreamSubscription<List<SupportThread>>? _supportBadgeSubscription;
   StreamSubscription<void>? _supportReadBadgeSubscription;
   List<Booking> _sidebarBookings = const <Booking>[];
   List<Chassis> _sidebarChassis = const <Chassis>[];
+  List<VehicleMake> _sidebarMakes = const <VehicleMake>[];
   List<SupportThread> _sidebarThreads = const <SupportThread>[];
   Map<String, String> _sidebarThreadReadMarkers = const <String, String>{};
   // Badge updates must not rebuild the active page. The sidebar listens to
@@ -177,6 +181,7 @@ class _AdminHomeState extends State<AdminHome> {
     PerformanceTrace.event('admin-home', 'dispose');
     _bookingsBadgeSubscription?.cancel();
     _chassisBadgeSubscription?.cancel();
+    _makesBadgeSubscription?.cancel();
     _supportBadgeSubscription?.cancel();
     _supportReadBadgeSubscription?.cancel();
     _sidebarBadgeRevision.dispose();
@@ -189,16 +194,22 @@ class _AdminHomeState extends State<AdminHome> {
   void _startSidebarBadgeSync() {
     _bookingsBadgeSubscription?.cancel();
     _chassisBadgeSubscription?.cancel();
+    _makesBadgeSubscription?.cancel();
     _supportBadgeSubscription?.cancel();
     _supportReadBadgeSubscription?.cancel();
 
     final userId = _shellUser.id?.trim();
     _sidebarBookings = BookingRequest.hydratedBookingsSnapshot;
     _sidebarChassis = ChassisRequest.instance.hydratedChassisSnapshot;
+    _sidebarMakes = VehicleRequest.hydratedMakesSnapshot;
     _sidebarThreads = SupportRequest.hydratedAllThreadsSnapshot;
     _sidebarThreadReadMarkers = const <String, String>{};
     _hasResolvedSidebarThreadReadMarkers = false;
 
+    _makesBadgeSubscription = VehicleRequest.instance
+        .watchCatalogCacheUpdates()
+        .listen((_) => _refreshSidebarMakes());
+    unawaited(_refreshSidebarMakes());
     unawaited(BookingRequest.instance.initialize());
     _bookingsBadgeSubscription = BookingRequest.instance.watchBookings().listen(
       (bookings) {
@@ -269,6 +280,22 @@ class _AdminHomeState extends State<AdminHome> {
   int get _unbilledBookingsBadgeCount => _sidebarBookings.where((booking) {
     return (booking.billingStatus ?? '').trim().toLowerCase() == 'unbilled';
   }).length;
+
+  /// Vehicles that are not crewed out yet: no driver, or no helper. A truck in
+  /// this state is the office's to finish, so the count belongs on the menu.
+  int get _uncrewedMakesBadgeCount =>
+      _sidebarMakes.where((make) => make.needsCrew).length;
+
+  Future<void> _refreshSidebarMakes() async {
+    try {
+      final makes = await VehicleRequest.instance.getMakes();
+      if (!mounted) return;
+      setState(() => _sidebarMakes = makes);
+      _notifySidebarBadgeChanged();
+    } catch (_) {
+      // A sidebar count must never block the shell; the list itself still loads.
+    }
+  }
 
   int get _emptyChassisBadgeCount => _sidebarChassis.where((chassis) {
     return chassis.isActive && chassis.currentStatus == Chassis.empty;
@@ -706,6 +733,7 @@ class _AdminHomeState extends State<AdminHome> {
                             vm.selectedSection == AdminSection.vehicles &&
                             vm.selectedVehiclesSection ==
                                 AdminVehiclesSection.makes,
+                        trailing: _sidebarBadge(_uncrewedMakesBadgeCount),
                         onTap: () {
                           vm.selectVehiclesSection(AdminVehiclesSection.makes);
                           if (isCompact) {

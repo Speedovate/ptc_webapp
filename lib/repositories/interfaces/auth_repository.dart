@@ -9,7 +9,10 @@ abstract class AuthRepository {
     required String identifier,
     required String password,
   });
-  Future<UserModel> register(UserModel user);
+
+  /// [vehicleCode] is a driver's own vehicle. When given, registration also
+  /// opens that vehicle make with the new driver on it and no helper yet.
+  Future<UserModel> register(UserModel user, {String? vehicleCode});
   Future<UserModel> saveUser(UserModel user);
   Future<UserModel> saveUserPhoto({
     required String userId,

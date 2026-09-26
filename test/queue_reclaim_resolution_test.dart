@@ -43,28 +43,10 @@ class _RejectingPhotoStorage extends PhotoStorageService {
   Future<void> deleteByPath(String? storagePath) async {}
 }
 
-/// The shared error-log singleton binds to the first mock store it sees, so this
-/// assertion lives in its own file.
-Future<bool> _waitsForReclaimedLog() async {
-  final deadline = DateTime.now().add(const Duration(seconds: 10));
-  while (DateTime.now().isBefore(deadline)) {
-    final preferences = await SharedPreferences.getInstance();
-    for (final key in preferences.getKeys().where(
-      (key) => key.startsWith('${SyncDiagnosticOutbox.prefix}_row_'),
-    )) {
-      for (final value in preferences.getStringList(key) ?? const <String>[]) {
-        final row = jsonDecode(value);
-        if (row is Map && row['kind'] == 'queue_reclaimed') {
-          return true;
-        }
-      }
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 25));
-  }
-  return false;
-}
-
-/// Every diagnostic row this device is currently holding, newest last.
+/// Every diagnostic row this device is currently holding.
+///
+/// The shared error-log singleton binds to the first mock store it sees, so
+/// assertions about resolved rows need their own test file.
 Future<List<Map<String, dynamic>>> _outboxRows() async {
   final preferences = await SharedPreferences.getInstance();
   final rows = <Map<String, dynamic>>[];
@@ -82,7 +64,12 @@ Future<List<Map<String, dynamic>>> _outboxRows() async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a discarded queued photo leaves a diagnostic record', () async {
+  test('a later reclaim clears the failure that queued the photo', () async {
+    // This is the production sequence: the upload failed on one day, and only
+    // much later did the server tell us the photo would never be accepted. The
+    // entry ends up settled, so the original failure must stop asking the admin
+    // to act - otherwise a correctly reclaimed photo leaves a permanent
+    // "needs attention" entry that nothing will ever clear.
     SharedPreferences.setMockInitialValues({});
     final auth = createAuthStorageBackend();
     await auth.initialize();
@@ -105,63 +92,70 @@ void main() {
     await service.initialize();
     await service.enqueueBookingPhoto(
       bookingId: '1',
-      statusKey: 'delivered',
-      fieldKey: 'proof',
+      statusKey: 'book__1',
+      fieldKey: 'waybill_photo',
       bytes: Uint8List.fromList(img.encodePng(img.Image(width: 2, height: 2))),
-      fileName: 'proof.png',
+      fileName: 'waybill.png',
     );
     final queued =
         jsonDecode((await backend.readStringList(storageKey)).single)
             as Map<String, dynamic>;
-    // The server owns this placeholder when the upload starts.
     await db.collection('bookings').doc('1').set({
       'id': '1',
       'status_outputs': {
-        'delivered': {
-          'status_key': 'delivered',
+        'book__1': {
+          'status_key': 'book',
           'fields': {
-            'proof': {'pending_upload_id': queued['id']},
+            'waybill_photo': {'pending_upload_id': queued['id']},
           },
         },
       },
     });
-    // The placeholder disappears during the upload, so the queued bytes can no
-    // longer be applied to this booking.
-    uploads.onUpload = () async {
-      await db.collection('bookings').doc('1').set({
-        'id': '1',
-        'status_outputs': {
-          'delivered': {
-            'status_key': 'delivered',
-            'fields': <String, dynamic>{},
-          },
-        },
-      });
-    };
 
-    // Let the enqueue-triggered flush finish, then run a deterministic cycle.
+    // First cycle: the upload is rejected while the marker is still in place, so
+    // the entry is kept with a stored error and a failure is reported.
+    uploads.onUpload = () async {};
     await Future<void>.delayed(const Duration(milliseconds: 400));
     await service.flushPendingUploads();
-
-    expect(await backend.readStringList(storageKey), isEmpty);
-    expect(
-      await _waitsForReclaimedLog(),
-      isTrue,
-      reason: 'discarding queued bytes must leave a diagnostic record',
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(await backend.readStringList(storageKey), hasLength(1));
+    var failureRows = (await _outboxRows()).where(
+      (row) =>
+          row['kind'] == 'queue_failure' &&
+          row['queue_entry_id'] == queued['id'],
     );
-
-    // The queued photo is settled, so the failure that put it in the log must
-    // stop asking the admin to act. Otherwise a correctly reclaimed photo leaves
-    // a permanent "needs attention" entry that nothing will ever clear.
-    final reclaims = (await _outboxRows()).where(
-      (row) => row['kind'] == 'queue_reclaimed',
-    );
-    expect(reclaims, isNotEmpty);
-    for (final row in reclaims) {
+    expect(failureRows, isNotEmpty, reason: 'the rejection was reported');
+    for (final row in failureRows) {
       expect(
-        row['attention_required'],
-        isFalse,
-        reason: 'a correct reclaim is a settled outcome, not a new problem',
+        row['resolved_at'],
+        isNull,
+        reason: 'nothing has settled this entry yet',
+      );
+    }
+
+    // Second cycle: the server drops the placeholder, so the queued photo can
+    // never be applied and the entry is reclaimed.
+    await db.collection('bookings').doc('1').set({
+      'id': '1',
+      'status_outputs': {
+        'book__1': {'status_key': 'book', 'fields': <String, dynamic>{}},
+      },
+    });
+    await service.flushPendingUploads();
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(await backend.readStringList(storageKey), isEmpty);
+
+    failureRows = (await _outboxRows()).where(
+      (row) =>
+          row['kind'] == 'queue_failure' &&
+          row['queue_entry_id'] == queued['id'],
+    );
+    expect(failureRows, isNotEmpty);
+    for (final row in failureRows) {
+      expect(
+        row['resolved_at'],
+        isNotNull,
+        reason: 'a reclaimed photo must resolve its own failure report',
       );
     }
   });

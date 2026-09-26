@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
+import 'package:webapp/utils/functions.dart';
 
 class VehicleMake {
   const VehicleMake({
@@ -23,6 +24,16 @@ class VehicleMake {
   final bool? isActive;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+
+  /// An active truck that is not fully crewed out yet: no driver, or no helper.
+  /// A driver signs up with the truck alone, so this is the normal state right
+  /// after a signup and it is the office that closes it by assigning a helper.
+  bool get needsCrew {
+    if (isActive == false) {
+      return false;
+    }
+    return normalizeId(driver?.id) == null || normalizeId(helper?.id) == null;
+  }
 
   VehicleMake copyWith({
     String? id,

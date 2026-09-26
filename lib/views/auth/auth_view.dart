@@ -44,6 +44,10 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
   static const String _loginDraftStorageKey = 'auth_login_draft_v1';
   static const String _registerDraftStorageKey = 'auth_register_draft_v1';
   static const String _legacyAuthDraftStorageKey = 'auth_form_draft_v1';
+
+  /// Letters, numbers, spaces, dots and dashes - a plate-style code, nothing a
+  /// keyboard would mangle.
+  static final RegExp _vehicleCodePattern = RegExp(r'^[A-Z0-9][A-Z0-9 .\-]*$');
   final _loginFormKey = GlobalKey<FormState>();
   final _registerFormKey = GlobalKey<FormState>();
 
@@ -53,6 +57,7 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
   final _registerNameController = TextEditingController();
   final _registerPhoneController = TextEditingController();
   final _registerLicenseController = TextEditingController();
+  final _registerVehicleCodeController = TextEditingController();
   final _registerPasswordController = TextEditingController();
   final _loginIdentifierFocusNode = FocusNode();
   final _loginPasswordFocusNode = FocusNode();
@@ -70,6 +75,10 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
   bool _isSubmittingAuthFlow = false;
   String _authFlowLoadingMessage = 'Loading, please wait ...';
   List<VehicleCatalogItem> _vehicleTypes = const [];
+
+  /// Upper-cased vehicle codes already in use. A code becomes a real vehicle
+  /// make, so two trucks must never answer to the same one.
+  Set<String> _takenVehicleCodes = <String>{};
   _PendingAuthImageUpload? _registerProfilePhotoUpload;
   _PendingAuthImageUpload? _registerLicensePhotoUpload;
   AuthCameraSession? _activeCameraSession;
@@ -109,11 +118,16 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
   Future<void> _loadVehicleTypes() async {
     try {
       final vehicleTypes = await VehicleRequest.instance.getTypes();
+      final makes = await VehicleRequest.instance.getMakes();
       if (!mounted) {
         return;
       }
       setState(() {
         _vehicleTypes = vehicleTypes;
+        _takenVehicleCodes = makes
+            .map((make) => (make.code ?? '').trim().toUpperCase())
+            .where((code) => code.isNotEmpty)
+            .toSet();
       });
     } catch (_) {
       // Registration remains available when the optional driver catalog is
@@ -145,6 +159,7 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
     _registerPhoneController.dispose();
     _registerLicenseController.dispose();
     _registerPasswordController.dispose();
+    _registerVehicleCodeController.dispose();
     _loginIdentifierFocusNode.dispose();
     _loginPasswordFocusNode.dispose();
     _registerEmailFocusNode.dispose();
@@ -176,6 +191,7 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
     _registerPhoneController.clear();
     _registerLicenseController.clear();
     _registerPasswordController.clear();
+    _registerVehicleCodeController.clear();
     _registerRole = null;
     _registerVehicleTypeId = null;
     _registerProfilePhotoUpload = null;
@@ -190,6 +206,7 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
   }
 
   void _attachDraftListeners() {
+    _registerVehicleCodeController.addListener(_scheduleDraftPersist);
     _loginEmailController.addListener(_scheduleDraftPersist);
     _loginPasswordController.addListener(_scheduleDraftPersist);
     _registerEmailController.addListener(_scheduleDraftPersist);
@@ -230,6 +247,7 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
       'password': _registerPasswordController.text,
       'role': _registerRole,
       'vehicle_type_id': _registerVehicleTypeId,
+      'vehicle_code': _registerVehicleCodeController.text,
       'profile_photo': _registerProfilePhotoUpload?.toMap(),
       'license_photo': _registerLicensePhotoUpload?.toMap(),
     };
@@ -252,6 +270,8 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
             loginDraft?['password']?.toString() ?? '';
         _registerRole = registerDraft?['role']?.toString();
         _registerVehicleTypeId = registerDraft?['vehicle_type_id']?.toString();
+        _registerVehicleCodeController.text =
+            (registerDraft?['vehicle_code']?.toString() ?? '').toUpperCase();
         _registerEmailController.text =
             registerDraft?['email']?.toString() ?? '';
         _registerNameController.text = registerDraft?['name']?.toString() ?? '';
@@ -624,6 +644,8 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
                                                                     'driver') {
                                                                   _registerVehicleTypeId =
                                                                       null;
+                                                                  _registerVehicleCodeController
+                                                                      .clear();
                                                                 }
                                                               });
                                                             },
@@ -691,6 +713,26 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
                                                                           value,
                                                                 );
                                                               },
+                                                            ),
+                                                            const SizedBox(
+                                                              height:
+                                                                  _authFieldSpacing,
+                                                            ),
+                                                            _AuthTextField(
+                                                              controller:
+                                                                  _registerVehicleCodeController,
+                                                              label:
+                                                                  'Vehicle Code',
+                                                              hintText: 'PM1',
+                                                              textCapitalization:
+                                                                  TextCapitalization
+                                                                      .characters,
+                                                              inputFormatters: [
+                                                                const _UpperCaseTextFormatter(),
+                                                                LengthLimitingTextInputFormatter(
+                                                                  24,
+                                                                ),
+                                                              ],
                                                             ),
                                                           ],
                                                           const SizedBox(
@@ -999,7 +1041,10 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
           _registerPhoneController.text.trim();
       await _showAuthFlowStage('Creating your account ...');
       final user = await vm.register(
-        _registerRole == 'driver'
+        vehicleCode: _registerRole == 'driver'
+            ? _registerVehicleCodeController.text.trim().toUpperCase()
+            : null,
+        user: _registerRole == 'driver'
             ? DriverModel(
                 role: _registerRole,
                 email: _registerEmailController.text.trim(),
@@ -1139,11 +1184,33 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
         (_registerRole == 'driver'
             ? _validateRequired('Vehicle type')(_registerVehicleTypeId)
             : null) ??
+        (_registerRole == 'driver'
+            ? _validateVehicleCode(_registerVehicleCodeController.text)
+            : null) ??
         _validateEmail(_registerEmailController.text) ??
         _validateRequired('Name')(_registerNameController.text) ??
         _validatePhone(_registerPhoneController.text) ??
         (_registerRole == 'driver' ? _validateLicensePhoto() : null) ??
         _validatePassword(_registerPasswordController.text);
+  }
+
+  /// A driver's vehicle code becomes a real vehicle make, so it has to be
+  /// present, legible, and not already claimed by another truck.
+  String? _validateVehicleCode(String? value) {
+    final code = (value ?? '').trim();
+    if (code.isEmpty) {
+      return 'Vehicle code is required.';
+    }
+    if (code.length < 2) {
+      return 'Vehicle code must be at least 2 characters.';
+    }
+    if (!_vehicleCodePattern.hasMatch(code)) {
+      return 'Use letters, numbers, spaces, dots or dashes only.';
+    }
+    if (_takenVehicleCodes.contains(code.toUpperCase())) {
+      return 'That vehicle code is already taken.';
+    }
+    return null;
   }
 
   String? _validateEmail(String? value) {
@@ -1827,6 +1894,18 @@ class _PendingAuthImageUpload {
   }
 }
 
+/// Keeps a vehicle code uppercase as it is typed, so the value the driver sees
+/// is the value that gets saved.
+class _UpperCaseTextFormatter extends TextInputFormatter {
+  const _UpperCaseTextFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) => newValue.copyWith(text: newValue.text.toUpperCase());
+}
+
 class _AuthTextField extends StatefulWidget {
   const _AuthTextField({
     required this.controller,
@@ -1837,6 +1916,7 @@ class _AuthTextField extends StatefulWidget {
     this.textCapitalization = TextCapitalization.none,
     this.inputFormatters,
     this.textInputAction,
+    this.hintText,
     this.onSubmitted,
   });
 
@@ -1848,6 +1928,7 @@ class _AuthTextField extends StatefulWidget {
   final TextCapitalization textCapitalization;
   final List<TextInputFormatter>? inputFormatters;
   final TextInputAction? textInputAction;
+  final String? hintText;
   final ValueChanged<String>? onSubmitted;
 
   @override
@@ -1903,6 +1984,7 @@ class _AuthTextFieldState extends State<_AuthTextField> {
                 radius: 18,
                 minHeight: adminModalFieldMinHeight,
               ).copyWith(
+                hintText: widget.hintText,
                 fillColor: _isHovered || _isPressed
                     ? activeFillColor
                     : Colors.white,
