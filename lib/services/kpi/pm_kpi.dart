@@ -1,6 +1,7 @@
 import 'kpi_rating_rules.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/services/booking_pm_assignment.dart';
+import 'package:webapp/services/kpi/kpi_cost_override.dart';
 import 'dart:convert';
 
 import 'package:webapp/models/booking.dart';
@@ -340,8 +341,13 @@ class PmKpi {
     required this.issues,
     required this.threshold,
     this.ratingRules = const KpiRatingRules(),
+    this.costOverrides = const {},
   });
   final KpiPeriod period;
+
+  /// Period cost overrides keyed by 'maintenance' / 'depreciation'. A record
+  /// only takes effect once approved, so a pending figure never moves money.
+  final Map<String, Map<String, dynamic>> costOverrides;
   final List<KpiDay> days;
   final double revenue;
   final int bookingCount;
@@ -351,8 +357,31 @@ class PmKpi {
   double get fuel => days.fold(0, (sum, d) => sum + d.fuel);
   double get driverSalary => days.fold(0, (sum, d) => sum + d.driverSalary);
   double get helperSalary => days.fold(0, (sum, d) => sum + d.helperSalary);
-  double get depreciation => period.weeks * 12500;
-  double get maintenance => period.weeks * 14500;
+
+  /// The company buffers. Years of real experience, so they remain the default.
+  double get depreciationBuffer => period.weeks * 12500;
+  double get maintenanceBuffer => period.weeks * 14500;
+
+  /// A resolved figure, and whether it is a real number or the buffer. Both are
+  /// surfaced so a reader is never shown an estimate dressed as a fact.
+  ({double amount, bool isEstimate}) depreciationCost() =>
+      _cost(depreciationBuffer, 'depreciation');
+  ({double amount, bool isEstimate}) maintenanceCost() =>
+      _cost(maintenanceBuffer, 'maintenance');
+
+  double get depreciation => depreciationCost().amount;
+  double get maintenance => maintenanceCost().amount;
+  bool get depreciationEstimated => depreciationCost().isEstimate;
+  bool get maintenanceEstimated => maintenanceCost().isEstimate;
+
+  ({double amount, bool isEstimate}) _cost(double buffer, String key) {
+    final record = costOverrides[key];
+    return (
+      amount: resolveKpiCost(bufferAmount: buffer, overrideRecord: record),
+      isEstimate: kpiCostIsEstimate(record),
+    );
+  }
+
   double get expenses =>
       fuel + driverSalary + helperSalary + depreciation + maintenance;
   double get gross => revenue - expenses;
@@ -375,6 +404,7 @@ class PmKpi {
     List<Map<String, dynamic>> fuelEntries = const [],
     KpiDay Function(KpiDay day, Set<String> issues)? resolveSalary,
     List<VehicleMake> makes = const [],
+    Map<String, Map<String, dynamic>> costOverrides = const {},
   }) {
     final issues = <String>{};
     final unique = <String, Booking>{};
@@ -557,6 +587,7 @@ class PmKpi {
       issues: detailedIssues,
       threshold: threshold,
       ratingRules: ratingRules,
+      costOverrides: costOverrides,
     );
   }
 }

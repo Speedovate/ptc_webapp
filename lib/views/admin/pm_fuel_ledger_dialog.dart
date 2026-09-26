@@ -389,6 +389,7 @@ class _FuelEntryDialogState extends State<FuelEntryDialog> {
   static const labels = {
     'reference': 'PO / receipt reference',
     'supplier': 'Supplier / station',
+    'description': 'Description (optional)',
     'liters': 'Liters (optional)',
     'price_per_liter': 'Price per liter (optional)',
     'amount': 'Amount',

@@ -16,9 +16,14 @@ class KpiImportRow {
     this.liters,
     this.price,
     this.notes = '',
+    this.description = '',
     this.period = '',
   });
   final String sheet, make, kind, reference, notes, period;
+
+  /// The free-text Description the company writes against a cost. Kept apart
+  /// from notes so the reference trail survives a re-import.
+  final String description;
   final int row;
   final double amount;
   DateTime? date;
@@ -92,6 +97,9 @@ class KpiWorkbookImport {
       if (target == null) continue;
       final path = target.startsWith('/') ? target.substring(1) : 'xl/$target';
       var pm = '', salaryColumn = '', salaryDateColumn = '';
+      // Located from the header rather than assumed, because the company
+      // moves columns between sheets.
+      var descriptionColumn = '';
       for (final row in read(path).findAllElements('row')) {
         final cells = <String, String>{};
         final formulas = <String, String>{};
@@ -117,6 +125,9 @@ class KpiWorkbookImport {
           if (entry.value.trim().toLowerCase() == 'salary') {
             salaryDateColumn = entry.key;
             salaryColumn = String.fromCharCode(entry.key.codeUnitAt(0) + 1);
+          }
+          if (entry.value.trim().toLowerCase() == 'description') {
+            descriptionColumn = entry.key;
           }
         }
         if (pm != makeCode.replaceAll(' ', '').toUpperCase()) continue;
@@ -154,6 +165,9 @@ class KpiWorkbookImport {
                   ? kpiMoney(cells['F'])
                   : null,
               notes: salaryDateColumn == 'H' ? cells['G'] ?? '' : '',
+              description: descriptionColumn.isEmpty
+                  ? ''
+                  : (cells[descriptionColumn] ?? '').trim(),
               period: first,
             ),
           );

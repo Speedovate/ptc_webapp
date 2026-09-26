@@ -28,9 +28,9 @@ Uint8List workbook() {
     '<Relationships><Relationship Id="r1" Target="worksheets/sheet1.xml"/><Relationship Id="r2" Target="worksheets/sheet1.xml"/></Relationships>',
   );
   add('xl/worksheets/sheet1.xml', '''<worksheet><sheetData>
-  <row r="3"><c r="E3" t="inlineStr"><is><t>Salary</t></is></c></row>
+  <row r="3"><c r="E3" t="inlineStr"><is><t>Salary</t></is></c><c r="H3" t="inlineStr"><is><t>Description</t></is></c></row>
   <row r="4"><c r="A4" t="inlineStr"><is><t>PM 4</t></is></c></row>
-  <row r="5"><c r="A5" t="inlineStr"><is><t>week 1</t></is></c><c r="B5" t="inlineStr"><is><t>PO-1</t></is></c><c r="D5"><v>1000</v></c><c r="E5" t="inlineStr"><is><t>JAN 2-9,2026</t></is></c><c r="F5"><v>1500</v></c></row>
+  <row r="5"><c r="A5" t="inlineStr"><is><t>week 1</t></is></c><c r="B5" t="inlineStr"><is><t>PO-1</t></is></c><c r="D5"><v>1000</v></c><c r="E5" t="inlineStr"><is><t>JAN 2-9,2026</t></is></c><c r="F5"><v>1500</v></c><c r="G5" t="inlineStr"><is><t>REF-77</t></is></c><c r="H5" t="inlineStr"><is><t>Diesel top-up Roxas</t></is></c></row>
   <row r="12"><c r="D12"><f>SUM(D5:D11)</f><v>1000</v></c></row>
   <row r="14"><c r="A14" t="inlineStr"><is><t>PM 5</t></is></c></row>
   <row r="15"><c r="A15" t="inlineStr"><is><t>week 1</t></is></c><c r="D15"><v>2000</v></c></row>
@@ -94,6 +94,12 @@ void main() {
       expect(rows.map((r) => r.amount), [1000, 1500]);
       expect(rows.every((r) => !r.valid && !r.selected), true);
       expect(rows.first.liters, isNull); // Salary date is not fuel liters.
+      expect(
+        rows.first.description,
+        'Diesel top-up Roxas',
+        reason:
+            'the Description column is located from its header, not assumed',
+      );
       final salary = rows.last;
       salary.date = DateTime.utc(2026, 1, 9);
       salary.driver = 1000;

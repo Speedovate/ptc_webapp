@@ -2412,20 +2412,39 @@ class _KpiFinancialTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rows = <(String, double Function(PmKpi), bool)>[
-      ('Revenue', (r) => r.revenue, true),
-      ('Fuel', (r) => r.fuel, false),
-      ('Total salary', (r) => r.driverSalary + r.helperSalary, false),
-      ('Truck depreciation', (r) => r.depreciation, false),
-      ('Maintenance', (r) => r.maintenance, false),
-      ('Total expenses', (r) => r.expenses, true),
-      ('Gross income (actual)', (r) => r.gross, true),
+    // The fourth field marks a value that is still the company buffer rather
+    // than a figure somebody entered. Without the marker these read exactly
+    // like real costs, and somebody eventually acts on one as though it were.
+    final rows = <(String, double Function(PmKpi), bool, bool Function(PmKpi))>[
+      ('Revenue', (r) => r.revenue, true, (_) => false),
+      ('Fuel', (r) => r.fuel, false, (_) => false),
+      (
+        'Total salary',
+        (r) => r.driverSalary + r.helperSalary,
+        false,
+        (_) => false,
+      ),
+      (
+        'Truck depreciation',
+        (r) => r.depreciation,
+        false,
+        (r) => r.depreciationEstimated,
+      ),
+      (
+        'Maintenance',
+        (r) => r.maintenance,
+        false,
+        (r) => r.maintenanceEstimated,
+      ),
+      ('Total expenses', (r) => r.expenses, true, (_) => false),
+      ('Gross income (actual)', (r) => r.gross, true, (_) => false),
       (
         'Target gross income (${columns.first.$2.ratingRules.targetLabel}%)',
         (r) => r.marginTarget,
         false,
+        (_) => false,
       ),
-      ('Favorable / Unfavorable', (r) => r.marginVariance, true),
+      ('Favorable / Unfavorable', (r) => r.marginVariance, true, (_) => false),
     ];
     Widget cell(
       String text, {
@@ -2533,7 +2552,13 @@ class _KpiFinancialTable extends StatelessWidget {
                               : Colors.white,
                         ),
                         children: [
-                          cell(row.$1, heading: row.$3, label: true),
+                          cell(
+                            row.$4(columns.first.$2)
+                                ? '${row.$1}  (est.)'
+                                : row.$1,
+                            heading: row.$3,
+                            label: true,
+                          ),
                           for (final column in columns)
                             cell(
                               _kpiAmount(row.$2(column.$2)),

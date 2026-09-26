@@ -285,6 +285,47 @@ void main() {
   }
 
   testWidgets(
+    'buffered cost lines are marked as estimates without overflowing',
+    (tester) async {
+      for (final width in [375.0, 600.0, 1200.0]) {
+        tester.view.physicalSize = Size(width, 1000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final store = TestStore();
+        addTearDown(store.updates.close);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: PmKpiDialog(
+                diagnostics: testDiagnostics,
+                make: const VehicleMake(id: '4', code: 'PM4'),
+                store: store,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // The buffer is years of company experience, but it is still a guess, so
+        // it must say so. A label that is longer than the old one also has to
+        // survive a narrow phone.
+        expect(
+          find.textContaining('(est.)'),
+          findsWidgets,
+          reason: 'buffered cost lines should be marked at $width',
+        );
+        expect(
+          find.text('Maintenance  (est.)'),
+          findsOneWidget,
+          reason: 'at $width',
+        );
+        expect(tester.takeException(), isNull, reason: 'overflow at $width');
+      }
+    },
+  );
+
+  testWidgets(
     'Export opens Excel confirmation directly and Cancel does not export',
     (tester) async {
       tester.view.physicalSize = const Size(1200, 1000);
