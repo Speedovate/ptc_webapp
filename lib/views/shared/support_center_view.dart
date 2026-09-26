@@ -247,6 +247,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     }
     _selectedBookingId = normalizeId(widget.initialBookingId);
     _pendingInitialAdminUserId = normalizeId(widget.initialUserId);
+    debugPrint(
+      '[chatdebug] initState pending=$_pendingInitialAdminUserId isAdmin=$_isAdmin',
+    );
     _selectedTopicKey =
         (widget.initialTopicKey?.trim().isNotEmpty == true
                 ? widget.initialTopicKey
@@ -488,6 +491,13 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         'support-view',
         'admin users reused count=${_adminUsers.length}',
       );
+      debugPrint(
+        '[chatdebug] loadAdminUsers CACHED path count=${_adminUsers.length} pending="$_pendingInitialAdminUserId"',
+      );
+      // Someone can arrive asking for one specific user. Reusing the cached
+      // inbox must still honour that request, or the chat action silently
+      // leaves the admin on whoever was open before.
+      await _applyPendingInitialAdminUser(_adminUsers);
       return;
     }
     final shouldShowBlockingLoading =
@@ -513,6 +523,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         _cachedAdminUsers = List<UserModel>.from(filtered);
         _cachedHasLoadedAdminUsers = true;
       });
+      debugPrint(
+        '[chatdebug] loadAdminUsers FRESH path count=${filtered.length} pending="$_pendingInitialAdminUserId"',
+      );
       _log('load resolved section=support-users count=${filtered.length}');
       await _applyPendingInitialAdminUser(filtered);
     } catch (error) {
@@ -566,6 +579,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
 
   Future<void> _applyPendingInitialAdminUser(List<UserModel> users) async {
     final targetUserId = normalizeId(_pendingInitialAdminUserId);
+    debugPrint(
+      '[chatdebug] applyPending target="$targetUserId" stableSelection=$_hasStableAdminSelection selectedThread=$_selectedThreadId draftUser=${_selectedAdminDraftUser?.id}',
+    );
     if (targetUserId == null) {
       return;
     }
@@ -583,13 +599,23 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       return normalizeId(user.id) == targetUserId;
     }).firstOrNull;
     if (targetUser == null) {
-      if (mounted) {
-        setState(() {
+      // The inbox may still be arriving. Keep the request alive so the next
+      // load can satisfy it, and only drop it once the list has resolved and
+      // the id genuinely is not in it.
+      debugPrint(
+        '[chatdebug] applyPending TARGET NOT IN LIST resolved=$_cachedHasLoadedAdminUsers count=${users.length}',
+      );
+      if (_cachedHasLoadedAdminUsers && users.isNotEmpty) {
+        if (mounted) {
+          setState(() {
+            _pendingInitialAdminUserId = null;
+          });
+        } else {
           _pendingInitialAdminUserId = null;
-        });
-      } else {
-        _pendingInitialAdminUserId = null;
+        }
+        return;
       }
+      _scheduleAdminUsersWarmRetryIfNeeded();
       return;
     }
     try {
@@ -606,6 +632,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         });
         return;
       }
+      debugPrint(
+        '[chatdebug] applyPending RESULT thread=${thread?.id} draftUser=${thread == null ? targetUser.id : null}',
+      );
       setState(() {
         _selectedThreadId = thread?.id;
         _selectedAdminDraftUser = thread == null ? targetUser : null;

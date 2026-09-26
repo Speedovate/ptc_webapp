@@ -5,7 +5,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/services/role_access_service.dart';
+import 'package:webapp/views/shared/support_center_view.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/admin_list_primitives.dart';
@@ -337,6 +340,28 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
     return '$value';
   }
 
+  /// A signed-out row has nobody to talk to, so the chat action stays off it.
+  bool _canChatWith(String user) =>
+      _allowed &&
+      user != 'signed_out' &&
+      user.trim().isNotEmpty &&
+      RoleAccessService.instance.canAccess(
+        DispatcherAccessCapability.supportRead,
+        role: widget.user.role,
+      );
+
+  /// Opens the support chat already sitting on this user's thread, so an admin
+  /// reading an error can ask about it in the same place they read it.
+  Future<void> _chatWith(String user) async {
+    if (!_canChatWith(user)) return;
+    debugPrint('[chatdebug] error_logs row.user="$user" canChat=$_canChatWith');
+    await openSupportDestination(
+      context,
+      user: widget.user,
+      initialUserId: user,
+    );
+  }
+
   Future<void> _copy(Object data) async {
     try {
       await Clipboard.setData(ClipboardData(text: _json(data)));
@@ -612,7 +637,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
           trailingActions: true,
           selectableCells: true,
           wrappingColumn: 3,
-          columnExtraWidths: const {3: 24, 4: 100},
+          columnExtraWidths: const {3: 24, 4: 148},
           titles: const ['ID', 'Name', 'Role', 'Errors', 'Actions'],
           itemCount: rows.length,
           leadingColumnSpanAt: (i) => rows[i].device != null ? 3 : 1,
@@ -732,6 +757,17 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                           ),
                   ),
                 ),
+                if (_canChatWith(row.user)) ...[
+                  const SizedBox(width: 8),
+                  Tooltip(
+                    message:
+                        'Chat with ${_name(row.user, groups[row.user]!.first)}',
+                    child: AdminListActionButton(
+                      icon: Icons.chat_bubble_outline,
+                      onTap: () => _chatWith(row.user),
+                    ),
+                  ),
+                ],
                 const SizedBox(width: 8),
                 Tooltip(
                   message: log == null
