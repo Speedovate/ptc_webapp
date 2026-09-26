@@ -49,6 +49,10 @@ import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/performance_trace.dart';
 
+// Temporary tracing for the error-log chat action. Removed once the
+// wrong-target cause is confirmed.
+// ignore_for_file: avoid_print
+
 class AdminHome extends StatefulWidget {
   const AdminHome({
     super.key,
@@ -137,7 +141,7 @@ class _AdminHomeState extends State<AdminHome> {
   static const int _maxRetainedSecondarySections = 3;
 
   Widget _chatDebugWrap(String message, Widget child) {
-    debugPrint('[chatdebug] $message');
+    print('[chatdebug] $message');
     return child;
   }
 
@@ -479,7 +483,7 @@ class _AdminHomeState extends State<AdminHome> {
                       String? initialBookingId,
                       String? initialUserId,
                     }) {
-                      debugPrint(
+                      print(
                         '[chatdebug] admin_home onOpenSupport initialUserId=$initialUserId',
                       );
                       setState(() {
@@ -489,7 +493,7 @@ class _AdminHomeState extends State<AdminHome> {
                         _supportViewTick++;
                       });
                       vm.selectSection(AdminSection.support);
-                      debugPrint(
+                      print(
                         '[chatdebug] admin_home after setState tick=$_supportViewTick id=$_supportInitialUserId',
                       );
                     },
