@@ -84,6 +84,8 @@ class InvestorScope {
 
   /// The investor a trip's commission belongs to, derived from the truck the
   /// trip ran on. Null means the trip was company work.
-  static String? investorForMake(VehicleMake make) =>
-      normalizeId(make.investorId);
+  /// A trip's commission belongs to whoever owns the truck it ran on. Null
+  /// means the make is unknown or company-owned, so the trip is company work.
+  static String? investorForMake(VehicleMake? make) =>
+      normalizeId(make?.investorId);
 }

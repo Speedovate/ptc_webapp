@@ -9,6 +9,7 @@ import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/models/vehicle_make.dart';
+import 'package:webapp/utils/functions.dart';
 import 'package:webapp/view_models/admin/admin_vehicle_makes.vm.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
@@ -20,6 +21,13 @@ import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
+
+/// Owner text for a make. A blank id is the normal case - Paltranco owns the
+/// truck - so it reads as a plain value rather than a special one.
+String _makeOwnerLabel(VehicleMake item) {
+  final id = item.investorId?.trim() ?? '';
+  return id.isEmpty ? 'Paltranco' : id;
+}
 
 String _makeCrewLabel(UserModel? user) {
   if (user == null) {
@@ -177,6 +185,9 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
             final sampleHelper = filteredMakes
                 .map((item) => _makeCrewLabel(item.helper))
                 .fold<String>('-', AdminListMeasurements.longerText);
+            final sampleOwner = filteredMakes
+                .map((item) => _makeOwnerLabel(item))
+                .fold<String>('-', AdminListMeasurements.longerText);
             final sampleActive = filteredMakes
                 .map((item) => (item.isActive ?? false) ? 'Active' : 'Inactive')
                 .fold<String>('Inactive', AdminListMeasurements.longerText);
@@ -224,6 +235,14 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
               'Helper',
               _headerStyle,
               sampleHelper,
+              _valueStyle,
+            );
+            final ownerWidth = AdminListMeasurements.maxTextWidth(
+              context,
+              textScaler,
+              'Owner',
+              _headerStyle,
+              sampleOwner,
               _valueStyle,
             );
             final activeWidth = AdminListMeasurements.maxTextWidth(
@@ -286,6 +305,12 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                   trailingPadding: _defaultTrailingPadding,
                   extraWidthAllowance: _extraWidthAllowance,
                 );
+            final resolvedOwnerWidth =
+                AdminListMeasurements.resolvedColumnWidth(
+                  ownerWidth,
+                  trailingPadding: _defaultTrailingPadding,
+                  extraWidthAllowance: _extraWidthAllowance,
+                );
             final resolvedActiveWidth =
                 AdminListMeasurements.resolvedColumnWidth(
                   activeWidth,
@@ -313,6 +338,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                 resolvedTypeWidth +
                 resolvedDriverWidth +
                 resolvedHelperWidth +
+                resolvedOwnerWidth +
                 resolvedActiveWidth +
                 resolvedCreatedWidth +
                 resolvedUpdatedWidth +
@@ -448,6 +474,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                           typeWidth: resolvedTypeWidth,
                           driverWidth: resolvedDriverWidth,
                           helperWidth: resolvedHelperWidth,
+                          ownerWidth: resolvedOwnerWidth,
                           activeWidth: resolvedActiveWidth,
                           createdWidth: resolvedCreatedWidth,
                           updatedWidth: resolvedUpdatedWidth,
@@ -470,6 +497,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                                   typeWidth: resolvedTypeWidth,
                                   driverWidth: resolvedDriverWidth,
                                   helperWidth: resolvedHelperWidth,
+                                  ownerWidth: resolvedOwnerWidth,
                                   activeWidth: resolvedActiveWidth,
                                   createdWidth: resolvedCreatedWidth,
                                   updatedWidth: resolvedUpdatedWidth,
@@ -630,6 +658,7 @@ class _VehicleMakeHeaderRow extends StatelessWidget {
     required this.typeWidth,
     required this.driverWidth,
     required this.helperWidth,
+    required this.ownerWidth,
     required this.activeWidth,
     required this.createdWidth,
     required this.updatedWidth,
@@ -641,6 +670,7 @@ class _VehicleMakeHeaderRow extends StatelessWidget {
   final double typeWidth;
   final double driverWidth;
   final double helperWidth;
+  final double ownerWidth;
   final double activeWidth;
   final double createdWidth;
   final double updatedWidth;
@@ -673,6 +703,10 @@ class _VehicleMakeHeaderRow extends StatelessWidget {
           AdminListFixedSlot(
             width: helperWidth,
             child: const AdminListHeaderCell(label: 'Helper'),
+          ),
+          AdminListFixedSlot(
+            width: ownerWidth,
+            child: const AdminListHeaderCell(label: 'Owner'),
           ),
           AdminListFixedSlot(
             width: activeWidth,
@@ -709,6 +743,7 @@ class _VehicleMakeDesktopRow extends StatelessWidget {
     required this.typeWidth,
     required this.driverWidth,
     required this.helperWidth,
+    required this.ownerWidth,
     required this.activeWidth,
     required this.createdWidth,
     required this.updatedWidth,
@@ -721,6 +756,7 @@ class _VehicleMakeDesktopRow extends StatelessWidget {
   final double typeWidth;
   final double driverWidth;
   final double helperWidth;
+  final double ownerWidth;
   final double activeWidth;
   final double createdWidth;
   final double updatedWidth;
@@ -776,6 +812,17 @@ class _VehicleMakeDesktopRow extends StatelessWidget {
                 style: _makeCrewLabel(item.helper) == '-'
                     ? _VehicleMakeStyles.valueStyle
                     : _VehicleMakeStyles.crewStyle,
+              ),
+            ),
+          ),
+          AdminListFixedSlot(
+            width: ownerWidth,
+            child: AdminListBodyCell(
+              child: Text(
+                _makeOwnerLabel(item),
+                style: (item.investorId?.trim().isNotEmpty ?? false)
+                    ? _VehicleMakeStyles.crewStyle
+                    : _VehicleMakeStyles.valueStyle,
               ),
             ),
           ),
@@ -854,6 +901,7 @@ class _VehicleMakeResponsiveCard extends StatelessWidget {
             ),
             ('Driver', _makeCrewLabel(item.driver)),
             ('Helper', _makeCrewLabel(item.helper)),
+            ('Owner', _makeOwnerLabel(item)),
             ('Created', AdminUsersView.formatUpdatedAt(item.createdAt)),
             ('Updated', AdminUsersView.formatUpdatedAt(item.updatedAt)),
           ];
@@ -1467,6 +1515,12 @@ Future<VehicleMake?> showVehicleMakeDialog(
 }) async {
   final codeController = TextEditingController(text: initialItem?.code ?? '');
   final codeFocusNode = FocusNode();
+  // Free text, not a picker. There is no investor directory yet, and building
+  // one is a separate decision from marking a truck as somebody's.
+  final investorController = TextEditingController(
+    text: initialItem?.investorId ?? '',
+  );
+  final investorFocusNode = FocusNode();
   String? typeId = initialItem?.type?.id;
   String? driverId = initialItem?.driver?.id;
   String? helperId = initialItem?.helper?.id;
@@ -1483,6 +1537,8 @@ Future<VehicleMake?> showVehicleMakeDialog(
     WidgetsBinding.instance.addPostFrameCallback((_) {
       codeController.dispose();
       codeFocusNode.dispose();
+      investorController.dispose();
+      investorFocusNode.dispose();
     });
   }
 
@@ -1600,6 +1656,7 @@ Future<VehicleMake?> showVehicleMakeDialog(
                 (initialItem?.helper?.id == helperId
                     ? initialItem?.helper
                     : null),
+      investorId: normalizeId(investorController.text),
       isActive: isActive,
       createdAt: initialItem?.createdAt,
       updatedAt: DateTime.now(),
@@ -1703,10 +1760,24 @@ Future<VehicleMake?> showVehicleMakeDialog(
                 AdminModalDropdownField<String>(
                   label: 'Helper',
                   initialValue: helperId ?? '',
-                  bottomPadding: 0,
+                  bottomPadding: 6,
                   iconEnabledColor: AppColors.primaryColor,
                   items: buildHelperItems(),
                   onChanged: (value) => setState(() => helperId = value),
+                ),
+                AdminModalTextField(
+                  controller: investorController,
+                  focusNode: investorFocusNode,
+                  label: 'Investor ID (blank = Paltranco owns this truck)',
+                  hintText:
+                      'Leave blank unless an investor owns this truck. The id '
+                      'is what the investor statement is built from.',
+                  bottomPadding: 0,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) {
+                    FocusScope.of(context).unfocus();
+                    submit();
+                  },
                 ),
               ],
             ),

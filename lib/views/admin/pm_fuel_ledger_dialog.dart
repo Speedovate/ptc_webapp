@@ -1,4 +1,6 @@
 import 'package:webapp/services/kpi/kpi_period_label.dart';
+import 'package:webapp/utils/functions.dart';
+import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'dart:async';
 import 'package:webapp/services/sync_error_log_service.dart';
@@ -67,7 +69,98 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
       ? 'Voided'
       : row['local_sync_status'] != null
       ? 'Queued'
-      : 'Active';
+      : row['approved'] == true
+      ? 'Agreed'
+      : 'Pending';
+
+  /// Recording agreement is what lets a cost come off an investor's statement,
+  /// so it asks first and says plainly whose money it touches.
+  Future<void> _toggleApproval(Map<String, dynamic> row) async {
+    final alreadyAgreed = row['approved'] == true;
+    final id = row['id']?.toString();
+    if (id == null || id.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          alreadyAgreed ? 'Withdraw agreement?' : 'Record agreement?',
+        ),
+        content: Text(
+          alreadyAgreed
+              ? 'This cost will stop reducing the investor statement and go back '
+                    'to pending.'
+              : 'Confirm the investor has agreed to this cost. It will start '
+                    'reducing their statement from the next period.',
+          style: const TextStyle(height: 1.45),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(alreadyAgreed ? 'Withdraw' : 'Record agreement'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      if (alreadyAgreed) {
+        await widget.store.revokeFuelApproval(
+          makeId: widget.make.id!,
+          entryId: id,
+          previous: row,
+        );
+      } else {
+        await widget.store.approveFuel(
+          makeId: widget.make.id!,
+          entryId: id,
+          previous: row,
+        );
+      }
+      if (!mounted) return;
+      setState(() => _busy = true);
+      try {
+        final refreshed = await widget.store
+            .load(widget.make.id!, widget.period)
+            .timeout(const Duration(seconds: 15));
+        if (!mounted) return;
+        setState(() {
+          _data = refreshed;
+          _busy = false;
+        });
+        AppSnackbar.showSuccess(
+          context,
+          alreadyAgreed ? 'Agreement withdrawn.' : 'Agreement recorded.',
+        );
+      } catch (reloadError) {
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error = userFacingErrorMessage(
+            reloadError,
+            fallback: 'Saved, but the list could not be refreshed.',
+          );
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = userFacingErrorMessage(
+          error,
+          fallback: 'Could not update that cost.',
+        );
+      });
+    }
+  }
 
   void _filter(VoidCallback change) => setState(() {
     change();
@@ -312,6 +405,7 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
                           'Amount',
                           'Notes / Route',
                           'Status',
+                          '',
                           'Actions',
                         ],
                         itemCount: rows.length.clamp(0, _visibleRows),
@@ -319,7 +413,7 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
                         horizontalOnDesktop: true,
                         showTitlesRow: MediaQuery.sizeOf(context).width >= 900,
                         wrappingColumn: 6,
-                        columnExtraWidths: const {8: 40},
+                        columnExtraWidths: const {8: 40, 9: 40},
                         valuesAt: (i) {
                           final r = rows[i];
                           return [
@@ -334,23 +428,38 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
                                 : '₱${kpiMoney(r['price_per_liter'])!.toStringAsFixed(2)}',
                             '₱${(kpiMoney(r['amount']) ?? 0).toStringAsFixed(2)}',
                             '${r['notes'] ?? '—'}',
-                            r['voided'] == true
-                                ? 'Voided'
-                                : r['local_sync_status'] != null
-                                ? 'Queued'
-                                : 'Active',
+                            _entryStatus(r),
+                            '',
                             '',
                           ];
                         },
-                        cellBuilder: (i, column) => column == 8
-                            ? Tooltip(
-                                message: 'View fuel entry',
-                                child: AdminListActionButton(
-                                  icon: Icons.visibility_outlined,
-                                  onTap: () => _edit(rows[i]),
-                                ),
-                              )
-                            : null,
+                        cellBuilder: (i, column) => switch (column) {
+                          8 => Tooltip(
+                            message: 'View cost entry',
+                            child: AdminListActionButton(
+                              icon: Icons.visibility_outlined,
+                              onTap: () => _edit(rows[i]),
+                            ),
+                          ),
+                          // Approving is what lets a cost reduce an investor's
+                          // share, so it is a deliberate per-entry action rather
+                          // than a bulk one.
+                          9 =>
+                            rows[i]['voided'] == true
+                                ? null
+                                : Tooltip(
+                                    message: rows[i]['approved'] == true
+                                        ? 'Withdraw agreement'
+                                        : 'Record that the investor agreed',
+                                    child: AdminListActionButton(
+                                      icon: rows[i]['approved'] == true
+                                          ? Icons.how_to_reg_rounded
+                                          : Icons.gavel_rounded,
+                                      onTap: () => _toggleApproval(rows[i]),
+                                    ),
+                                  ),
+                          _ => null,
+                        },
                       ),
                     ),
                   ),

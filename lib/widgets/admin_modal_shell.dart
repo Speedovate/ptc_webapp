@@ -132,17 +132,26 @@ class AdminModalShell extends StatelessWidget {
                                 ),
                         )
                       else
-                        ConstrainedBox(
-                          constraints: BoxConstraints(maxHeight: bodyMaxHeight),
-                          child: bodyHandlesScrolling
-                              ? Padding(padding: contentInset, child: child)
-                              : SingleChildScrollView(
-                                  primary: false,
-                                  child: Padding(
-                                    padding: contentInset,
-                                    child: child,
+                        // Flexible as well as bounded: bodyMaxHeight does not
+                        // account for the title, so a tall enough body could
+                        // claim more than the title and actions leave room for
+                        // and overflow the dialog instead of scrolling. This
+                        // lets the body shrink to what is actually left over.
+                        Flexible(
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxHeight: bodyMaxHeight,
+                            ),
+                            child: bodyHandlesScrolling
+                                ? Padding(padding: contentInset, child: child)
+                                : SingleChildScrollView(
+                                    primary: false,
+                                    child: Padding(
+                                      padding: contentInset,
+                                      child: child,
+                                    ),
                                   ),
-                                ),
+                          ),
                         ),
                       if (hasActions)
                         Padding(

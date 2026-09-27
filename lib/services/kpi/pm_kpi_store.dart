@@ -491,6 +491,96 @@ class PmKpiStore {
     ]);
   }
 
+  /// Records that the investor has agreed a cost, so it may reduce their share.
+  ///
+  /// A cost is the office's word until somebody signs it off, and the default
+  /// is unapproved - an entry nobody looked at deducts nothing. This writes the
+  /// who and the when alongside the flag, because an approval with no name on it
+  /// is not evidence of anything.
+  ///
+  /// The entry is re-saved through the same queue and cache path as any other
+  /// edit, so approving offline behaves like everything else here.
+  Future<void> approveFuel({
+    required String makeId,
+    required String entryId,
+    required Map<String, dynamic> previous,
+    String? approvedBy,
+    String? note,
+  }) async {
+    if (!canEditFuel) {
+      throw StateError('You do not have access to edit fuel entries.');
+    }
+    if (previous['voided'] == true) {
+      throw StateError('A voided entry cannot be approved.');
+    }
+    final id = previous['id']?.toString();
+    if (id == null || id.isEmpty || id != entryId) {
+      throw StateError('That cost could not be found. Refresh and try again.');
+    }
+    final account = await _account();
+    final now = DateTime.now().toUtc().toIso8601String();
+    final cacheKey = 'kpi:$account:$makeId:fuel';
+    final cached = await _cache.readDocumentMaps(cacheKey) ?? [];
+    final updated = <String, dynamic>{
+      ...previous,
+      'approved': true,
+      'approved_by': approvedBy ?? account,
+      'approved_at': now,
+      if (note != null && note.trim().isNotEmpty) 'approval_note': note.trim(),
+      'updated_at': now,
+      'updated_by': account,
+    };
+    await _queue.saveCollectionDocumentOnlineFirst(
+      collectionKey: 'pm_fuel_entries',
+      documentId: id,
+      document: updated,
+      baseUpdatedAt: previous['updated_at']?.toString(),
+    );
+    await _cache.writeDocumentMaps(cacheKey, [
+      ...cached.where((record) => record['id'] != id),
+      updated,
+    ]);
+  }
+
+  /// Withdraws an approval. A cost that turns out to be wrong must be able to
+  /// come back off the investor's statement rather than needing a void.
+  Future<void> revokeFuelApproval({
+    required String makeId,
+    required String entryId,
+    required Map<String, dynamic> previous,
+    String? revokedBy,
+  }) async {
+    if (!canEditFuel) {
+      throw StateError('You do not have access to edit fuel entries.');
+    }
+    final id = previous['id']?.toString();
+    if (id == null || id.isEmpty || id != entryId) {
+      throw StateError('That cost could not be found. Refresh and try again.');
+    }
+    final account = await _account();
+    final now = DateTime.now().toUtc().toIso8601String();
+    final cacheKey = 'kpi:$account:$makeId:fuel';
+    final cached = await _cache.readDocumentMaps(cacheKey) ?? [];
+    final updated = <String, dynamic>{
+      ...previous,
+      'approved': false,
+      'revoked_by': revokedBy ?? account,
+      'revoked_at': now,
+      'updated_at': now,
+      'updated_by': account,
+    };
+    await _queue.saveCollectionDocumentOnlineFirst(
+      collectionKey: 'pm_fuel_entries',
+      documentId: id,
+      document: updated,
+      baseUpdatedAt: previous['updated_at']?.toString(),
+    );
+    await _cache.writeDocumentMaps(cacheKey, [
+      ...cached.where((record) => record['id'] != id),
+      updated,
+    ]);
+  }
+
   Future<void> saveFuel({
     required String makeId,
     required Map<String, dynamic> data,
