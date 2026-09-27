@@ -140,9 +140,10 @@ void main() {
         rows.firstWhere((r) => r.isNotEmpty && r.first == 'Net due')[1]
             as double;
     expect(net, s.netDue);
-    // 5,500 gross, less the 10% fee, less one day's crew, less two city shares.
-    expect(net, closeTo(5500 - 550 - 910 - 300, 0.005));
-    expect(net, 3740);
+    // 5,500 gross, less the 10% fee, less two days of crew (2 trips on 2 days,
+    // 2 crew each), less two city shares.
+    expect(net, closeTo(5500 - 550 - 1820 - 300, 0.005));
+    expect(net, 2830);
   });
 
   test('an approved cost is deducted and appears in the statement lines', () {
@@ -162,8 +163,8 @@ void main() {
     )['Statement 2026-09']!.map((row) => row.join(' ')).join('\n');
     expect(text, contains('Approved expenses'));
     expect(text, isNot(contains('PENDING YOUR APPROVAL')));
-    expect(s.netDue, closeTo(5500 - 550 - 910 - 300 - 1200, 0.005));
-    expect(s.netDue, 2540);
+    expect(s.netDue, closeTo(5500 - 550 - 1820 - 300 - 1200, 0.005));
+    expect(s.netDue, 1630);
   });
 
   test('a period with trips but no recorded costs is marked NOT FINAL', () {

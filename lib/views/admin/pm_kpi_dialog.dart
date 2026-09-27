@@ -2080,22 +2080,13 @@ class _KpiDayDialogState extends State<_KpiDayDialog> {
         )!).compareTo(kpiDeliveredAt(b.booking)!);
         return date != 0 ? date : a.identity.compareTo(b.identity);
       });
-    final saved = record['trip_rates'];
-    for (final trip in _trips) {
-      final match = saved is List
-          ? saved
-                .whereType<Map>()
-                .where((r) => r['signature'] == trip.signature)
-                .firstOrNull
-          : null;
-      final route = match?['route']?.toString();
-      final exact = matchKpiTripRate(trip, _matrix.rates).rate;
-      if (route != null && _matrix.rates.any((r) => r.name == route)) {
-        _routes[trip.identity] = route;
-      } else if (exact != null) {
-        _routes[trip.identity] = exact.name;
-      }
-    }
+    _routes.addAll(
+      resolveKpiTripRoutes(
+        _trips,
+        rates: _matrix.rates,
+        savedTripRates: record['trip_rates'],
+      ).routes,
+    );
   }
 
   @override

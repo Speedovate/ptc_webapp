@@ -226,6 +226,60 @@ class KpiSalaryEstimate {
   final bool complete;
 }
 
+/// The outcome of placing a set of trips on the rate card.
+class KpiRouteResolution {
+  const KpiRouteResolution({required this.routes, required this.unresolved});
+
+  /// Route name by trip identity, for [kpiSalary].
+  final Map<String, String> routes;
+
+  /// Trips with no single rate to stand behind them. Empty means every trip is
+  /// priced. A non-empty list is never a formatting problem - it means crew trip
+  /// share is being computed from nothing.
+  final List<KpiTrip> unresolved;
+
+  bool get complete => unresolved.isEmpty;
+}
+
+/// Places trips on the rate card the way the office does: a rate the office
+/// already confirmed for that exact trip wins, and the rate card's own match is
+/// the fallback.
+///
+/// This lives here, not in a screen, because two callers need it to agree. The
+/// PM's KPI dialog prices the same trips, and an investor statement that priced
+/// them differently would move real money on a document the investor cannot
+/// check. One function, one answer.
+///
+/// A trip that matches nothing is reported, never guessed. Guessing a rate for
+/// an unmatched drop-off would invent a crew cost that nobody agreed to, and an
+/// invented cost is worse than a visible gap.
+KpiRouteResolution resolveKpiTripRoutes(
+  List<KpiTrip> trips, {
+  required List<KpiRate> rates,
+  Object? savedTripRates,
+}) {
+  final resolved = <String, String>{};
+  final unresolved = <KpiTrip>[];
+  final saved = savedTripRates is List
+      ? savedTripRates.whereType<Map>().toList()
+      : const <Map>[];
+  for (final trip in trips) {
+    final match = saved
+        .where((r) => r['signature'] == trip.signature)
+        .firstOrNull;
+    final route = match?['route']?.toString();
+    final exact = matchKpiTripRate(trip, rates).rate;
+    if (route != null && rates.any((r) => r.name == route)) {
+      resolved[trip.identity] = route;
+    } else if (exact != null) {
+      resolved[trip.identity] = exact.name;
+    } else {
+      unresolved.add(trip);
+    }
+  }
+  return KpiRouteResolution(routes: resolved, unresolved: unresolved);
+}
+
 DateTime? kpiDeliveredAt(Booking booking) {
   if (booking.deliveredAt != null) {
     return booking.deliveredAt;
@@ -323,6 +377,18 @@ class KpiDay {
             (t.booking.driver?.id?.isNotEmpty ?? false) &&
             (t.booking.helper?.id?.isNotEmpty ?? false),
       );
+  /// What the office entered for this day, whether or not they ticked the box
+  /// that confirms it.
+  ///
+  /// An entered figure is the office's own determination, made by someone who
+  /// knows the run. It is a better answer than anything a rate card can derive
+  /// for a route the card does not carry, so callers that can accept a figure
+  /// which is not yet confirmed should prefer this over deriving one.
+  bool get hasSavedSalary =>
+      kpiMoney(record['driver_salary']) != null &&
+      kpiMoney(record['helper_salary']) != null;
+  double get savedDriverSalary => kpiMoney(record['driver_salary']) ?? 0;
+  double get savedHelperSalary => kpiMoney(record['helper_salary']) ?? 0;
   double get fuel => kpiMoney(record['fuel']) ?? 0;
   double get driverSalary => salaryComplete
       ? kpiMoney(record['driver_salary'])!

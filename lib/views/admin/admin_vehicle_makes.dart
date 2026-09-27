@@ -10,6 +10,7 @@ import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/utils/functions.dart';
+import 'package:webapp/views/admin/investor_statement_dialog.dart';
 import 'package:webapp/view_models/admin/admin_vehicle_makes.vm.dart';
 import 'package:webapp/views/admin/admin_users.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
@@ -357,6 +358,23 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     AppRefreshStrip(isVisible: vm.showBlockingLoading),
+                    // The investor statement is generated from here because
+                    // this is where a truck is marked as somebody's, and the
+                    // list already knows which investors exist.
+                    if (RoleAccessService.instance.canAccess(
+                      DispatcherAccessCapability.investorEarningsRead,
+                    ))
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () => InvestorStatementDialog.show(
+                            context,
+                            filteredMakes,
+                          ),
+                          icon: const Icon(Icons.request_quote_outlined),
+                          label: const Text('Investor statement'),
+                        ),
+                      ),
                     // Catalog-only roles retain their existing authorized entry.
                     // KPI users manage it inside the selected PM's KPI workspace.
                     if (RoleAccessService.instance.canAccess(

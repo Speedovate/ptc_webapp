@@ -99,6 +99,13 @@ class InvestorStatementWorkbook {
           'Trips ran this period but no cost was recorded, so this statement is',
           'higher than the real figure. Do not send it as a final statement.',
         ],
+      if (statement.unconfirmedDays > 0)
+        [
+          'CREW COST NOT YET SIGNED OFF',
+          '${statement.unconfirmedDays} of ${statement.officeDayCount} day'
+              '${statement.officeDayCount == 1 ? '' : 's'} priced in the office KPI '
+              'has not been confirmed. Confirm it in the PM KPI before sending.',
+        ],
       const [],
       ['LINE', 'AMOUNT'],
     ];

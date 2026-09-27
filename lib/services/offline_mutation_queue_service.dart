@@ -457,6 +457,24 @@ class OfflineMutationQueueService {
     unawaited(flushPendingMutations());
   }
 
+  /// Releases the retry timer and the network subscription.
+  ///
+  /// The app keeps one queue for its whole life, so nothing normally calls
+  /// this. A test that reads through the queue does, because the first read
+  /// starts a periodic timer that would otherwise outlive the test and be
+  /// reported as a leak. Queued work is left in storage, not dropped.
+  void dispose() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    final subscription = _networkSubscription;
+    _networkSubscription = null;
+    _isInitialized = false;
+    // Not awaited: cancelling a stream subscription settles asynchronously, and
+    // nothing here depends on it having settled. Awaiting it would also make
+    // teardown hang under a test clock that is no longer advancing.
+    unawaited(subscription?.cancel());
+  }
+
   Future<void> _queueMutationTail = Future<void>.value();
 
   final Object _storageScopeKey = Object();
