@@ -557,6 +557,7 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
                                 await showPmKpiDialog(
                                   context,
                                   filtered[i - 1].make,
+                                  store: store,
                                 );
                                 if (mounted) unawaited(load());
                               },

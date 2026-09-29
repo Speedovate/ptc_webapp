@@ -1,4 +1,6 @@
 import 'package:webapp/views/admin/admin_kpi_tracking.dart';
+import 'package:webapp/services/kpi/investor_kpi_store.dart';
+import 'package:webapp/utils/functions.dart' show normalizeRoleKey;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:webapp/views/admin/admin_error_logs.dart';
 import 'package:webapp/widgets/shared/user_session_actions_scope.dart';
@@ -1007,8 +1009,12 @@ class _AdminHomeState extends State<AdminHome> {
           ),
         ),
       ),
-      AdminSection.kpiTracking => const AdminKpiTrackingView(),
-      AdminSection.analytics => const AdminAnalyticsView(),
+      AdminSection.kpiTracking => AdminKpiTrackingView(
+        store: normalizeRoleKey(_shellUser.role) == 'investor'
+            ? InvestorKpiStore(_shellUser)
+            : null,
+      ),
+      AdminSection.analytics => AdminAnalyticsView(user: _shellUser),
       AdminSection.errorLogs => AdminErrorLogsView(
         user: _shellUser,
         refreshSignal: _errorLogsRefresh,

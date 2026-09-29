@@ -1,6 +1,7 @@
 import 'package:webapp/widgets/shared/retained_stream_builder.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
+import 'package:webapp/services/support_contact_scope.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -158,7 +159,25 @@ class _SupportCenterViewState extends State<SupportCenterView> {
 
   bool get _isAdmin =>
       _canReadSupport &&
-      _roleAccessService.canAccess('users.read', role: _effectiveRole);
+      (_isInvestor ||
+          _roleAccessService.canAccess('users.read', role: _effectiveRole));
+
+  bool get _isInvestor => normalizeRoleKey(_effectiveRole) == 'investor';
+
+  UserModel _threadTarget(UserModel user) =>
+      _isInvestor && normalizeId(user.id) == '1' ? widget.user : user;
+
+  bool _visibleInvestorThread(SupportThread thread) {
+    if (!_isInvestor) return true;
+    final requester = normalizeId(thread.requesterUserId);
+    return requester == normalizeId(widget.user.id) ||
+        _adminUsers.any(
+          (user) =>
+              normalizeId(user.id) == requester &&
+              requester != '1' &&
+              canSeeSupportContact(widget.user, user),
+        );
+  }
 
   bool get _hasStableAdminSelection =>
       _isAdmin &&
@@ -169,7 +188,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     final currentUserId = normalizeId(widget.user.id);
     final filtered = users.where((user) {
       final userId = normalizeId(user.id);
-      return userId != null && userId != currentUserId;
+      return userId != null &&
+          userId != currentUserId &&
+          (!_isInvestor || canSeeSupportContact(widget.user, user));
     }).toList();
     filtered.sort((left, right) {
       final leftName = (left.name ?? '').trim().toLowerCase();
@@ -191,7 +212,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     }
     final allThreads = SupportRequest.hydratedAllThreadsSnapshot;
     if (_isAdmin) {
-      return allThreads;
+      return allThreads.where(_visibleInvestorThread).toList();
     }
     final currentUserId = normalizeId(widget.user.id);
     if (currentUserId == null) {
@@ -226,7 +247,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       'init user=${widget.user.id ?? '-'} role=${widget.user.role ?? '-'} admin=$_isAdmin embedded=${widget.embedded}',
     );
     _accessibleBookings = List<Booking>.from(_cachedAccessibleBookings);
-    _adminUsers = List<UserModel>.from(_cachedAdminUsers);
+    _adminUsers = _filteredAdminUsersFrom(_cachedAdminUsers);
     _supportAgentUser = _cachedSupportAgentUser;
     if (_isAdmin && AuthRequest.hasResolvedUsers) {
       final sharedAdminUsers = _filteredAdminUsersFrom(
@@ -622,7 +643,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     }
     try {
       final thread = await _supportRequest
-          .findAdminDirectThread(targetUser: targetUser)
+          .findAdminDirectThread(targetUser: _threadTarget(targetUser))
           .timeout(_supportThreadLookupTimeout, onTimeout: () => null);
       if (!mounted) {
         _pendingInitialAdminUserId = null;
@@ -823,7 +844,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       try {
         final thread = await _supportRequest
             .createLocalAdminDirectThreadForSend(
-              targetUser: _selectedAdminDraftUser!,
+              targetUser: _threadTarget(_selectedAdminDraftUser!),
             );
         if (!mounted) {
           return;
@@ -933,7 +954,8 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     List<SupportThread> threads,
   ) async {
     final existingThread = threads.where((thread) {
-      return normalizeId(thread.requesterUserId) == normalizeId(user.id);
+      return normalizeId(thread.requesterUserId) ==
+          normalizeId(_threadTarget(user).id);
     }).firstOrNull;
     if (existingThread != null) {
       setState(() {
@@ -975,6 +997,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
               final threads = (snapshot.data ?? const <SupportThread>[]).where((
                 thread,
               ) {
+                if (!_visibleInvestorThread(thread)) return false;
                 final isSelectedThread =
                     normalizeId(thread.id) == normalizeId(_selectedThreadId);
                 final matchesDraftUser =
@@ -1292,6 +1315,11 @@ class _SupportCenterViewState extends State<SupportCenterView> {
 
   UserModel? _resolvedThreadRequesterUser(SupportThread? thread) {
     final requesterId = normalizeId(thread?.requesterUserId);
+    if (_isInvestor && requesterId == normalizeId(widget.user.id)) {
+      return _adminUsers
+          .where((user) => normalizeId(user.id) == '1')
+          .firstOrNull;
+    }
     if (requesterId == null) {
       return null;
     }
@@ -1601,9 +1629,14 @@ class _AdminSupportThreadList extends StatelessWidget {
         if (normalizeId(user.id) != null) normalizeId(user.id)!: user,
     };
     final searchQuery = searchController.text.trim().toLowerCase();
+    final investor = normalizeRoleKey(currentUser.role) == 'investor';
     final latestThreadByUserId = <String, SupportThread>{};
     for (final thread in threads) {
-      final requesterId = normalizeId(thread.requesterUserId);
+      final requesterId =
+          investor &&
+              normalizeId(thread.requesterUserId) == normalizeId(currentUser.id)
+          ? '1'
+          : normalizeId(thread.requesterUserId);
       if (requesterId == null ||
           latestThreadByUserId.containsKey(requesterId)) {
         continue;
@@ -1611,7 +1644,7 @@ class _AdminSupportThreadList extends StatelessWidget {
       latestThreadByUserId[requesterId] = thread;
     }
     final matchingUsers = searchQuery.isEmpty
-        ? const <UserModel>[]
+        ? (investor ? users : const <UserModel>[])
         : users.where((user) {
             final name = (user.name ?? '').trim().toLowerCase();
             final email = (user.email ?? '').trim().toLowerCase();
@@ -1671,7 +1704,7 @@ class _AdminSupportThreadList extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: searchQuery.isNotEmpty
+          child: searchQuery.isNotEmpty || investor
               ? (matchingUsers.isEmpty
                     ? const Center(
                         child: Padding(

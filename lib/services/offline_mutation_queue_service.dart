@@ -1,5 +1,6 @@
 import 'booking_status_continuation.dart';
 import 'booking_photo_cleanup.dart';
+import 'booking_edit_archive.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
 import 'package:webapp/utils/copy_document_fields.dart';
@@ -1915,12 +1916,14 @@ class OfflineMutationQueueService {
                 _firestore.collection('vehicle_makes').doc(makeId),
               )).data();
             }
-            final reconciled = reconcileBookingHistory(
-              existingBooking.data()!,
-              document,
-              baseUpdatedAt: entry.baseUpdatedAt,
-              verifiedMake: verifiedMake,
-            );
+            final reconciled =
+                reconcileBookingHistory(
+                  existingBooking.data()!,
+                  document,
+                  baseUpdatedAt: entry.baseUpdatedAt,
+                  verifiedMake: verifiedMake,
+                ) ??
+                archiveSupersededBookingEdit(existingBooking.data()!, document);
             if (reconciled != null) {
               if (_sameDocument(reconciled, existingBooking.data())) {
                 return _BookingUpsertOutcome.alreadyApplied;
@@ -3097,6 +3100,10 @@ class OfflineMutationQueueService {
             entry.collectionKey == 'bookings' &&
             lastError.contains('chassis is active on another booking');
         final legacyRecovery =
+            (!entry.bookingEditArchiveRechecked &&
+                entry.collectionKey == 'bookings' &&
+                entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+                (hasBookingConflict || lastError == 'Connection failed.')) ||
             (!entry.bookingPhotoRechecked && hasBookingConflict) ||
             (!entry.bookingMetadataRechecked && hasBookingConflict) ||
             (!entry.boxedErrorRechecked && hasBoxedError) ||
@@ -3114,6 +3121,7 @@ class OfflineMutationQueueService {
           recoveredConflictIds.add(entry.id);
           return entry.copyWith(
             isBlocked: false,
+            bookingEditArchiveRechecked: true,
             bookingPhotoRechecked:
                 hasBookingConflict || entry.bookingPhotoRechecked,
             bookingMetadataRechecked:
@@ -3645,6 +3653,7 @@ class _OfflineMutationEntry {
     this.conflictRecoveryAttempted = false,
     this.bookingMetadataRechecked = false,
     this.bookingPhotoRechecked = false,
+    this.bookingEditArchiveRechecked = false,
     this.bookingAssignmentHistoryRechecked = false,
     this.catalogPredecessorVersions = const [],
     // A user entry only replays `is_online` when presence was the point of the
@@ -3677,6 +3686,7 @@ class _OfflineMutationEntry {
   final bool conflictRecoveryAttempted;
   final bool bookingMetadataRechecked;
   final bool bookingPhotoRechecked;
+  final bool bookingEditArchiveRechecked;
   final bool bookingAssignmentHistoryRechecked;
   final List<String> catalogPredecessorVersions;
 
@@ -3703,6 +3713,7 @@ class _OfflineMutationEntry {
     bool? conflictRecoveryAttempted,
     bool? bookingMetadataRechecked,
     bool? bookingPhotoRechecked,
+    bool? bookingEditArchiveRechecked,
     bool? bookingAssignmentHistoryRechecked,
     bool? replayPresence,
     Map<String, dynamic>? basePayload,
@@ -3744,6 +3755,8 @@ class _OfflineMutationEntry {
           bookingMetadataRechecked ?? this.bookingMetadataRechecked,
       bookingPhotoRechecked:
           bookingPhotoRechecked ?? this.bookingPhotoRechecked,
+      bookingEditArchiveRechecked:
+          bookingEditArchiveRechecked ?? this.bookingEditArchiveRechecked,
       catalogPredecessorVersions: catalogPredecessorVersions,
       replayPresence: replayPresence ?? this.replayPresence,
       basePayload: basePayload ?? this.basePayload,
@@ -3772,6 +3785,7 @@ class _OfflineMutationEntry {
       'conflict_recovery_attempted': conflictRecoveryAttempted,
       'booking_metadata_rechecked': bookingMetadataRechecked,
       'booking_photo_rechecked': bookingPhotoRechecked,
+      'booking_edit_archive_rechecked': bookingEditArchiveRechecked,
       'booking_assignment_history_rechecked': bookingAssignmentHistoryRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
@@ -3811,6 +3825,8 @@ class _OfflineMutationEntry {
       conflictRecoveryAttempted: map['conflict_recovery_attempted'] == true,
       bookingMetadataRechecked: map['booking_metadata_rechecked'] == true,
       bookingPhotoRechecked: map['booking_photo_rechecked'] == true,
+      bookingEditArchiveRechecked:
+          map['booking_edit_archive_rechecked'] == true,
       bookingAssignmentHistoryRechecked:
           map['booking_assignment_history_rechecked'] == true,
       catalogPredecessorVersions:

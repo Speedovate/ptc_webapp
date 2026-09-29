@@ -88,12 +88,14 @@ Future<void> showPmKpiDialog(
   BuildContext context,
   VehicleMake make, {
   bool openRules = false,
+  PmKpiStore? store,
 }) async {
   final selection = await showAppDialog<Object>(
     context: context,
     modalKey: 'pm-kpi:${make.id}',
     builder: (dialogContext) => PmKpiDialog(
       make: make,
+      store: store,
       openRules: openRules,
       onOpenBooking: (current, booking) =>
           Navigator.of(dialogContext).pop((current: current, booking: booking)),

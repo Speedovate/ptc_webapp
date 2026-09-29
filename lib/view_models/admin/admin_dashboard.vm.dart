@@ -1,5 +1,6 @@
 import 'package:webapp/utils/booking_party_search.dart';
 import 'dart:async';
+import 'package:webapp/services/investor_reporting_scope.dart';
 
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/booking.dart';
@@ -168,6 +169,9 @@ class AdminDashboardViewModel extends BaseViewModel {
     }
     _currentUser = user;
     _cachedCurrentUser = user;
+    if (normalizeRoleKey(user.role) == 'investor') {
+      _applyCompletedBookings(BookingRequest.hydratedBookingsSnapshot);
+    }
     _log(
       () =>
           'prime current user loggedIn=true user=${user.id ?? "-"} role=${user.role ?? "-"}',
@@ -334,6 +338,9 @@ class AdminDashboardViewModel extends BaseViewModel {
         );
       _cachedUsersById = Map<String, UserModel>.from(_usersById);
       _cachedCurrentUser = _currentUser;
+      if (normalizeRoleKey(_currentUser?.role) == 'investor') {
+        _applyCompletedBookings(BookingRequest.hydratedBookingsSnapshot);
+      }
       _log(
         () =>
             'supporting reload done loggedIn=${_currentUser != null} user=${normalizeId(_currentUser?.id) ?? "-"} role=${_currentUser?.role ?? "-"} users=${_usersById.length}',
@@ -425,11 +432,14 @@ class AdminDashboardViewModel extends BaseViewModel {
   }
 
   void _applyCompletedBookings(List<Booking> bookings) {
+    final scope = InvestorReportingScope(_currentUser, _usersById.values);
     _completedBookings
       ..clear()
       ..addAll(
         bookings.where(
-          (booking) => Booking.isDeliveredWorkflowStatus(booking.clientStatus),
+          (booking) =>
+              Booking.isDeliveredWorkflowStatus(booking.clientStatus) &&
+              scope.booking(booking),
         ),
       );
 

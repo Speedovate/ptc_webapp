@@ -1,4 +1,8 @@
 import 'dart:math' as math;
+import 'dart:async';
+import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/auth.request.dart';
+import 'package:webapp/services/investor_reporting_scope.dart';
 
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -9,13 +13,15 @@ import 'package:webapp/widgets/shared/admin_list_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 
 class AdminAnalyticsView extends StatefulWidget {
-  const AdminAnalyticsView({super.key});
+  const AdminAnalyticsView({super.key, this.user});
+  final UserModel? user;
 
   @override
   State<AdminAnalyticsView> createState() => _AdminAnalyticsViewState();
 }
 
 class _AdminAnalyticsViewState extends State<AdminAnalyticsView> {
+  StreamSubscription<void>? _usersSubscription;
   late DateTime _startDate;
   late DateTime _endDate;
 
@@ -25,6 +31,27 @@ class _AdminAnalyticsViewState extends State<AdminAnalyticsView> {
     final now = DateTime.now();
     _startDate = DateTime(now.year, now.month, 1);
     _endDate = DateTime(now.year, now.month + 1, 0);
+    if (InvestorReportingScope(widget.user, const []).scoped) {
+      _usersSubscription = AuthRequest.instance.watchUsersCacheUpdates().listen(
+        (_) {
+          if (mounted) setState(() {});
+        },
+      );
+      unawaited(
+        AuthRequest.instance
+            .getUsers()
+            .then((_) {
+              if (mounted) setState(() {});
+            })
+            .catchError((Object _) {}),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_usersSubscription?.cancel());
+    super.dispose();
   }
 
   void _updateStartDate(DateTime value) {
@@ -55,7 +82,13 @@ class _AdminAnalyticsViewState extends State<AdminAnalyticsView> {
       stream: BookingRequest.instance.watchBookings(),
       initialData: BookingRequest.hydratedBookingsSnapshot,
       builder: (context, snapshot) {
-        final bookings = snapshot.data ?? const <Booking>[];
+        final scope = InvestorReportingScope(
+          widget.user,
+          AuthRequest.hydratedUsersSnapshot,
+        );
+        final bookings = (snapshot.data ?? const <Booking>[])
+            .where(scope.booking)
+            .toList();
         final isAwaitingInitialData =
             !BookingRequest.hasResolvedBookings && bookings.isEmpty;
         final content = _AnalyticsContent(
