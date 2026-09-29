@@ -1844,6 +1844,17 @@ class OfflineMutationQueueService {
                   ..remove('local_sync_status');
             final pendingContents = Map<String, dynamic>.from(document)
               ..remove('updated_at');
+            // Cleanup bookkeeping is owned by the media pipeline. A retry
+            // must acknowledge an already committed booking without replaying
+            // its chassis transitions or restoring stale cleanup metadata.
+            for (final key in [
+              'photo_cleanup_paths',
+              'photo_cleanup_claims',
+              'media_synced_at',
+            ]) {
+              serverContents.remove(key);
+              pendingContents.remove(key);
+            }
             if (_sameDocument(serverContents, pendingContents)) {
               // Already reflected on the server. Do not replay chassis transitions
               // or replace the server's timestamp with the old action timestamp.
@@ -1863,6 +1874,8 @@ class OfflineMutationQueueService {
                       .data()?['updated_at']
                       ?.toString(),
                   'pending_updated_at': document['updated_at']?.toString(),
+                  'server_document': existingBooking.data(),
+                  'conflict_stage': 'same_action_version_different_contents',
                   'server_status': existingBooking.data()?['client_status'],
                   'pending_status': document['client_status'],
                   'differing_fields': [
@@ -1934,6 +1947,7 @@ class OfflineMutationQueueService {
                       ?.toString(),
                   'pending_updated_at': document['updated_at']?.toString(),
                   'server_document': existingBooking.data(),
+                  'conflict_stage': 'history_reconciliation_rejected',
                   'server_status': existingBooking.data()?['client_status'],
                   'pending_status': document['client_status'],
                   'differing_fields': [
@@ -3071,6 +3085,7 @@ class OfflineMutationQueueService {
             entry.collectionKey == 'bookings' &&
             lastError.contains('chassis is active on another booking');
         final legacyRecovery =
+            (!entry.bookingMetadataRechecked && hasBookingConflict) ||
             (!entry.boxedErrorRechecked && hasBoxedError) ||
             (!entry.bookingHistoryRechecked && hasBookingConflict) ||
             (!entry.bookingAssignmentHistoryRechecked && hasCreateConflict) ||
@@ -3086,6 +3101,8 @@ class OfflineMutationQueueService {
           recoveredConflictIds.add(entry.id);
           return entry.copyWith(
             isBlocked: false,
+            bookingMetadataRechecked:
+                hasBookingConflict || entry.bookingMetadataRechecked,
             chassisTransferRechecked:
                 (hasChassisConflict && legacyRecovery) ||
                 entry.chassisTransferRechecked,
@@ -3611,6 +3628,7 @@ class _OfflineMutationEntry {
     this.chassisConflictRechecked = false,
     this.chassisTransferRechecked = false,
     this.conflictRecoveryAttempted = false,
+    this.bookingMetadataRechecked = false,
     this.bookingAssignmentHistoryRechecked = false,
     this.catalogPredecessorVersions = const [],
     // A user entry only replays `is_online` when presence was the point of the
@@ -3641,6 +3659,7 @@ class _OfflineMutationEntry {
   final bool chassisConflictRechecked;
   final bool chassisTransferRechecked;
   final bool conflictRecoveryAttempted;
+  final bool bookingMetadataRechecked;
   final bool bookingAssignmentHistoryRechecked;
   final List<String> catalogPredecessorVersions;
 
@@ -3665,6 +3684,7 @@ class _OfflineMutationEntry {
     bool? chassisConflictRechecked,
     bool? chassisTransferRechecked,
     bool? conflictRecoveryAttempted,
+    bool? bookingMetadataRechecked,
     bool? bookingAssignmentHistoryRechecked,
     bool? replayPresence,
     Map<String, dynamic>? basePayload,
@@ -3702,6 +3722,8 @@ class _OfflineMutationEntry {
           chassisTransferRechecked ?? this.chassisTransferRechecked,
       conflictRecoveryAttempted:
           conflictRecoveryAttempted ?? this.conflictRecoveryAttempted,
+      bookingMetadataRechecked:
+          bookingMetadataRechecked ?? this.bookingMetadataRechecked,
       catalogPredecessorVersions: catalogPredecessorVersions,
       replayPresence: replayPresence ?? this.replayPresence,
       basePayload: basePayload ?? this.basePayload,
@@ -3728,6 +3750,7 @@ class _OfflineMutationEntry {
       'chassis_conflict_rechecked': chassisConflictRechecked,
       'chassis_transfer_rechecked': chassisTransferRechecked,
       'conflict_recovery_attempted': conflictRecoveryAttempted,
+      'booking_metadata_rechecked': bookingMetadataRechecked,
       'booking_assignment_history_rechecked': bookingAssignmentHistoryRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
@@ -3765,6 +3788,7 @@ class _OfflineMutationEntry {
       chassisConflictRechecked: map['chassis_conflict_rechecked'] == true,
       chassisTransferRechecked: map['chassis_transfer_rechecked'] == true,
       conflictRecoveryAttempted: map['conflict_recovery_attempted'] == true,
+      bookingMetadataRechecked: map['booking_metadata_rechecked'] == true,
       bookingAssignmentHistoryRechecked:
           map['booking_assignment_history_rechecked'] == true,
       catalogPredecessorVersions:

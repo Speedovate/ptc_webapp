@@ -458,7 +458,7 @@ class SyncErrorLogService {
                 operation: '${entry['kind'] ?? 'bookingPhotoUpload'}',
                 entryId: '${entry['id']}',
                 target:
-                    '${entry['collection_key'] ?? ''}/${entry['target_id'] ?? entry['booking_id'] ?? entry['thread_id'] ?? entry['target_path'] ?? ''}',
+                    '${entry['collection_key'] ?? (entry['booking_id'] != null ? 'bookings' : '')}/${entry['target_id'] ?? entry['booking_id'] ?? entry['thread_id'] ?? entry['target_path'] ?? ''}',
                 owner: owner,
                 actionAt: entry['created_at']?.toString(),
                 error:
@@ -796,18 +796,41 @@ class SyncErrorLogService {
   static Map<String, dynamic> pendingMutationSnapshot(
     Map<String, dynamic> entry,
   ) => {
-    'schema_version': 1,
+    'schema_version': 2,
     'queue_entry_id': entry['id'],
-    'operation': entry['kind'],
-    'collection': entry['collection_key'],
-    'target_id': entry['target_id'],
+    'operation':
+        entry['kind'] ??
+        (entry['booking_id'] != null ? 'bookingPhotoUpload' : null),
+    'collection':
+        entry['collection_key'] ??
+        (entry['booking_id'] != null ? 'bookings' : null),
+    'target_id': entry['target_id'] ?? entry['booking_id'],
     'action_at': entry['created_at'],
     'base_updated_at': entry['base_updated_at'],
-    'original_document_available': false,
-    'original_document_unavailable_reason':
-        'The queue retains the original version timestamp, not the pre-edit document.',
+    'original_document_available': entry['base_payload'] is Map,
+    if (entry['base_payload'] is Map)
+      'original_document': entry['base_payload'],
+    if (entry['base_payload'] is! Map)
+      'original_document_unavailable_reason':
+          'The queue retains the original version timestamp, not the pre-edit document.',
     'pending_payload_available': entry['payload'] is Map,
     if (entry['payload'] is Map) 'pending_payload': entry['payload'],
+    if (entry['booking_id'] != null && entry.containsKey('bytes_base64'))
+      'photo_upload': {
+        for (final key in [
+          'booking_id',
+          'status_key',
+          'field_key',
+          'file_name',
+          'mime_type',
+          'size',
+          'waiting_for_commit',
+          'wait_reason',
+          'wait_count',
+        ])
+          key: entry[key],
+        'local_bytes_present': '${entry['bytes_base64'] ?? ''}'.isNotEmpty,
+      },
   };
 
   static Map<String, dynamic> sanitizeDetails(Map<String, dynamic> details) {
