@@ -8,19 +8,21 @@ import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/view_models/admin/investor_statement.vm.dart';
 
 import '../booking_id_resolver_test.dart' show MemoryBackend;
+import 'investor_fixtures.dart';
 import 'merge_aware_firestore.dart';
 
 /// The two investor fleets the tests share: one investor with two trucks, one
 /// with a single truck, and a company truck that must never look like an
 /// investor.
-const String investorA = 'inv-A';
-const String investorB = 'inv-B';
+const String investorA = 'inv-1';
+const String investorB = 'inv-2';
 
 final investorTestMakes = [
-  VehicleMake(id: '4', code: 'PM4', investorId: investorA),
-  VehicleMake(id: '5', code: 'PM5', investorId: investorA),
-  VehicleMake(id: '9', code: 'PM9', investorId: investorB),
-  VehicleMake(id: '7', code: 'PM7'),
+  InvestorFixtures.ownedMake('4', 'PM4', investorA),
+  InvestorFixtures.ownedMake('5', 'PM5', investorA),
+  InvestorFixtures.ownedMake('9', 'PM9', investorB),
+  // A company truck: it must never show up as an investor.
+  InvestorFixtures.companyMake('7', 'PM7'),
 ];
 
 class MemoryCache extends FirestoreCacheStore {
@@ -120,6 +122,7 @@ buildInvestorStatementVm({
     online: () => false,
   );
   final vm = InvestorStatementViewModel(kpiStore: kpi, rateStore: rates)
+    ..setUsers(InvestorFixtures.usersFor(makes ?? investorTestMakes))
     ..setMakes(makes ?? investorTestMakes);
   return (vm: vm, kpi: kpi, rateCache: rateCache, rateQueue: rateQueue);
 }

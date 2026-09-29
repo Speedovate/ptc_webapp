@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/services/investor_scope.dart';
 
 /// The investor model only holds if two things are true: an investor can never
@@ -142,94 +141,6 @@ void main() {
         ),
         isTrue,
       );
-    });
-  });
-
-  group('a crew only ever works its own investor trucks', () {
-    test('matching owners are allowed', () {
-      expect(
-        InvestorScope.canCrewWorkVehicle(
-          crewInvestorId: '8',
-          vehicleInvestorId: '8',
-        ),
-        isTrue,
-      );
-    });
-
-    test('a mismatch is refused in both directions', () {
-      expect(
-        InvestorScope.canCrewWorkVehicle(
-          crewInvestorId: '8',
-          vehicleInvestorId: '9',
-        ),
-        isFalse,
-      );
-      expect(
-        InvestorScope.canCrewWorkVehicle(
-          crewInvestorId: '9',
-          vehicleInvestorId: '8',
-        ),
-        isFalse,
-      );
-    });
-
-    test('an investor crew can never be put on a company truck', () {
-      expect(
-        InvestorScope.canCrewWorkVehicle(
-          crewInvestorId: '8',
-          vehicleInvestorId: null,
-        ),
-        isFalse,
-      );
-    });
-
-    test('company crews still crew company trucks', () {
-      expect(
-        InvestorScope.canCrewWorkVehicle(
-          crewInvestorId: null,
-          vehicleInvestorId: null,
-        ),
-        isTrue,
-      );
-    });
-
-    test('an unowned crew member is never a free pass', () {
-      // A crew member with no investor recorded must not be usable on an
-      // investor's truck just because the id is missing on one side.
-      expect(
-        InvestorScope.canCrewWorkVehicle(
-          crewInvestorId: null,
-          vehicleInvestorId: '8',
-        ),
-        isFalse,
-      );
-    });
-  });
-
-  group('trip ownership comes from the truck', () {
-    test('an investor-owned make resolves to its investor', () {
-      expect(
-        InvestorScope.investorForMake(
-          const VehicleMake(id: '1', code: 'PM1', investorId: '8'),
-        ),
-        '8',
-      );
-    });
-
-    test('a company make resolves to nobody', () {
-      expect(
-        InvestorScope.investorForMake(const VehicleMake(id: '1', code: 'PM1')),
-        isNull,
-      );
-    });
-
-    test('the driver on the make never implies ownership', () {
-      // Same truck, driver changed. Ownership must not move with the shift.
-      const make = VehicleMake(id: '1', code: 'PM1', investorId: '8');
-      final afterShiftChange = make.copyWith(
-        driver: const VehicleMake(id: '1', code: 'PM1', investorId: '8').driver,
-      );
-      expect(InvestorScope.investorForMake(afterShiftChange), '8');
     });
   });
 }

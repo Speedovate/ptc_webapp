@@ -11,7 +11,6 @@ class VehicleMake {
     this.type,
     this.driver,
     this.helper,
-    this.investorId,
     this.isActive,
     this.createdAt,
     this.updatedAt,
@@ -22,13 +21,6 @@ class VehicleMake {
   final VehicleCatalogItem? type;
   final UserModel? driver;
   final UserModel? helper;
-
-  /// The investor who owns this truck. Null means Paltranco owns it.
-  ///
-  /// Ownership lives here and is never inferred. The driver on a make is the
-  /// current assignment and rotates constantly, so reading ownership off it
-  /// would hand a truck to a new investor the moment somebody changed shifts.
-  final String? investorId;
 
   final bool? isActive;
   final DateTime? createdAt;
@@ -50,7 +42,6 @@ class VehicleMake {
     VehicleCatalogItem? type,
     UserModel? driver,
     UserModel? helper,
-    String? investorId,
     bool clearHelper = false,
     bool? isActive,
     DateTime? createdAt,
@@ -62,7 +53,6 @@ class VehicleMake {
       type: type ?? this.type,
       driver: driver ?? this.driver,
       helper: clearHelper ? null : helper ?? this.helper,
-      investorId: investorId ?? this.investorId,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -76,7 +66,6 @@ class VehicleMake {
       'type': type?.toMap(),
       'driver': driver?.toMap(),
       'helper': helper?.toMap(),
-      'investor_id': investorId,
       'is_active': isActive,
       'created_at': createdAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
@@ -98,7 +87,6 @@ class VehicleMake {
       helper: map['helper'] is Map
           ? UserModel.fromMap(Map<String, dynamic>.from(map['helper'] as Map))
           : null,
-      investorId: map['investor_id']?.toString(),
       isActive: map['is_active'] as bool?,
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),

@@ -1,3 +1,4 @@
+import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -19,6 +20,19 @@ class InvestorScope {
 
   static bool isInvestorRole(String? role) =>
       normalizeRoleKey(role) == 'investor';
+
+  /// The investors on file, keyed by user id. These are the accounts an
+  /// investor's fleet can belong to, and the only values the office can pick
+  /// from - there is nothing to type and so nothing to mistype.
+  static Map<String, UserModel> investorsById(Iterable<UserModel> users) {
+    final map = <String, UserModel>{};
+    for (final user in users) {
+      if (!isInvestorRole(user.role)) continue;
+      final id = normalizeId(user.id);
+      if (id != null) map[id] = user;
+    }
+    return map;
+  }
 
   /// Whether [viewer] may act on a row owned by [ownerInvestorId].
   ///
@@ -63,29 +77,60 @@ class InvestorScope {
     return false;
   }
 
+  /// The investor a crew member works for, as that investor's user id.
+  ///
+  /// Read from the crew member's `parent_client_id`, but only honoured when
+  /// that parent is actually an investor account. A crew member under a client
+  /// is a client relationship, not an investor one, and must not be mistaken
+  /// for a fleet.
+  static String? investorForCrew(
+    UserModel? crew,
+    Map<String, UserModel> usersById,
+  ) {
+    final parentId = normalizeId(crew?.parentClientId);
+    if (parentId == null) return null;
+    return isInvestorRole(usersById[parentId]?.role) ? parentId : null;
+  }
+
+  /// The investor who owns a truck, as that investor's user id.
+  ///
+  /// Derived from whoever is crewed on it, because a truck carries no owner
+  /// field of its own. A driver or helper whose `parent_client_id` names an
+  /// investor account puts the truck in that investor's fleet; a Paltranco crew
+  /// member leaves it a company truck.
+  ///
+  /// The driver is asked first, then the helper. A truck can only ever belong to
+  /// one investor, and a mixed crew is not something to resolve here - the silo
+  /// check rejects that pairing before it can be saved.
+  static String? investorForMake(
+    VehicleMake? make,
+    Map<String, UserModel> usersById,
+  ) {
+    if (make == null) return null;
+    for (final crew in [make.driver, make.helper]) {
+      final owner = investorForCrew(crew, usersById);
+      if (owner != null) return owner;
+    }
+    return null;
+  }
+
   /// The one dispatch rule the whole model rests on: a crew only ever works an
   /// investor's own trucks, so an investor's fleet is a closed silo.
   ///
-  /// Ownership is compared, never inferred. The driver on a make rotates with
-  /// the shift, so a crew member is not evidence of who owns the truck, and a
-  /// company crew member is not evidence that a truck is company-owned.
+  ///   Paltranco truck <-> Paltranco crew
+  ///   inv-1 truck     <-> inv-1's crew
+  ///   inv-1 truck     <-> inv-2's crew   never
+  ///
+  /// Both sides are resolved the same way, so a company crew member cannot be
+  /// put on an investor's truck and an investor's crew cannot be put on a
+  /// company truck.
   static bool canCrewWorkVehicle({
-    required String? crewInvestorId,
-    required String? vehicleInvestorId,
+    required UserModel? crew,
+    required Map<String, UserModel> usersById,
+    required VehicleMake? vehicle,
   }) {
-    final crew = normalizeId(crewInvestorId);
-    final vehicle = normalizeId(vehicleInvestorId);
-    if (crew == null || vehicle == null) {
-      // Unowned means Paltranco, and Paltranco crews only crew its own trucks.
-      return crew == vehicle;
-    }
-    return crew == vehicle;
+    final crewOwner = investorForCrew(crew, usersById);
+    final vehicleOwner = investorForMake(vehicle, usersById);
+    return crewOwner == vehicleOwner;
   }
-
-  /// The investor a trip's commission belongs to, derived from the truck the
-  /// trip ran on. Null means the trip was company work.
-  /// A trip's commission belongs to whoever owns the truck it ran on. Null
-  /// means the make is unknown or company-owned, so the trip is company work.
-  static String? investorForMake(VehicleMake? make) =>
-      normalizeId(make?.investorId);
 }

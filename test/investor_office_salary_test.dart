@@ -3,12 +3,13 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
-import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/services/investor_commission.dart';
 import 'package:webapp/services/kpi/pm_kpi.dart';
 
+import 'support/investor_fixtures.dart';
+
 const inv = 'inv-A';
-final make = VehicleMake(id: '4', code: 'PM4', investorId: inv);
+final make = InvestorFixtures.ownedMake('4', 'PM4', inv);
 
 Booking trip({required String id, String destination = 'Bancao-Bancao'}) =>
     Booking(
@@ -67,6 +68,7 @@ void main() {
       trips: list,
       routes: routes ?? {for (final t in list) t.identity: 'Bancao-Bancao'},
       makes: [make],
+      users: InvestorFixtures.usersFor([make]),
       officeDays: officeDays,
     );
   }

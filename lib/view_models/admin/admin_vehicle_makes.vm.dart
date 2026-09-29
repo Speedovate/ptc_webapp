@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:stacked/stacked.dart';
 import 'package:webapp/models/vehicle_make.dart';
+import 'package:webapp/services/investor_scope.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
@@ -62,6 +63,15 @@ class AdminVehicleMakesViewModel extends BaseViewModel {
   List<VehicleMake> get makes => _makes;
   List<UserModel> get drivers => _drivers;
   List<UserModel> get helpers => _helpers;
+
+  /// The investor accounts a truck's crew can belong to.
+  ///
+  /// The silo check needs these by id, not just the crew: a crew member's owner
+  /// is read off their `parent_client_id`, and without the account itself in the
+  /// lookup every crew member reads as Paltranco and every pairing looks valid.
+  List<UserModel> investors(Iterable<UserModel> allUsers) => allUsers
+      .where((user) => InvestorScope.isInvestorRole(user.role))
+      .toList();
   List<VehicleCatalogItem> get types => _types;
   String? get errorMessage => _errorMessage;
   String get busyMessage => _busyMessage;

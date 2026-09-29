@@ -5,6 +5,7 @@ import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/views/admin/investor_statement_dialog.dart';
 
+import 'support/investor_fixtures.dart';
 import 'support/investor_statement_harness.dart';
 
 import 'package:webapp/models/user.dart';
@@ -38,6 +39,10 @@ open(
       home: Scaffold(
         body: InvestorStatementDialog(
           makes: makes ?? investorTestMakes,
+          // Ownership is read off a truck's crew, so the accounts have to come
+          // with them. Without these every truck reads as Paltranco and the
+          // investor list is empty.
+          users: InvestorFixtures.usersFor(makes ?? investorTestMakes),
           kpiStore: vm.kpiStore,
           rateStore: vm.rateStore,
         ),
@@ -131,8 +136,9 @@ void main() {
       expect(find.text('Investor Statement'), findsOneWidget);
       await tester.tap(find.text('Select Investor').last);
       await settle(tester);
-      expect(find.text('inv-A'), findsOneWidget);
-      expect(find.text('inv-B'), findsOneWidget);
+      // Accounts, chosen from a list, named by the person - not typed.
+      expect(find.text('Dela Cruz'), findsOneWidget);
+      expect(find.text('Reyes'), findsOneWidget);
       // A company truck is not an investor.
       expect(find.text('Paltranco'), findsNothing);
       expect(tester.takeException(), isNull);

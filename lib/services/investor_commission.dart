@@ -1,3 +1,4 @@
+import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/services/booking_pm_assignment.dart';
 import 'package:webapp/services/investor_scope.dart';
@@ -38,6 +39,7 @@ class InvestorCommission {
     required List<KpiTrip> trips,
     required Map<String, String> routes,
     List<VehicleMake> makes = const [],
+    List<UserModel> users = const [],
     List<InvestorExpense> expenses = const [],
     List<KpiRate> matrix = KpiRate.matrix,
     double dailyRate = 455,
@@ -45,8 +47,15 @@ class InvestorCommission {
   }) {
     // Ownership comes from the canonical make record, never from the copy
     // embedded in the booking. A booking cached before investors existed
-    // carries a make with no investor_id on it, and trusting that copy would
+    // carries a make with no owner on it, and trusting that copy would
     // silently drop a real trip off an investor's statement.
+    // A truck has no owner field. Who owns it is read off whoever is crewed on
+    // it, so the users have to be in hand to resolve that.
+    final usersById = <String, UserModel>{};
+    for (final user in users) {
+      final userId = normalizeId(user.id);
+      if (userId != null) usersById[userId] = user;
+    }
     final makesById = <String, VehicleMake>{};
     for (final make in makes) {
       final id = normalizeId(make.id);
@@ -60,7 +69,10 @@ class InvestorCommission {
       if (id == null) {
         return false;
       }
-      return InvestorScope.investorForMake(makesById[id] ?? embedded) ==
+      return InvestorScope.investorForMake(
+            makesById[id] ?? embedded,
+            usersById,
+          ) ==
           investorId;
     }).toList();
 

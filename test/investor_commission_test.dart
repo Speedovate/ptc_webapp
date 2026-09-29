@@ -5,26 +5,20 @@ import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/services/investor_commission.dart';
 import 'package:webapp/services/kpi/pm_kpi.dart';
 
+import 'support/investor_fixtures.dart';
+
 /// The money split, checked against the numbers the office already uses: a
 /// City Proper crew share of 100/50 plus 455 a day each, and the 10% platform
 /// fee taken on the delivery amount before anything else comes out.
 void main() {
-  const investorA = '8';
-  const investorB = '9';
+  // An investor is an account with that role, and a truck belongs to whoever
+  // is crewed on it. The fixtures keep those two facts in step.
+  const investorA = 'inv-1';
+  const investorB = 'inv-2';
 
-  final cityMake = VehicleMake(
-    id: '4',
-    code: 'PM1',
-    investorId: investorA,
-    isActive: true,
-  );
-  final otherInvestorMake = VehicleMake(
-    id: '9',
-    code: 'PM9',
-    investorId: investorB,
-    isActive: true,
-  );
-  final companyMake = VehicleMake(id: '5', code: 'PM5', isActive: true);
+  final cityMake = InvestorFixtures.ownedMake('4', 'PM1', investorA);
+  final otherInvestorMake = InvestorFixtures.ownedMake('9', 'PM9', investorB);
+  final companyMake = InvestorFixtures.companyMake('5', 'PM5');
   final makes = [cityMake, otherInvestorMake, companyMake];
 
   Booking trip({
@@ -68,6 +62,7 @@ void main() {
     trips: trips,
     routes: {for (final trip in trips) trip.identity: route},
     makes: makes,
+    users: InvestorFixtures.usersFor(makes),
     expenses: expenses,
   );
 

@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/services/investor_scope.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
@@ -660,6 +661,29 @@ class AuthRequest implements AuthRepository {
   VehicleCatalogItem? _registeredVehicleType(UserModel user) =>
       user.asDriver?.vehicleType;
 
+  /// The investor a newly added crew member belongs to, decided once here.
+  ///
+  /// When an investor account adds a driver or helper, that crew is theirs and
+  /// is stamped with the investor's own user id. That link is the silo: the
+  /// crew can then only be assigned to that investor's trucks, because a truck
+  /// has no owner of its own and reads its owner off whoever crews it.
+  ///
+  /// Stamped only when nobody set a parent by hand. An admin placing a crew
+  /// member under a specific investor keeps that choice, and a crew member with
+  /// no parent stays Paltranco's.
+  Future<String?> _investorParentForNewCrew(UserModel user) async {
+    final role = normalizeRoleKey(user.role);
+    if (role != 'driver' && role != 'helper') {
+      return null;
+    }
+    final actor = await getCurrentUser();
+    if (!InvestorScope.isInvestorRole(actor?.role)) {
+      // The office is placing the crew member, and it says who they are for.
+      return null;
+    }
+    return normalizeId(actor?.id);
+  }
+
   @override
   Future<UserModel> saveUser(UserModel user) async {
     return _runAuthRequest(() async {
@@ -706,7 +730,9 @@ class AuthRequest implements AuthRepository {
       final existing = users.where((item) => item.id == nextId).firstOrNull;
       final saved = user.copyWith(
         id: nextId,
-        parentClientId: normalizeId(user.parentClientId),
+        parentClientId:
+            normalizeId(user.parentClientId) ??
+            await _investorParentForNewCrew(user),
         email: normalizedEmail,
         name: normalizedName,
         phone: normalizedPhone,

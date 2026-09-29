@@ -1,13 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
-import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/services/investor_commission.dart';
 import 'package:webapp/services/kpi/pm_kpi.dart';
 
+import 'support/investor_fixtures.dart';
+
 const investorA = 'inv-1';
 
-final ownedMake = VehicleMake(id: '4', code: 'PM4', investorId: investorA);
+final ownedMake = InvestorFixtures.ownedMake('4', 'PM4', investorA);
 
 /// A delivered City Proper run with a driver and a helper, which is a
 /// trip share of 100 + 50 on the office rate card.
@@ -38,6 +39,7 @@ InvestorCommission build(List<KpiTrip> trips, Map<String, String> routes) =>
       trips: trips,
       routes: routes,
       makes: [ownedMake],
+      users: InvestorFixtures.usersFor([ownedMake]),
     );
 
 void main() {
@@ -157,7 +159,7 @@ void main() {
     });
 
     test('a trip belonging to another investor is not this investor problem', () {
-      final otherMake = VehicleMake(id: '9', code: 'PM9', investorId: 'inv-2');
+      final otherMake = InvestorFixtures.ownedMake('9', 'PM9', 'inv-2');
       final otherTrip = KpiTrip(
         Booking(
           id: '950',

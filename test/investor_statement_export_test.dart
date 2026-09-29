@@ -10,20 +10,15 @@ import 'package:webapp/services/kpi/investor_statement_workbook.dart';
 import 'package:webapp/services/kpi/kpi_report_export.dart';
 import 'package:webapp/services/kpi/pm_kpi.dart';
 
+import 'support/investor_fixtures.dart';
+
 /// The statement is a file the office generates and sends, so the only thing
 /// that has to be true is that it opens, reads correctly, and never claims a
 /// figure it did not deduct.
 void main() {
-  const investorId = '8';
-
   final makes = [
-    const VehicleMake(
-      id: '4',
-      code: 'PM1',
-      investorId: investorId,
-      isActive: true,
-    ),
-    const VehicleMake(id: '9', code: 'PM9', investorId: '77', isActive: true),
+    InvestorFixtures.ownedMake('4', 'PM1', 'inv-1'),
+    InvestorFixtures.ownedMake('9', 'PM9', 'inv-2'),
   ];
   const crew = [
     UserModel(id: '13', role: 'driver', name: 'Ben'),
@@ -54,12 +49,13 @@ void main() {
       KpiTrip(trip('102', '4', '2500'), DateTime.utc(2026, 9, 16)),
     ];
     return InvestorCommission.calculate(
-      investorId: investorId,
+      investorId: 'inv-1',
       periodKey: '2026-09',
       rate: rate,
       trips: trips,
       routes: {for (final t in trips) t.identity: 'City Proper'},
       makes: makes,
+      users: InvestorFixtures.usersFor(makes),
       expenses: expenses,
     );
   }
@@ -70,6 +66,7 @@ void main() {
         periodKey: '2026-09',
         investorName: 'Investor Eight',
         makes: makes,
+        users: InvestorFixtures.usersFor(makes),
         crew: crew,
         generatedBy: '1',
       );
@@ -175,6 +172,7 @@ void main() {
       periodKey: '2026-09',
       investorName: 'Investor Eight',
       makes: makes,
+      users: InvestorFixtures.usersFor(makes),
       crew: crew,
       costsRecorded: 0,
     );
@@ -191,6 +189,7 @@ void main() {
       statement: statement(),
       periodKey: '2026-09',
       makes: makes,
+      users: InvestorFixtures.usersFor(makes),
       crew: crew,
       costsRecorded: 8,
     );

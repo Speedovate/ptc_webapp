@@ -3,12 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
-import 'package:webapp/models/vehicle_catalog_item.dart';
-import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/services/investor_commission.dart';
 import 'package:webapp/services/investor_commission_rate_store.dart';
 import 'package:webapp/services/kpi/pm_kpi.dart';
+
+import 'support/investor_fixtures.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
 
 import 'booking_id_resolver_test.dart' show MemoryBackend;
@@ -159,13 +159,8 @@ void main() {
   group('the rate reaches the money', () {
     // The whole point of storing it: what the office sets is what the investor
     // is actually charged. A setting nothing reads is a setting that lies.
-    const investorA = 'inv-001';
-    final make = VehicleMake(
-      id: '4',
-      code: 'PM4',
-      type: const VehicleCatalogItem(id: '1', name: 'Truck'),
-      investorId: investorA,
-    );
+    const investorA = 'inv-1';
+    final make = InvestorFixtures.ownedMake('4', 'PM4', investorA);
     // A priceable drop-off, resolved through the shared resolver, so this test
     // measures the rate and nothing else.
     final trip = KpiTrip(
@@ -196,6 +191,7 @@ void main() {
       trips: [trip],
       routes: routes,
       makes: [make],
+      users: InvestorFixtures.usersFor([make]),
     );
 
     test('the default rate takes 10% of a trip', () async {

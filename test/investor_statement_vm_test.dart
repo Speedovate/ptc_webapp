@@ -11,17 +11,18 @@ import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/view_models/admin/investor_statement.vm.dart';
 
 import 'booking_id_resolver_test.dart' show MemoryBackend;
+import 'support/investor_fixtures.dart';
 import 'support/merge_aware_firestore.dart';
 
-const investorA = 'inv-A';
-const investorB = 'inv-B';
+const investorA = 'inv-1';
+const investorB = 'inv-2';
 
 final makes = [
-  VehicleMake(id: '4', code: 'PM4', investorId: investorA),
-  VehicleMake(id: '5', code: 'PM5', investorId: investorA),
-  VehicleMake(id: '9', code: 'PM9', investorId: investorB),
+  InvestorFixtures.ownedMake('4', 'PM4', investorA),
+  InvestorFixtures.ownedMake('5', 'PM5', investorA),
+  InvestorFixtures.ownedMake('9', 'PM9', investorB),
   // A company truck, which must never appear in an investor list.
-  VehicleMake(id: '7', code: 'PM7'),
+  InvestorFixtures.companyMake('7', 'PM7'),
 ];
 
 class MemoryCache extends FirestoreCacheStore {
@@ -99,7 +100,10 @@ buildVm({
     editPermission: canEdit ?? () => true,
     online: () => false,
   );
+  // Ownership is read off a truck's crew, so the view model is given the
+  // accounts before the trucks: an owner it cannot resolve reads as Paltranco.
   final vm = InvestorStatementViewModel(kpiStore: kpi, rateStore: rates)
+    ..setUsers(InvestorFixtures.usersFor(ownedMakes ?? makes))
     ..setMakes(ownedMakes ?? makes);
   return (vm: vm, kpi: kpi, rateCache: rateCache);
 }
@@ -131,7 +135,7 @@ void main() {
   group('the investor list', () {
     test('only investors that own a truck are offered', () {
       final vm = buildVm().vm;
-      expect(vm.investors, [investorA, investorB]);
+      expect(vm.investors.keys.toList(), [investorA, investorB]);
       expect(vm.hasInvestors, isTrue);
     });
 
@@ -270,8 +274,8 @@ void main() {
       final statement = await vm.generate();
       final files = vm.files(statement!);
       expect(files.keys.toList()..sort(), [
-        'Investor-Statement-inv-A-2026-09.pdf',
-        'Investor-Statement-inv-A-2026-09.xlsx',
+        'Investor-Statement-inv-1-2026-09.pdf',
+        'Investor-Statement-inv-1-2026-09.xlsx',
       ]);
       for (final bytes in files.values) {
         expect(bytes.length, greaterThan(500));

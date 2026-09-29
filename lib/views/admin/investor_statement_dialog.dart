@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
+import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/services/kpi/investor_statement_workbook.dart';
 import 'package:webapp/services/investor_commission_rate_store.dart';
@@ -39,22 +40,30 @@ class InvestorStatementDialog extends StatefulWidget {
   const InvestorStatementDialog({
     super.key,
     required this.makes,
+    this.users = const [],
     this.kpiStore,
     this.rateStore,
   });
 
   final List<VehicleMake> makes;
 
+  /// The accounts ownership is resolved from. A truck has no owner field, so
+  /// without these every truck reads as Paltranco and the list is empty.
+  final List<UserModel> users;
+
   /// Injectable so the dialog can be exercised without a live database, the
   /// same way the fuel ledger takes its store.
   final PmKpiStore? kpiStore;
   final InvestorCommissionRateStore? rateStore;
 
-  static Future<void> show(BuildContext context, List<VehicleMake> makes) =>
-      showAppDialog<void>(
-        context: context,
-        builder: (_) => InvestorStatementDialog(makes: makes),
-      );
+  static Future<void> show(
+    BuildContext context,
+    List<VehicleMake> makes, {
+    List<UserModel> users = const [],
+  }) => showAppDialog<void>(
+    context: context,
+    builder: (_) => InvestorStatementDialog(makes: makes, users: users),
+  );
 
   @override
   State<InvestorStatementDialog> createState() =>
@@ -71,10 +80,13 @@ class _InvestorStatementDialogState extends State<InvestorStatementDialog> {
   @override
   void initState() {
     super.initState();
-    _vm = InvestorStatementViewModel(
-      kpiStore: widget.kpiStore,
-      rateStore: widget.rateStore,
-    )..setMakes(widget.makes);
+    _vm =
+        InvestorStatementViewModel(
+            kpiStore: widget.kpiStore,
+            rateStore: widget.rateStore,
+          )
+          ..setUsers(widget.users)
+          ..setMakes(widget.makes);
     _shareController.text = _number(_share);
     _loadShare();
   }
@@ -204,8 +216,15 @@ class _InvestorStatementDialogState extends State<InvestorStatementDialog> {
                       bottomPadding: 6,
                       iconEnabledColor: AppColors.primaryColor,
                       items: [
-                        for (final id in _vm.investors)
-                          DropdownMenuItem(value: id, child: Text(id)),
+                        for (final entry in _vm.investors.entries)
+                          DropdownMenuItem(
+                            value: entry.key,
+                            child: Text(
+                              InvestorStatementViewModel.investorLabel(
+                                entry.value,
+                              ),
+                            ),
+                          ),
                       ],
                       onChanged: (value) => _vm.selectInvestor(value),
                     ),

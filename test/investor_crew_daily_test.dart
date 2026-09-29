@@ -1,12 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/user.dart';
-import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/services/investor_commission.dart';
 import 'package:webapp/services/kpi/pm_kpi.dart';
 
-const inv = 'inv-A';
-final make = VehicleMake(id: '4', code: 'PM4', investorId: inv);
+import 'support/investor_fixtures.dart';
+
+const inv = 'inv-1';
+final make = InvestorFixtures.ownedMake('4', 'PM4', inv);
 
 Booking trip({
   required String id,
@@ -38,6 +39,7 @@ InvestorCommission build(List<KpiTrip> trips) {
     trips: trips,
     routes: routes,
     makes: [make],
+    users: InvestorFixtures.usersFor([make]),
   );
 }
 

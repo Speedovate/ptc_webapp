@@ -9,6 +9,7 @@ import 'package:webapp/views/admin/booking_conflict_review_dialog.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:webapp/services/investor_scope.dart';
 import 'package:flutter/services.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -1182,6 +1183,37 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     return chassis == null ? normalizedId : _chassisLabel(chassis);
   }
 
+  /// The users this dialog can resolve an investor from. The crew pickers get
+  /// their candidates from here, so the silo check sees the same people it
+  /// offers.
+  Map<String, UserModel> get _crewUsersById => {
+    for (final person in [...widget.drivers, ...widget.helpers])
+      if ((person.id ?? '').trim().isNotEmpty) person.id!.trim(): person,
+  };
+
+  /// Whether [person] is allowed on this booking's truck.
+  ///
+  /// Paltranco trucks take Paltranco crew, an investor's truck takes that
+  /// investor's crew, and the two are never mixed. Someone already assigned
+  /// stays selectable even if the pairing has since gone wrong, so the office
+  /// can see and correct it rather than having it disappear.
+  bool _crewCanWorkVehicle(UserModel? person) {
+    if (person == null) return true;
+    final vehicle = widget.booking.vehicleMake;
+    if (vehicle == null) {
+      // Bookings store a vehicle_make_id, not an embedded make with its crew, so
+      // the owner often cannot be resolved here. Showing everyone is the
+      // existing behaviour and hiding crew the office needs would be worse than
+      // missing a check. The silo is enforced where the truck is crewed.
+      return true;
+    }
+    return InvestorScope.canCrewWorkVehicle(
+      crew: person,
+      usersById: _crewUsersById,
+      vehicle: vehicle,
+    );
+  }
+
   List<DropdownMenuItem<String>> _buildRoleUserItems({
     required String? selectedUserId,
     required List<UserModel> activeUsers,
@@ -1234,7 +1266,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
 
     for (final user in activeUsers) {
       final value = user.id?.trim();
-      if (value != null && value.isNotEmpty) {
+      if (value != null && value.isNotEmpty && _crewCanWorkVehicle(user)) {
         addUserItem(value, _userLabel(user), user: user);
       }
     }

@@ -7,9 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/user.dart';
+import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/models/vehicle_make.dart';
-import 'package:webapp/utils/functions.dart';
+import 'package:webapp/services/investor_scope.dart';
 import 'package:webapp/views/admin/investor_statement_dialog.dart';
 import 'package:webapp/view_models/admin/admin_vehicle_makes.vm.dart';
 import 'package:webapp/views/admin/admin_users.dart';
@@ -23,11 +24,17 @@ import 'package:webapp/widgets/shared/admin_modal_form_primitives.dart';
 import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 import 'package:webapp/widgets/shared/app_refresh_strip.dart';
 
-/// Owner text for a make. A blank id is the normal case - Paltranco owns the
-/// truck - so it reads as a plain value rather than a special one.
-String _makeOwnerLabel(VehicleMake item) {
-  final id = item.investorId?.trim() ?? '';
-  return id.isEmpty ? 'Paltranco' : id;
+/// The investor who owns a make, resolved from whoever is crewed on it.
+///
+/// A truck carries no owner field, so this is derived the same way everywhere
+/// else: the driver first, then the helper, and only honoured when the parent
+/// is an actual investor account. No owner reads as Paltranco, which is the
+/// normal case and is shown as such rather than as a blank.
+String _makeOwnerLabel(VehicleMake make, Map<String, UserModel> usersById) {
+  final id = InvestorScope.investorForMake(make, usersById);
+  if (id == null) return 'Paltranco';
+  final name = usersById[id]?.name?.trim() ?? '';
+  return name.isEmpty ? id : '$name | $id';
 }
 
 String _makeCrewLabel(UserModel? user) {
@@ -112,6 +119,12 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
       onViewModelReady: (vm) => vm.load(),
       builder: (context, vm, _) {
         _vm = vm;
+        // A truck has no owner field, so ownership is resolved from its crew.
+        // The list needs this to show who owns what.
+        final usersById = <String, UserModel>{
+          for (final person in [...vm.drivers, ...vm.helpers])
+            if ((person.id ?? '').isNotEmpty) person.id!: person,
+        };
         final filteredMakes = vm.makes.where((item) {
           final haystack =
               '${item.id ?? ''} '
@@ -187,7 +200,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                 .map((item) => _makeCrewLabel(item.helper))
                 .fold<String>('-', AdminListMeasurements.longerText);
             final sampleOwner = filteredMakes
-                .map((item) => _makeOwnerLabel(item))
+                .map((item) => _makeOwnerLabel(item, usersById))
                 .fold<String>('-', AdminListMeasurements.longerText);
             final sampleActive = filteredMakes
                 .map((item) => (item.isActive ?? false) ? 'Active' : 'Inactive')
@@ -370,6 +383,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                           onPressed: () => InvestorStatementDialog.show(
                             context,
                             filteredMakes,
+                            users: AuthRequest.hydratedUsersSnapshot,
                           ),
                           icon: const Icon(Icons.request_quote_outlined),
                           label: const Text('Investor statement'),
@@ -510,6 +524,10 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                           child: useWideTable
                               ? _VehicleMakeDesktopRow(
                                   item: entry.value,
+                                  owner: _makeOwnerLabel(
+                                    entry.value,
+                                    usersById,
+                                  ),
                                   idWidth: resolvedIdWidth,
                                   codeWidth: resolvedCodeWidth,
                                   typeWidth: resolvedTypeWidth,
@@ -521,7 +539,13 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
                                   updatedWidth: resolvedUpdatedWidth,
                                   actionsWidth: resolvedActionsWidth,
                                 )
-                              : _VehicleMakeResponsiveCard(item: entry.value),
+                              : _VehicleMakeResponsiveCard(
+                                  item: entry.value,
+                                  owner: _makeOwnerLabel(
+                                    entry.value,
+                                    usersById,
+                                  ),
+                                ),
                         ),
                       ),
                     ],
@@ -542,6 +566,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
       types: vm.types,
       drivers: vm.drivers,
       helpers: vm.helpers,
+      investors: vm.investors(AuthRequest.hydratedUsersSnapshot),
       onSaveAsync: (item) => vm.saveMake(item),
     );
     if (created == null || !mounted) {
@@ -582,6 +607,7 @@ class _AdminVehicleMakesViewState extends State<AdminVehicleMakesView> {
       types: vm.types,
       drivers: vm.drivers,
       helpers: vm.helpers,
+      investors: vm.investors(AuthRequest.hydratedUsersSnapshot),
       onSaveAsync: (value) => vm.saveMake(value.copyWith(id: item.id)),
     );
     if (edited == null || !mounted) {
@@ -756,6 +782,7 @@ class _VehicleMakeHeaderRow extends StatelessWidget {
 class _VehicleMakeDesktopRow extends StatelessWidget {
   const _VehicleMakeDesktopRow({
     required this.item,
+    required this.owner,
     required this.idWidth,
     required this.codeWidth,
     required this.typeWidth,
@@ -769,6 +796,9 @@ class _VehicleMakeDesktopRow extends StatelessWidget {
   });
 
   final VehicleMake item;
+
+  /// The resolved investor, already named. A truck has no owner field.
+  final String owner;
   final double idWidth;
   final double codeWidth;
   final double typeWidth;
@@ -837,10 +867,10 @@ class _VehicleMakeDesktopRow extends StatelessWidget {
             width: ownerWidth,
             child: AdminListBodyCell(
               child: Text(
-                _makeOwnerLabel(item),
-                style: (item.investorId?.trim().isNotEmpty ?? false)
-                    ? _VehicleMakeStyles.crewStyle
-                    : _VehicleMakeStyles.valueStyle,
+                owner,
+                style: owner == 'Paltranco'
+                    ? _VehicleMakeStyles.valueStyle
+                    : _VehicleMakeStyles.crewStyle,
               ),
             ),
           ),
@@ -893,9 +923,12 @@ class _VehicleMakeDesktopRow extends StatelessWidget {
 }
 
 class _VehicleMakeResponsiveCard extends StatelessWidget {
-  const _VehicleMakeResponsiveCard({required this.item});
+  const _VehicleMakeResponsiveCard({required this.item, required this.owner});
 
   final VehicleMake item;
+
+  /// The resolved investor, already named. A truck has no owner field.
+  final String owner;
 
   @override
   Widget build(BuildContext context) {
@@ -919,7 +952,7 @@ class _VehicleMakeResponsiveCard extends StatelessWidget {
             ),
             ('Driver', _makeCrewLabel(item.driver)),
             ('Helper', _makeCrewLabel(item.helper)),
-            ('Owner', _makeOwnerLabel(item)),
+            ('Owner', owner),
             ('Created', AdminUsersView.formatUpdatedAt(item.createdAt)),
             ('Updated', AdminUsersView.formatUpdatedAt(item.updatedAt)),
           ];
@@ -1528,17 +1561,12 @@ Future<VehicleMake?> showVehicleMakeDialog(
   required List<VehicleCatalogItem> types,
   required List<UserModel> drivers,
   List<UserModel> helpers = const [],
+  List<UserModel> investors = const [],
   bool readOnly = false,
   Future<void> Function(VehicleMake item)? onSaveAsync,
 }) async {
   final codeController = TextEditingController(text: initialItem?.code ?? '');
   final codeFocusNode = FocusNode();
-  // Free text, not a picker. There is no investor directory yet, and building
-  // one is a separate decision from marking a truck as somebody's.
-  final investorController = TextEditingController(
-    text: initialItem?.investorId ?? '',
-  );
-  final investorFocusNode = FocusNode();
   String? typeId = initialItem?.type?.id;
   String? driverId = initialItem?.driver?.id;
   String? helperId = initialItem?.helper?.id;
@@ -1555,8 +1583,6 @@ Future<VehicleMake?> showVehicleMakeDialog(
     WidgetsBinding.instance.addPostFrameCallback((_) {
       codeController.dispose();
       codeFocusNode.dispose();
-      investorController.dispose();
-      investorFocusNode.dispose();
     });
   }
 
@@ -1587,6 +1613,35 @@ Future<VehicleMake?> showVehicleMakeDialog(
     return items;
   }
 
+  /// Whether [person] may crew this truck alongside [partner].
+  ///
+  /// The silo, applied where a truck is crewed rather than where a trip is
+  /// assigned. A truck crewed by one investor's driver and another's helper has
+  /// no owner at all - both would be charged for it - so the pairing is refused
+  /// here instead of producing a statement nobody can attribute.
+  UserModel? driverForId() =>
+      drivers.where((u) => u.id?.trim() == driverId).firstOrNull;
+
+  UserModel? helperForId() =>
+      helpers.where((u) => u.id?.trim() == helperId).firstOrNull;
+
+  bool crewFits(UserModel? person, UserModel? partner) {
+    if (person == null || partner == null) return true;
+    // The investor accounts have to be in here too, or a crew member's owner
+    // cannot be resolved and every crew reads as Paltranco.
+    final usersById = <String, UserModel>{
+      for (final candidate in [...investors, ...drivers, ...helpers])
+        if ((candidate.id ?? '').isNotEmpty) candidate.id!: candidate,
+    };
+    return InvestorScope.canCrewWorkVehicle(
+      crew: person,
+      usersById: usersById,
+      vehicle: (partner.id ?? '') == driverId
+          ? VehicleMake(driver: partner, helper: helperForId())
+          : VehicleMake(driver: driverForId(), helper: partner),
+    );
+  }
+
   List<DropdownMenuItem<String>> buildDriverItems() {
     final items = <DropdownMenuItem<String>>[];
     final seen = <String>{};
@@ -1611,7 +1666,10 @@ Future<VehicleMake?> showVehicleMakeDialog(
 
     addItem(initialItem?.driver);
     for (final item in drivers) {
-      addItem(item);
+      // The helper already on the truck decides who may sit next to them.
+      if (crewFits(item, helperForId())) {
+        addItem(item);
+      }
     }
     return items;
   }
@@ -1623,19 +1681,29 @@ Future<VehicleMake?> showVehicleMakeDialog(
       for (final user in helpers)
         if (user.id?.isNotEmpty == true) user.id!: user,
     };
+    final allowed = {
+      for (final user in helpers)
+        if ((user.id ?? '').isNotEmpty && crewFits(user, driverForId()))
+          user.id!.trim(): user,
+    };
     return [
       const DropdownMenuItem(
         value: '',
         child: Text('Not assigned', style: adminDropdownDisplayTextStyle),
       ),
+      // Only crew that may sit with the driver already on this truck. The
+      // person already on it is always kept, so an existing crew member whose
+      // partner changed is still visible and correctable rather than vanished.
       for (final user in users.values)
-        DropdownMenuItem(
-          value: user.id,
-          child: Text(
-            'Helper ${user.id} | ${user.name?.trim().isNotEmpty == true ? user.name : "—"}',
-            style: adminDropdownDisplayTextStyle,
+        if (allowed.containsKey(user.id) ||
+            user.id?.trim() == initialItem?.helper?.id?.trim())
+          DropdownMenuItem(
+            value: user.id,
+            child: Text(
+              'Helper ${user.id} | ${user.name?.trim().isNotEmpty == true ? user.name : "—"}',
+              style: adminDropdownDisplayTextStyle,
+            ),
           ),
-        ),
     ];
   }
 
@@ -1648,6 +1716,18 @@ Future<VehicleMake?> showVehicleMakeDialog(
         .where((item) => item.id == driverId)
         .cast<UserModel?>()
         .firstWhere((_) => true, orElse: () => initialItem?.driver);
+    // A truck crewed across two owners has no owner at all, so both would be
+    // billed for it and neither could be told. The dropdowns already stop this
+    // being picked; this stops an existing mixed crew being saved back
+    // unchanged, which is the only way one can still reach Firestore.
+    if (!crewFits(selectedDriver, helperForId())) {
+      AppSnackbar.showError(
+        context,
+        'That driver and helper are not from the same owner, so the truck '
+        'would have no investor. Choose crew from one owner only.',
+      );
+      return;
+    }
     if (selectedType == null || selectedDriver == null) {
       AppSnackbar.showError(
         context,
@@ -1674,7 +1754,6 @@ Future<VehicleMake?> showVehicleMakeDialog(
                 (initialItem?.helper?.id == helperId
                     ? initialItem?.helper
                     : null),
-      investorId: normalizeId(investorController.text),
       isActive: isActive,
       createdAt: initialItem?.createdAt,
       updatedAt: DateTime.now(),
@@ -1778,24 +1857,10 @@ Future<VehicleMake?> showVehicleMakeDialog(
                 AdminModalDropdownField<String>(
                   label: 'Helper',
                   initialValue: helperId ?? '',
-                  bottomPadding: 6,
+                  bottomPadding: 0,
                   iconEnabledColor: AppColors.primaryColor,
                   items: buildHelperItems(),
                   onChanged: (value) => setState(() => helperId = value),
-                ),
-                AdminModalTextField(
-                  controller: investorController,
-                  focusNode: investorFocusNode,
-                  label: 'Investor ID (blank = Paltranco owns this truck)',
-                  hintText:
-                      'Leave blank unless an investor owns this truck. The id '
-                      'is what the investor statement is built from.',
-                  bottomPadding: 0,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: (_) {
-                    FocusScope.of(context).unfocus();
-                    submit();
-                  },
                 ),
               ],
             ),

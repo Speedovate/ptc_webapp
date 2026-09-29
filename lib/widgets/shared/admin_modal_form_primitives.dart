@@ -93,6 +93,7 @@ class AdminModalTextField extends StatefulWidget {
     this.onTap,
     this.textInputAction,
     this.onSubmitted,
+    this.onChanged,
   });
 
   final TextEditingController controller;
@@ -112,6 +113,10 @@ class AdminModalTextField extends StatefulWidget {
   final VoidCallback? onTap;
   final TextInputAction? textInputAction;
   final ValueChanged<String>? onSubmitted;
+
+  /// Fires on every edit, for validation that has to react while the office is
+  /// still typing rather than after they press Save.
+  final ValueChanged<String>? onChanged;
 
   @override
   State<AdminModalTextField> createState() => _AdminModalTextFieldState();
@@ -196,6 +201,7 @@ class _AdminModalTextFieldState extends State<AdminModalTextField> {
           child: TextFormField(
             controller: widget.controller,
             focusNode: widget.focusNode,
+            onChanged: widget.onChanged,
             obscureText: widget.obscureText,
             readOnly: widget.readOnly,
             keyboardType: _isPhoneField
@@ -480,7 +486,6 @@ class _AdminModalValueTextFieldState extends State<AdminModalValueTextField> {
                       ? activeFillColor
                       : Colors.white,
                 ),
-            onChanged: widget.onChanged,
           ),
         ),
       ),

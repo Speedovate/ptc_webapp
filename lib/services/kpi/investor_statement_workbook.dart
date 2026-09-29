@@ -1,6 +1,7 @@
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/services/investor_commission.dart';
+import 'package:webapp/services/investor_scope.dart';
 import 'package:webapp/services/kpi/pm_kpi.dart';
 import 'package:webapp/utils/functions.dart';
 
@@ -38,11 +39,26 @@ class InvestorStatementWorkbook {
     String investorName = '',
     List<VehicleMake> makes = const [],
     List<UserModel> crew = const [],
+    List<UserModel> users = const [],
     String? generatedBy,
     int costsRecorded = 0,
   }) {
+    // A truck has no owner field: who owns it is read off its crew, the same way
+    // every other screen resolves it.
+    // Ownership is read off a truck's crew, so the accounts have to be in hand.
+    // `users` is the full set; `crew` is only who is on this statement, and on
+    // its own it cannot resolve who owns what.
+    final usersById = <String, UserModel>{
+      for (final user in [...users, ...crew])
+        if ((normalizeId(user.id) ?? '').isNotEmpty)
+          normalizeId(user.id)!: user,
+    };
     final ownedMakes = makes
-        .where((make) => normalizeId(make.investorId) == statement.investorId)
+        .where(
+          (make) =>
+              InvestorScope.investorForMake(make, usersById) ==
+              statement.investorId,
+        )
         .toList();
     final ownedIds = ownedMakes.map((make) => normalizeId(make.id)).toSet();
 

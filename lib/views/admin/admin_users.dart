@@ -369,9 +369,12 @@ class _AdminUsersViewState extends State<AdminUsersView> {
                           : () async {
                               final confirmed = await showAdminActionConfirmation(
                                 context,
-                                title: 'Sign In As User',
+                                title:
+                                    'Sign In As ${AdminUsersView.formatRole(viewedUser.role)} ${viewedUser.id ?? '-'}',
                                 message:
-                                    'Continue signing in as ${viewedUser.name ?? 'this user'} (${AdminUsersView.formatRole(viewedUser.role)})?',
+                                    'You will be signed in as ${AdminUsersView.formatRole(viewedUser.role).toLowerCase()} ${viewedUser.id ?? '-'}'
+                                    '${viewedUser.name?.trim().isNotEmpty == true ? ' (${viewedUser.name!.trim()})' : ''}.'
+                                    ' Anything you do will be recorded under that account.',
                                 confirmLabel: 'Sign In',
                                 onConfirmAsync: () async {
                                   try {
@@ -2479,7 +2482,8 @@ class _AdminUserDetailDialogBodyState
                         : () async {
                             final confirmed = await showAdminActionConfirmation(
                               context,
-                              title: 'Sign In As User',
+                              title:
+                                  'Sign In As ${AdminUsersView.formatRole(viewedUser.role)} ${viewedUser.id ?? '-'}',
                               message:
                                   'Continue signing in as ${viewedUser.name ?? 'this user'} (${AdminUsersView.formatRole(viewedUser.role)})?',
                               confirmLabel: 'Sign In',
@@ -2628,7 +2632,10 @@ class _UserDetailHeader extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'User ${user.id ?? '-'}',
+                    // Role and id, not "User". An investor is not a user of the
+                    // office - saying so here is what tells the person looking
+                    // at this screen who they are actually acting on.
+                    '${AdminUsersView.formatRole(user.role)} ${user.id ?? '-'}',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       color: AppColors.textPrimary,
                       fontWeight: FontWeight.w800,

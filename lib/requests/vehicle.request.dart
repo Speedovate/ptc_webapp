@@ -1030,7 +1030,6 @@ class VehicleRequest implements VehicleCatalogRepository {
       'type_id': make.type?.id,
       'driver_id': make.driver?.id,
       'helper_id': make.helper?.id,
-      'investor_id': make.investorId,
       'is_active': make.isActive,
       'created_at': make.createdAt?.toIso8601String(),
       'updated_at': make.updatedAt?.toIso8601String(),
@@ -1056,7 +1055,6 @@ class VehicleRequest implements VehicleCatalogRepository {
           (normalizeId(map['helper_id']?.toString()) == null
               ? null
               : UserModel(id: map['helper_id'].toString(), role: 'helper')),
-      investorId: map['investor_id']?.toString(),
       isActive: map['is_active'] as bool?,
       createdAt: _toDateTime(map['created_at']),
       updatedAt: _toDateTime(map['updated_at']),

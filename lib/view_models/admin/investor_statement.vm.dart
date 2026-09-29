@@ -61,6 +61,7 @@ class InvestorStatementViewModel extends ChangeNotifier {
   InvestorCommissionRateStore get rateStore => _rates;
 
   List<VehicleMake> _makes = const [];
+  List<UserModel> _users = const [];
   String? _investorId;
   KpiPeriod _period = _currentMonth();
   InvestorCommission? _statement;
@@ -105,17 +106,57 @@ class InvestorStatementViewModel extends ChangeNotifier {
   /// Derived from the trucks on file rather than a directory of investors,
   /// because no such directory exists and inventing one is a separate decision.
   /// An id with no truck cannot be owed anything, so it is not offered.
-  List<String> get investors {
-    final ids = <String>{};
-    for (final make in _makes) {
-      final id = normalizeId(make.investorId);
-      if (id != null) ids.add(id);
+  Map<String, UserModel> _usersById() {
+    final map = <String, UserModel>{};
+    for (final user in _users) {
+      final id = normalizeId(user.id);
+      if (id != null) map[id] = user;
     }
-    final list = ids.toList()..sort();
-    return list;
+    return map;
+  }
+
+  /// The investor accounts that actually own a truck, keyed by user id.
+  ///
+  /// An investor account with no truck is not offered, because it cannot be owed
+  /// anything, and an investor is never invented here - the office picks from
+  /// accounts that exist.
+  Map<String, UserModel> get investors {
+    final usersById = _usersById();
+    final owners = <String, UserModel>{};
+    for (final make in _makes) {
+      final id = InvestorScope.investorForMake(make, usersById);
+      if (id == null) continue;
+      final user = usersById[id];
+      if (user != null) owners[id] = user;
+    }
+    final entries = owners.entries.toList()
+      ..sort((a, b) {
+        final byName = (a.value.name ?? '').toLowerCase().compareTo(
+          (b.value.name ?? '').toLowerCase(),
+        );
+        return byName != 0 ? byName : a.key.compareTo(b.key);
+      });
+    return {for (final entry in entries) entry.key: entry.value};
+  }
+
+  /// How an investor is named in the picker and on the document.
+  static String investorLabel(UserModel investor) {
+    final name = investor.name?.trim() ?? '';
+    return name.isEmpty ? investor.id ?? '' : name;
   }
 
   bool get hasInvestors => investors.isNotEmpty;
+
+  void setUsers(List<UserModel> users) {
+    _users = users;
+    final stillOwned = investors.containsKey(_investorId);
+    if (_investorId != null && !stillOwned) {
+      _investorId = null;
+      _statement = null;
+      _owned = const [];
+    }
+    notifyListeners();
+  }
 
   void selectInvestor(String? id) {
     if (_investorId == id) return;
@@ -139,7 +180,7 @@ class InvestorStatementViewModel extends ChangeNotifier {
     _makes = makes;
     // Keep the selection only if it still owns a truck. A deleted make should
     // not leave a statement on screen for an investor who no longer exists.
-    if (_investorId != null && !investors.contains(_investorId)) {
+    if (_investorId != null && !investors.containsKey(_investorId)) {
       _investorId = null;
       _statement = null;
       _owned = const [];
@@ -194,8 +235,9 @@ class InvestorStatementViewModel extends ChangeNotifier {
     _error = null;
     notifyListeners();
     try {
+      final usersById = _usersById();
       _owned = _makes
-          .where((make) => InvestorScope.investorForMake(make) == id)
+          .where((make) => InvestorScope.investorForMake(make, usersById) == id)
           .toList();
       if (_owned.isEmpty) {
         _error = 'That investor does not own any trucks on file.';
@@ -272,6 +314,7 @@ class InvestorStatementViewModel extends ChangeNotifier {
         trips: trips,
         routes: resolution.routes,
         makes: _makes,
+        users: _users,
         expenses: expenses,
         officeDays: officeDays,
       );

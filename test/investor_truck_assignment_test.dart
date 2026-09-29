@@ -4,178 +4,218 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/models/vehicle_catalog_item.dart';
 import 'package:webapp/models/vehicle_make.dart';
-import 'package:webapp/requests/vehicle.request.dart';
-import 'package:webapp/services/offline_mutation_queue_service.dart';
+import 'package:webapp/services/investor_scope.dart';
 import 'package:webapp/views/admin/admin_vehicle_makes.dart';
 
-import 'booking_id_resolver_test.dart' show MemoryBackend;
-import 'support/merge_aware_firestore.dart';
+/// A truck has no owner field. Who owns it is read off whoever is crewed on it,
+/// so these pin that the dialog and the list both agree with that, and that the
+/// free-text Investor ID box is genuinely gone.
+const investor = UserModel(id: 'inv-1', role: 'investor', name: 'Dela Cruz');
+const otherInvestor = UserModel(id: 'inv-2', role: 'investor', name: 'Reyes');
+const ben = UserModel(
+  id: '8',
+  role: 'driver',
+  name: 'Ben',
+  parentClientId: 'inv-1',
+);
+const ana = UserModel(
+  id: '9',
+  role: 'helper',
+  name: 'Ana',
+  parentClientId: 'inv-1',
+);
+const pio = UserModel(id: '12', role: 'driver', name: 'Pio');
+const liza = UserModel(id: '13', role: 'helper', name: 'Liza');
 
-const investorDriver = UserModel(id: '8', role: 'driver', name: 'Ben');
-const companyTruck = VehicleMake(
+const type = VehicleCatalogItem(id: '1', name: 'Truck');
+
+final ownedTruck = VehicleMake(
   id: '4',
   code: 'PM 4',
-  type: VehicleCatalogItem(id: '1', name: 'Truck'),
-  driver: investorDriver,
+  type: type,
+  driver: ben,
+  helper: ana,
 );
-
-/// The ownership field is free text on purpose, so these tests exercise the two
-/// ends that matter: marking a truck as somebody's, and taking it back.
-Future<VehicleMake?> _editMake(
-  WidgetTester tester,
-  VehicleMake initial, {
-  required Future<void> Function(VehicleMake item) onSave,
-}) async {
-  VehicleMake? saved;
-  // Left at the default test viewport on purpose: this dialog used to overflow
-  // here once it carried a fifth field.
-  await tester.pumpWidget(
-    MaterialApp(
-      home: Scaffold(
-        body: Builder(
-          builder: (context) => TextButton(
-            onPressed: () async {
-              saved = await showVehicleMakeDialog(
-                context,
-                title: 'Edit Make',
-                initialItem: initial,
-                types: [companyTruck.type!],
-                drivers: [investorDriver],
-                onSaveAsync: onSave,
-              );
-            },
-            child: const Text('Open'),
-          ),
-        ),
-      ),
-    ),
-  );
-  // The modal guard debounces real time between openings.
-  await tester.runAsync(
-    () => Future<void>.delayed(const Duration(milliseconds: 400)),
-  );
-  await tester.tap(find.text('Open'));
-  await tester.pumpAndSettle();
-  return saved;
-}
-
-Finder _investorField() => find.widgetWithText(
-  TextField,
-  'Investor ID (blank = Paltranco owns this truck)',
+final companyTruck = VehicleMake(
+  id: '7',
+  code: 'PM 7',
+  type: type,
+  driver: pio,
+  helper: liza,
 );
+const crew = [ben, ana, pio, liza];
+const allUsers = [investor, otherInvestor, ben, ana, pio, liza];
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  group('truck ownership', () {
-    testWidgets('marking a truck as an investor lands on the saved make', (
-      tester,
-    ) async {
-      VehicleMake? saved;
-      var finished = false;
-      // `onSaveAsync` closes the dialog, so capture through it and keep the
-      // handle the caller normally reads after the fact.
-      await _editMake(
-        tester,
-        companyTruck,
-        onSave: (item) async {
-          saved = item;
-          finished = true;
-        },
-      );
-      expect(_investorField(), findsOneWidget);
-      await tester.enterText(_investorField(), 'inv-001');
-      await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
-      expect(finished, isTrue);
-      expect(saved?.investorId, 'inv-001');
-      // The rest of the make is untouched by ownership.
-      expect(saved?.code, 'PM 4');
-      expect(saved?.driver?.id, '8');
-      expect(tester.takeException(), isNull);
+  group('ownership is read off the crew', () {
+    test('an investor truck resolves to its investor', () {
+      final byId = {for (final u in allUsers) u.id!: u};
+      expect(InvestorScope.investorForMake(ownedTruck, byId), 'inv-1');
     });
 
-    testWidgets('blank text hands the truck back to Paltranco', (tester) async {
-      final owned = companyTruck.copyWith(investorId: 'inv-001');
-      VehicleMake? saved;
-      var finished = false;
-      await _editMake(
-        tester,
-        owned,
-        onSave: (item) async {
-          saved = item;
-          finished = true;
-        },
-      );
-      // The existing owner is shown, so this is a visible state to clear.
-      expect(
-        tester.widget<TextField>(_investorField()).controller!.text,
-        'inv-001',
-      );
-      await tester.enterText(_investorField(), '');
-      await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
-      expect(finished, isTrue);
-      expect(saved?.investorId, isNull);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('a company truck starts blank rather than carrying an owner', (
-      tester,
-    ) async {
-      VehicleMake? saved;
-      var finished = false;
-      await _editMake(
-        tester,
-        companyTruck,
-        onSave: (item) async {
-          saved = item;
-          finished = true;
-        },
-      );
-      expect(tester.widget<TextField>(_investorField()).controller!.text, '');
-      await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
-      expect(finished, isTrue);
-      expect(saved?.investorId, isNull);
-      expect(tester.takeException(), isNull);
+    test('a company truck resolves to nobody', () {
+      final byId = {for (final u in allUsers) u.id!: u};
+      expect(InvestorScope.investorForMake(companyTruck, byId), isNull);
     });
   });
 
-  group('ownership persistence', () {
-    test('the owner id is written to the make document', () async {
-      final db = MergeAwareFirestore();
-      final backend = MemoryBackend();
-      final queue = OfflineMutationQueueService(
-        firestore: db,
-        backend: backend,
-        isOnline: () => true,
+  group('the make dialog', () {
+    testWidgets('has no free-text investor field to mistype', (tester) async {
+      VehicleMake? saved;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () async {
+                  saved = await showVehicleMakeDialog(
+                    context,
+                    title: 'Edit Make',
+                    initialItem: ownedTruck,
+                    types: const [type],
+                    drivers: const [ben, pio],
+                    helpers: const [ana, liza],
+                    investors: const [investor, otherInvestor],
+                    onSaveAsync: (item) async => saved = item,
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
       );
-      final request = VehicleRequest(
-        firestore: db,
-        offlineMutationQueueService: queue,
-        offlineQueueInitializer: () async {},
+      // The modal guard debounces real time between openings.
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 400)),
       );
-      await request.saveMake(companyTruck.copyWith(investorId: 'inv-001'));
-      final saved = (await db.collection('vehicle_makes').doc('4').get())
-          .data()!;
-      expect(saved['investor_id'], 'inv-001');
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
 
-      // Clearing it must not leave a stale owner behind on the document, or
-      // the statement keeps attributing trips to an investor who gave it up.
-      await request.saveMake(companyTruck.copyWith(id: '4'));
-      final cleared = (await db.collection('vehicle_makes').doc('4').get())
-          .data()!;
-      expect(cleared['investor_id'] == null, isTrue);
+      // The field is gone: an investor is an account, not something typed.
+      expect(
+        find.textContaining('Investor ID'),
+        findsNothing,
+        reason: 'an investor is chosen from accounts, never typed',
+      );
+      // The crew fields that decide ownership are still there. The dropdown
+      // shows its prompt rather than a label until something is chosen.
+      expect(find.text('Code'), findsOneWidget);
+      expect(find.text('Select Driver'), findsWidgets);
+      expect(find.text('Select Helper'), findsWidgets);
+
+      // Saving keeps the crew, and with it the ownership.
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(saved?.driver?.id, '8');
+      expect(saved?.helper?.id, '9');
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
     });
 
-    test('ownership survives a copyWith that does not mention it', () {
-      final owned = companyTruck.copyWith(investorId: 'inv-001');
-      expect(owned.copyWith(isActive: false).investorId, 'inv-001');
-      expect(owned.copyWith(driver: null).investorId, 'inv-001');
-      expect(owned.copyWith(id: '4').investorId, 'inv-001');
-      expect(VehicleMake.fromJson(owned.toJson()).investorId, 'inv-001');
+    testWidgets('a truck already crewed across two owners cannot be saved', (
+      tester,
+    ) async {
+      // A company driver on an investor's helper: the truck would have no owner,
+      // so both would be billed. The crew stays visible so it can be corrected,
+      // but it cannot be saved back unchanged.
+      final mixed = VehicleMake(
+        id: '5',
+        code: 'PM 5',
+        type: type,
+        driver: pio,
+        helper: ana,
+      );
+      VehicleMake? saved;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () async {
+                  saved = await showVehicleMakeDialog(
+                    context,
+                    title: 'Edit Make',
+                    initialItem: mixed,
+                    types: const [type],
+                    drivers: const [ben, pio],
+                    helpers: const [ana, liza],
+                    investors: const [investor, otherInvestor],
+                    onSaveAsync: (item) async => saved = item,
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 400)),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(saved, isNull);
+      expect(find.textContaining('not from the same owner'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+    });
+  });
+
+  group('persistence', () {
+    test('a make writes exactly the fields it always did', () {
+      // The whole key set, not a check that one field is missing. A future
+      // field would fail this, and the shape is pinned to what the office has
+      // always stored - which is the point: an investor is an account, not a
+      // thing bolted onto a truck.
+      expect(ownedTruck.toMap().keys.toSet(), {
+        'id',
+        'code',
+        'type',
+        'driver',
+        'helper',
+        'is_active',
+        'created_at',
+        'updated_at',
+      });
+    });
+
+    test('a user writes exactly the fields it always did', () {
+      expect(ben.toMap().keys.toSet(), {
+        'id',
+        'role',
+        'parent_client_id',
+        'email',
+        'name',
+        'photo',
+        'phone',
+        'position',
+        'is_active',
+        'is_online',
+        'password',
+        'created_at',
+        'updated_at',
+      });
+    });
+
+    test('a round trip keeps the crew that decides ownership', () {
+      final restored = VehicleMake.fromJson(ownedTruck.toJson());
+      final byId = {for (final u in allUsers) u.id!: u};
+      expect(InvestorScope.investorForMake(restored, byId), 'inv-1');
+      expect(restored.copyWith(isActive: false).driver?.id, '8');
+    });
+
+    test('the crew link is the one that survives a round trip', () {
+      expect(UserModel.fromJson(ben.toJson()).parentClientId, 'inv-1');
     });
   });
 }

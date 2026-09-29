@@ -435,9 +435,19 @@ class SyncErrorLogService {
         'booking_pending_upload_queue_v1',
       ]) {
         for (final owner in scopes) {
-          for (final raw in await _backend.readStringList('$prefix::$owner')) {
+          final scope = '$prefix::$owner';
+          final saved = await _backend.readStringList(scope);
+          var completeSnapshot = true;
+          final present = <String>{};
+          for (final raw in saved) {
             try {
               final entry = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+              final id = entry['id'];
+              if (id is! String || id.isEmpty) {
+                completeSnapshot = false;
+                continue;
+              }
+              present.add(id);
               final attention = requiresAttention(prefix, entry);
               if (!attention && '${entry['last_error'] ?? ''}'.isEmpty) {
                 await _clearAttention('$prefix::$owner', '${entry['id']}');
@@ -476,8 +486,23 @@ class SyncErrorLogService {
                 },
               );
             } catch (_) {
+              completeSnapshot = false;
               /* Skip only malformed legacy entries, never delete them. */
             }
+          }
+          // Superseded actions disappear without a successful replay callback.
+          // Reconcile diagnostics only, never remove business queue entries.
+          final syncing = _progress.entries.any(
+            (entry) => queuePrefix(entry.key) == prefix && entry.value.syncing,
+          );
+          if (completeSnapshot && !syncing) {
+            await _prepareOutbox();
+            final absent = (await _outbox.trackedEntries(
+              scope,
+            )).difference(present);
+            // Re-read durable storage inside the existing guarded resolver, then
+            // re-check again before remote deletion. Late failures are tombstoned.
+            await resolveQueueEntries(scope, absent);
           }
         }
       }
@@ -866,6 +891,13 @@ class SyncErrorLogService {
                       current['queue_entry_id'] as String,
                     ));
             if (resolved) {
+              if (_progress.entries.any(
+                (entry) =>
+                    queuePrefix(entry.key) == scope?.split('::').first &&
+                    entry.value.syncing,
+              )) {
+                throw StateError('Error cleanup deferred: queue is syncing');
+              }
               if (scope == null) {
                 throw StateError('Missing completed queue scope');
               }
