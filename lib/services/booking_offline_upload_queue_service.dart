@@ -1,4 +1,5 @@
 import 'sync_error_log_service.dart';
+import 'booking_photo_marker_match.dart';
 import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
 import 'package:webapp/models/offline_queue_item.dart';
@@ -414,20 +415,6 @@ class BookingOfflineUploadQueueService {
     }
   }
 
-  /// A booking document written after this photo was staged can no longer
-  /// carry its marker, and no queued booking write remains to restore it.
-  bool _bookingOutlivedStagedPhoto(
-    Map<String, dynamic> booking,
-    _PendingBookingUploadEntry entry,
-  ) {
-    final bookingUpdatedAt = DateTime.tryParse('${booking['updated_at']}');
-    final stagedAt = DateTime.tryParse(entry.createdAtIso);
-    if (bookingUpdatedAt == null || stagedAt == null) {
-      return false;
-    }
-    return bookingUpdatedAt.isAfter(stagedAt);
-  }
-
   /// Records why this entry stayed on the device. A wait is normal for a few
   /// cycles while the booking write lands, so only the first wait and a change
   /// of reason are written back. Once the same wait survives
@@ -442,6 +429,7 @@ class BookingOfflineUploadQueueService {
     _PendingBookingUploadEntry entry,
     _PhotoWaitReason reason, {
     required String storageKey,
+    Map<String, dynamic>? serverDocument,
   }) async {
     final waitCount = (_waitCycles[entry.id] ?? entry.waitCount) + 1;
     _waitCycles[entry.id] = waitCount;
@@ -455,7 +443,11 @@ class BookingOfflineUploadQueueService {
                   'Open the booking, check the photo field, and retry the upload.'
             : null);
     String? diagnostics = entry.diagnostics;
-    if (escalate) {
+    final enrich =
+        lastError != null &&
+        serverDocument != null &&
+        !(entry.diagnostics ?? '').contains('server_photo_state_v1');
+    if (escalate || enrich) {
       diagnostics = await offlineErrorDiagnostics(
         error: StateError(
           'Queued booking photo made no progress: ${reason.explanation}.',
@@ -475,6 +467,13 @@ class BookingOfflineUploadQueueService {
           'booking_status': entry.statusKey,
           'field_key': entry.fieldKey,
           'media_size': entry.size,
+          'queued_photo_id': entry.id,
+          'photo_staged_at': entry.createdAtIso,
+          'waiting_for_commit': entry.waitingForCommit,
+          if (serverDocument != null) ...{
+            'diagnostic_schema': 'server_photo_state_v1',
+            'server_document': serverDocument,
+          },
         },
       );
     }
@@ -485,7 +484,7 @@ class BookingOfflineUploadQueueService {
         lastError: lastError,
         diagnostics: diagnostics,
       ),
-      persisted: waitCount == 1 || reasonChanged || escalate,
+      persisted: waitCount == 1 || reasonChanged || escalate || enrich,
     );
   }
 
@@ -679,15 +678,27 @@ class BookingOfflineUploadQueueService {
           remaining.add(wait.entry);
           continue;
         }
+        final recoveredStatus = matchingBookingPhotoStatus(
+          booking: markerData,
+          uploadId: entry.id,
+          fieldKey: entry.fieldKey,
+          fileName: entry.fileName,
+          size: entry.size,
+          mimeType: entry.mimeType,
+        );
+        if (recoveredStatus != null && recoveredStatus != entry.statusKey) {
+          entry = entry.copyWith(statusKey: recoveredStatus);
+          mutated = true;
+        }
         final markerField = _fieldValueFromStatusOutputs(
           _statusOutputsFromBooking(markerData),
           statusKey: entry.statusKey,
           fieldKey: entry.fieldKey,
         );
         if (_pendingUploadId(markerField) != entry.id) {
-          final superseded =
-              !entry.waitingForCommit ||
-              _bookingOutlivedStagedPhoto(markerData, entry);
+          // An unrelated newer booking edit does not prove that this staged
+          // photo was committed or intentionally removed.
+          final superseded = !entry.waitingForCommit;
           if (superseded) {
             // The placeholder that owned this entry is gone and no queued
             // booking write can bring it back. Reclaim the queued bytes
@@ -731,6 +742,7 @@ class BookingOfflineUploadQueueService {
                 ? _PhotoWaitReason.photoFieldMissing
                 : _PhotoWaitReason.markerSuperseded,
             storageKey: storageKey,
+            serverDocument: markerData,
           );
           mutated = mutated || wait.persisted;
           remaining.add(wait.entry);
@@ -1031,6 +1043,7 @@ class _PendingBookingUploadEntry {
     String? lastError,
     String? diagnostics,
     String? bookingId,
+    String? statusKey,
     bool? waitingForCommit,
     int? waitCount,
     String? waitReason,
@@ -1040,7 +1053,7 @@ class _PendingBookingUploadEntry {
       id: id,
       waitingForCommit: waitingForCommit ?? this.waitingForCommit,
       bookingId: bookingId ?? this.bookingId,
-      statusKey: statusKey,
+      statusKey: statusKey ?? this.statusKey,
       fieldKey: fieldKey,
       bytesBase64: bytesBase64,
       fileName: fileName,
