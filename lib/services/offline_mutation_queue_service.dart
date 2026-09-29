@@ -1863,6 +1863,18 @@ class OfflineMutationQueueService {
               return _BookingUpsertOutcome.alreadyApplied;
             }
             if (remoteVersion == nextVersion) {
+              // Photo uploads replace pending markers after the booking commit
+              // without changing its action timestamp. Acknowledge only when
+              // existing event/path/metadata checks yield the unchanged server.
+              final photoReconciled = reconcileBookingHistory(
+                existingBooking.data()!,
+                document,
+                baseUpdatedAt: entry.baseUpdatedAt,
+              );
+              if (photoReconciled != null &&
+                  _sameDocument(photoReconciled, existingBooking.data())) {
+                return _BookingUpsertOutcome.alreadyApplied;
+              }
               // The server carries this action's own version but different
               // contents, so another writer changed the booking inside it.
               // Replaying here would silently resurrect the queued action.
@@ -3085,6 +3097,7 @@ class OfflineMutationQueueService {
             entry.collectionKey == 'bookings' &&
             lastError.contains('chassis is active on another booking');
         final legacyRecovery =
+            (!entry.bookingPhotoRechecked && hasBookingConflict) ||
             (!entry.bookingMetadataRechecked && hasBookingConflict) ||
             (!entry.boxedErrorRechecked && hasBoxedError) ||
             (!entry.bookingHistoryRechecked && hasBookingConflict) ||
@@ -3101,6 +3114,8 @@ class OfflineMutationQueueService {
           recoveredConflictIds.add(entry.id);
           return entry.copyWith(
             isBlocked: false,
+            bookingPhotoRechecked:
+                hasBookingConflict || entry.bookingPhotoRechecked,
             bookingMetadataRechecked:
                 hasBookingConflict || entry.bookingMetadataRechecked,
             chassisTransferRechecked:
@@ -3629,6 +3644,7 @@ class _OfflineMutationEntry {
     this.chassisTransferRechecked = false,
     this.conflictRecoveryAttempted = false,
     this.bookingMetadataRechecked = false,
+    this.bookingPhotoRechecked = false,
     this.bookingAssignmentHistoryRechecked = false,
     this.catalogPredecessorVersions = const [],
     // A user entry only replays `is_online` when presence was the point of the
@@ -3660,6 +3676,7 @@ class _OfflineMutationEntry {
   final bool chassisTransferRechecked;
   final bool conflictRecoveryAttempted;
   final bool bookingMetadataRechecked;
+  final bool bookingPhotoRechecked;
   final bool bookingAssignmentHistoryRechecked;
   final List<String> catalogPredecessorVersions;
 
@@ -3685,6 +3702,7 @@ class _OfflineMutationEntry {
     bool? chassisTransferRechecked,
     bool? conflictRecoveryAttempted,
     bool? bookingMetadataRechecked,
+    bool? bookingPhotoRechecked,
     bool? bookingAssignmentHistoryRechecked,
     bool? replayPresence,
     Map<String, dynamic>? basePayload,
@@ -3724,6 +3742,8 @@ class _OfflineMutationEntry {
           conflictRecoveryAttempted ?? this.conflictRecoveryAttempted,
       bookingMetadataRechecked:
           bookingMetadataRechecked ?? this.bookingMetadataRechecked,
+      bookingPhotoRechecked:
+          bookingPhotoRechecked ?? this.bookingPhotoRechecked,
       catalogPredecessorVersions: catalogPredecessorVersions,
       replayPresence: replayPresence ?? this.replayPresence,
       basePayload: basePayload ?? this.basePayload,
@@ -3751,6 +3771,7 @@ class _OfflineMutationEntry {
       'chassis_transfer_rechecked': chassisTransferRechecked,
       'conflict_recovery_attempted': conflictRecoveryAttempted,
       'booking_metadata_rechecked': bookingMetadataRechecked,
+      'booking_photo_rechecked': bookingPhotoRechecked,
       'booking_assignment_history_rechecked': bookingAssignmentHistoryRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
@@ -3789,6 +3810,7 @@ class _OfflineMutationEntry {
       chassisTransferRechecked: map['chassis_transfer_rechecked'] == true,
       conflictRecoveryAttempted: map['conflict_recovery_attempted'] == true,
       bookingMetadataRechecked: map['booking_metadata_rechecked'] == true,
+      bookingPhotoRechecked: map['booking_photo_rechecked'] == true,
       bookingAssignmentHistoryRechecked:
           map['booking_assignment_history_rechecked'] == true,
       catalogPredecessorVersions:
