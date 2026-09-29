@@ -615,6 +615,16 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
       return single.length > 110 ? '${single.substring(0, 110)}…' : single;
     }
 
+    String errorTitle(Map<String, dynamic> log) {
+      final title = preview('${log['operation'] ?? log['source'] ?? 'Error'}');
+      final version = '${log['app_version'] ?? ''}'.trim();
+      final build = '${log['build_number'] ?? ''}'.trim();
+      if (version.isEmpty) {
+        return '$title • ${build.isEmpty ? 'Version unavailable' : 'Build $build'}';
+      }
+      return '$title • $version${build.isEmpty ? '' : '+$build'}';
+    }
+
     return Padding(
       padding: const EdgeInsets.all(24),
       child: NotificationListener<ScrollNotification>(
@@ -682,7 +692,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                   ]
                 : [
                     '—',
-                    preview('${log['operation'] ?? log['source'] ?? 'Error'}'),
+                    errorTitle(log),
                     '',
                     preview('${log['error'] ?? '—'}'),
                     '',
@@ -696,7 +706,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   SelectableText(
-                    preview('${log['operation'] ?? log['source'] ?? 'Error'}'),
+                    errorTitle(log),
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 8),
@@ -756,7 +766,9 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                           ),
                   ),
                 ),
-                if (_canChatWith(row.user)) ...[
+                if (log == null &&
+                    row.device == null &&
+                    _canChatWith(row.user)) ...[
                   const SizedBox(width: 8),
                   Tooltip(
                     message:
