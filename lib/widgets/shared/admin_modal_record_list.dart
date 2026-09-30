@@ -133,6 +133,10 @@ class AdminModalRecordList extends StatelessWidget {
         : Text(text, style: style, softWrap: true);
     Widget header(String title, {bool trailing = false}) => selectableCells
         ? AdminListBodyCell(
+            alignment: trailing ? Alignment.centerRight : Alignment.centerLeft,
+            trailingPadding: trailing
+                ? 0
+                : AdminListMeasurements.defaultTrailingPadding,
             child: SelectableText(
               title,
               style: headerStyle.copyWith(
