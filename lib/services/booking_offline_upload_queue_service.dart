@@ -29,6 +29,8 @@ class BookingOfflineUploadQueueService {
     OfflineMutationQueueService? mutationQueue,
     Duration mutationFlushTimeout = _defaultMutationFlushTimeout,
     Future<Map<String, dynamic>?> Function(String bookingId)? bookingReader,
+    Future<Map<String, dynamic>?> Function(String bookingId)?
+    cachedBookingReader,
   }) : _backend = backend ?? createBookingStorageBackend(),
        _providedFirestore = firestore,
        _photoStorageService =
@@ -38,7 +40,8 @@ class BookingOfflineUploadQueueService {
            OfflineMutationQueueService.instance.flushPendingMutations,
        _mutationQueue = mutationQueue ?? OfflineMutationQueueService.instance,
        _mutationFlushTimeout = mutationFlushTimeout,
-       _bookingReader = bookingReader;
+       _bookingReader = bookingReader,
+       _cachedBookingReader = cachedBookingReader;
 
   static final BookingOfflineUploadQueueService instance =
       BookingOfflineUploadQueueService();
@@ -48,6 +51,8 @@ class BookingOfflineUploadQueueService {
   /// the caller can decide how long a confirmation is worth waiting for.
   final Future<Map<String, dynamic>?> Function(String bookingId)?
   _bookingReader;
+  final Future<Map<String, dynamic>?> Function(String bookingId)?
+  _cachedBookingReader;
 
   static const _storageKey = 'booking_pending_upload_queue_v1';
   static const _currentUserIdKey = 'paltranco_current_user_id';
@@ -435,6 +440,8 @@ class BookingOfflineUploadQueueService {
     _PhotoWaitReason reason, {
     required String storageKey,
     Map<String, dynamic>? serverDocument,
+    Object? readError,
+    StackTrace? readStack,
   }) async {
     final waitCount = (_waitCycles[entry.id] ?? entry.waitCount) + 1;
     _waitCycles[entry.id] = waitCount;
@@ -450,7 +457,9 @@ class BookingOfflineUploadQueueService {
     String? diagnostics = entry.diagnostics;
     final enrich =
         lastError != null &&
-        !(entry.diagnostics ?? '').contains('photo_dependency_state_v2');
+        (!(entry.diagnostics ?? '').contains('photo_dependency_state_v2') ||
+            (readError != null &&
+                !(entry.diagnostics ?? '').contains('marker_read_failure')));
     if (escalate || enrich) {
       final evidence = <String, dynamic>{};
       try {
@@ -473,10 +482,12 @@ class BookingOfflineUploadQueueService {
         evidence['dependency_evidence_error'] = error.toString();
       }
       diagnostics = await offlineErrorDiagnostics(
-        error: StateError(
-          'Queued booking photo made no progress: ${reason.explanation}.',
-        ),
-        stack: StackTrace.current,
+        error:
+            readError ??
+            StateError(
+              'Queued booking photo made no progress: ${reason.explanation}.',
+            ),
+        stack: readStack ?? StackTrace.current,
         source: 'booking_offline_upload_queue_service.dart',
         operation: 'bookingPhotoUpload',
         entryId: entry.id,
@@ -487,6 +498,18 @@ class BookingOfflineUploadQueueService {
         attempt: entry.retryCount + 1,
         context: {
           'diagnostic_schema': 'photo_dependency_state_v2',
+          if (readError != null)
+            'marker_read_failure': {
+              'error': readError.toString(),
+              'type': readError.runtimeType.toString(),
+              if (readError is FirebaseException) ...{
+                'plugin': readError.plugin,
+                'code': readError.code,
+                'message': readError.message,
+              },
+              'stage': 'booking_photo_marker_read',
+              'cache_fallback': 'no_exact_marker',
+            },
           ...evidence,
           'wait_reason': reason.key,
           'wait_cycles': waitCount,
@@ -679,15 +702,56 @@ class BookingOfflineUploadQueueService {
                         .get()
                         .timeout(markerCheckTimeout))
                     .data();
-        } catch (_) {
-          final wait = await _noteWait(
-            entry,
-            _PhotoWaitReason.markerCheckTimedOut,
-            storageKey: storageKey,
-          );
-          mutated = mutated || wait.persisted;
-          remaining.add(wait.entry);
-          continue;
+        } catch (error, stack) {
+          // A cached positive match may start an upload, but can never authorize
+          // a booking write or discard. The transaction below rechecks the live
+          // marker before touching the field. Missing/stale cache keeps bytes.
+          if (error is TimeoutException ||
+              (error is FirebaseException &&
+                  const {
+                    'unavailable',
+                    'deadline-exceeded',
+                  }.contains(error.code))) {
+            try {
+              final reader = _cachedBookingReader;
+              final cached = reader != null
+                  ? await reader(entry.bookingId).timeout(_localStoreTimeout)
+                  : (await _bookingsCollection
+                            .doc(entry.bookingId)
+                            .get(const GetOptions(source: Source.cache))
+                            .timeout(_localStoreTimeout))
+                        .data();
+              if (cached != null &&
+                  cached['id']?.toString() == entry.bookingId &&
+                  matchingBookingPhotoStatus(
+                        booking: cached,
+                        uploadId: entry.id,
+                        fieldKey: entry.fieldKey,
+                        fileName: entry.fileName,
+                        size: entry.size,
+                        mimeType: entry.mimeType,
+                      ) !=
+                      null) {
+                markerData = cached;
+              }
+            } catch (_) {
+              // Cache is optional; preserve the original read failure below.
+            }
+          }
+          if (markerData == null) {
+            final wait = await _noteWait(
+              entry,
+              error is TimeoutException
+                  ? _PhotoWaitReason.markerCheckTimedOut
+                  : _PhotoWaitReason.markerReadFailed,
+              storageKey: storageKey,
+              readError: error,
+              readStack: stack,
+            );
+            mutated = mutated || wait.persisted;
+            remaining.add(wait.entry);
+            continue;
+          }
         }
         if (markerData == null) {
           // The booking write that carries this photo has not landed yet.
@@ -1176,6 +1240,11 @@ enum _PhotoWaitReason {
     'marker_check_timed_out',
     'the booking could not be re-read to confirm this photo is still wanted',
     'Waiting for the booking to be re-read',
+  ),
+  markerReadFailed(
+    'marker_read_failed',
+    'the booking read failed before the photo could be verified',
+    'Waiting for the booking read to succeed',
   );
 
   const _PhotoWaitReason(this.key, this.explanation, this.pendingMessage);

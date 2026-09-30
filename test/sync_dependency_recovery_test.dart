@@ -83,54 +83,67 @@ void main() {
       expect(backend.data[storageKey], hasLength(1));
     },
   );
-  for (final owner in ['99', '86', null]) {
-    test(
-      'acknowledge detached delivered chassis only if reassignment proven: $owner',
-      () async {
-        final db = MergeAwareFirestore();
-        final backend = MemoryBackend();
-        final local = {
-          'id': '86',
-          'submission_key': 'same',
-          'chassis_id': '8',
-          'client_status': 'delivered',
-          'updated_at': '2026-09-19T18:58:31.495',
-        };
-        final remote = {
-          ...local,
-          'chassis_id': null,
-          'photo_cleanup_paths': [],
-        };
-        await db.collection('bookings').doc('86').set(remote);
-        await db.collection('chassis').doc('8').set({
-          'current_booking_id': owner,
-        });
-        final queue = OfflineMutationQueueService(
-          backend: backend,
-          firestore: db,
-          isOnline: () => false,
-        );
-        await queue.queueCollectionDocumentUpsert(
-          collectionKey: 'bookings',
-          documentId: '86',
-          document: local,
-          baseUpdatedAt: '2026-09-17T02:10:30.386Z',
-        );
-        final online = OfflineMutationQueueService(
-          backend: backend,
-          firestore: db,
-          isOnline: () => true,
-        );
-        await online.flushPendingMutations();
-        expect(backend.data[storageKey], hasLength(owner == '99' ? 0 : 1));
-        expect(
-          (await db.collection('bookings').doc('86').get()).data(),
-          remote,
-        );
-        expect((await db.collection('chassis').doc('8').get()).data(), {
-          'current_booking_id': owner,
-        });
-      },
-    );
+  for (final legacyBlocked in [false, true]) {
+    for (final owner in ['99', '86', null]) {
+      test(
+        'acknowledge detached delivered chassis only if reassignment proven: $owner, legacy blocked: $legacyBlocked',
+        () async {
+          final db = MergeAwareFirestore();
+          final backend = MemoryBackend();
+          final local = {
+            'id': '86',
+            'submission_key': 'same',
+            'chassis_id': '8',
+            'client_status': 'delivered',
+            'updated_at': '2026-09-19T18:58:31.495',
+          };
+          final remote = {
+            ...local,
+            'chassis_id': null,
+            'photo_cleanup_paths': [],
+          };
+          await db.collection('bookings').doc('86').set(remote);
+          await db.collection('chassis').doc('8').set({
+            'current_booking_id': owner,
+          });
+          final queue = OfflineMutationQueueService(
+            backend: backend,
+            firestore: db,
+            isOnline: () => false,
+          );
+          await queue.queueCollectionDocumentUpsert(
+            collectionKey: 'bookings',
+            documentId: '86',
+            document: local,
+            baseUpdatedAt: '2026-09-17T02:10:30.386Z',
+          );
+          if (legacyBlocked) {
+            final persisted = Map<String, dynamic>.from(
+              jsonDecode(backend.data[storageKey]!.single) as Map,
+            );
+            persisted['is_blocked'] = true;
+            persisted['retry_count'] = 1;
+            persisted['last_error'] =
+                'Bad state: Sync conflict: booking changed remotely before applying this edit.';
+            persisted['created_at'] = '2026-09-19T10:58:31.694Z';
+            backend.data[storageKey] = [jsonEncode(persisted)];
+          }
+          final online = OfflineMutationQueueService(
+            backend: backend,
+            firestore: db,
+            isOnline: () => true,
+          );
+          await online.flushPendingMutations();
+          expect(backend.data[storageKey], hasLength(owner == '99' ? 0 : 1));
+          expect(
+            (await db.collection('bookings').doc('86').get()).data(),
+            remote,
+          );
+          expect((await db.collection('chassis').doc('8').get()).data(), {
+            'current_booking_id': owner,
+          });
+        },
+      );
+    }
   }
 }
