@@ -1,4 +1,5 @@
 import 'sync_error_log_service.dart';
+import 'package:webapp/requests/firestore_cache_store.dart';
 import 'booking_photo_marker_match.dart';
 import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
@@ -406,7 +407,11 @@ class BookingOfflineUploadQueueService {
   ) async {
     try {
       return await _mutationQueue
-          .hasPendingBookingMutation(bookingId, storageKey: storageKey)
+          .hasPendingBookingMutation(
+            bookingId,
+            storageKey:
+                'offline_mutation_queue_v1::${storageKey.substring('$_storageKey::'.length)}',
+          )
           .timeout(_mutationCheckTimeout);
     } on TimeoutException {
       return null;
@@ -445,9 +450,28 @@ class BookingOfflineUploadQueueService {
     String? diagnostics = entry.diagnostics;
     final enrich =
         lastError != null &&
-        serverDocument != null &&
-        !(entry.diagnostics ?? '').contains('server_photo_state_v1');
+        !(entry.diagnostics ?? '').contains('photo_dependency_state_v2');
     if (escalate || enrich) {
+      final evidence = <String, dynamic>{};
+      try {
+        evidence['pending_booking_actions'] = await _mutationQueue
+            .pendingBookingEvidence(
+              entry.bookingId,
+              storageKey:
+                  'offline_mutation_queue_v1::${storageKey.substring('$_storageKey::'.length)}',
+            )
+            .timeout(_mutationCheckTimeout);
+        final cached = await FirestoreCacheStore.instance
+            .readDocumentMaps('bookings')
+            .timeout(_localStoreTimeout);
+        final matches = (cached ?? <Map<String, dynamic>>[])
+            .where((row) => row['id']?.toString() == entry.bookingId)
+            .toList();
+        evidence['cached_booking_available'] = matches.length == 1;
+        if (matches.length == 1) evidence['cached_booking'] = matches.single;
+      } catch (error) {
+        evidence['dependency_evidence_error'] = error.toString();
+      }
       diagnostics = await offlineErrorDiagnostics(
         error: StateError(
           'Queued booking photo made no progress: ${reason.explanation}.',
@@ -462,6 +486,8 @@ class BookingOfflineUploadQueueService {
         actionAt: entry.createdAtIso,
         attempt: entry.retryCount + 1,
         context: {
+          'diagnostic_schema': 'photo_dependency_state_v2',
+          ...evidence,
           'wait_reason': reason.key,
           'wait_cycles': waitCount,
           'booking_status': entry.statusKey,
@@ -470,10 +496,7 @@ class BookingOfflineUploadQueueService {
           'queued_photo_id': entry.id,
           'photo_staged_at': entry.createdAtIso,
           'waiting_for_commit': entry.waitingForCommit,
-          if (serverDocument != null) ...{
-            'diagnostic_schema': 'server_photo_state_v1',
-            'server_document': serverDocument,
-          },
+          if (serverDocument != null) ...{'server_document': serverDocument},
         },
       );
     }

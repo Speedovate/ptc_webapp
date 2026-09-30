@@ -698,7 +698,15 @@ class SyncErrorLogService {
             final additions = {
               for (final entry in incomingDetails.entries)
                 if (!storedDetails.containsKey(entry.key) ||
-                    (entry.key == 'queue_snapshot' &&
+                    (const {
+                          'queue_snapshot',
+                          'diagnostic_schema',
+                          'server_document',
+                          'pending_booking_actions',
+                          'cached_booking',
+                          'cached_booking_available',
+                          'dependency_evidence_error',
+                        }.contains(entry.key) &&
                         jsonEncode(storedDetails[entry.key]) !=
                             jsonEncode(entry.value)))
                   entry.key: entry.value,

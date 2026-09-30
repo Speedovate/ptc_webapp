@@ -1,6 +1,7 @@
 import 'booking_status_continuation.dart';
 import 'booking_photo_cleanup.dart';
 import 'booking_edit_archive.dart';
+import 'package:webapp/models/booking.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
 import 'package:webapp/utils/copy_document_fields.dart';
@@ -615,6 +616,27 @@ class OfflineMutationQueueService {
                   entry.kind == _OfflineMutationKind.collectionDocumentUpsert));
       return targetMatches && isBookingMutation;
     });
+  }
+
+  Future<List<Map<String, dynamic>>> pendingBookingEvidence(
+    String bookingId, {
+    required String storageKey,
+  }) async {
+    await initialize();
+    final entries = await _readEntriesForStorageKey(storageKey);
+    return [
+      for (final entry in entries)
+        if ((entry.kind == _OfflineMutationKind.bookingCreate ||
+                entry.collectionKey == 'bookings') &&
+            (entry.targetId == bookingId ||
+                entry.payload['id']?.toString() == bookingId))
+          {
+            ...SyncErrorLogService.pendingMutationSnapshot(entry.toMap()),
+            'blocked': entry.isBlocked,
+            'last_error': entry.lastError,
+            'retry_count': entry.retryCount,
+          },
+    ];
   }
 
   Future<void> queueBookingBillingStatusUpdate({
@@ -1875,6 +1897,50 @@ class OfflineMutationQueueService {
               if (photoReconciled != null &&
                   _sameDocument(photoReconciled, existingBooking.data())) {
                 return _BookingUpsertOutcome.alreadyApplied;
+              }
+              // A completed booking's released chassis must never be reclaimed
+              // by an old retry. Acknowledge only with transaction-verified
+              // reassignment and otherwise identical booking contents.
+              final oldChassis = normalizeId(
+                document['chassis_id']?.toString(),
+              );
+              if (oldChassis != null &&
+                  normalizeId(
+                        existingBooking.data()?['chassis_id']?.toString(),
+                      ) ==
+                      null &&
+                  Booking.isDeliveredWorkflowStatus(
+                    document['client_status']?.toString(),
+                  )) {
+                final released = {
+                  ...document,
+                  'chassis_id': existingBooking.data()?['chassis_id'],
+                };
+                final normalized = reconcileBookingHistory(
+                  existingBooking.data()!,
+                  released,
+                  baseUpdatedAt: entry.baseUpdatedAt,
+                );
+                final identical =
+                    _sameDocument({
+                      ...pendingContents,
+                      'chassis_id': serverContents['chassis_id'],
+                    }, serverContents) ||
+                    (normalized != null &&
+                        _sameDocument(normalized, existingBooking.data()));
+                if (identical) {
+                  final chassis = await transaction.get(
+                    _firestore.collection('chassis').doc(oldChassis),
+                  );
+                  final owner = normalizeId(
+                    chassis.data()?['current_booking_id']?.toString(),
+                  );
+                  if (chassis.exists &&
+                      owner != null &&
+                      owner != entry.targetId) {
+                    return _BookingUpsertOutcome.alreadyApplied;
+                  }
+                }
               }
               // The server carries this action's own version but different
               // contents, so another writer changed the booking inside it.

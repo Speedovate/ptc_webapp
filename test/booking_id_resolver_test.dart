@@ -101,7 +101,11 @@ void main() {
     () async {
       final db = FakeFirebaseFirestore();
       final resolver = BookingIdResolver(firestore: db);
-      await db.collection('bookings').doc('84').set({...booking(), 'id': '84'});
+      await db.collection('bookings').doc('84').set({
+        ...booking(),
+        'id': '84',
+        'submission_key': 'different_submission',
+      });
       expect(await resolver.resolve(temp), isNull);
       await reserve(db);
       resolver.invalidate(temp);

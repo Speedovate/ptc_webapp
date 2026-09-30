@@ -93,7 +93,23 @@ class BookingIdResolver {
         .collection('manage_id')
         .doc(reservationId(key))
         .get();
-    if (!reservation.exists) return null;
+    if (!reservation.exists) {
+      // Some completed legacy/online creates have no reservation document.
+      // Read-only fallback: require exactly one numeric, matching identity.
+      final matches = await _firestore
+          .collection('bookings')
+          .where('submission_key', isEqualTo: key)
+          .limit(2)
+          .get();
+      if (matches.docs.length != 1) return null;
+      final match = matches.docs.single;
+      if (!isNumeric(match.id) ||
+          match.data()['submission_key'] != key ||
+          match.data()['id']?.toString() != match.id) {
+        return null;
+      }
+      return match.id;
+    }
     final data = reservation.data()!;
     final finalId = data['document_id']?.toString();
     if (data['resource_key'] != 'bookings' ||
