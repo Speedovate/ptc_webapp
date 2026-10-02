@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
 import 'dart:ui';
 import 'package:webapp/services/app_widgets_binding.dart';
@@ -497,7 +498,7 @@ class _AppErrorFallback extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              SelectableText(
+              AppSelectableText(
                 exceptionText,
                 style: TextStyle(
                   fontSize: 14,

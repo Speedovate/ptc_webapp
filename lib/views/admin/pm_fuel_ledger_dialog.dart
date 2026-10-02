@@ -365,6 +365,7 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
                         return false;
                       },
                       child: AdminModalRecordList(
+                        pageSize: null,
                         scrollHeader: _error == null
                             ? const SizedBox.shrink()
                             : Padding(
@@ -437,7 +438,8 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
                           8 => Tooltip(
                             message: 'View cost entry',
                             child: AdminListActionButton(
-                              icon: Icons.visibility_outlined,
+                              icon: Icons.visibility_rounded,
+                              backgroundColor: Colors.yellow.shade900,
                               onTap: () => _edit(rows[i]),
                             ),
                           ),

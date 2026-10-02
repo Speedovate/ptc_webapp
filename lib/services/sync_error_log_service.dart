@@ -1,3 +1,4 @@
+import 'kpi/kpi_diagnostic_policy.dart';
 import 'sync_diagnostic_outbox.dart';
 import 'diagnostic_write_lock.dart';
 import 'sync_error_environment.dart';
@@ -556,7 +557,6 @@ class SyncErrorLogService {
     'queue_failure',
     'persisted_queue_failure',
     'queue_stalled',
-    'kpi_diagnostic',
     // A discarded or stalled queue cycle is a sync failure the user must be
     // able to see. Without this the report is dropped before it is persisted.
     'queue_reclaimed',
@@ -902,13 +902,18 @@ class SyncErrorLogService {
           await withDiagnosticWriteLock(() async {
             final current = await _outbox.get(row['fingerprint'] as String);
             if (current == null || current['dirty'] != true) return;
-            if (!_isSyncError(current['kind'])) {
+            if (!_isSyncError(current['kind']) ||
+                isObsoleteKpiDiagnosticLog(current)) {
               // Older app versions may have queued informational/general logs.
               // Suppress only their diagnostic upload, never business actions.
               await _outbox.update(current['fingerprint'] as String, (
                 saved,
               ) async {
-                if (saved == null || _isSyncError(saved['kind'])) return null;
+                if (saved == null ||
+                    (_isSyncError(saved['kind']) &&
+                        !isObsoleteKpiDiagnosticLog(saved))) {
+                  return null;
+                }
                 saved['dirty'] = false;
                 saved['suppressed_at'] = _now().toUtc().toIso8601String();
                 return saved;

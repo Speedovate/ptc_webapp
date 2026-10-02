@@ -467,6 +467,7 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: AdminModalRecordList(
+                pageSize: null,
                 horizontalOnDesktop: true,
                 scrollHeader: Padding(
                   padding: const EdgeInsets.only(bottom: 20),
@@ -540,8 +541,6 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
 
   List<double> numbers(PmKpi report) => [
     report.revenue,
-    report.fuel,
-    report.driverSalary + report.helperSalary,
     report.expenses,
     report.gross,
     report.marginTarget,
@@ -549,6 +548,35 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
     report.revenueTarget,
     report.profitTarget,
   ];
+
+  Future<void> openTotal(
+    List<({VehicleMake make, PmKpi report})> entries,
+  ) async {
+    if (entries.isEmpty) return;
+    await showPmKpiDialog(
+      context,
+      VehicleMake(id: 'fleet-total', code: 'Total'),
+      store: store,
+      fleet: entries.map((e) => e.make).toList(),
+      initialFleetData: {
+        for (final entry in entries)
+          if (data[entry.make.id] case final KpiStoredData stored)
+            entry.make.id!: stored,
+      },
+      initialBookings: bookings,
+      initialPeriod: mode == 'All Time'
+          ? KpiPeriod(
+              entries
+                  .map((e) => e.report.period.start)
+                  .reduce((a, b) => a.isBefore(b) ? a : b),
+              kpiDate(DateTime.now()),
+            )
+          : period,
+      initialMode: mode,
+      initialWeek: week,
+    );
+    if (mounted) unawaited(load());
+  }
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -563,7 +591,7 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
       final totalRating = averageFleetRating(
         filtered.map((entry) => entry.report),
       );
-      final totals = List<double>.filled(9, 0);
+      final totals = List<double>.filled(7, 0);
       for (final entry in filtered) {
         final values = numbers(entry.report);
         for (var i = 0; i < values.length; i++) {
@@ -663,14 +691,14 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
                         return false;
                       },
                       child: AdminModalRecordList(
+                        pageSize: null,
                         squareCorners: true,
                         horizontalOnDesktop: true,
+                        trailingActions: true,
                         selectableCells: true,
                         titles: const [
                           'Name',
                           'Revenue',
-                          'Fuel',
-                          'Salary',
                           'Expenses',
                           'Income',
                           'Target Income',
@@ -678,40 +706,62 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
                           'Target Revenue',
                           'Income Goal',
                           'Rating',
+                          'Actions',
                         ],
                         itemCount: filtered.isEmpty ? 0 : count + 1,
                         emptyMessage: query.trim().isEmpty
                             ? 'No trucks available.'
                             : 'No matching trucks.',
                         valuesAt: (i) => i == 0
-                            ? ['Total', ...totals.map(amount), totalRating]
+                            ? ['Total', ...totals.map(amount), totalRating, '']
                             : [
                                 filtered[i - 1].make.code ??
                                     filtered[i - 1].make.id!,
                                 ...numbers(filtered[i - 1].report).map(amount),
                                 filtered[i - 1].report.rating,
+                                '',
                               ],
                         cellBuilder: (i, col) {
+                          Future<void> openPm() async {
+                            await showPmKpiDialog(
+                              context,
+                              filtered[i - 1].make,
+                              store: store,
+                            );
+                            if (mounted) unawaited(load());
+                          }
+
+                          if (col == 9) {
+                            return Tooltip(
+                              message: 'View KPI',
+                              child: AdminListActionButton(
+                                icon: Icons.visibility_rounded,
+                                backgroundColor: Colors.yellow.shade900,
+                                onTap: i == 0
+                                    ? () => openTotal(filtered)
+                                    : openPm,
+                              ),
+                            );
+                          }
                           if (i == 0 && col == 0) {
-                            return const Text(
-                              'Total',
-                              style: TextStyle(
-                                color: AppColors.primaryColor,
-                                fontWeight: FontWeight.bold,
-                                decoration: TextDecoration.none,
+                            return InkWell(
+                              onTap: () => openTotal(filtered),
+                              child: const Text(
+                                'Total',
+                                style: TextStyle(
+                                  color: AppColors.primaryColor,
+                                  fontWeight: FontWeight.bold,
+                                  decoration: TextDecoration.underline,
+                                  decorationColor: AppColors.primaryColor,
+                                ),
                               ),
                             );
                           }
                           if (i > 0 && col == 0) {
                             return InkWell(
-                              onTap: () async {
-                                await showPmKpiDialog(
-                                  context,
-                                  filtered[i - 1].make,
-                                  store: store,
-                                );
-                                if (mounted) unawaited(load());
-                              },
+                              onTap: i == 0
+                                  ? () => openTotal(filtered)
+                                  : openPm,
                               child: Text(
                                 filtered[i - 1].make.code ??
                                     filtered[i - 1].make.id!,

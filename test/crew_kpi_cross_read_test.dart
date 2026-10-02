@@ -37,7 +37,7 @@ Map<String, dynamic> _trip(
   'id': id,
   '${role}_id': ownerId,
   'client_status': status,
-  'created_at': '2026-09-02T02:00:00.000Z',
+  'created_at': DateTime.now().toUtc().toIso8601String(),
   'delivered_at': ?deliveredAt,
 };
 

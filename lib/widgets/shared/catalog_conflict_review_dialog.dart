@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -127,10 +128,10 @@ class _CatalogConflictReviewDialogState
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            const SelectableText(
+            const AppSelectableText(
               'Review the differences below. Applying uses the pending settings and retains existing matrix history. A newer server change will stop the sync.',
             ),
-            if (_error != null) SelectableText(_error!),
+            if (_error != null) AppSelectableText(_error!),
             const SizedBox(height: 12),
             Expanded(
               child: AdminModalRecordList(

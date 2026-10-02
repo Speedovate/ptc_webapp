@@ -24,6 +24,68 @@ Booking trip(
 );
 void main() {
   testWidgets(
+    'Total includes every matching PM across pages and display modes',
+    (tester) async {
+      final makes = [
+        for (var i = 1; i <= 16; i++) VehicleMake(id: '$i', code: 'Truck-$i'),
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: KpiUtilizationView(
+              selectedMonth: DateTime.utc(2026, 9),
+              makes: makes,
+              bookings: [for (var i = 1; i <= 16; i++) trip('$i', 1, pm: '$i')],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      for (final mode in ['Daily', 'Weekly', 'Monthly']) {
+        final filters = tester.widget<AdminListDynamicFiltersPanel>(
+          find.byType(AdminListDynamicFiltersPanel),
+        );
+        (filters.filters.first as AdminListDropdownFilterConfig).onChanged(
+          mode,
+        );
+        await tester.pumpAndSettle();
+        final table = tester.widget<AdminModalRecordList>(
+          find.byType(AdminModalRecordList),
+        );
+        expect(table.itemCount, 16); // Total plus 15 initially visible trucks.
+        final total = table.valuesAt(0);
+        expect(total.first, 'Total');
+        expect(total.last, '16');
+        expect(
+          total[total.length - 2],
+          mode == 'Monthly' ? '16/365' : '16/30',
+        );
+        expect(total[mode == 'Monthly' ? 9 : 1], '16');
+        expect(table.valuesAt(1).first, 'Truck-1');
+      }
+      tester
+          .widget<AdminListSearchField>(find.byType(AdminListSearchField))
+          .onChanged('Truck-16');
+      await tester.pumpAndSettle();
+      final filtered = tester.widget<AdminModalRecordList>(
+        find.byType(AdminModalRecordList),
+      );
+      expect(filtered.itemCount, 2);
+      expect(filtered.valuesAt(0).last, '1');
+      expect(filtered.valuesAt(0)[13], '1/365');
+      await tester.tap(find.text('Total'));
+      await tester.pumpAndSettle();
+      expect(find.text('Total Trips · 2026'), findsOneWidget);
+      final trips = tester
+          .widgetList<AdminModalRecordList>(find.byType(AdminModalRecordList))
+          .last;
+      expect(trips.itemCount, 1);
+      expect(trips.valuesAt(0).first, 'Booking 16');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'shared month survives view switches and updates in both directions',
     (tester) async {
       tester.view.physicalSize = const Size(1500, 900);

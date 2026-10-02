@@ -1,3 +1,5 @@
+import 'package:webapp/widgets/shared/app_selectable_dialog.dart';
+import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:flutter/services.dart';
@@ -369,7 +371,7 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => Dialog(
+  Widget build(BuildContext context) => AppSelectableDialog(
     insetPadding: const EdgeInsets.all(16),
     child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 960, maxHeight: 600),
@@ -381,7 +383,7 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
             Row(
               children: [
                 const Expanded(
-                  child: SelectableText(
+                  child: AppSelectableText(
                     'Queued Actions',
                     style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
@@ -402,13 +404,13 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
                     return const Center(child: CircularProgressIndicator());
                   }
                   if (snapshot.hasError) {
-                    return const SelectableText(
+                    return const AppSelectableText(
                       'Could not read saved actions. Please refresh to try again.',
                     );
                   }
                   final items = snapshot.data ?? [];
                   if (items.isEmpty) {
-                    return const SelectableText(
+                    return const AppSelectableText(
                       'No queued actions for this account.',
                     );
                   }
@@ -430,7 +432,7 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          SelectableText(_valuesForItem(item)[3]),
+                          AppSelectableText(_valuesForItem(item)[3]),
                           Wrap(
                             spacing: 8,
                             children: [
@@ -460,11 +462,11 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
               ),
             ),
             if (_retryError != null)
-              SelectableText(
+              AppSelectableText(
                 _retryError!,
                 style: const TextStyle(color: AppColors.danger),
               ),
-            if (_retrying) const SelectableText('Syncing queued chat…'),
+            if (_retrying) const AppSelectableText('Syncing queued chat…'),
             Wrap(
               spacing: 12,
               alignment: WrapAlignment.end,

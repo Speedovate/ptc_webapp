@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -38,11 +39,19 @@ class AdminModalRecordList extends StatelessWidget {
         AdminListMeasurements.defaultTrailingPadding,
     this.showTitlesRow = true,
     this.scrollHeader,
+    this.scrollHeaderItems,
     this.scrollController,
     this.scrollPhysics,
     this.scrollFooter,
     this.emptyMessage,
+    this.pageSize = 15,
+    this.virtualizeGroups = false,
   });
+
+  /// Presentation batching only; callers retain complete data for search,
+  /// totals, copying, and sync. Null opts out for a small fixed table.
+  final int? pageSize;
+  final bool virtualizeGroups;
   final String? emptyMessage;
   final List<String> titles;
   final int itemCount;
@@ -89,6 +98,10 @@ class AdminModalRecordList extends StatelessWidget {
 
   /// Header and rows share one lazy vertical viewport when supplied.
   final Widget? scrollHeader;
+
+  /// Separate header sections share the lazy viewport instead of laying out
+  /// an entire (potentially fleet-sized) Column as one list child.
+  final List<Widget>? scrollHeaderItems;
   final Widget? scrollFooter;
   final ScrollController? scrollController;
   final ScrollPhysics? scrollPhysics;
@@ -100,6 +113,14 @@ class AdminModalRecordList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!shrinkWrap && pageSize != null && itemCount > pageSize!) {
+      return _PagedModalRecords(list: this);
+    }
+    return _buildRecords(context, itemCount);
+  }
+
+  Widget _buildRecords(BuildContext context, int visibleCount) {
+    final itemCount = visibleCount;
     final rows = List.generate(itemCount, valuesAt, growable: false);
     final inherited = DefaultTextStyle.of(context).style;
     final headerStyle = inherited.merge(
@@ -168,7 +189,7 @@ class AdminModalRecordList extends StatelessWidget {
     }
     Widget valueText(String text, TextStyle style, {bool centered = false}) =>
         selectableCells
-        ? SelectableText(
+        ? AppSelectableText(
             text,
             style: style,
             textAlign: centered ? TextAlign.center : TextAlign.start,
@@ -189,7 +210,9 @@ class AdminModalRecordList extends StatelessWidget {
             trailingPadding: trailing || compact
                 ? 0
                 : AdminListMeasurements.defaultTrailingPadding,
-            child: SelectableText(
+            // A title is static text, not a scrollable read-only editor.
+            // SelectionArea preserves selection without caret reveal scrolling.
+            child: Text(
               title,
               style: headerStyle.copyWith(
                 color: AppColors.primaryColor.withValues(alpha: 0.72),
@@ -203,7 +226,7 @@ class AdminModalRecordList extends StatelessWidget {
                 ? 0
                 : AdminListMeasurements.defaultTrailingPadding,
           );
-    return LayoutBuilder(
+    final list = LayoutBuilder(
       builder: (context, constraints) {
         final layoutWidths = List<double>.of(widths);
         final wrapping = wrappingColumn;
@@ -445,13 +468,56 @@ class AdminModalRecordList extends StatelessWidget {
           start = end;
         }
         final showEmpty = groups.isEmpty && emptyMessage != null;
-        final groupCount = showEmpty ? 1 : groups.length;
+        final lazyGroups = virtualizeGroups && rowGroupKey != null;
+        final groupCount = showEmpty
+            ? 1
+            : lazyGroups
+            ? itemCount
+            : groups.length;
+        bool sameGroup(int a, int b) =>
+            lazyGroups &&
+            a >= 0 &&
+            b < itemCount &&
+            rowGroupKey!(a) == rowGroupKey!(b);
+        double groupGap(int index) => sameGroup(index, index + 1) ? 0 : 12;
         Widget buildGroup(BuildContext context, int index) {
           if (showEmpty) {
             return AdminListItemCard(
               borderRadius: BorderRadius.circular(squareCorners ? 0 : 18),
               padding: const EdgeInsets.all(24),
               child: AdminListStateText(message: emptyMessage!),
+            );
+          }
+          if (lazyGroups) {
+            final first = !sameGroup(index - 1, index);
+            final last = !sameGroup(index, index + 1);
+            final divider =
+                !last && (first || (dividerAfterRow?.call(index) ?? false));
+            return CustomPaint(
+              key: ValueKey('admin-record-group-row-$index'),
+              painter: _GroupRowBorder(
+                first: first,
+                last: last,
+                radius: squareCorners ? 0 : 18,
+              ),
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  17,
+                  first ? 17 : 0,
+                  17,
+                  last ? 17 : 0,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    buildRowContent(context, index),
+                    if (divider)
+                      const Divider(height: 25, color: AppColors.primaryBorder)
+                    else if (!last)
+                      const SizedBox(height: 16),
+                  ],
+                ),
+              ),
             );
           }
           final group = groups[index];
@@ -493,8 +559,9 @@ class AdminModalRecordList extends StatelessWidget {
           );
         }
 
-        final rowStart = showTitlesRow ? 2 : 1;
-        final content = scrollHeader != null
+        final headerCount = scrollHeaderItems?.length ?? 1;
+        final rowStart = headerCount + (showTitlesRow ? 1 : 0);
+        final content = scrollHeader != null || scrollHeaderItems != null
             ? ListView.separated(
                 controller: scrollController,
                 physics: scrollPhysics,
@@ -502,19 +569,24 @@ class AdminModalRecordList extends StatelessWidget {
                 padding: EdgeInsets.zero,
                 itemCount:
                     groupCount + rowStart + (scrollFooter == null ? 0 : 1),
-                separatorBuilder: (_, index) =>
-                    SizedBox(height: index == 0 ? 0 : 12),
+                separatorBuilder: (_, index) => SizedBox(
+                  height: index < headerCount
+                      ? 0
+                      : index < rowStart
+                      ? 12
+                      : groupGap(index - rowStart),
+                ),
                 itemBuilder: (context, index) {
-                  if (index == 0) {
+                  if (index < headerCount) {
                     return Align(
                       alignment: Alignment.centerLeft,
                       child: SizedBox(
                         width: constraints.maxWidth,
-                        child: scrollHeader,
+                        child: scrollHeaderItems?[index] ?? scrollHeader,
                       ),
                     );
                   }
-                  if (showTitlesRow && index == 1) return tableHeader;
+                  if (showTitlesRow && index == headerCount) return tableHeader;
                   if (index == groupCount + rowStart) return scrollFooter!;
                   return buildGroup(context, index - rowStart);
                 },
@@ -528,14 +600,18 @@ class AdminModalRecordList extends StatelessWidget {
                   ],
                   listContainer(
                     child: ListView.separated(
+                      controller: scrollController,
                       shrinkWrap: shrinkWrap,
                       physics: shrinkWrap
                           ? const NeverScrollableScrollPhysics()
                           : scrollPhysics,
                       primary: false,
-                      itemCount: groupCount,
-                      separatorBuilder: (_, _) => const SizedBox(height: 12),
-                      itemBuilder: buildGroup,
+                      itemCount: groupCount + (scrollFooter == null ? 0 : 1),
+                      separatorBuilder: (_, index) =>
+                          SizedBox(height: groupGap(index)),
+                      itemBuilder: (context, index) => index == groupCount
+                          ? scrollFooter!
+                          : buildGroup(context, index),
                     ),
                   ),
                 ],
@@ -554,6 +630,9 @@ class AdminModalRecordList extends StatelessWidget {
         return content;
       },
     );
+    return selectableCells && SelectionContainer.maybeOf(context) == null
+        ? SelectionArea(child: list)
+        : list;
   }
 }
 
@@ -652,4 +731,98 @@ class _PinnedRecordContentClipper extends CustomClipper<Rect> {
   bool shouldReclip(_PinnedRecordContentClipper oldClipper) =>
       oldClipper.position != position ||
       oldClipper.leadingWidth != leadingWidth;
+}
+
+class _PagedModalRecords extends StatefulWidget {
+  const _PagedModalRecords({required this.list});
+  final AdminModalRecordList list;
+  @override
+  State<_PagedModalRecords> createState() => _PagedModalRecordsState();
+}
+
+class _PagedModalRecordsState extends State<_PagedModalRecords> {
+  late int visible = widget.list.pageSize!;
+  @override
+  Widget build(BuildContext context) =>
+      NotificationListener<ScrollNotification>(
+        onNotification: (notice) {
+          if (notice.metrics.axis == Axis.vertical &&
+              notice.metrics.extentAfter < 240 &&
+              ((notice is ScrollUpdateNotification &&
+                      (notice.scrollDelta ?? 0) > 0) ||
+                  (notice is OverscrollNotification &&
+                      notice.overscroll > 0)) &&
+              visible < widget.list.itemCount) {
+            setState(
+              () => visible = (visible + widget.list.pageSize!).clamp(
+                0,
+                widget.list.itemCount,
+              ),
+            );
+          }
+          return false;
+        },
+        child: widget.list._buildRecords(
+          context,
+          visible.clamp(0, widget.list.itemCount),
+        ),
+      );
+}
+
+class _GroupRowBorder extends CustomPainter {
+  const _GroupRowBorder({
+    required this.first,
+    required this.last,
+    required this.radius,
+  });
+  final bool first, last;
+  final double radius;
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    canvas.drawRRect(
+      RRect.fromRectAndCorners(
+        rect,
+        topLeft: Radius.circular(first ? radius : 0),
+        topRight: Radius.circular(first ? radius : 0),
+        bottomLeft: Radius.circular(last ? radius : 0),
+        bottomRight: Radius.circular(last ? radius : 0),
+      ),
+      Paint()..color = Colors.white,
+    );
+    final r = radius.clamp(0.0, size.height / 2);
+    final right = size.width - 0.5;
+    final bottom = size.height - 0.5;
+    final path = Path();
+    path.moveTo(0.5, first ? r : 0);
+    if (first) {
+      path.quadraticBezierTo(0.5, 0.5, r, 0.5);
+      path.lineTo(right - r, 0.5);
+      path.quadraticBezierTo(right, 0.5, right, r);
+    } else {
+      path.moveTo(right, 0);
+    }
+    path.lineTo(right, last ? bottom - r : size.height);
+    if (last) {
+      path.quadraticBezierTo(right, bottom, right - r, bottom);
+      path.lineTo(r, bottom);
+      path.quadraticBezierTo(0.5, bottom, 0.5, bottom - r);
+    } else {
+      path.moveTo(0.5, size.height);
+    }
+    path.lineTo(0.5, first ? r : 0);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = AppColors.primaryBorder
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _GroupRowBorder oldDelegate) =>
+      first != oldDelegate.first ||
+      last != oldDelegate.last ||
+      radius != oldDelegate.radius;
 }

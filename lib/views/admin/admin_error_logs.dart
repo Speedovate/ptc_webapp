@@ -1,3 +1,5 @@
+import 'package:webapp/services/kpi/kpi_diagnostic_policy.dart';
+import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'dart:convert';
 import 'dart:async';
 
@@ -43,18 +45,10 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
   final _deviceSummaries = <String, int>{};
   String _deviceKey(String user, String device) => jsonEncode([user, device]);
   final _scroll = ScrollController();
-  DocumentSnapshot<Map<String, dynamic>>? _cursor;
   bool _loading = false;
   bool _hasMore = true;
   String? _error;
 
-  /// True when the ordered read stalled and the reports shown came from the
-  /// cheaper unsorted read, so the list is complete but not newest-first.
-  bool _degraded = false;
-
-  /// Set when the per-user and per-device counters could not be read. The
-  /// reports are still listed; only those totals are missing.
-  String? _summaryNotice;
   bool _copying = false;
   bool get _allowed => widget.user.role?.trim().toLowerCase() == 'admin';
   FirebaseFirestore get _db => widget.firestore ?? FirebaseFirestore.instance;
@@ -82,96 +76,69 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
     super.dispose();
   }
 
-  String _errorCountLabel(int? count) =>
-      '${count ?? "—"} ${count == 1 ? "Error" : "Errors"}';
+  int? _errorCount(String user, {String? device}) => device == null
+      ? _summaries[user]
+      : _deviceSummaries[_deviceKey(user, device)];
+
+  String _errorCountLabel(String user, {String? device}) {
+    final count = _errorCount(user, device: device);
+    if (count == null) return 'Retry count';
+    return '$count ${count == 1 ? "Error" : "Errors"}';
+  }
 
   String _owner(Map<String, dynamic> row) =>
       row['user_id']?.toString() ?? 'signed_out';
-
-  Future<int> _summary(String id, {String? deviceId}) async {
-    final collection = _db
-        .collection('sync_error_logs')
-        .where('attention_required', isEqualTo: true);
-    final query = id == 'signed_out'
-        ? collection.where('user_id', isNull: true)
-        : collection.where('user_id', isEqualTo: id);
-    final scoped = deviceId == null
-        ? query
-        : deviceId == 'Device not recorded'
-        ? query.where('device_id', isNull: true)
-        : query.where('device_id', isEqualTo: deviceId);
-    final result = await scoped.count().get().timeout(
-      const Duration(seconds: 8),
-    );
-    return result.count ?? 0;
-  }
 
   Future<void> _load({bool refresh = false}) async {
     if (!_allowed || _loading || (!refresh && !_hasMore)) return;
     setState(() {
       _loading = true;
       _error = null;
-      _summaryNotice = null;
     });
     try {
-      Query<Map<String, dynamic>> query = _db
+      // Read all active reports once. Sorting and counts share this snapshot,
+      // so a missing composite index cannot hide reports or change totals.
+      final page = await _db
           .collection('sync_error_logs')
           .where('attention_required', isEqualTo: true)
-          .orderBy('last_failed_at', descending: true);
-      if (!refresh && _cursor != null) {
-        query = query.startAfterDocument(_cursor!);
-      }
-      QuerySnapshot<Map<String, dynamic>>? fetchedPage;
-      var degraded = false;
-      try {
-        fetchedPage = await query
-            .limit(15)
-            .get()
-            .timeout(const Duration(seconds: 12));
-      } on TimeoutException catch (timeout) {
-        // A stalled ordered query must not decide whether errors exist. The
-        // previous fallback only checked emptiness, so it happened to survive
-        // exactly when there was nothing to show and hard-failed the moment
-        // there was - the one case an admin opened this page for. Fall back to
-        // the cheap single-field read instead: unsorted, but the reports are
-        // visible, which is what matters.
-        try {
-          fetchedPage = await _db
-              .collection('sync_error_logs')
-              .where('attention_required', isEqualTo: true)
-              .limit(15)
-              .get()
-              .timeout(const Duration(seconds: 8));
-          degraded = true;
-        } catch (_) {
-          // Neither read completed. Surface what actually went wrong instead of
-          // a generic message, so the next report is diagnosable.
-          Error.throwWithStackTrace(timeout, StackTrace.current);
-        }
-      }
-      final page = fetchedPage;
+          .get(const GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 12));
       if (!mounted || !_allowed) return;
-      // Both the ordered read and the fallback always answer with a snapshot or
-      // rethrow, so reaching here means the read completed. An empty page is
-      // therefore a real empty result, not a stalled one.
-      if (page.docs.isEmpty) {
-        setState(() {
-          if (refresh) {
-            _logs.clear();
-            _summaries.clear();
-            _deviceSummaries.clear();
-            _cursor = null;
-          }
-          _hasMore = false;
-          _loading = false;
-        });
-        final notify = widget.onReportsLoaded;
-        if (notify != null) unawaited(notify());
-        return;
+      DateTime failedAt(Map<String, dynamic> row) {
+        final value = row['last_failed_at'];
+        if (value is Timestamp) return value.toDate();
+        return DateTime.tryParse('$value') ??
+            DateTime.fromMillisecondsSinceEpoch(0);
       }
-      final rows = page.docs
-          .map((doc) => {...doc.data(), 'id': doc.id})
-          .toList();
+
+      final retained = <Map<String, dynamic>>[];
+      for (final doc in page.docs) {
+        var data = doc.data();
+        if (isObsoleteKpiDiagnosticLog(data)) {
+          // Re-read inside the transaction: never delete a report that changed
+          // to a genuine sync failure after this page loaded.
+          final latest = await _db
+              .runTransaction<Map<String, dynamic>?>((transaction) async {
+                final current = await transaction.get(doc.reference);
+                final value = current.data();
+                if (value == null) return null;
+                if (isObsoleteKpiDiagnosticLog(value)) {
+                  transaction.delete(doc.reference);
+                  return null;
+                }
+                return value;
+              })
+              .timeout(const Duration(seconds: 12));
+          if (latest == null) continue;
+          data = latest;
+        }
+        retained.add({...data, 'id': doc.id});
+      }
+      final rows = retained
+        ..sort((a, b) {
+          final byTime = failedAt(b).compareTo(failedAt(a));
+          return byTime != 0 ? byTime : '${a['id']}'.compareTo('${b['id']}');
+        });
       final ids = rows
           .map(_owner)
           .where((id) => id != 'signed_out' && !_users.containsKey(id))
@@ -191,77 +158,28 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
           }
         }),
       );
-      final summaryIds = rows
-          .map(_owner)
-          .toSet()
-          .where((id) => refresh || !_summaries.containsKey(id));
-      String? summaryError;
-      final summariesFuture = Future.wait(
-        summaryIds.map((id) async {
-          try {
-            return MapEntry(id, await _summary(id));
-          } catch (error) {
-            summaryError = 'Could not load user totals: $error';
-            return null;
-          }
-        }),
-      );
-      final deviceIds = <String, ({String user, String device})>{
-        for (final row in rows)
-          _deviceKey(
-            _owner(row),
-            '${row['device_id'] ?? 'Device not recorded'}',
-          ): (
-            user: _owner(row),
-            device: '${row['device_id'] ?? 'Device not recorded'}',
-          ),
-      };
-      final deviceSummaries = await Future.wait(
-        deviceIds.entries.map((entry) async {
-          try {
-            return MapEntry(
-              entry.key,
-              await _summary(entry.value.user, deviceId: entry.value.device),
-            );
-          } catch (error) {
-            summaryError = 'Could not load device totals: $error';
-            return null;
-          }
-        }),
-      );
-      final summaries = await summariesFuture;
       if (!mounted || !_allowed) return;
       setState(() {
-        if (refresh) {
-          _logs.clear();
-          _summaries.clear();
-          _deviceSummaries.clear();
-        }
-        _summaries.addEntries(summaries.whereType<MapEntry<String, int>>());
-        _deviceSummaries.addEntries(
-          deviceSummaries.whereType<MapEntry<String, int>>(),
-        );
-        // A failed per-user or per-device counter must not replace the page.
-        // The reports themselves are already loaded and are the reason the admin
-        // opened this screen, so a missing count degrades that one column rather
-        // than hiding every report behind an error and a Retry button.
-        if (summaryError != null) _summaryNotice = summaryError;
-        final byId = {for (final row in _logs) row['id']: row};
-        for (final row in rows) {
-          byId[row['id']] = row;
-        }
         _logs
           ..clear()
-          ..addAll(byId.values);
+          ..addAll(rows);
+        _summaries.clear();
+        _deviceSummaries.clear();
+        for (final row in rows) {
+          final user = _owner(row);
+          final device = _deviceKey(
+            user,
+            '${row['device_id'] ?? 'Device not recorded'}',
+          );
+          _summaries.update(user, (value) => value + 1, ifAbsent: () => 1);
+          _deviceSummaries.update(
+            device,
+            (value) => value + 1,
+            ifAbsent: () => 1,
+          );
+        }
         _users.addEntries(names);
-        _cursor = page.docs.isEmpty
-            ? (refresh ? null : _cursor)
-            : page.docs.last;
-        _hasMore = page.docs.length == 15;
-        // The cheap read has no meaningful cursor to continue from, so paging
-        // stays off until the next ordered read succeeds.
-        if (degraded) _hasMore = false;
-        _degraded = degraded;
+        _hasMore = false;
       });
       final notify = widget.onReportsLoaded;
       if (notify != null) unawaited(notify());
@@ -269,9 +187,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
       if (mounted) {
         setState(
           () => _error = error is TimeoutException
-              ? 'Unable to load error logs: the request timed out and the '
-                    'cheaper fallback read also did not answer. '
-                    '(${error.runtimeType})'
+              ? 'Unable to load error logs. Please retry. (${error.runtimeType})'
               : '$error',
         );
       }
@@ -511,7 +427,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
         ],
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: SelectableText(_json(data)),
+          child: AppSelectableText(_json(data)),
         ),
       ),
     );
@@ -526,7 +442,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          SelectableText(_error!),
+          AppSelectableText(_error!),
           TextButton(
             onPressed: _loading ? null : () => _load(refresh: true),
             child: const Text('Retry'),
@@ -546,32 +462,11 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                     ? errorState()
                     : AdminListItemCard(
                         padding: const EdgeInsets.all(24),
-                        child: AdminListStateText(
-                          message: _degraded
-                              ? 'No error logs in the quick read. The sorted '
-                                    'read is still timing out.'
-                              : 'No error logs.',
-                        ),
+                        child: AdminListStateText(message: 'No error logs.'),
                       ),
               ),
       );
     }
-    final notes = <String>[
-      if (_degraded)
-        'Showing a quick unsorted read. The newest-first read timed out, so '
-            'this list is complete but not ordered by date.',
-      if (_summaryNotice != null)
-        'Some error totals could not be loaded, so those counts are missing.',
-    ];
-    final degradedNotice = notes.isEmpty
-        ? const SizedBox.shrink()
-        : Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: AdminListItemCard(
-              padding: const EdgeInsets.all(12),
-              child: AdminListStateText(message: notes.join('\n\n')),
-            ),
-          );
     final groups = <String, List<Map<String, dynamic>>>{};
     for (final row in _logs) {
       groups.putIfAbsent(_owner(row), () => []).add(row);
@@ -652,6 +547,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
           leadingColumnSpanAt: (i) => rows[i].device != null ? 3 : 1,
           fullWidthRowColumnAt: (i) => rows[i].log != null ? 0 : null,
           rowGroupKey: (i) => rows[i].user,
+          virtualizeGroups: true,
           dividerAfterRow: (i) {
             final row = rows[i];
             if (row.device == null) return false;
@@ -660,7 +556,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                 rows[i + 1].user == row.user &&
                 rows[i + 1].log == null;
           },
-          scrollHeader: degradedNotice,
+          scrollHeader: const SizedBox.shrink(),
           scrollFooter: _loading
               ? const AppPageLoading(compact: true)
               : _error != null
@@ -670,15 +566,12 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
             final row = rows[i];
             final log = row.log;
             final first = groups[row.user]!.first;
-            final summary = _summaries[row.user];
             if (log == null && row.device != null) {
               return [
                 row.device!,
                 '',
                 '',
-                _errorCountLabel(
-                  _deviceSummaries[deviceKey(row.user, row.device!)],
-                ),
+                _errorCountLabel(row.user, device: row.device),
                 '',
               ];
             }
@@ -687,7 +580,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                     row.user == 'signed_out' ? '—' : row.user,
                     _name(row.user, first),
                     _role(row.user, first),
-                    summary == null ? '—' : _errorCountLabel(summary),
+                    _errorCountLabel(row.user),
                     '',
                   ]
                 : [
@@ -705,19 +598,22 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SelectableText(
+                  AppSelectableText(
                     errorTitle(log),
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 8),
-                  SelectableText(preview('${log['error'] ?? '—'}')),
+                  AppSelectableText(preview('${log['error'] ?? '—'}')),
                 ],
               );
             }
             if (col == 3 && log == null) {
-              final count = row.device == null
-                  ? _summaries[row.user]
-                  : _deviceSummaries[deviceKey(row.user, row.device!)];
+              if (_errorCount(row.user, device: row.device) == null) {
+                return TextButton(
+                  onPressed: _loading ? null : () => _load(refresh: true),
+                  child: const Text('Retry count'),
+                );
+              }
               return Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -728,8 +624,8 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
                   border: Border.all(color: AppColors.dangerBorderAlt),
                   borderRadius: BorderRadius.circular(999),
                 ),
-                child: SelectableText(
-                  _errorCountLabel(count),
+                child: AppSelectableText(
+                  _errorCountLabel(row.user, device: row.device),
                   style: const TextStyle(color: AppColors.danger),
                 ),
               );
@@ -747,8 +643,9 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
             }
             if (col != 4) return null;
             return Row(
-              mainAxisSize: MainAxisSize.min,
+              mainAxisSize: log == null ? MainAxisSize.max : MainAxisSize.min,
               children: [
+                if (log == null) const Spacer(),
                 Tooltip(
                   message: log == null
                       ? (row.device == null

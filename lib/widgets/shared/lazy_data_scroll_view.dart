@@ -125,3 +125,43 @@ class SliverListenableBuilder extends StatelessWidget implements SliverContent {
     builder: (context, child) => _asSliver(builder(context, child)),
   );
 }
+
+/// Incremental presentation of a complete local result. Keeps all source
+/// records available to search, unread counts and offline reconciliation.
+class ProgressiveList extends StatefulWidget {
+  const ProgressiveList({
+    super.key,
+    required this.itemCount,
+    required this.builder,
+    this.pageSize = 15,
+  });
+  final int itemCount;
+  final int pageSize;
+  final Widget Function(int visibleCount) builder;
+  @override
+  State<ProgressiveList> createState() => _ProgressiveListState();
+}
+
+class _ProgressiveListState extends State<ProgressiveList> {
+  late int visible = widget.pageSize;
+  @override
+  Widget build(
+    BuildContext context,
+  ) => NotificationListener<ScrollNotification>(
+    onNotification: (notice) {
+      if (notice.metrics.axis == Axis.vertical &&
+          notice.metrics.extentAfter < 240 &&
+          ((notice is ScrollUpdateNotification &&
+                  (notice.scrollDelta ?? 0) > 0) ||
+              (notice is OverscrollNotification && notice.overscroll > 0)) &&
+          visible < widget.itemCount) {
+        setState(
+          () =>
+              visible = (visible + widget.pageSize).clamp(0, widget.itemCount),
+        );
+      }
+      return false;
+    },
+    child: widget.builder(visible.clamp(0, widget.itemCount)),
+  );
+}

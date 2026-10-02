@@ -1,3 +1,4 @@
+import 'package:webapp/views/admin/pm_kpi_dialog.dart';
 import 'dart:async';
 import 'package:flutter/rendering.dart';
 import 'package:webapp/views/admin/pm_fuel_ledger_dialog.dart';
@@ -57,6 +58,84 @@ class BatchStore extends FleetStore {
 }
 
 void main() {
+  testWidgets('overview View action opens the same PM KPI as its name', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(3000, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final store = FleetStore();
+    addTearDown(store.updates.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: AdminKpiTrackingView(store: store)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final list = tester.widget<AdminModalRecordList>(
+      find.byType(AdminModalRecordList),
+    );
+    expect(list.titles.last, 'Actions');
+    expect(list.trailingActions, isTrue);
+    expect(find.byTooltip('View KPI'), findsNWidgets(3));
+    await tester.tap(find.byTooltip('View KPI').first);
+    await tester.pumpAndSettle();
+    expect(find.byType(PmKpiDialog), findsOneWidget);
+    expect(find.text('Total KPI'), findsOneWidget);
+    expect(find.text('Month total'), findsOneWidget);
+    expect(find.text('Week 1'), findsWidgets);
+    expect(find.text('₱100,000.00'), findsWidgets);
+    expect(find.text('₱116,000.00'), findsWidgets);
+    final totalDialog = tester.widget<PmKpiDialog>(find.byType(PmKpiDialog));
+    expect(totalDialog.fleet!.map((m) => m.id), ['1', '2']);
+    expect(find.text('All drivers'), findsNothing);
+    expect(find.text('All helpers'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('13 | Jonami Mainar'),
+      250,
+      scrollable: find
+          .descendant(
+            of: find.byType(PmKpiDialog),
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Scrollable &&
+                  widget.axisDirection == AxisDirection.down,
+            ),
+          )
+          .first,
+    );
+    expect(find.text('13 | Jonami Mainar'), findsOneWidget);
+    expect(find.text('18 | Orlando Bania'), findsOneWidget);
+    expect(find.byKey(const ValueKey('kpi-add-complaints-13')), findsOneWidget);
+    expect(find.byKey(const ValueKey('kpi-add-accidents-18')), findsOneWidget);
+
+    await tester.tap(find.text('Close').last);
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 400)),
+    );
+    await tester.tap(find.text('Total').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Total KPI'), findsOneWidget);
+    await tester.tap(find.text('Close').last);
+    await tester.pumpAndSettle();
+    final pm = list.valuesAt(1).first;
+    await tester.tap(find.byTooltip('View KPI').at(1));
+    await tester.pumpAndSettle();
+    expect(find.text('$pm KPI'), findsOneWidget);
+    await tester.tap(find.text('Close').last);
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 400)),
+    );
+    await tester.tap(find.text(pm).first);
+    await tester.pumpAndSettle();
+    expect(find.text('$pm KPI'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   test(
     'all time begins with each truck history, including older recorded expenses',
     () {
@@ -107,6 +186,9 @@ void main() {
         find.byType(AdminModalRecordList),
       );
       expect(list.itemCount, 3);
+      expect(list.titles.last, 'Actions');
+      expect(list.trailingActions, isTrue);
+      expect(list.valuesAt(0).last, isEmpty);
       expect(list.valuesAt(0).first, 'Total');
       expect(list.valuesAt(1).first, 'PM4');
       final panel = tester.widget<AdminListDynamicFiltersPanel>(
@@ -116,9 +198,11 @@ void main() {
       expect(dropdown.value, 'Monthly');
       expect(dropdown.items, ['Range', 'Weekly', 'Monthly', 'All Time']);
       for (var i = 1; i < list.itemCount; i++) {
+        expect(list.titles, isNot(contains('Fuel')));
+        expect(list.titles, isNot(contains('Salary')));
         expect(list.titles, isNot(contains('Depreciation')));
         expect(list.titles, isNot(contains('Maintenance')));
-        expect(list.valuesAt(i)[4], '₱108,000');
+        expect(list.valuesAt(i)[list.titles.indexOf('Expenses')], '₱108,000');
       }
       dropdown.onChanged('All Time');
       await tester.pumpAndSettle();
@@ -232,7 +316,7 @@ void main() {
     await tester.pumpAndSettle();
     final actionsText = tester.renderObject<RenderParagraph>(
       find.descendant(
-        of: find.text('Actions'),
+        of: find.text('Actions').first,
         matching: find.byType(RichText),
       ),
     );
@@ -240,7 +324,7 @@ void main() {
       actionsText.size.width + 0.01,
       greaterThanOrEqualTo(actionsText.getMaxIntrinsicWidth(double.infinity)),
     );
-    await tester.tap(find.text('Actions'));
+    await tester.tap(find.text('Actions').first);
     await tester.pumpAndSettle();
     expect(find.byType(PopupMenuItem<String>), findsNWidgets(3));
     final surfaces = tester.widgetList<Material>(
@@ -296,7 +380,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Actions'));
+    await tester.tap(find.text('Actions').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Rules'));
     await tester.pumpAndSettle();
@@ -305,7 +389,7 @@ void main() {
     expect(find.byKey(const ValueKey('kpi-rule-edit-0')), findsOneWidget);
     await tester.tap(find.text('Go Back'));
     await tester.pumpAndSettle();
-    expect(find.text('Actions'), findsOneWidget);
+    expect(find.text('Actions'), findsNWidgets(2));
     await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets('utilization toolbar stays visible during initial loading', (

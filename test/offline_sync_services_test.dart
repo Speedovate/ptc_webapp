@@ -1136,7 +1136,7 @@ void main() {
     );
 
     test(
-      'reclaims a queued photo the server already replaced and waits when the booking is still older',
+      'preserves a superseded queued photo and waits when the booking is still older',
       () async {
         final firestore = FakeFirebaseFirestore();
         final backend = _MemoryBookingStorageBackend();
@@ -1164,8 +1164,8 @@ void main() {
             'waiting_for_commit': true,
           }),
         ]);
-        // The booking moved past the staged photo, so no queued booking write
-        // can restore its marker and this entry can never be applied.
+        // A different server marker is not proof this photo was uploaded.
+        // Preserve its original bytes until safe reconciliation is possible.
         await firestore.collection('bookings').doc('144').set({
           'id': '144',
           'updated_at': stagedAt
@@ -1187,7 +1187,13 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 120));
         await service.flushPendingUploads();
 
-        expect(await backend.readStringList(key), isEmpty);
+        final preserved =
+            jsonDecode((await backend.readStringList(key)).single)
+                as Map<String, dynamic>;
+        expect(preserved['id'], 'photo_a');
+        expect(preserved['bytes_base64'], base64Encode([1, 2, 3]));
+        expect(preserved['created_at'], stagedAt.toIso8601String());
+        expect(preserved['wait_reason'], 'marker_superseded');
         expect(photoService.uploadCalls, 0);
         final saved = (await firestore.collection('bookings').doc('144').get())
             .data()!;

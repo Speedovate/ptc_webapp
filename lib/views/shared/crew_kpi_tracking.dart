@@ -403,6 +403,7 @@ class _CrewKpiTrackingViewState extends State<CrewKpiTrackingView> {
           return false;
         },
         child: AdminModalRecordList(
+          pageSize: null,
           horizontalOnDesktop: true,
           selectableCells: true,
           trailingActions: !showingFuel,

@@ -1,8 +1,9 @@
+import 'package:webapp/services/kpi/kpi_activity_index.dart';
+import 'package:webapp/services/kpi/fleet_kpi.dart';
+import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/views/admin/shared_kpi_rules_dialog.dart';
 import 'package:webapp/services/kpi/kpi_period_label.dart';
 import 'package:webapp/services/kpi/kpi_all_time_period.dart';
-import 'dart:convert';
-import 'package:webapp/services/kpi/kpi_salary_diagnostics.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
 import 'package:webapp/services/kpi/kpi_calculation_cache.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
@@ -89,6 +90,12 @@ Future<void> showPmKpiDialog(
   VehicleMake make, {
   bool openRules = false,
   PmKpiStore? store,
+  List<VehicleMake>? fleet,
+  Map<String, KpiStoredData>? initialFleetData,
+  List<Booking>? initialBookings,
+  KpiPeriod? initialPeriod,
+  String? initialMode,
+  int initialWeek = 1,
 }) async {
   final selection = await showAppDialog<Object>(
     context: context,
@@ -96,6 +103,12 @@ Future<void> showPmKpiDialog(
     builder: (dialogContext) => PmKpiDialog(
       make: make,
       store: store,
+      fleet: fleet,
+      initialFleetData: initialFleetData,
+      initialBookings: initialBookings,
+      initialPeriod: initialPeriod,
+      initialMode: initialMode,
+      initialWeek: initialWeek,
       openRules: openRules,
       onOpenBooking: (current, booking) =>
           Navigator.of(dialogContext).pop((current: current, booking: booking)),
@@ -135,7 +148,19 @@ class PmKpiDialog extends StatefulWidget {
     this.onOpenBooking,
     this.openRules = false,
     this.onBack,
+    this.fleet,
+    this.initialFleetData,
+    this.initialBookings,
+    this.initialPeriod,
+    this.initialMode,
+    this.initialWeek = 1,
   });
+  final List<VehicleMake>? fleet;
+  final Map<String, KpiStoredData>? initialFleetData;
+  final List<Booking>? initialBookings;
+  final KpiPeriod? initialPeriod;
+  final String? initialMode;
+  final int initialWeek;
   final void Function(UserModel current, UserModel viewed)? onOpenUser;
   final void Function(UserModel current, Booking booking)? onOpenBooking;
   final PmKpiStore? store;
@@ -150,10 +175,50 @@ class PmKpiDialog extends StatefulWidget {
 class _PmKpiDialogState extends State<PmKpiDialog> {
   late final PmKpiStore _store;
   final _calculations = KpiCalculationCache<PmKpi>();
+  final _activityIndexes = KpiCalculationCache<KpiActivityIndex>();
   final _calculationIssues = <PmKpi, Set<String>>{};
   Object? _lastCalculationRevision;
 
+  bool get _isFleet => widget.fleet != null;
+  Map<String, KpiStoredData> _fleetData = {};
+
   PmKpi _calculate(KpiPeriod period) {
+    if (_isFleet && _fleetData.isNotEmpty) {
+      final report =
+          _calculations.get(
+                (_fleetData, _bookings, _mode),
+                (period.start, period.end),
+                () {
+                  return FleetKpi(period, [
+                    for (final make in widget.fleet!)
+                      if (_fleetData[make.id] case final KpiStoredData stored)
+                        PmKpi.calculate(
+                          makeId: make.id!,
+                          period: _mode == 'All Time'
+                              ? fleetTruckAllTimePeriod(
+                                  make,
+                                  _store.makes,
+                                  _bookings,
+                                  stored,
+                                  kpiDate(DateTime.now()),
+                                )
+                              : period,
+                          bookings: _bookings,
+                          makes: _store.makes,
+                          records: stored.records,
+                          fuelEntries: stored.fuel,
+                          resolveSalary: stored.catalog.resolveSalary,
+                          ratingRules: KpiRatingRules.fromMap(stored.settings),
+                        ),
+                  ]);
+                },
+              )
+              as FleetKpi;
+      report.issues
+        ..clear()
+        ..addAll(report.reports.expand((item) => item.issues));
+      return report;
+    }
     final makes = _store.makes;
     final revision = (
       widget.make.id,
@@ -199,7 +264,6 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
   int _activityCount = 0;
   bool _addingActivityBatch = false;
   String? _activityPeriod;
-  bool _showIssues = false;
   bool _exporting = false;
   Widget? _section;
   double _summaryOffset = 0;
@@ -233,14 +297,27 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
   KpiStoredData _stored = const KpiStoredData([], {}, true);
   UserModel? _currentUser;
   StreamSubscription<List<Booking>>? _subscription;
-  bool get _canEdit => _store.canEdit;
+  bool get _canEdit => _store.canEdit && !_isFleet;
 
   @override
   void initState() {
     super.initState();
     _store = widget.store ?? PmKpiStore.instance;
-    _month = kpiDate(DateTime.now());
-    _period = KpiPeriod.month(_month.year, _month.month);
+    _month = widget.initialPeriod?.start ?? kpiDate(DateTime.now());
+    _period =
+        widget.initialPeriod ?? KpiPeriod.month(_month.year, _month.month);
+    _mode = widget.initialMode ?? 'Monthly';
+    _week = widget.initialWeek;
+    if (_isFleet) {
+      _fleetData = Map.of(widget.initialFleetData ?? {});
+      _bookings = widget.initialBookings ?? [];
+      _hasLoadedBookings = widget.initialBookings != null;
+      if (_fleetData.isNotEmpty) {
+        _stored = _fleetData.values.first;
+        _hasStoredData = true;
+        _loading = false;
+      }
+    }
     _load(initial: true);
   }
 
@@ -271,47 +348,11 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
     });
   }
 
-  Future<void> _recordKpiDiagnostic(
-    String stage,
-    Object error,
-    StackTrace stack,
-  ) async {
-    try {
-      final result = _calculate(_period);
-      await (widget.diagnostics ?? SyncErrorLogService.instance).capture(
-        source: 'pm_kpi_dialog.dart',
-        operation: stage,
-        entryId:
-            '${widget.make.id}:${kpiDayKey(_period.start)}:${kpiDayKey(_period.end)}:$stage',
-        target: 'PM ${widget.make.code ?? widget.make.id}',
-        error: error.toString(),
-        stack: stack.toString(),
-        attempt: DateTime.now().microsecondsSinceEpoch,
-        kind: 'kpi_diagnostic',
-        attentionRequired: true,
-        details: {
-          'failed_step': stage,
-          'error_type': error.runtimeType.toString(),
-          'has_stored_data': _hasStoredData,
-          'from_cache': _stored.fromCache,
-          'diagnostics': jsonDecode(
-            kpiSalaryDiagnostics(
-              makeId: widget.make.id!,
-              bookings: _bookings,
-              catalog: _stored.catalog,
-              result: result,
-              verified: _store.bookingsVerified,
-              makes: _store.makes,
-            ),
-          ),
-        },
-      );
-    } catch (_) {
-      // Diagnostic persistence must not block KPI loading or retry.
-    }
-  }
-
   Future<void> _load({bool initial = false}) async {
+    if (_isFleet) {
+      await _loadFleet(initial: initial);
+      return;
+    }
     final generation = ++_generation;
     var stage = 'Read current user and permissions';
     setState(() {
@@ -382,16 +423,6 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
         _openedInitialRules = true;
         unawaited(_editRatingRules());
       }
-      final dataIssues = _calculate(_period).issues;
-      if (dataIssues.isNotEmpty) {
-        unawaited(
-          _recordKpiDiagnostic(
-            'Validate KPI data',
-            dataIssues.join('\n'),
-            StackTrace.empty,
-          ),
-        );
-      }
       _subscription ??= _store.watchBookings().listen(
         (bookings) {
           if (mounted) {
@@ -409,10 +440,7 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
           }
         },
       );
-    } catch (error, stack) {
-      if (mounted && generation == _generation) {
-        unawaited(_recordKpiDiagnostic(stage, error, stack));
-      }
+    } catch (error) {
       if (mounted && generation == _generation) {
         setState(() {
           _error = error is TimeoutException
@@ -424,7 +452,142 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
     }
   }
 
+  Future<void> _loadFleet({bool initial = false}) async {
+    final generation = ++_generation;
+    setState(() => _error = null);
+    try {
+      _currentUser = await _store.currentUser().timeout(
+        const Duration(seconds: 12),
+      );
+      if (!_store.canRead || !_store.canReadBookings) {
+        throw StateError('You do not have access to booking KPIs.');
+      }
+      _bookings =
+          _store.cachedBookings ??
+          await _store.bookings().timeout(const Duration(seconds: 12));
+      final fetch = _mode == 'All Time'
+          ? KpiPeriod(DateTime.utc(1900), kpiDate(DateTime.now()))
+          : _period;
+      final cached = await Future.wait([
+        for (final make in widget.fleet!)
+          _store
+              .readCached(make.id!, fetch)
+              .timeout(const Duration(seconds: 5)),
+      ]);
+      if (!mounted || generation != _generation) return;
+      if (cached.every((value) => value != null)) {
+        setState(() {
+          _fleetData = {
+            for (var i = 0; i < cached.length; i++)
+              widget.fleet![i].id!: cached[i]!,
+          };
+          _stored = _fleetData.values.first;
+          _hasStoredData = true;
+          _loading = false;
+          _resolveAllTimePeriod();
+        });
+      }
+      final fresh = await Future.wait([
+        for (final make in widget.fleet!)
+          _store.load(make.id!, fetch).timeout(const Duration(seconds: 15)),
+      ]);
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _fleetData = {
+          for (var i = 0; i < fresh.length; i++) widget.fleet![i].id!: fresh[i],
+        };
+        _stored = _fleetData.values.first;
+        _hasStoredData = true;
+        _loading = false;
+        _resolveAllTimePeriod();
+      });
+      _subscription ??= _store.watchBookings().listen(
+        (bookings) {
+          if (mounted) setState(() => _bookings = bookings);
+        },
+        onError: (Object error) {
+          if (mounted) setState(() => _error = 'Could not refresh bookings.');
+        },
+      );
+    } catch (error) {
+      if (mounted && generation == _generation) {
+        setState(() {
+          _loading = false;
+          _error = error is TimeoutException
+              ? 'KPI data took too long to load. Please retry.'
+              : error.toString();
+        });
+      }
+    }
+  }
+
+  void _selectFleetFuel() {
+    _openSection(
+      AdminModalShell(
+        title: 'Fuel · Select PM',
+        maxWidth: AdminModalShell.kpiMaxWidth,
+        flexibleBody: true,
+        bodyHandlesScrolling: true,
+        actions: [
+          TextButton(
+            onPressed: _backToSummary,
+            child: const Text('Back to KPI'),
+          ),
+        ],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: AdminModalRecordList(
+            pageSize: null,
+            titles: const ['PM', 'Driver', 'Helper'],
+            itemCount: widget.fleet!.length,
+            emptyMessage: 'No trucks available.',
+            valuesAt: (i) => [
+              widget.fleet![i].code ?? widget.fleet![i].id!,
+              widget.fleet![i].driver?.name ?? '—',
+              widget.fleet![i].helper?.name ?? '—',
+            ],
+            onRowTap: (i) {
+              final make = widget.fleet![i];
+              _openSection(
+                PmFuelLedgerDialog(
+                  make: make,
+                  period: _period,
+                  store: _store,
+                  initialData: _fleetData[make.id],
+                  periodLabel: kpiPeriodLabel(
+                    _period,
+                    mode: _mode,
+                    week: _week,
+                  ),
+                  onBack: _selectFleetFuel,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   void _resolveAllTimePeriod() {
+    if (_isFleet && _mode == 'All Time' && _fleetData.isNotEmpty) {
+      final periods = [
+        for (final make in widget.fleet!)
+          if (_fleetData[make.id] case final KpiStoredData stored)
+            fleetTruckAllTimePeriod(
+              make,
+              _store.makes,
+              _bookings,
+              stored,
+              kpiDate(DateTime.now()),
+            ),
+      ];
+      _period = KpiPeriod(
+        periods.map((p) => p.start).reduce((a, b) => a.isBefore(b) ? a : b),
+        kpiDate(DateTime.now()),
+      );
+      return;
+    }
     if (_mode == 'All Time') {
       _period = fleetTruckAllTimePeriod(
         widget.make,
@@ -500,7 +663,7 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                     ),
                     if (!valid) ...[
                       const SizedBox(height: 12),
-                      const SelectableText(
+                      const AppSelectableText(
                         'Choose an end date on or after the start date, up to one year apart.',
                         style: TextStyle(color: AppColors.dangerStrong),
                       ),
@@ -623,11 +786,18 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
     );
   }
 
-  Future<void> _editIncidents({UserModel? initialUser, String? metric}) async {
+  Future<void> _editIncidents({
+    UserModel? initialUser,
+    String? metric,
+    VehicleMake? targetMake,
+    KpiStoredData? targetData,
+  }) async {
+    final incidentMake = targetMake ?? widget.make;
+    final incidentData = targetData ?? _stored;
     final today = kpiDate(DateTime.now());
     final end = _period.end.isAfter(today) ? today : _period.end;
     if (end.isBefore(_period.start)) return;
-    final previous = Map<String, dynamic>.from(_stored.settings);
+    final previous = Map<String, dynamic>.from(incidentData.settings);
     final rawUsers = previous['user_incident_counts'];
     final userRecords = rawUsers is Map
         ? Map<String, dynamic>.from(rawUsers)
@@ -636,8 +806,8 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
       for (final user in [
         ..._store.incidentUsers,
         ?initialUser,
-        if (widget.make.driver != null) widget.make.driver!,
-        if (widget.make.helper != null) widget.make.helper!,
+        if (incidentMake.driver != null) incidentMake.driver!,
+        if (incidentMake.helper != null) incidentMake.helper!,
         for (final booking in _bookings) ...[
           if (booking.driver != null) booking.driver!,
           if (booking.helper != null) booking.helper!,
@@ -804,7 +974,7 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                   ),
                   const SizedBox(height: 16),
                 ],
-                SelectableText(
+                AppSelectableText(
                   '${_kpiDateLabel(_period.start)} – ${_kpiDateLabel(end)}',
                 ),
                 const SizedBox(height: 16),
@@ -840,7 +1010,7 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                       update(() => confirmMissingZero = value ?? false),
                 ),
                 if (error != null)
-                  SelectableText(
+                  AppSelectableText(
                     error!,
                     style: const TextStyle(color: AppColors.dangerStrong),
                   ),
@@ -856,7 +1026,7 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
     if (saved == null || !mounted) return;
     try {
       await _store.save(
-        makeId: widget.make.id!,
+        makeId: incidentMake.id!,
         data: {
           ...previous,
           'kind': 'settings',
@@ -937,54 +1107,19 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
     if (_error != null) {
       result.issues.add(_error!);
     }
-    // Cache verification is background work, not an actionable data issue.
-    // Retain it in calculation completeness and copied diagnostics only.
-    final visibleIssues = result.issues
-        .where(
-          (issue) =>
-              issue != 'Cached data · refresh online to verify' &&
-              issue != _error,
-        )
-        .toList(growable: false);
     final incidents = KpiIncidentSummary(
       _stored.settings,
       _period,
       kpiDate(DateTime.now()),
     );
-    final activeDays = result.days
-        .where((day) => day.trips.isNotEmpty || day.record.isNotEmpty)
-        .toList();
-    final activityRows =
-        <({KpiDay day, KpiTrip? trip, bool showDailyTotals})>[];
-    for (final day in activeDays) {
-      final trips = [...day.trips]
-        ..sort((a, b) {
-          final order = kpiDeliveredAt(
-            a.booking,
-          )!.compareTo(kpiDeliveredAt(b.booking)!);
-          return order == 0 ? a.identity.compareTo(b.identity) : order;
-        });
-      for (final trip in trips) {
-        activityRows.add((day: day, trip: trip, showDailyTotals: false));
-      }
-      activityRows.add((day: day, trip: null, showDailyTotals: true));
-    }
-    activityRows.sort((a, b) {
-      final aTime = a.trip == null
-          ? a.day.date.add(const Duration(days: 1))
-          : kpiDeliveredAt(
-              a.trip!.booking,
-            )!.toUtc().add(const Duration(hours: 8));
-      final bTime = b.trip == null
-          ? b.day.date.add(const Duration(days: 1))
-          : kpiDeliveredAt(
-              b.trip!.booking,
-            )!.toUtc().add(const Duration(hours: 8));
-      final order = bTime.compareTo(aTime);
-      return order != 0
-          ? order
-          : (b.trip?.identity ?? '').compareTo(a.trip?.identity ?? '');
-    });
+    final activity = _activityIndexes.get(
+      result,
+      'transactions',
+      () => KpiActivityIndex(result),
+    );
+    final activeDays = activity.activeDays;
+    final activityRows = activity.activityRows;
+    final transactionsByDay = activity.transactionsByDay;
     final activityPeriod = '${_period.start}:${_period.end}';
     if (_activityPeriod != activityPeriod) {
       _activityPeriod = activityPeriod;
@@ -993,13 +1128,6 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
     }
     // Keep the complete transaction set for exports; flatten only expanded days
     // into the lazy viewport. Salary remains grouped by its worked day.
-    activeDays.sort((a, b) => b.date.compareTo(a.date));
-    final transactionsByDay = <String, List<int>>{};
-    for (var i = 0; i < activityRows.length; i++) {
-      transactionsByDay
-          .putIfAbsent(kpiDayKey(activityRows[i].day.date), () => [])
-          .add(i);
-    }
     final displayRows = <({KpiDay day, int? transaction})>[];
     for (final day in activeDays.where((_) => _store.canReadIncome)) {
       final key = kpiDayKey(day.date);
@@ -1127,18 +1255,31 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
         'Needs user attribution',
       ]);
     }
-    Widget crewSummary(String role, UserModel? user) {
+    if (_isFleet) incidentRatingRows.clear();
+    Widget crewSummary(
+      String role,
+      UserModel? user, {
+      PmKpi? pmReport,
+      KpiStoredData? pmData,
+      VehicleMake? pmMake,
+    }) {
+      final crewReport = pmReport ?? result;
+      final crewData = pmData ?? _stored;
       final userIncidents = user?.id == null
           ? null
           : KpiIncidentSummary.forUser(
-              _stored.settings,
+              crewData.settings,
               user!.id!,
               _period,
               kpiDate(DateTime.now()),
             );
+      final complaints = userIncidents?.complaints;
+      final accidents = userIncidents?.accidents;
       final key = role.toLowerCase();
-      final total = key == 'driver' ? result.driverSalary : result.helperSalary;
-      final shares = result.days.fold<double>(0, (sum, day) {
+      final total = key == 'driver'
+          ? crewReport.driverSalary
+          : crewReport.helperSalary;
+      final shares = crewReport.days.fold<double>(0, (sum, day) {
         final rates =
             (day.estimate?.rates ??
                     day.record['trip_rates'] as List? ??
@@ -1199,13 +1340,13 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                             children: [
                               Expanded(child: Text(item.$1)),
                               Text(
-                                userIncidents == null
+                                complaints == null || accidents == null
                                     ? '—'
                                     : item.$2 == 'complaints'
-                                    ? '${userIncidents.complaints} (${result.ratingRules.complaintsRating(userIncidents.complaints)})'
-                                    : '${userIncidents.accidents} (${result.ratingRules.accidentsRating(userIncidents.accidents)})',
+                                    ? '$complaints (${crewReport.ratingRules.complaintsRating(complaints)})'
+                                    : '$accidents (${crewReport.ratingRules.accidentsRating(accidents)})',
                               ),
-                              if (_canEdit &&
+                              if (_store.canEdit &&
                                   user?.id?.isNotEmpty == true &&
                                   !_period.start.isAfter(
                                     kpiDate(DateTime.now()),
@@ -1233,6 +1374,8 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                                     ),
                                     onPressed: () => _editIncidents(
                                       initialUser: user,
+                                      targetMake: pmMake,
+                                      targetData: pmData,
                                       metric: item.$2,
                                     ),
                                   ),
@@ -1288,6 +1431,10 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
           icon: Icons.local_gas_station_outlined,
           label: 'Fuel',
           onTap: () async {
+            if (_isFleet) {
+              _selectFleetFuel();
+              return;
+            }
             _openSection(
               PmFuelLedgerDialog(
                 make: widget.make,
@@ -1311,7 +1458,7 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
             _openSection(OperationsCatalogDialog(onBack: _backToSummary));
           },
         ),
-      if (_canEdit)
+      if (_store.canEdit)
         AdminListNewButton(
           controlHeight: adminFilterFieldMinHeight,
           surfaceRadius: 16,
@@ -1321,14 +1468,52 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
           label: 'Rules',
         ),
     ];
-    final sectionButtons = Row(
-      children: [
-        for (var i = 0; i < sectionActions.length; i++) ...[
-          if (i > 0) const SizedBox(width: 8),
-          Expanded(child: sectionActions[i]),
-        ],
-      ],
+    var sectionButtonWidth = 104.0;
+    for (final button in sectionActions.cast<AdminListNewButton>()) {
+      final painter = TextPainter(
+        text: TextSpan(
+          text: button.label,
+          style: Theme.of(
+            context,
+          ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout();
+      final needed = painter.width.ceilToDouble() + 60;
+      if (needed > sectionButtonWidth) {
+        sectionButtonWidth = needed;
+      }
+      painter.dispose();
+    }
+    final sectionButtons = LayoutBuilder(
+      builder: (context, constraints) {
+        final columns =
+            sectionActions.isNotEmpty &&
+                constraints.maxWidth >=
+                    sectionActions.length * sectionButtonWidth +
+                        (sectionActions.length - 1) * 8
+            ? sectionActions.length
+            : 1;
+        final width = ((constraints.maxWidth - (columns - 1) * 8) / columns)
+            .clamp(sectionButtonWidth, double.infinity);
+        final buttons = Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final button in sectionActions)
+              SizedBox(width: width, child: button),
+          ],
+        );
+        return constraints.maxWidth < sectionButtonWidth
+            ? SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(width: sectionButtonWidth, child: buttons),
+              )
+            : buttons;
+      },
     );
+
     final periodTextStyle = DefaultTextStyle.of(context).style
         .merge(adminFieldValueTextStyle.copyWith(fontSize: 14))
         .copyWith(inherit: false);
@@ -1538,17 +1723,17 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
         );
       },
     );
-    final sectionCount =
-        (_store.canReadFuel ? 1 : 0) +
-        (_store.canReadCatalog ? 1 : 0) +
-        (_canEdit ? 1 : 0);
+    final sectionCount = sectionActions.length;
     final sectionWidth = sectionCount == 0
         ? 0.0
-        : sectionCount * 104.0 + (sectionCount - 1) * 8;
+        : sectionCount * sectionButtonWidth + (sectionCount - 1) * 8;
     final periodWidth =
         modeWidth +
         (_mode == 'All Time' ? 0 : dateWidth + 12) +
         (_mode == 'Weekly' ? weekWidth + 12 : 0);
+    final reportedMakes = _isFleet
+        ? widget.fleet!.where((m) => _fleetData.containsKey(m.id)).toList()
+        : <VehicleMake>[];
     final header = <Widget>[
       LayoutBuilder(
         builder: (context, constraints) {
@@ -1598,61 +1783,70 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
           ),
         ),
       ],
-      if (visibleIssues.isNotEmpty) ...[
-        const SizedBox(height: _kpiSectionSpacing),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(
-            '${visibleIssues.length} ${visibleIssues.length == 1 ? 'item needs' : 'items need'} checking',
-          ),
-          trailing: Icon(_showIssues ? Icons.expand_less : Icons.expand_more),
-          onTap: () => setState(() => _showIssues = !_showIssues),
-        ),
-        if (_showIssues)
-          for (final issue in visibleIssues)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(issue),
-              ),
-            ),
-      ],
       SizedBox(
         height:
-            _kpiSectionSpacing -
-            (visibleIssues.isEmpty && _error == null
-                ? _kpiToolbarSurfaceInset
-                : 0),
+            _kpiSectionSpacing - (_error == null ? _kpiToolbarSurfaceInset : 0),
       ),
       _KpiFinancialTable(columns: comparisons),
       const SizedBox(height: _kpiSectionSpacing),
       _KpiPlanComparison(result: result),
       const SizedBox(height: _kpiSectionSpacing),
       if (_store.canReadIncome)
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final driverSummary = crewSummary('Driver', driver);
-            final helperSummary = crewSummary('Helper', helper);
-            if (constraints.maxWidth >= 640) {
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        for (final entry in [
+          if (!_isFleet)
+            (make: widget.make, report: result, stored: _stored)
+          else if (result is FleetKpi)
+            for (var i = 0; i < result.reports.length; i++)
+              (
+                make: reportedMakes[i],
+                report: result.reports[i],
+                stored: _fleetData[reportedMakes[i].id]!,
+              ),
+        ]) ...[
+          if (_isFleet) ...[
+            Text(
+              entry.make.code ?? entry.make.id ?? '—',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+          ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final driverSummary = crewSummary(
+                'Driver',
+                _isFleet ? entry.make.driver : driver,
+                pmReport: entry.report,
+                pmData: entry.stored,
+                pmMake: entry.make,
+              );
+              final helperSummary = crewSummary(
+                'Helper',
+                _isFleet ? entry.make.helper : helper,
+                pmReport: entry.report,
+                pmData: entry.stored,
+                pmMake: entry.make,
+              );
+              if (constraints.maxWidth >= 640) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: driverSummary),
+                    const SizedBox(width: _kpiSectionSpacing),
+                    Expanded(child: helperSummary),
+                  ],
+                );
+              }
+              return Column(
                 children: [
-                  Expanded(child: driverSummary),
-                  const SizedBox(width: _kpiSectionSpacing),
-                  Expanded(child: helperSummary),
+                  driverSummary,
+                  const SizedBox(height: _kpiSectionSpacing),
+                  helperSummary,
                 ],
               );
-            }
-            return Column(
-              children: [
-                driverSummary,
-                const SizedBox(height: _kpiSectionSpacing),
-                helperSummary,
-              ],
-            );
-          },
-        ),
+            },
+          ),
+          if (_isFleet) const SizedBox(height: _kpiSectionSpacing),
+        ],
       const SizedBox(height: _kpiSectionSpacing),
       if (_canEdit &&
           _stored.settings['incident_counts'] is Map &&
@@ -1873,11 +2067,15 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
                   return false;
                 },
                 child: AdminModalRecordList(
+                  pageSize: null,
                   scrollController: _activityScroll,
-                  scrollHeader: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: header,
-                  ),
+                  scrollHeaderItems: _isFleet ? header : null,
+                  scrollHeader: _isFleet
+                      ? null
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: header,
+                        ),
                   emptyMessage: !_store.canReadIncome
                       ? 'You do not have access to driver/helper income.'
                       : _error == null

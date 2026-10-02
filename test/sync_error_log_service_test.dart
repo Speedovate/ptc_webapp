@@ -66,41 +66,63 @@ Future<void> waitFor(bool Function() ready) async {
 }
 
 void main() {
-  test(
-    'KPI diagnostics persist and upload with context without queue ownership',
-    () async {
-      final backend = MemoryLogs();
-      final writes = <Map<String, dynamic>>[];
-      var online = false;
-      final service = SyncErrorLogService(
-        backend: backend,
-        online: () => online,
-        metadata: (_) async => {'user_id': '13'},
-        writer: (_, data) async => writes.add(data),
-      );
-      await service.start();
-      await service.capture(
-        source: 'pm_kpi_dialog.dart',
-        operation: 'Load KPI',
-        entryId: '4:2026-09:load',
-        target: 'PM7',
-        error: 'timeout',
-        stack: 'load:123',
-        attempt: 1,
-        kind: 'kpi_diagnostic',
-        attentionRequired: true,
-        details: {'pm_id': '4', 'failed_step': 'Load KPI'},
-      );
-      expect(reports(backend), hasLength(1));
-      online = true;
-      await service.flush();
-      expect(writes, hasLength(1));
-      expect(writes.single['kind'], 'kpi_diagnostic');
-      expect(writes.single['attention_required'], isTrue);
-      expect(writes.single['queue_scope'], isNull);
-      expect(writes.single['details']['failed_step'], 'Load KPI');
-    },
-  );
+  test('assignment-only diagnostics are not queued or uploaded', () async {
+    final backend = MemoryLogs();
+    final writes = <Map<String, dynamic>>[];
+    final service = SyncErrorLogService(
+      backend: backend,
+      online: () => false,
+      metadata: (_) async => {'user_id': '1'},
+      writer: (_, data) async => writes.add(data),
+    );
+    await service.start();
+    const warning =
+        'Booking 124: Truck not recorded. Select the truck used for this booking.';
+    Future<void> record(String error) => service.capture(
+      source: 'pm_kpi_dialog.dart',
+      operation: 'Validate KPI data',
+      entryId: 'pm4-validation',
+      target: 'PM4',
+      error: error,
+      stack: '',
+      attempt: 1,
+      kind: 'kpi_diagnostic',
+    );
+    await record(warning);
+    expect(reports(backend), isEmpty);
+    expect(writes, isEmpty);
+    await record('$warning\nBooking 78: No active trip rate');
+    expect(reports(backend), isEmpty);
+  });
+
+  test('KPI load diagnostics are not captured as sync failures', () async {
+    final backend = MemoryLogs();
+    final writes = <Map<String, dynamic>>[];
+    var online = false;
+    final service = SyncErrorLogService(
+      backend: backend,
+      online: () => online,
+      metadata: (_) async => {'user_id': '13'},
+      writer: (_, data) async => writes.add(data),
+    );
+    await service.start();
+    await service.capture(
+      source: 'pm_kpi_dialog.dart',
+      operation: 'Load KPI',
+      entryId: '4:2026-09:load',
+      target: 'PM7',
+      error: 'timeout',
+      stack: 'load:123',
+      attempt: 1,
+      kind: 'kpi_diagnostic',
+      attentionRequired: true,
+      details: {'pm_id': '4', 'failed_step': 'Load KPI'},
+    );
+    expect(reports(backend), isEmpty);
+    online = true;
+    await service.flush();
+    expect(writes, isEmpty);
+  });
 
   test(
     'inline photos cannot truncate pending and server booking diagnostics',

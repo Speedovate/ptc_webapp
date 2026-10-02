@@ -1,3 +1,4 @@
+import 'kpi_diagnostic_policy.dart';
 import 'package:webapp/models/vehicle_make.dart';
 import 'package:webapp/services/booking_pm_assignment.dart';
 import 'dart:convert';
@@ -14,7 +15,26 @@ String kpiSalaryDiagnostics({
   required PmKpi result,
   required bool verified,
   List<VehicleMake> makes = const [],
+  bool issuesOnly = false,
+  bool includeAssignmentIssues = true,
 }) {
+  final reportedIssues = result.issues
+      .where(
+        (issue) => includeAssignmentIssues || !isKpiAssignmentNotice(issue),
+      )
+      .toList();
+  final reportedBookings = issuesOnly
+      ? bookings
+            .where(
+              (booking) =>
+                  booking.id != null &&
+                  reportedIssues.any(
+                    (issue) => issue.startsWith('Booking ${booking.id}:'),
+                  ),
+            )
+            .toList()
+      : bookings;
+
   return const JsonEncoder.withIndent('  ').convert({
     'report': 'KPI salary diagnostics',
     'pm_id': makeId,
@@ -24,8 +44,21 @@ String kpiSalaryDiagnostics({
     'loaded_bookings': bookings.length,
     'driver_salary': result.driverSalary,
     'helper_salary': result.helperSalary,
-    'issues': result.issues.toList(),
-    'bookings': bookings.map((booking) {
+    'issues': reportedIssues,
+    'diagnostic_scope': issuesOnly
+        ? 'bookings with reported issues'
+        : 'all loaded bookings',
+    'reported_bookings': reportedBookings.length,
+    'current_pm_assignments': [
+      for (final make in makes)
+        {
+          'id': make.id,
+          'code': make.code,
+          'driver_id': make.driver?.id,
+          'helper_id': make.helper?.id,
+        },
+    ],
+    'bookings': reportedBookings.map((booking) {
       final pm = resolveBookingPm(booking, makes);
       final delivered = kpiDeliveredAt(booking);
       final day = delivered == null ? null : kpiDate(delivered);
@@ -91,18 +124,27 @@ String kpiSalaryDiagnostics({
             : 'Outside selected dates',
       };
     }).toList(),
-    'days': result.days
-        .map(
-          (day) => {
-            'date': kpiDayKey(day.date),
-            'bookings': day.trips.map((trip) => trip.booking.id).toList(),
-            'driver_salary': day.driverSalary,
-            'helper_salary': day.helperSalary,
-            'calculation_complete': day.salaryCalculated,
-            'confirmed_snapshot': day.salaryComplete,
-            'calculated_rates': day.estimate?.rates,
-          },
-        )
-        .toList(),
+    'days':
+        (issuesOnly
+                ? result.days.where(
+                    (day) => day.trips.any(
+                      (trip) => reportedBookings.any(
+                        (booking) => booking.id == trip.booking.id,
+                      ),
+                    ),
+                  )
+                : result.days)
+            .map(
+              (day) => {
+                'date': kpiDayKey(day.date),
+                'bookings': day.trips.map((trip) => trip.booking.id).toList(),
+                'driver_salary': day.driverSalary,
+                'helper_salary': day.helperSalary,
+                'calculation_complete': day.salaryCalculated,
+                'confirmed_snapshot': day.salaryComplete,
+                'calculated_rates': day.estimate?.rates,
+              },
+            )
+            .toList(),
   });
 }

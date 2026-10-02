@@ -190,9 +190,9 @@ void main() {
         expect(find.byType(AdminModalRecordList), findsOneWidget);
         expect(find.text('PO123'), findsOneWidget);
         expect(tester.takeException(), isNull);
-        await tester.ensureVisible(find.byIcon(Icons.visibility_outlined));
+        await tester.ensureVisible(find.byTooltip('View cost entry'));
         await tester.pumpAndSettle();
-        await tester.tap(find.byIcon(Icons.visibility_outlined));
+        await tester.tap(find.byTooltip('View cost entry'));
         await tester.pumpAndSettle();
         expect(find.text('Fuel Entry'), findsOneWidget);
         expect(tester.takeException(), isNull);

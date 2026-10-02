@@ -1,5 +1,4 @@
 import 'package:webapp/widgets/admin_modal_shell.dart';
-import 'package:webapp/widgets/shared/admin_icon_action_button.dart';
 import 'package:webapp/widgets/shared/app_modal_guard.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -122,26 +121,40 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
     return '${tripDateLabel(date)}\n${pad(date.hour % 12 == 0 ? 12 : date.hour % 12)}:${pad(date.minute)}:${pad(date.second)} ${date.hour < 12 ? 'AM' : 'PM'}';
   }
 
-  Future<void> openTrips(VehicleMake make, int column) async {
-    final trips = List<Booking>.of(result.trips[make.id]?[column] ?? const [])
-      ..sort((a, b) => kpiDeliveredAt(b)!.compareTo(kpiDeliveredAt(a)!));
-    final periodTitle = switch (mode) {
-      KpiUtilizationMode.daily => tripDateLabel(
-        DateTime(month.year, month.month, column + 1),
-      ),
-      KpiUtilizationMode.weekly =>
-        'Week ${column + 1} · ${MaterialLocalizations.of(context).formatMonthYear(month)}',
-      KpiUtilizationMode.monthly => MaterialLocalizations.of(
-        context,
-      ).formatMonthYear(DateTime(month.year, column + 1)),
-    };
+  Future<void> openTrips(
+    VehicleMake? make,
+    int column, {
+    List<VehicleMake>? fleet,
+  }) async {
+    final trips = <Booking>[
+      if (make != null) ...result.trips[make.id]?[column] ?? const [],
+      if (fleet != null)
+        for (final pm in fleet)
+          for (var bucket = 0; bucket < result.columns; bucket++)
+            ...result.trips[pm.id]?[bucket] ?? const [],
+    ]..sort((a, b) => kpiDeliveredAt(b)!.compareTo(kpiDeliveredAt(a)!));
+    final periodTitle = fleet != null
+        ? (mode == KpiUtilizationMode.monthly
+              ? '${month.year}'
+              : MaterialLocalizations.of(context).formatMonthYear(month))
+        : switch (mode) {
+            KpiUtilizationMode.daily => tripDateLabel(
+              DateTime(month.year, month.month, column + 1),
+            ),
+            KpiUtilizationMode.weekly =>
+              'Week ${column + 1} · ${MaterialLocalizations.of(context).formatMonthYear(month)}',
+            KpiUtilizationMode.monthly => MaterialLocalizations.of(
+              context,
+            ).formatMonthYear(DateTime(month.year, column + 1)),
+          };
     var visibleTrips = 15;
     final selected = await showAppDialog<Booking>(
       context: context,
-      modalKey: 'utilization-trips:${make.id}:${mode.name}:$periodTitle',
+      modalKey:
+          'utilization-trips:${make?.id ?? 'total'}:${mode.name}:$periodTitle',
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, update) => AdminModalShell(
-          title: '${make.code ?? make.id} Trips · $periodTitle',
+          title: '${make?.code ?? make?.id ?? 'Total'} Trips · $periodTitle',
           maxWidth: AdminModalShell.kpiMaxWidth,
           flexibleBody: true,
           bodyHandlesScrolling: true,
@@ -165,6 +178,7 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
                 return false;
               },
               child: AdminModalRecordList(
+                pageSize: null,
                 horizontalOnDesktop: true,
                 trailingActions: true,
                 selectableCells: true,
@@ -182,9 +196,9 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
                         alignment: Alignment.centerRight,
                         child: Tooltip(
                           message: 'View booking',
-                          child: AdminIconActionButton(
-                            icon: Icons.visibility_outlined,
-                            backgroundColor: AppColors.primaryColor,
+                          child: AdminListActionButton(
+                            icon: Icons.visibility_rounded,
+                            backgroundColor: Colors.yellow.shade900,
                             onTap: widget.onOpenBooking == null
                                 ? null
                                 : () =>
@@ -238,6 +252,15 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
           .split(RegExp(r'\s+'))
           .every(text.contains);
     }).toList();
+    final totalCounts = List<int>.filled(result.columns, 0);
+    var totalDays = 0;
+    for (final make in matches) {
+      final counts = result.counts[make.id];
+      for (var column = 0; column < result.columns; column++) {
+        totalCounts[column] += counts?[column] ?? 0;
+      }
+      totalDays += result.totalDays[make.id] ?? 0;
+    }
     final titles = <String>[
       'PM',
       ...List.generate(
@@ -373,6 +396,7 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
                     return false;
                   },
                   child: AdminModalRecordList(
+                    pageSize: null,
                     horizontalOnDesktop: true,
                     horizontalOnMobile: true,
                     pinFirstColumn: true,
@@ -390,8 +414,25 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
                         column: 18,
                     },
                     cellBuilder: (row, column) {
+                      if (row == 0) {
+                        return column == 0
+                            ? InkWell(
+                                onTap: () => openTrips(null, 0, fleet: matches),
+                                child: const Text(
+                                  'Total',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: AppColors.primaryColor,
+                                    fontWeight: FontWeight.bold,
+                                    decoration: TextDecoration.underline,
+                                    decorationColor: AppColors.primaryColor,
+                                  ),
+                                ),
+                              )
+                            : null;
+                      }
                       if (column == 0 && widget.onOpenMake != null) {
-                        final make = matches[row];
+                        final make = matches[row - 1];
                         return InkWell(
                           onTap: () => widget.onOpenMake!(make),
                           child: Text(
@@ -408,7 +449,7 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
                       }
                       if (column < 1 || column > result.columns) return null;
                       final count =
-                          result.counts[matches[row].id]?[column - 1] ?? 0;
+                          result.counts[matches[row - 1].id]?[column - 1] ?? 0;
                       final cell = Stack(
                         children: [
                           Padding(
@@ -443,7 +484,8 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
                       );
                       return count > 0
                           ? InkWell(
-                              onTap: () => openTrips(matches[row], column - 1),
+                              onTap: () =>
+                                  openTrips(matches[row - 1], column - 1),
                               child: cell,
                             )
                           : cell;
@@ -461,12 +503,22 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
                             ),
                           )
                         : null,
-                    itemCount: matches.length.clamp(0, visible),
+                    itemCount: matches.isEmpty
+                        ? 0
+                        : matches.length.clamp(0, visible) + 1,
                     emptyMessage: search.trim().isEmpty
                         ? 'No trucks available.'
                         : 'No matching trucks.',
                     valuesAt: (i) {
-                      final make = matches[i];
+                      if (i == 0) {
+                        return [
+                          'Total',
+                          ...totalCounts.map((count) => '$count'),
+                          '$totalDays/$periodDays',
+                          '${totalCounts.fold<int>(0, (a, b) => a + b)}',
+                        ];
+                      }
+                      final make = matches[i - 1];
                       final values =
                           result.counts[make.id] ??
                           List<int>.filled(result.columns, 0);

@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -92,15 +93,15 @@ class _AdminActionConfirmationDialogState
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: SelectableText(widget.title),
+      title: AppSelectableText(widget.title),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SelectableText(widget.message),
+          AppSelectableText(widget.message),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            SelectableText(
+            AppSelectableText(
               _error!,
               style: const TextStyle(color: AppColors.danger),
             ),

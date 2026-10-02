@@ -262,15 +262,8 @@ void main() {
         );
         expect(find.textContaining('TimeoutException'), findsNothing);
         expect(find.text('Data could not be refreshed'), findsNothing);
-        final report = testDiagnostics.captured.last;
-        expect(report['kind'], 'kpi_diagnostic');
-        expect(report['attention_required'], isTrue);
-        expect(report['error'], contains('TimeoutException'));
-        expect(
-          (report['details'] as Map)['failed_step'],
-          'Refresh KPI records, fuel, rates and settings',
-        );
-        expect((report['details'] as Map)['diagnostics'], contains('pm_id'));
+        expect(testDiagnostics.captured, isEmpty);
+        expect(find.textContaining('items need checking'), findsNothing);
 
         store.stall = false;
         await tester.tap(find.text('Retry'));
@@ -505,6 +498,64 @@ void main() {
       expect(label().contains(' – '), isTrue);
     },
   );
+
+  for (final width in [320.0, 375.0, 899.0, 900.0, 1200.0]) {
+    testWidgets('Total and per-PM toolbar bounds match at $width', (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 1100);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final store = TestStore();
+      addTearDown(store.updates.close);
+      const make = VehicleMake(id: '4', code: 'PM4');
+      final bounds = <String, Rect>{};
+      for (final fleet in [false, true]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: PmKpiDialog(
+                key: ValueKey(fleet),
+                make: fleet
+                    ? const VehicleMake(id: 'fleet-total', code: 'Total')
+                    : make,
+                store: store,
+                fleet: fleet ? const [make] : null,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        for (final label in ['Fuel', 'Rates', 'Rules', 'date']) {
+          final target = label == 'date'
+              ? find.byKey(const ValueKey('kpi-period-date-field'))
+              : find.ancestor(
+                  of: find.text(label),
+                  matching: find.byType(FilledButton),
+                );
+          expect(target, findsOneWidget, reason: '$label visible at $width');
+          if (label != 'date') {
+            final text = tester.renderObject<RenderParagraph>(
+              find.descendant(
+                of: find.descendant(of: target, matching: find.text(label)),
+                matching: find.byType(RichText),
+              ),
+            );
+            expect(text.didExceedMaxLines, isFalse, reason: label);
+          }
+          final rect = tester.getRect(target);
+          if (fleet) {
+            expect(rect, bounds[label], reason: '$label at $width');
+          } else {
+            bounds[label] = rect;
+          }
+        }
+        expect(tester.takeException(), isNull);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
 
   testWidgets('KPI section buttons match the existing New button surface', (
     tester,

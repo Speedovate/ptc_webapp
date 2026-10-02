@@ -104,7 +104,9 @@ buildVm({
   // accounts before the trucks: an owner it cannot resolve reads as Paltranco.
   final vm = InvestorStatementViewModel(kpiStore: kpi, rateStore: rates)
     ..setUsers(InvestorFixtures.usersFor(ownedMakes ?? makes))
-    ..setMakes(ownedMakes ?? makes);
+    ..setMakes(ownedMakes ?? makes)
+    // Fixtures contain September trips, independent of the test run month.
+    ..selectPeriod(KpiPeriod.month(2026, 9));
   return (vm: vm, kpi: kpi, rateCache: rateCache);
 }
 

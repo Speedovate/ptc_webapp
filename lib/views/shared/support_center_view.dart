@@ -1543,50 +1543,57 @@ class UserSupportSidebar extends StatelessWidget {
                     child: AdminListStateText(message: 'No support chats yet.'),
                   ),
                 )
-              : LazyDataScrollView(
-                  padding: const EdgeInsets.fromLTRB(14, 16, 14, 16),
-                  child: SliverSection(
-                    children: [
-                      for (final topicKey in topicKeys) ...[
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(6, 0, 6, 10),
-                          child: Text(
-                            topicKey,
-                            style: TextStyle(
-                              color: AppColors.primaryColor.withValues(
-                                alpha: 0.72,
+              : ProgressiveList(
+                  itemCount: threads.length,
+                  builder: (visibleCount) => LazyDataScrollView(
+                    padding: const EdgeInsets.fromLTRB(14, 16, 14, 16),
+                    child: SliverSection(
+                      children: [
+                        for (final topicKey in topicKeys) ...[
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(6, 0, 6, 10),
+                            child: Text(
+                              topicKey,
+                              style: TextStyle(
+                                color: AppColors.primaryColor.withValues(
+                                  alpha: 0.72,
+                                ),
+                                fontWeight: FontWeight.w700,
                               ),
-                              fontWeight: FontWeight.w700,
                             ),
                           ),
-                        ),
-                        LazySliverList(
-                          items: grouped[topicKey]!.asMap().entries,
-                          itemBuilder: (context, entry) {
-                            final thread = entry.value;
-                            return Padding(
-                              padding: EdgeInsets.only(
-                                bottom:
-                                    entry.key == grouped[topicKey]!.length - 1
-                                    ? 0
-                                    : 8,
-                              ),
-                              child: _SupportThreadTile(
-                                currentUser: currentUser,
-                                thread: thread,
-                                isUnread: isThreadUnread(thread),
-                                isSelected:
-                                    normalizeId(thread.id) ==
-                                    normalizeId(selectedThreadId),
-                                onTap: () => onSelectThread(thread),
-                              ),
-                            );
-                          },
-                        ),
-                        if (topicKey != topicKeys.last)
-                          const SizedBox(height: 14),
+                          LazySliverList(
+                            items: grouped[topicKey]!
+                                .take(visibleCount)
+                                .toList()
+                                .asMap()
+                                .entries,
+                            itemBuilder: (context, entry) {
+                              final thread = entry.value;
+                              return Padding(
+                                padding: EdgeInsets.only(
+                                  bottom:
+                                      entry.key == grouped[topicKey]!.length - 1
+                                      ? 0
+                                      : 8,
+                                ),
+                                child: _SupportThreadTile(
+                                  currentUser: currentUser,
+                                  thread: thread,
+                                  isUnread: isThreadUnread(thread),
+                                  isSelected:
+                                      normalizeId(thread.id) ==
+                                      normalizeId(selectedThreadId),
+                                  onTap: () => onSelectThread(thread),
+                                ),
+                              );
+                            },
+                          ),
+                          if (topicKey != topicKeys.last)
+                            const SizedBox(height: 14),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
         ),
@@ -1714,63 +1721,73 @@ class _AdminSupportThreadList extends StatelessWidget {
                           ),
                         ),
                       )
-                    : ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(
-                          _horizontalInset,
-                          20,
-                          _horizontalInset,
-                          16,
-                        ),
+                    : ProgressiveList(
+                        key: ValueKey('support-users:$searchQuery'),
                         itemCount: matchingUsers.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final user = matchingUsers[index];
-                          final thread =
-                              latestThreadByUserId[normalizeId(user.id) ?? ''];
-                          final normalizedUserId = normalizeId(user.id);
-                          final isSelected =
-                              normalizeId(selectedDraftUserId) ==
-                                  normalizedUserId ||
-                              (thread != null &&
-                                  (normalizeId(thread.id) ==
-                                          normalizeId(selectedThreadId) ||
-                                      normalizeId(thread.requesterUserId) ==
-                                          normalizeId(selectedDraftUserId)));
-                          return _SupportUserThreadTile(
-                            currentUser: currentUser,
-                            user: user,
-                            thread: thread,
-                            isUnread: thread != null && isThreadUnread(thread),
-                            isSelected: isSelected,
-                            onTap: () => onSelectUser(user),
-                          );
-                        },
+                        builder: (visibleCount) => ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(
+                            _horizontalInset,
+                            20,
+                            _horizontalInset,
+                            16,
+                          ),
+                          itemCount: visibleCount,
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final user = matchingUsers[index];
+                            final thread =
+                                latestThreadByUserId[normalizeId(user.id) ??
+                                    ''];
+                            final normalizedUserId = normalizeId(user.id);
+                            final isSelected =
+                                normalizeId(selectedDraftUserId) ==
+                                    normalizedUserId ||
+                                (thread != null &&
+                                    (normalizeId(thread.id) ==
+                                            normalizeId(selectedThreadId) ||
+                                        normalizeId(thread.requesterUserId) ==
+                                            normalizeId(selectedDraftUserId)));
+                            return _SupportUserThreadTile(
+                              currentUser: currentUser,
+                              user: user,
+                              thread: thread,
+                              isUnread:
+                                  thread != null && isThreadUnread(thread),
+                              isSelected: isSelected,
+                              onTap: () => onSelectUser(user),
+                            );
+                          },
+                        ),
                       ))
               : threads.isEmpty
               ? const SizedBox.shrink()
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(
-                    _horizontalInset,
-                    20,
-                    _horizontalInset,
-                    16,
-                  ),
+              : ProgressiveList(
+                  key: ValueKey('support-threads'),
                   itemCount: threads.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final thread = threads[index];
-                    return _SupportThreadTile(
-                      currentUser: currentUser,
-                      thread: thread,
-                      requesterUser:
-                          usersById[normalizeId(thread.requesterUserId)],
-                      isUnread: isThreadUnread(thread),
-                      isSelected:
-                          normalizeId(thread.id) ==
-                          normalizeId(selectedThreadId),
-                      onTap: () => onSelect(thread),
-                    );
-                  },
+                  builder: (visibleCount) => ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(
+                      _horizontalInset,
+                      20,
+                      _horizontalInset,
+                      16,
+                    ),
+                    itemCount: visibleCount,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final thread = threads[index];
+                      return _SupportThreadTile(
+                        currentUser: currentUser,
+                        thread: thread,
+                        requesterUser:
+                            usersById[normalizeId(thread.requesterUserId)],
+                        isUnread: isThreadUnread(thread),
+                        isSelected:
+                            normalizeId(thread.id) ==
+                            normalizeId(selectedThreadId),
+                        onTap: () => onSelect(thread),
+                      );
+                    },
+                  ),
                 ),
         ),
       ],
@@ -2346,108 +2363,120 @@ class _SupportChatPanelState extends State<_SupportChatPanel> {
                       }
                       return Container(
                         color: const Color(0xFFF8F7FC),
-                        child: ListView.builder(
-                          // Without a key of its own this list shares one
-                          // storage slot with every other unkeyed scrollable on
-                          // the page, so a conversation that was scrolled deep
-                          // handed its position to the next one opened.
-                          key: PageStorageKey<String>(
-                            'support-conversation:'
-                            '${widget.currentUser.id ?? 'guest'}:'
-                            '${widget.thread?.id ?? 'draft'}',
+                        child: ProgressiveList(
+                          key: ValueKey(
+                            'support-messages:${widget.thread?.id}',
                           ),
-                          controller: _scrollController,
-                          // Bottom-anchored, the way a conversation reads. The
-                          // list starts on the newest message instead of the
-                          // oldest, so opening a chat never scrolls at all.
-                          reverse: true,
-                          padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
                           itemCount: messages.length,
-                          itemBuilder: (context, index) {
-                            // With reverse, index 0 is drawn at the bottom, so
-                            // the visual position maps back to the message
-                            // order the grouping helpers already expect.
-                            final messageIndex = messages.length - 1 - index;
-                            final message = messages[messageIndex];
-                            final isMine =
-                                normalizeId(message.senderUserId) ==
-                                normalizeId(widget.currentUser.id);
-                            final nextMessage =
-                                messageIndex < messages.length - 1
-                                ? messages[messageIndex + 1]
-                                : null;
-                            final showTimestampHeader =
-                                _shouldShowSupportMessageTimestampHeader(
-                                  messages: messages,
-                                  index: messageIndex,
-                                );
-                            final isFollowedBySameVisualGroup =
-                                nextMessage != null &&
-                                _isSameSupportMessageVisualGroup(
-                                  current: message,
-                                  next: nextMessage,
-                                );
-                            return Column(
-                              children: [
-                                if (showTimestampHeader) ...[
-                                  Center(
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(bottom: 6),
-                                      child: Text(
-                                        _supportMessageTimestampForBubble(
-                                          message,
+                          builder: (visibleCount) => ListView.builder(
+                            // Without a key of its own this list shares one
+                            // storage slot with every other unkeyed scrollable on
+                            // the page, so a conversation that was scrolled deep
+                            // handed its position to the next one opened.
+                            key: PageStorageKey<String>(
+                              'support-conversation:'
+                              '${widget.currentUser.id ?? 'guest'}:'
+                              '${widget.thread?.id ?? 'draft'}',
+                            ),
+                            controller: _scrollController,
+                            // Bottom-anchored, the way a conversation reads. The
+                            // list starts on the newest message instead of the
+                            // oldest, so opening a chat never scrolls at all.
+                            reverse: true,
+                            padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+                            itemCount: visibleCount,
+                            itemBuilder: (context, index) {
+                              // With reverse, index 0 is drawn at the bottom, so
+                              // the visual position maps back to the message
+                              // order the grouping helpers already expect.
+                              final messageIndex = messages.length - 1 - index;
+                              final message = messages[messageIndex];
+                              final isMine =
+                                  normalizeId(message.senderUserId) ==
+                                  normalizeId(widget.currentUser.id);
+                              final nextMessage =
+                                  messageIndex < messages.length - 1
+                                  ? messages[messageIndex + 1]
+                                  : null;
+                              final showTimestampHeader =
+                                  _shouldShowSupportMessageTimestampHeader(
+                                    messages: messages,
+                                    index: messageIndex,
+                                  );
+                              final isFollowedBySameVisualGroup =
+                                  nextMessage != null &&
+                                  _isSameSupportMessageVisualGroup(
+                                    current: message,
+                                    next: nextMessage,
+                                  );
+                              return Column(
+                                children: [
+                                  if (showTimestampHeader) ...[
+                                    Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 6,
                                         ),
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: AppColors.primaryColor
-                                              .withValues(alpha: 0.64),
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
+                                        child: Text(
+                                          _supportMessageTimestampForBubble(
+                                            message,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: AppColors.primaryColor
+                                                .withValues(alpha: 0.64),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                ],
-                                Padding(
-                                  padding: EdgeInsets.only(
-                                    bottom: messageIndex == messages.length - 1
-                                        ? 0
-                                        : (isFollowedBySameVisualGroup
-                                              ? 6
-                                              : 12),
-                                  ),
-                                  child: _SupportMessageBubble(
-                                    currentUser: widget.currentUser,
-                                    primaryCounterpartUserId:
-                                        widget.counterpartUser?.id ??
-                                        widget.thread?.requesterUserId ??
-                                        widget.draftUser?.id,
-                                    message: message,
-                                    senderUser:
-                                        widget.usersById[normalizeId(
-                                          message.senderUserId,
-                                        )],
-                                    isMine: isMine,
-                                    showSenderMeta:
-                                        _shouldShowSupportMessageSenderMeta(
-                                          messages: messages,
-                                          index: messageIndex,
-                                          currentUser: widget.currentUser,
-                                          primaryCounterpartUserId:
-                                              widget.counterpartUser?.id ??
-                                              widget.thread?.requesterUserId ??
-                                              widget.draftUser?.id,
-                                        ),
-                                    showAvatar: _shouldShowSupportMessageAvatar(
-                                      messages: messages,
-                                      index: messageIndex,
+                                  ],
+                                  Padding(
+                                    padding: EdgeInsets.only(
+                                      bottom:
+                                          messageIndex == messages.length - 1
+                                          ? 0
+                                          : (isFollowedBySameVisualGroup
+                                                ? 6
+                                                : 12),
+                                    ),
+                                    child: _SupportMessageBubble(
                                       currentUser: widget.currentUser,
+                                      primaryCounterpartUserId:
+                                          widget.counterpartUser?.id ??
+                                          widget.thread?.requesterUserId ??
+                                          widget.draftUser?.id,
+                                      message: message,
+                                      senderUser:
+                                          widget.usersById[normalizeId(
+                                            message.senderUserId,
+                                          )],
+                                      isMine: isMine,
+                                      showSenderMeta:
+                                          _shouldShowSupportMessageSenderMeta(
+                                            messages: messages,
+                                            index: messageIndex,
+                                            currentUser: widget.currentUser,
+                                            primaryCounterpartUserId:
+                                                widget.counterpartUser?.id ??
+                                                widget
+                                                    .thread
+                                                    ?.requesterUserId ??
+                                                widget.draftUser?.id,
+                                          ),
+                                      showAvatar:
+                                          _shouldShowSupportMessageAvatar(
+                                            messages: messages,
+                                            index: messageIndex,
+                                            currentUser: widget.currentUser,
+                                          ),
                                     ),
                                   ),
-                                ),
-                              ],
-                            );
-                          },
+                                ],
+                              );
+                            },
+                          ),
                         ),
                       );
                     },

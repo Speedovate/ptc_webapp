@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/widgets/shared/app_selectable_dialog.dart';
 import 'dart:async';
 
@@ -390,14 +391,14 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(24),
           ),
-          title: const SelectableText(
+          title: const AppSelectableText(
             'Account Has Been Created',
             style: TextStyle(
               color: AppColors.textPrimary,
               fontWeight: FontWeight.w800,
             ),
           ),
-          content: const SelectableText(
+          content: const AppSelectableText(
             'Your account was created successfully. Please contact your admin so they can activate your driver or helper account.',
             style: TextStyle(color: AppColors.textPrimary, height: 1.4),
           ),

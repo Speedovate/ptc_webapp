@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/widgets/shared/app_page_loading.dart';
@@ -129,7 +130,7 @@ class AdminModalShell extends StatelessWidget {
                               )
                             : selectable
                             ? Text(title, style: theme.textTheme.titleLarge)
-                            : SelectableText(
+                            : AppSelectableText(
                                 title,
                                 style: theme.textTheme.titleLarge,
                               ),

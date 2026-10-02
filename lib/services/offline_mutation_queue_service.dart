@@ -3257,7 +3257,13 @@ class OfflineMutationQueueService {
             entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
             entry.collectionKey == 'bookings' &&
             lastError.contains('chassis is active on another booking');
+        final legacyConnectionFailure =
+            !entry.bookingConnectionFailureRechecked &&
+            entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+            entry.collectionKey == 'bookings' &&
+            lastError.trim().toLowerCase() == 'connection failed.';
         final legacyRecovery =
+            legacyConnectionFailure ||
             (!entry.bookingStartArchiveRechecked &&
                 hasBookingConflict &&
                 entry.payload['client_status'] == 'ongoing') ||
@@ -3290,6 +3296,9 @@ class OfflineMutationQueueService {
             bookingDeliveryHistoryRechecked: true,
             bookingRepeatedDeliveryRechecked: true,
             bookingStartArchiveRechecked: true,
+            bookingConnectionFailureRechecked:
+                legacyConnectionFailure ||
+                entry.bookingConnectionFailureRechecked,
             bookingPhotoRechecked:
                 hasBookingConflict || entry.bookingPhotoRechecked,
             bookingMetadataRechecked:
@@ -3771,7 +3780,8 @@ class OfflineMutationQueueService {
 
   bool _isRetryable(String message) {
     final normalized = message.trim().toLowerCase();
-    return normalized.contains('internet connection') ||
+    return normalized == 'connection failed.' ||
+        normalized.contains('internet connection') ||
         normalized.contains('temporarily unavailable') ||
         normalized.contains('request took too long') ||
         normalized.contains('try again');
@@ -3827,6 +3837,7 @@ class _OfflineMutationEntry {
     this.bookingDeliveryHistoryRechecked = false,
     this.bookingRepeatedDeliveryRechecked = false,
     this.bookingStartArchiveRechecked = false,
+    this.bookingConnectionFailureRechecked = false,
     this.catalogPredecessorVersions = const [],
     // A user entry only replays `is_online` when presence was the point of the
     // edit. Older persisted entries have no flag, so they keep the safe default
@@ -3863,6 +3874,7 @@ class _OfflineMutationEntry {
   final bool bookingDeliveryHistoryRechecked;
   final bool bookingRepeatedDeliveryRechecked;
   final bool bookingStartArchiveRechecked;
+  final bool bookingConnectionFailureRechecked;
   final List<String> catalogPredecessorVersions;
 
   /// True when this entry's `is_online` value is an intentional presence change
@@ -3893,6 +3905,7 @@ class _OfflineMutationEntry {
     bool? bookingDeliveryHistoryRechecked,
     bool? bookingRepeatedDeliveryRechecked,
     bool? bookingStartArchiveRechecked,
+    bool? bookingConnectionFailureRechecked,
     bool? replayPresence,
     Map<String, dynamic>? basePayload,
     String? baseUpdatedAt,
@@ -3943,6 +3956,9 @@ class _OfflineMutationEntry {
       bookingDeliveryHistoryRechecked:
           bookingDeliveryHistoryRechecked ??
           this.bookingDeliveryHistoryRechecked,
+      bookingConnectionFailureRechecked:
+          bookingConnectionFailureRechecked ??
+          this.bookingConnectionFailureRechecked,
       catalogPredecessorVersions: catalogPredecessorVersions,
       replayPresence: replayPresence ?? this.replayPresence,
       basePayload: basePayload ?? this.basePayload,
@@ -3976,6 +3992,7 @@ class _OfflineMutationEntry {
       'booking_delivery_history_rechecked': bookingDeliveryHistoryRechecked,
       'booking_repeated_delivery_rechecked': bookingRepeatedDeliveryRechecked,
       'booking_start_archive_rechecked': bookingStartArchiveRechecked,
+      'booking_connection_failure_rechecked': bookingConnectionFailureRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
       'replay_presence': replayPresence,
@@ -4018,6 +4035,8 @@ class _OfflineMutationEntry {
           map['booking_repeated_delivery_rechecked'] == true,
       bookingDeliveryHistoryRechecked:
           map['booking_delivery_history_rechecked'] == true,
+      bookingConnectionFailureRechecked:
+          map['booking_connection_failure_rechecked'] == true,
       bookingMetadataRechecked: map['booking_metadata_rechecked'] == true,
       bookingPhotoRechecked: map['booking_photo_rechecked'] == true,
       bookingEditArchiveRechecked:

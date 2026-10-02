@@ -94,17 +94,31 @@ Future<void> main() async {
     OfflineMutationQueueService makeQueue(bool Function() online) {
       final scope = account;
       // A reopened app no longer has the previous app's active retry timers.
-      return OfflineMutationQueueService(
+      final queue = OfflineMutationQueueService(
         firestore: db,
         backend: disk,
         isOnline: () => scope == account && online(),
       );
+      disposers.add(queue.dispose);
+      return queue;
     }
 
     Future<void> reset() async {
       await setOnline(true);
       account =
           'emulator_${DateTime.now().microsecondsSinceEpoch}_${sequence++}';
+      // Auth scenarios start real session validation. Later scenarios must use
+      // an existing active account, not an ID absent from both server and cache.
+      final sessionUser = <String, dynamic>{
+        'id': account,
+        'name': 'Emulator scenario account',
+        'role': 'admin',
+        'is_active': true,
+      };
+      await db.collection('users').doc(account).set(sessionUser);
+      await FirestoreCacheStore.instance.writeDocumentMaps('users', [
+        sessionUser,
+      ]);
       final auth = createAuthStorageBackend();
       await auth.initialize();
       await auth.writeString('paltranco_current_user_id', account);
@@ -113,6 +127,10 @@ Future<void> main() async {
     }
 
     Future<void> cleanup() async {
+      for (final dispose in disposers) {
+        dispose();
+      }
+      disposers.clear();
       await setOnline(true);
       await disk.writeStringList('offline_mutation_queue_v1::$account', []);
     }
@@ -353,6 +371,18 @@ Future<void> main() async {
             'notes': 'offline edit',
           },
           baseUpdatedAt: old,
+        );
+        expect(
+          await createAuthStorageBackend().readString(
+            'paltranco_current_user_id',
+          ),
+          account,
+          reason: 'Conflict fixture must still own the active account',
+        );
+        expect(
+          await queue.readPendingItems(account),
+          hasLength(1),
+          reason: 'Conflict payload must be persisted before reconnect',
         );
         await setOnline(true);
         final reopened = makeQueue(() => true);

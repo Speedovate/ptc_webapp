@@ -87,6 +87,8 @@ String? bookingPmAssignmentIssue(Booking booking, Iterable<VehicleMake> makes) {
             '${label(make)}: Driver ${make.driver?.id ?? 'not assigned'}, Helper ${make.helper?.id ?? 'not assigned'}',
       )
       .join('; ');
-  return 'No PM assigned; no PM has Driver $driver + Helper $helper'
-      '${details.isEmpty ? '' : '. Current assignments: $details'}';
+  return 'Truck not recorded. Select the truck used for this booking. '
+      'Crew: Driver $driver + Helper $helper. '
+      'This pair does not match a current truck assignment'
+      '${details.isEmpty ? '.' : '. Current assignments: $details'}';
 }
