@@ -501,11 +501,20 @@ Map<String, dynamic>? reconcileBookingHistory(
     if (!_equal({...local, 'fields': fields}, remote)) return null;
     normalized['$key'] = remote;
   }
-  final repeatedDelivery = _reconcileRepeatedDelivery(
+  final historicalStart = _reconcileHistoricalStart(
     server,
     pending,
     normalized,
     baseUpdatedAt!,
+  );
+  if (historicalStart != null) {
+    return historicalStart;
+  }
+  final repeatedDelivery = _reconcileRepeatedDelivery(
+    server,
+    pending,
+    normalized,
+    baseUpdatedAt,
   );
   if (repeatedDelivery != null) return repeatedDelivery;
   final archived = _reconcileSupersededAssignment(
@@ -853,5 +862,160 @@ Map<String, dynamic>? _reconcileSupersededAssignment(
   return {
     ...server,
     'status_outputs': {...history, added.single: local},
+  };
+}
+
+/// Archive an older empty Start Delivery form when the same crew subsequently
+/// started and delivered this exact booking. Never restore stale live fields.
+Map<String, dynamic>? _reconcileHistoricalStart(
+  Map<String, dynamic> server,
+  Map<String, dynamic> pending,
+  Map<String, dynamic> normalized,
+  String baseUpdatedAt,
+) {
+  for (final key in ['client_status', 'driver_status', 'helper_status']) {
+    if (pending[key] != 'ongoing' || server[key] != 'delivered') {
+      return null;
+    }
+  }
+  if (pending['delivered_at'] != null) {
+    return null;
+  }
+  final history = server['status_outputs'] as Map;
+  final localEvents = normalized.entries
+      .where(
+        (event) =>
+            event.value is Map &&
+            _bookingInstant(event.value['submitted_at']) ==
+                _bookingInstant(pending['updated_at']),
+      )
+      .toList();
+  if (localEvents.length != 1) {
+    return null;
+  }
+  final local = localEvents.single;
+  bool isStart(Object? value) {
+    if (value is! Map) {
+      return false;
+    }
+    final form = value['status_form'];
+    return value['status_key'] == 'assigned' &&
+        value['fields'] is Map &&
+        (value['fields'] as Map).isEmpty &&
+        form is Map &&
+        form['is_main_form'] == true &&
+        form['current_status_key'] == 'assigned' &&
+        form['next_status_key'] == 'ongoing';
+  }
+
+  if (!isStart(local.value)) {
+    return null;
+  }
+  final actor = local.value['submitted_by'];
+  if (actor == null ||
+      ![pending['driver_id'], pending['helper_id']].contains(actor)) {
+    return null;
+  }
+  for (final key in ['driver_id', 'helper_id']) {
+    if (pending[key] == null || !_equal(pending[key], server[key])) {
+      return null;
+    }
+  }
+  if (normalized.keys.any(
+    (key) => key != local.key && !history.containsKey(key),
+  )) {
+    return null;
+  }
+  final remoteEvents = history.entries
+      .where((event) => !normalized.containsKey(event.key))
+      .toList();
+  if (remoteEvents.length != 2) {
+    return null;
+  }
+  final starts = remoteEvents.where((event) => isStart(event.value)).toList();
+  if (starts.length != 1) {
+    return null;
+  }
+  final delivery = remoteEvents
+      .singleWhere((event) => event.key != starts.single.key)
+      .value;
+  if (delivery is! Map ||
+      delivery['status_form'] is! Map ||
+      delivery['fields'] is! Map) {
+    return null;
+  }
+  final form = delivery['status_form'] as Map;
+  final fields = delivery['fields'] as Map;
+  if (delivery['status_key'] != 'ongoing' ||
+      form['current_status_key'] != 'ongoing' ||
+      form['next_status_key'] != 'delivered' ||
+      form['is_main_form'] != true ||
+      '${fields['delivery_form_number'] ?? ''}'.isEmpty ||
+      fields['delivery_form_photo'] is! Map) {
+    return null;
+  }
+  final base = _bookingInstant(baseUpdatedAt);
+  final localAt = _bookingInstant(local.value['submitted_at']);
+  final startAt = _bookingInstant(starts.single.value['submitted_at']);
+  final deliveryAt = _bookingInstant(delivery['submitted_at']);
+  final serverAt = _bookingInstant(server['updated_at']);
+  if (base == null ||
+      localAt == null ||
+      startAt == null ||
+      deliveryAt == null ||
+      serverAt == null ||
+      !localAt.isAfter(base) ||
+      !startAt.isAfter(localAt) ||
+      !deliveryAt.isAfter(startAt) ||
+      serverAt.isBefore(deliveryAt) ||
+      deliveryAt != _bookingInstant(server['delivered_at'])) {
+    return null;
+  }
+  if (!_equal(server['chassis_id'], pending['chassis_id'])) {
+    if (server['chassis_id'] != null || pending['chassis_id'] == null) {
+      return null;
+    }
+    final assignments = normalized.values
+        .whereType<Map>()
+        .where(
+          (event) =>
+              event['fields'] is Map &&
+              (event['fields'] as Map).containsKey('chassis_id'),
+        )
+        .toList();
+    if (assignments.isEmpty ||
+        assignments.any(
+          (event) =>
+              event['fields']['chassis_id'] != pending['chassis_id'] ||
+              _bookingInstant(event['submitted_at']) == null ||
+              _bookingInstant(event['submitted_at'])!.isAfter(base),
+        )) {
+      return null;
+    }
+  }
+  if (!_equal(server['vehicle_make_id'], pending['vehicle_make_id']) &&
+      (pending['vehicle_make_id'] != null ||
+          server['vehicle_make_id'] == null ||
+          fields['vehicle_make_id'] != server['vehicle_make_id'])) {
+    return null;
+  }
+  if (!_equal(server['billing_status'], pending['billing_status']) &&
+      !(pending['billing_status'] == 'unbilled' &&
+          server['billing_status'] == 'billed')) {
+    return null;
+  }
+  final allowed = {
+    ..._bookingWorkflowFields,
+    'vehicle_make_id',
+    'billing_status',
+  };
+  for (final key in {...server.keys, ...pending.keys}) {
+    if (!allowed.contains(key) && !_equal(server[key], pending[key])) {
+      return null;
+    }
+  }
+  return {
+    ...server,
+    'status_outputs': {...history, local.key: local.value},
   };
 }

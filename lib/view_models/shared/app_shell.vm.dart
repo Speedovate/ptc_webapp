@@ -30,6 +30,7 @@ class AppShellViewModel extends BaseViewModel {
   StreamSubscription<void>? _sessionInvalidationSubscription;
   static const Duration _startupStepTimeout = Duration(seconds: 8);
   int _sessionEpoch = 0;
+  String? _activityUserId;
 
   Future<void> initialize() async {
     _log('initialize start loggedIn=false');
@@ -48,6 +49,7 @@ class AppShellViewModel extends BaseViewModel {
         },
       );
 
+      _recordOpeningActivity(currentUser);
       _roleAccessService.setCurrentUser(currentUser);
       unawaited(_chassisCheckAlertService.startForUser(currentUser));
       unawaited(_bookingChatAlertService.startForUser(currentUser));
@@ -102,6 +104,7 @@ class AppShellViewModel extends BaseViewModel {
     );
     isLoading = true;
     currentUser = user;
+    _recordOpeningActivity(user);
     _roleAccessService.setCurrentUser(user);
     unawaited(_chassisCheckAlertService.startForUser(user));
     unawaited(_bookingChatAlertService.startForUser(user));
@@ -140,6 +143,7 @@ class AppShellViewModel extends BaseViewModel {
       'logout start loggedIn=${currentUser != null} user=${currentUser?.id ?? "-"} role=${currentUser?.role ?? "-"}',
     );
     _sessionEpoch++;
+    _activityUserId = null;
     await _sessionInvalidationSubscription?.cancel();
     _sessionInvalidationSubscription = null;
     currentUser = null;
@@ -294,10 +298,30 @@ class AppShellViewModel extends BaseViewModel {
     return refreshedUser.copyWith(photo: fallbackPhoto);
   }
 
+  void _recordOpeningActivity(UserModel? user) {
+    final id = user?.id;
+    final recorder = _repository;
+    if (id == null ||
+        id.isEmpty ||
+        id == _activityUserId ||
+        recorder is! UserActivityRecorder) {
+      return;
+    }
+    _activityUserId = id;
+    unawaited(
+      (recorder as UserActivityRecorder)
+          .recordUserActivity(id, DateTime.now().toUtc())
+          .catchError((Object error, StackTrace stack) {
+            // Activity must never hold the splash or prevent opening a session.
+          }),
+    );
+  }
+
   void _startWarmupForAuthenticatedMainUi(
     UserModel? resolvedUser, {
     required String source,
   }) {
+    _recordOpeningActivity(resolvedUser);
     // Non-admin homes start broad warmup after their essential data resolves.
     if (resolvedUser == null ||
         !_roleAccessService.usesAdminShell(role: resolvedUser.role)) {

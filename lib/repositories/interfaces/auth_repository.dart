@@ -48,3 +48,8 @@ class AuthFailure implements Exception {
   @override
   String toString() => message;
 }
+
+/// Optional capability for repositories that persist session-opening activity.
+abstract interface class UserActivityRecorder {
+  Future<void> recordUserActivity(String userId, DateTime openedAt);
+}

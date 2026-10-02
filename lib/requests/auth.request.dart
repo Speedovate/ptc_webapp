@@ -25,7 +25,7 @@ import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/utils/functions.dart';
 
-class AuthRequest implements AuthRepository {
+class AuthRequest implements AuthRepository, UserActivityRecorder {
   AuthRequest({
     FirebaseFirestore? firestore,
     VehicleRequest? vehicleRequest,
@@ -115,6 +115,10 @@ class AuthRequest implements AuthRepository {
 
   CollectionReference<Map<String, dynamic>> get _clientMembersCollection =>
       _firestore.collection('client_members');
+
+  @override
+  Future<void> recordUserActivity(String userId, DateTime openedAt) =>
+      _offlineMutationQueueService.recordUserActivity(userId, openedAt);
 
   @override
   Future<void> initialize() async {

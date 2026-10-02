@@ -30,13 +30,18 @@ class _BufferedTransaction implements Transaction {
 
   @override
   Transaction set<T>(DocumentReference<T> ref, T data, [SetOptions? options]) {
-    writes.add(() => ref.set(data, options));
+    // Firestore serialization restores string-keyed maps. The fake retains
+    // Map<dynamic, dynamic> from merges and then fails its own nested-update
+    // cast when a later photo transaction patches a dotted field path.
+    writes.add(() => ref.set(_stringKeyedMaps(data) as T, options));
     return this;
   }
 
   @override
   Transaction update(DocumentReference ref, Map<Object, Object?> data) {
-    writes.add(() => ref.update(data));
+    writes.add(
+      () => ref.update(_stringKeyedMaps(data) as Map<Object, Object?>),
+    );
     return this;
   }
 
@@ -45,4 +50,17 @@ class _BufferedTransaction implements Transaction {
     writes.add(ref.delete);
     return this;
   }
+}
+
+Object? _stringKeyedMaps(Object? value) {
+  if (value is Map && value.keys.every((key) => key is String)) {
+    return <String, dynamic>{
+      for (final entry in value.entries)
+        entry.key as String: _stringKeyedMaps(entry.value),
+    };
+  }
+  if (value is List) {
+    return value.map(_stringKeyedMaps).toList();
+  }
+  return value;
 }

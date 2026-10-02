@@ -22,7 +22,11 @@ class KpiUtilizationView extends StatefulWidget {
     this.onOpenBooking,
     this.periodTrailing,
     this.loading = false,
+    this.selectedMonth,
+    this.onMonthChanged,
   });
+  final DateTime? selectedMonth;
+  final ValueChanged<DateTime>? onMonthChanged;
   final Widget? periodTrailing;
   final bool loading;
   final List<VehicleMake> makes;
@@ -36,7 +40,7 @@ class KpiUtilizationView extends StatefulWidget {
 
 class _KpiUtilizationViewState extends State<KpiUtilizationView> {
   KpiUtilizationMode mode = KpiUtilizationMode.daily;
-  DateTime month = kpiDate(DateTime.now());
+  late DateTime month = widget.selectedMonth ?? kpiDate(DateTime.now());
   String search = '';
   int visible = 15;
   final toolbarKey = GlobalKey();
@@ -50,7 +54,17 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
   @override
   void didUpdateWidget(covariant KpiUtilizationView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.bookings != widget.bookings ||
+    final incomingMonth = widget.selectedMonth;
+    final monthChanged =
+        incomingMonth != null &&
+        (incomingMonth.year != month.year ||
+            incomingMonth.month != month.month);
+    if (monthChanged) {
+      month = incomingMonth;
+      visible = 15;
+    }
+    if (monthChanged ||
+        oldWidget.bookings != widget.bookings ||
         oldWidget.makes != widget.makes) {
       calculate();
     }
@@ -66,11 +80,19 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
     );
   }
 
-  void change(VoidCallback action) => setState(() {
-    action();
-    visible = 15;
-    calculate();
-  });
+  void change(VoidCallback action) {
+    final previousMonth = month;
+    setState(() {
+      action();
+      visible = 15;
+      calculate();
+    });
+    if (previousMonth.year != month.year ||
+        previousMonth.month != month.month) {
+      widget.onMonthChanged?.call(month);
+    }
+  }
+
   String label(KpiUtilizationMode value) => switch (value) {
     KpiUtilizationMode.daily => 'Daily',
     KpiUtilizationMode.weekly => 'Weekly',

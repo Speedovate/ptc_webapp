@@ -520,6 +520,81 @@ class OfflineMutationQueueService {
     );
   }
 
+  /// Activity is a narrow, monotonic timestamp patch, never a profile upsert.
+  Future<void> recordUserActivity(String userId, DateTime openedAt) {
+    return withAccountScope(() async {
+      await initialize();
+      final entry = _OfflineMutationEntry(
+        id: _nextEntryId('user_activity'),
+        kind: _OfflineMutationKind.userActivity,
+        collectionKey: 'users',
+        targetId: userId,
+        payload: {'updated_at': openedAt.toUtc().toIso8601String()},
+        createdAtIso: openedAt.toUtc().toIso8601String(),
+        retryCount: 0,
+      );
+      final pending = await _readEntries();
+      final hasEarlierUserEdit = pending.any(
+        (item) =>
+            item.targetId == userId &&
+            (item.collectionKey == 'users' ||
+                item.kind == _OfflineMutationKind.userUpsert ||
+                item.kind == _OfflineMutationKind.userDelete),
+      );
+      if (_isOnline() && !hasEarlierUserEdit) {
+        try {
+          await _applyUserActivity(entry).timeout(_remoteMutationTimeout);
+          await _publishCollectionVersion('users');
+          return;
+        } catch (_) {
+          // Preserve the original opening time for reconnect/retry.
+        }
+      }
+      await _serializeQueueMutation(() async {
+        final entries = await _readEntries();
+        final existing = entries.where(
+          (item) =>
+              item.kind == _OfflineMutationKind.userActivity &&
+              item.targetId == userId,
+        );
+        if (existing.any(
+          (item) => !DateTime.parse(item.createdAtIso).isBefore(openedAt),
+        )) {
+          return;
+        }
+        entries.removeWhere(
+          (item) =>
+              item.kind == _OfflineMutationKind.userActivity &&
+              item.targetId == userId,
+        );
+        entries.add(entry);
+        await _writeEntries(entries);
+        _setStatus(_snapshotForEntries(entries));
+      });
+      unawaited(flushPendingMutations());
+    });
+  }
+
+  Future<void> _applyUserActivity(_OfflineMutationEntry entry) async {
+    await runTransactionWithOriginalErrors<void>(_firestore, (tx) async {
+      final ref = _usersCollection.doc(entry.targetId);
+      final snapshot = await tx.get(ref);
+      // Opening an old cached session must not recreate a deleted account.
+      if (!snapshot.exists) {
+        return;
+      }
+      final raw = snapshot.data()?['updated_at'];
+      final previous = raw is Timestamp
+          ? raw.toDate()
+          : DateTime.tryParse(raw?.toString() ?? '');
+      final openedAt = DateTime.parse(entry.createdAtIso);
+      if (previous != null && !openedAt.isAfter(previous)) {
+        return;
+      }
+      tx.update(ref, {'updated_at': openedAt.toUtc().toIso8601String()});
+    });
+  }
+
   Future<void> queueUserDelete({required String userId}) async {
     await initialize();
     return _serializeQueueMutation(() async {
@@ -1492,6 +1567,10 @@ class OfflineMutationQueueService {
 
   Future<String?> _applyEntry(_OfflineMutationEntry entry, String scope) async {
     switch (entry.kind) {
+      case _OfflineMutationKind.userActivity:
+        await _applyUserActivity(entry);
+        await _publishCollectionVersion('users');
+        return null;
       case _OfflineMutationKind.userUpsert:
         await _applyVersionedUpsert(_usersCollection, entry);
         await _publishCollectionVersion('users');
@@ -3179,6 +3258,9 @@ class OfflineMutationQueueService {
             entry.collectionKey == 'bookings' &&
             lastError.contains('chassis is active on another booking');
         final legacyRecovery =
+            (!entry.bookingStartArchiveRechecked &&
+                hasBookingConflict &&
+                entry.payload['client_status'] == 'ongoing') ||
             ((!entry.bookingDeliveryHistoryRechecked ||
                     !entry.bookingRepeatedDeliveryRechecked) &&
                 hasBookingConflict &&
@@ -3207,6 +3289,7 @@ class OfflineMutationQueueService {
             bookingEditArchiveRechecked: true,
             bookingDeliveryHistoryRechecked: true,
             bookingRepeatedDeliveryRechecked: true,
+            bookingStartArchiveRechecked: true,
             bookingPhotoRechecked:
                 hasBookingConflict || entry.bookingPhotoRechecked,
             bookingMetadataRechecked:
@@ -3706,6 +3789,7 @@ class OfflineMutationQueueService {
 }
 
 enum _OfflineMutationKind {
+  userActivity,
   userUpsert,
   userDelete,
   bookingBillingStatusUpdate,
@@ -3742,6 +3826,7 @@ class _OfflineMutationEntry {
     this.bookingAssignmentHistoryRechecked = false,
     this.bookingDeliveryHistoryRechecked = false,
     this.bookingRepeatedDeliveryRechecked = false,
+    this.bookingStartArchiveRechecked = false,
     this.catalogPredecessorVersions = const [],
     // A user entry only replays `is_online` when presence was the point of the
     // edit. Older persisted entries have no flag, so they keep the safe default
@@ -3777,6 +3862,7 @@ class _OfflineMutationEntry {
   final bool bookingAssignmentHistoryRechecked;
   final bool bookingDeliveryHistoryRechecked;
   final bool bookingRepeatedDeliveryRechecked;
+  final bool bookingStartArchiveRechecked;
   final List<String> catalogPredecessorVersions;
 
   /// True when this entry's `is_online` value is an intentional presence change
@@ -3806,6 +3892,7 @@ class _OfflineMutationEntry {
     bool? bookingAssignmentHistoryRechecked,
     bool? bookingDeliveryHistoryRechecked,
     bool? bookingRepeatedDeliveryRechecked,
+    bool? bookingStartArchiveRechecked,
     bool? replayPresence,
     Map<String, dynamic>? basePayload,
     String? baseUpdatedAt,
@@ -3848,6 +3935,8 @@ class _OfflineMutationEntry {
           bookingPhotoRechecked ?? this.bookingPhotoRechecked,
       bookingEditArchiveRechecked:
           bookingEditArchiveRechecked ?? this.bookingEditArchiveRechecked,
+      bookingStartArchiveRechecked:
+          bookingStartArchiveRechecked ?? this.bookingStartArchiveRechecked,
       bookingRepeatedDeliveryRechecked:
           bookingRepeatedDeliveryRechecked ??
           this.bookingRepeatedDeliveryRechecked,
@@ -3886,6 +3975,7 @@ class _OfflineMutationEntry {
       'booking_assignment_history_rechecked': bookingAssignmentHistoryRechecked,
       'booking_delivery_history_rechecked': bookingDeliveryHistoryRechecked,
       'booking_repeated_delivery_rechecked': bookingRepeatedDeliveryRechecked,
+      'booking_start_archive_rechecked': bookingStartArchiveRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
       'replay_presence': replayPresence,
@@ -3922,6 +4012,8 @@ class _OfflineMutationEntry {
       chassisConflictRechecked: map['chassis_conflict_rechecked'] == true,
       chassisTransferRechecked: map['chassis_transfer_rechecked'] == true,
       conflictRecoveryAttempted: map['conflict_recovery_attempted'] == true,
+      bookingStartArchiveRechecked:
+          map['booking_start_archive_rechecked'] == true,
       bookingRepeatedDeliveryRechecked:
           map['booking_repeated_delivery_rechecked'] == true,
       bookingDeliveryHistoryRechecked:

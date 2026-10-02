@@ -23,6 +23,71 @@ Booking trip(
   deliveredAt: DateTime.utc(2026, 9, day, 4),
 );
 void main() {
+  testWidgets(
+    'shared month survives view switches and updates in both directions',
+    (tester) async {
+      tester.view.physicalSize = const Size(1500, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var month = DateTime.utc(2026, 9);
+      var utilization = true;
+      late StateSetter update;
+      var notifications = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              update = setState;
+              return Scaffold(
+                body: utilization
+                    ? KpiUtilizationView(
+                        makes: [make],
+                        bookings: [trip('1', 1)],
+                        selectedMonth: month,
+                        onMonthChanged: (value) => setState(() {
+                          month = value;
+                          notifications++;
+                        }),
+                      )
+                    : Text('Overview: ${month.year}-${month.month}'),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Daily · September 2026'), findsOneWidget);
+      final filters = tester.widget<AdminListDynamicFiltersPanel>(
+        find.byType(AdminListDynamicFiltersPanel),
+      );
+      filters.filters
+          .whereType<AdminListDropdownFilterConfig>()
+          .firstWhere((f) => f.label == 'Month')
+          .onChanged('8');
+      await tester.pumpAndSettle();
+      expect(month.month, 8);
+      expect(notifications, 1);
+      update(() => utilization = false);
+      await tester.pumpAndSettle();
+      expect(find.text('Overview: 2026-8'), findsOneWidget);
+      update(() {
+        month = DateTime.utc(2027, 2);
+        utilization = true;
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Daily · February 2027'), findsOneWidget);
+      update(() => month = DateTime.utc(2026, 9));
+      await tester.pumpAndSettle();
+      expect(find.text('Daily · September 2026'), findsOneWidget);
+      expect(
+        notifications,
+        1,
+        reason: 'Parent updates must not trigger callback loops',
+      );
+    },
+  );
+
   test(
     'daily weekly monthly count unique delivered-onwards trips in Philippine time',
     () {

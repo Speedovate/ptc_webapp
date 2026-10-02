@@ -419,8 +419,7 @@ class BookingOfflineUploadQueueService {
     _PendingBookingUploadEntry entry,
     Map<String, dynamic> booking,
   ) {
-    if (!entry.waitingForCommit ||
-        !entry.statusKey.startsWith('ongoing__') ||
+    if (!entry.statusKey.startsWith('ongoing__') ||
         entry.fieldKey != 'delivery_form_photo') {
       return false;
     }
@@ -728,6 +727,7 @@ class BookingOfflineUploadQueueService {
 
     for (final sourceEntry in entries) {
       var entry = sourceEntry;
+      var recoveringHistoricalPhoto = false;
       // A newer photo for this booking must not overtake an unresolved older one.
       if (remaining.any((older) => older.bookingId == entry.bookingId)) {
         remaining.add(entry);
@@ -907,6 +907,7 @@ class BookingOfflineUploadQueueService {
           entry,
           markerData,
         );
+        recoveringHistoricalPhoto = recoverHistoricalPhoto;
         if (_pendingUploadId(markerField) != entry.id &&
             !recoverHistoricalPhoto) {
           // An unrelated newer booking edit does not prove that this staged
@@ -1040,6 +1041,7 @@ class BookingOfflineUploadQueueService {
           );
         } else {
           final shouldKeep =
+              recoveringHistoricalPhoto ||
               entry.waitingForCommit ||
               await _shouldKeepEntryAfterFailure(entry);
           if (shouldKeep) {

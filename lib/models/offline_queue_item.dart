@@ -65,6 +65,7 @@ class OfflineQueueItem {
     'userUpsert' => 'Save user profile',
     'userDelete' => 'Remove user',
     'bookingBillingStatusUpdate' => 'Update booking billing',
+    'userActivity' => 'Update last activity',
     'supportThreadReadMarkerUpsert' => 'Mark support conversation read',
     'chassisAssignment' => 'Save chassis assignment',
     'chassisDelete' => 'Remove chassis',

@@ -610,6 +610,8 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
             Expanded(
               child: utilization
                   ? KpiUtilizationView(
+                      selectedMonth: month,
+                      onMonthChanged: (value) => change(() => month = value),
                       makes: makes,
                       bookings: bookings,
                       periodTrailing: viewSelector(),
