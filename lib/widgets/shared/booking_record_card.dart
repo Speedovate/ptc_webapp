@@ -103,8 +103,7 @@ class BookingRecordCard extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
       child: Builder(
-        builder: (context) => AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
+        builder: (context) => Container(
           width: double.infinity,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(

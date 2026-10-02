@@ -10,7 +10,7 @@ class AdminIconActionButton extends StatefulWidget {
     this.size = 38,
     this.iconSize = 18,
     this.borderRadius = 12,
-    this.animateInteraction = true,
+    this.animateInteraction = false,
   });
 
   final IconData icon;

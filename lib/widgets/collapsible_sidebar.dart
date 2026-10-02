@@ -8,7 +8,7 @@ class CollapsibleSidebar extends StatelessWidget {
     this.width = 260,
     this.color = AppColors.primaryColor,
     this.child,
-    this.duration = const Duration(milliseconds: 240),
+    this.duration = Duration.zero,
   });
 
   final bool isVisible;

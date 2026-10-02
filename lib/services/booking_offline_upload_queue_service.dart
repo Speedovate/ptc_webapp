@@ -448,16 +448,15 @@ class BookingOfflineUploadQueueService {
     final reasonChanged = entry.waitReason != reason.key;
     final escalate =
         entry.lastError == null && waitCount > _escalateWaitAfterCycles;
-    final lastError =
-        entry.lastError ??
-        (escalate
-            ? 'This photo is still waiting: ${reason.explanation}. '
-                  'Open the booking, check the photo field, and retry the upload.'
-            : null);
+    final lastError = (escalate || (reasonChanged && entry.lastError != null))
+        ? 'This photo is still waiting: ${reason.explanation}. '
+              'Open the booking, check the photo field, and retry the upload.'
+        : entry.lastError;
     String? diagnostics = entry.diagnostics;
     final enrich =
         lastError != null &&
-        (!(entry.diagnostics ?? '').contains('photo_dependency_state_v2') ||
+        (reasonChanged ||
+            !(entry.diagnostics ?? '').contains('photo_dependency_state_v2') ||
             (readError != null &&
                 !(entry.diagnostics ?? '').contains('marker_read_failure')));
     if (escalate || enrich) {
@@ -470,6 +469,12 @@ class BookingOfflineUploadQueueService {
                   'offline_mutation_queue_v1::${storageKey.substring('$_storageKey::'.length)}',
             )
             .timeout(_mutationCheckTimeout);
+      } catch (error) {
+        evidence['dependency_evidence_error'] = error.toString();
+      }
+      // Cache evidence can still contain the original delivery action even
+      // when reading the mutation queue fails. Inspect it independently.
+      try {
         final cached = await FirestoreCacheStore.instance
             .readDocumentMaps('bookings')
             .timeout(_localStoreTimeout);
@@ -479,7 +484,7 @@ class BookingOfflineUploadQueueService {
         evidence['cached_booking_available'] = matches.length == 1;
         if (matches.length == 1) evidence['cached_booking'] = matches.single;
       } catch (error) {
-        evidence['dependency_evidence_error'] = error.toString();
+        evidence['cached_booking_evidence_error'] = error.toString();
       }
       diagnostics = await offlineErrorDiagnostics(
         error:

@@ -1233,7 +1233,7 @@ class AdminListActionButton extends StatelessWidget {
     this.size = 40,
     this.iconSize = 18,
     this.borderRadius = 12,
-    this.animateInteraction = true,
+    this.animateInteraction = false,
   });
 
   final IconData icon;

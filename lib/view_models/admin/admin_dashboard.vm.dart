@@ -74,6 +74,10 @@ class AdminDashboardViewModel extends BaseViewModel {
   List<Booking> get completedBookings => List.unmodifiable(_completedBookings);
   UserModel? get currentUser => _currentUser;
   bool get hasResolvedInitialBookings => _hasLoadedOnce;
+  // Offline is not itself evidence that persisted bookings have been read.
+  bool get _sharedBookingsReady =>
+      BookingRequest.hasResolvedBookings &&
+      BookingRequest.hasAuthoritativeBookings;
   String? errorMessage;
   String busyMessage = 'Loading, please wait ...';
   String _searchQuery = '';
@@ -202,7 +206,7 @@ class AdminDashboardViewModel extends BaseViewModel {
     _ensureSupportingSubscriptions();
     busyMessage = 'Loading dashboard ...';
     var overlayHidden = false;
-    var hasSharedBookings = BookingRequest.hasAuthoritativeBookings;
+    var hasSharedBookings = _sharedBookingsReady;
     final hasVisiblePrimaryData =
         _completedBookings.isNotEmpty ||
         _cachedCompletedBookings.isNotEmpty ||
@@ -243,7 +247,7 @@ class AdminDashboardViewModel extends BaseViewModel {
             .catchError((error, stackTrace) {}),
       );
       await _ensureBookingsSubscription();
-      hasSharedBookings = BookingRequest.hasAuthoritativeBookings;
+      hasSharedBookings = _sharedBookingsReady;
       _traceHandoff(
         'subscription ready localCompleted=${_completedBookings.length} '
         'shared=${BookingRequest.hydratedBookingCount} '
@@ -402,7 +406,7 @@ class AdminDashboardViewModel extends BaseViewModel {
         'authoritative=${BookingRequest.hasAuthoritativeBookings} '
         'localBefore=${_completedBookings.length}',
       );
-      if (!BookingRequest.hasAuthoritativeBookings) {
+      if (!_sharedBookingsReady) {
         // The shared stream can emit an empty provisional cache while the
         // first server snapshot is still pending. Do not turn that into an
         // empty-state UI.

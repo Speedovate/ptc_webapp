@@ -33,7 +33,8 @@ bool isSafeBookingStatusContinuation(
   final from = server['client_status'];
   final to = pending['client_status'];
   if (!((from == 'pending' && to == 'assigned') ||
-      (from == 'assigned' && to == 'ongoing'))) {
+      (from == 'assigned' && to == 'ongoing') ||
+      (from == 'ongoing' && to == 'delivered'))) {
     return false;
   }
   if (action['status_key'] != from ||
@@ -63,6 +64,37 @@ bool isSafeBookingStatusContinuation(
     'driver_status',
     'helper_status',
   };
+  if (from == 'ongoing') {
+    // A delivered action must carry its original form and timestamp. Chassis
+    // ownership is still checked by the caller's Firestore transaction.
+    final deliveredAt = _bookingInstant(pending['delivered_at']);
+    if (server['delivered_at'] != null ||
+        deliveredAt == null ||
+        deliveredAt != _bookingInstant(action['submitted_at']) ||
+        '${fields['delivery_form_number'] ?? ''}'.trim().isEmpty ||
+        fields['delivery_form_photo'] is! Map) {
+      return false;
+    }
+    final photo = fields['delivery_form_photo'] as Map;
+    final pendingPhoto =
+        photo['pending_upload'] == true &&
+        '${photo['pending_upload_id'] ?? ''}'.isNotEmpty;
+    final uploadedPhoto =
+        '${photo['storage_path'] ?? ''}'.startsWith(
+          'bookings/${server['id']}/status_outputs/${added.single}/delivery_form_photo/',
+        ) &&
+        '${photo['download_url'] ?? ''}'.startsWith('https://');
+    if (!pendingPhoto && !uploadedPhoto) return false;
+    if (!_equal(server['chassis_id'], pending['chassis_id'])) {
+      if (server['chassis_id'] != null ||
+          pending['chassis_id'] == null ||
+          !_equal(fields['chassis_id'], pending['chassis_id'])) {
+        return false;
+      }
+      allowed.add('chassis_id');
+    }
+    allowed.add('delivered_at');
+  }
   if (from == 'pending') {
     for (final key in ['driver_id', 'helper_id', 'chassis_id']) {
       if (!_equal(server[key], pending[key])) {
@@ -534,6 +566,49 @@ Map<String, dynamic>? reconcileBookingHistory(
     return Map<String, dynamic>.from(server);
   }
   if (added.length != 1) return null;
+  final delivery = normalized[added.single];
+  if (server['chassis_id'] == null &&
+      pending['chassis_id'] != null &&
+      server['client_status'] == 'ongoing' &&
+      pending['client_status'] == 'delivered' &&
+      delivery is Map &&
+      delivery['fields'] is Map &&
+      !(delivery['fields'] as Map).containsKey('chassis_id')) {
+    // A delivery form that did not select a chassis must not resurrect the
+    // snapshot's old assignment after the server released it. Require that
+    // exact assignment in unchanged shared history predating the edit base.
+    final assignments = <Map>[];
+    for (final key in before.keys) {
+      final event = before[key];
+      if (event is Map &&
+          event['fields'] is Map &&
+          (event['fields'] as Map).containsKey('chassis_id')) {
+        if (!_equal(event, normalized[key])) return null;
+        assignments.add(event);
+      }
+    }
+    if (assignments.isEmpty ||
+        assignments.any((e) => _bookingInstant(e['submitted_at']) == null)) {
+      return null;
+    }
+    assignments.sort(
+      (a, b) => _bookingInstant(
+        a['submitted_at'],
+      )!.compareTo(_bookingInstant(b['submitted_at'])!),
+    );
+    final latest = assignments.last;
+    final originalBase = _bookingInstant(baseUpdatedAt);
+    if (originalBase == null ||
+        _bookingInstant(latest['submitted_at'])!.isAfter(originalBase) ||
+        !_equal(latest['fields']['chassis_id'], pending['chassis_id'])) {
+      return null;
+    }
+    if (server.containsKey('chassis_id')) {
+      candidate['chassis_id'] = server['chassis_id'];
+    } else {
+      candidate.remove('chassis_id');
+    }
+  }
   // Validate against the action's original base, preserving all remote edits.
   final baseline = {...server, 'updated_at': baseUpdatedAt};
   candidate['status_outputs'] = combined;

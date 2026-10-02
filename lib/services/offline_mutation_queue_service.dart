@@ -1886,6 +1886,7 @@ class OfflineMutationQueueService {
               return _BookingUpsertOutcome.alreadyApplied;
             }
             if (remoteVersion == nextVersion) {
+              Map<String, dynamic>? chassisVerification;
               // Photo uploads replace pending markers after the booking commit
               // without changing its action timestamp. Acknowledge only when
               // existing event/path/metadata checks yield the unchanged server.
@@ -1935,6 +1936,17 @@ class OfflineMutationQueueService {
                   final owner = normalizeId(
                     chassis.data()?['current_booking_id']?.toString(),
                   );
+                  chassisVerification = {
+                    'chassis_id': oldChassis,
+                    'exists': chassis.exists,
+                    'current_booking_id': owner,
+                    'current_status': chassis.data()?['current_status'],
+                    'updated_at': chassis.data()?['updated_at'],
+                    'booking_contents_match_after_photo_normalization': true,
+                    'reason': owner == null
+                        ? 'Chassis reassignment could not be verified: no current booking owner.'
+                        : 'Chassis still points to this booking.',
+                  };
                   if (chassis.exists &&
                       owner != null &&
                       owner != entry.targetId) {
@@ -1955,6 +1967,7 @@ class OfflineMutationQueueService {
                   'pending_updated_at': document['updated_at']?.toString(),
                   'server_document': existingBooking.data(),
                   'conflict_stage': 'same_action_version_different_contents',
+                  'chassis_verification': ?chassisVerification,
                   'server_status': existingBooking.data()?['client_status'],
                   'pending_status': document['client_status'],
                   'differing_fields': [
@@ -3166,6 +3179,9 @@ class OfflineMutationQueueService {
             entry.collectionKey == 'bookings' &&
             lastError.contains('chassis is active on another booking');
         final legacyRecovery =
+            (!entry.bookingDeliveryHistoryRechecked &&
+                hasBookingConflict &&
+                entry.payload['client_status'] == 'delivered') ||
             (!entry.bookingEditArchiveRechecked &&
                 entry.collectionKey == 'bookings' &&
                 entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
@@ -3188,6 +3204,7 @@ class OfflineMutationQueueService {
           return entry.copyWith(
             isBlocked: false,
             bookingEditArchiveRechecked: true,
+            bookingDeliveryHistoryRechecked: true,
             bookingPhotoRechecked:
                 hasBookingConflict || entry.bookingPhotoRechecked,
             bookingMetadataRechecked:
@@ -3721,6 +3738,7 @@ class _OfflineMutationEntry {
     this.bookingPhotoRechecked = false,
     this.bookingEditArchiveRechecked = false,
     this.bookingAssignmentHistoryRechecked = false,
+    this.bookingDeliveryHistoryRechecked = false,
     this.catalogPredecessorVersions = const [],
     // A user entry only replays `is_online` when presence was the point of the
     // edit. Older persisted entries have no flag, so they keep the safe default
@@ -3754,6 +3772,7 @@ class _OfflineMutationEntry {
   final bool bookingPhotoRechecked;
   final bool bookingEditArchiveRechecked;
   final bool bookingAssignmentHistoryRechecked;
+  final bool bookingDeliveryHistoryRechecked;
   final List<String> catalogPredecessorVersions;
 
   /// True when this entry's `is_online` value is an intentional presence change
@@ -3781,6 +3800,7 @@ class _OfflineMutationEntry {
     bool? bookingPhotoRechecked,
     bool? bookingEditArchiveRechecked,
     bool? bookingAssignmentHistoryRechecked,
+    bool? bookingDeliveryHistoryRechecked,
     bool? replayPresence,
     Map<String, dynamic>? basePayload,
     String? baseUpdatedAt,
@@ -3823,6 +3843,9 @@ class _OfflineMutationEntry {
           bookingPhotoRechecked ?? this.bookingPhotoRechecked,
       bookingEditArchiveRechecked:
           bookingEditArchiveRechecked ?? this.bookingEditArchiveRechecked,
+      bookingDeliveryHistoryRechecked:
+          bookingDeliveryHistoryRechecked ??
+          this.bookingDeliveryHistoryRechecked,
       catalogPredecessorVersions: catalogPredecessorVersions,
       replayPresence: replayPresence ?? this.replayPresence,
       basePayload: basePayload ?? this.basePayload,
@@ -3853,6 +3876,7 @@ class _OfflineMutationEntry {
       'booking_photo_rechecked': bookingPhotoRechecked,
       'booking_edit_archive_rechecked': bookingEditArchiveRechecked,
       'booking_assignment_history_rechecked': bookingAssignmentHistoryRechecked,
+      'booking_delivery_history_rechecked': bookingDeliveryHistoryRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
       'replay_presence': replayPresence,
@@ -3889,6 +3913,8 @@ class _OfflineMutationEntry {
       chassisConflictRechecked: map['chassis_conflict_rechecked'] == true,
       chassisTransferRechecked: map['chassis_transfer_rechecked'] == true,
       conflictRecoveryAttempted: map['conflict_recovery_attempted'] == true,
+      bookingDeliveryHistoryRechecked:
+          map['booking_delivery_history_rechecked'] == true,
       bookingMetadataRechecked: map['booking_metadata_rechecked'] == true,
       bookingPhotoRechecked: map['booking_photo_rechecked'] == true,
       bookingEditArchiveRechecked:

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/rendering.dart';
 import 'package:webapp/views/admin/pm_fuel_ledger_dialog.dart';
 import 'package:webapp/services/kpi/kpi_all_time_period.dart';
@@ -16,6 +17,7 @@ import 'pm_kpi_dialog_test.dart' show TestStore;
 class FleetStore extends TestStore {
   bool allowed = true;
   bool fail = false;
+  Completer<KpiStoredData>? delayedFirst;
   final periods = <KpiPeriod>[];
   @override
   bool get canRead => allowed;
@@ -38,9 +40,20 @@ class FleetStore extends TestStore {
   @override
   Future<KpiStoredData> load(String makeId, KpiPeriod period) async {
     periods.add(period);
+    if (makeId == '1' && delayedFirst != null) return delayedFirst!.future;
     if (fail) throw StateError('offline');
     return const KpiStoredData([], {}, false);
   }
+}
+
+class BatchStore extends FleetStore {
+  final second = Completer<KpiStoredData>();
+  @override
+  Future<KpiStoredData?> readCached(String makeId, KpiPeriod period) async =>
+      null;
+  @override
+  Future<KpiStoredData> load(String makeId, KpiPeriod period) async =>
+      makeId == '2' ? second.future : const KpiStoredData([], {}, false);
 }
 
 void main() {
@@ -86,7 +99,10 @@ void main() {
             .buttonLabel,
         'Actions',
       );
-      expect(store.periods.first.start, DateTime.utc(1900));
+      final today = kpiDate(DateTime.now());
+      final currentMonth = KpiPeriod.month(today.year, today.month);
+      expect(store.periods.first.start, currentMonth.start);
+      expect(store.periods.first.end, currentMonth.end);
       var list = tester.widget<AdminModalRecordList>(
         find.byType(AdminModalRecordList),
       );
@@ -97,9 +113,16 @@ void main() {
         find.byType(AdminListDynamicFiltersPanel),
       );
       final dropdown = panel.filters.first as AdminListDropdownFilterConfig;
-      expect(dropdown.value, 'All Time');
+      expect(dropdown.value, 'Monthly');
       expect(dropdown.items, ['Range', 'Weekly', 'Monthly', 'All Time']);
-      dropdown.onChanged('Monthly');
+      for (var i = 1; i < list.itemCount; i++) {
+        expect(list.titles, isNot(contains('Depreciation')));
+        expect(list.titles, isNot(contains('Maintenance')));
+        expect(list.valuesAt(i)[4], '₱108,000');
+      }
+      dropdown.onChanged('All Time');
+      await tester.pumpAndSettle();
+      panel.onClear();
       await tester.pumpAndSettle();
       expect(store.periods.last.start.day, 1);
       expect(store.periods.last.start.year, DateTime.now().year);
@@ -118,6 +141,67 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
   }
+  testWidgets(
+    'slow first PM does not block others and late success clears retry',
+    (tester) async {
+      final store = FleetStore()..delayedFirst = Completer<KpiStoredData>();
+      addTearDown(store.updates.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: AdminKpiTrackingView(store: store)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<AdminModalRecordList>(find.byType(AdminModalRecordList))
+            .valuesAt(1)
+            .first,
+        'PM4',
+      );
+      await tester.pump(const Duration(seconds: 16));
+      await tester.pumpAndSettle();
+      expect(store.periods.length, 2);
+      expect(
+        find.textContaining('PM4: Refresh is taking longer'),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<AdminModalRecordList>(find.byType(AdminModalRecordList))
+            .valuesAt(2)
+            .first,
+        'PM5',
+      );
+      store.delayedFirst!.complete(const KpiStoredData([], {}, false));
+      await tester.pumpAndSettle();
+      expect(find.text('Retry'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+  testWidgets('first load publishes fleet rows together', (tester) async {
+    final store = BatchStore();
+    addTearDown(store.updates.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: AdminKpiTrackingView(store: store)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byType(AdminModalRecordList), findsNothing);
+    store.second.complete(const KpiStoredData([], {}, false));
+    await tester.pumpAndSettle();
+    final list = tester.widget<AdminModalRecordList>(
+      find.byType(AdminModalRecordList),
+    );
+    expect(list.itemCount, 3);
+    expect(list.valuesAt(1).first, 'PM4');
+    expect(list.valuesAt(2).first, 'PM5');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('search matches crew and Actions Fuel selects a PM', (
     tester,
   ) async {
@@ -224,6 +308,58 @@ void main() {
     expect(find.text('Actions'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+  testWidgets('utilization toolbar stays visible during initial loading', (
+    tester,
+  ) async {
+    final store = BatchStore();
+    addTearDown(store.updates.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: AdminKpiTrackingView(store: store)),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Utilization'));
+    await tester.pump();
+    expect(find.byType(AdminListToolbar), findsOneWidget);
+    expect(find.byType(AdminListSearchField), findsOneWidget);
+    expect(find.text('Overview'), findsOneWidget);
+    store.second.complete(const KpiStoredData([], {}, false));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  for (final width in [375.0, 1400.0]) {
+    testWidgets('switching views keeps the toolbar at $width', (tester) async {
+      tester.view.physicalSize = Size(width, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final store = FleetStore();
+      addTearDown(store.updates.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: AdminKpiTrackingView(store: store)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      for (final title in ['Utilization', 'Overview', 'Utilization']) {
+        await tester.tap(find.text(title));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(find.byType(AdminListToolbar), findsOneWidget);
+        expect(find.byType(AdminListSearchField), findsOneWidget);
+        expect(
+          tester
+              .widget<AdminListToolbar>(find.byType(AdminListToolbar))
+              .onNewPressed,
+          isNotNull,
+        );
+        expect(find.byType(AdminListDynamicFiltersPanel), findsOneWidget);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
   testWidgets('denied KPI access makes no fleet reads', (tester) async {
     final store = FleetStore()..allowed = false;
     addTearDown(store.updates.close);

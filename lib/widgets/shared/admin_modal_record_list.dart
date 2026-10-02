@@ -12,6 +12,7 @@ class AdminModalRecordList extends StatelessWidget {
     required this.itemCount,
     required this.valuesAt,
     this.cellBuilder,
+    this.titleBuilder,
     this.onRowTap,
     this.hiddenColumnsAt,
     this.fullWidthRowColumnAt,
@@ -25,6 +26,16 @@ class AdminModalRecordList extends StatelessWidget {
     this.trailingActions = false,
     this.shrinkWrap = false,
     this.horizontalOnDesktop = false,
+    this.horizontalOnMobile = false,
+    this.pinFirstColumn = false,
+    this.centerFirstColumn = false,
+    this.fixedFirstColumnWidth,
+    this.firstColumnBackgroundColor = Colors.white,
+    this.firstColumnHeaderColor = AppColors.primarySurface,
+    this.squareCorners = false,
+    this.compactLastColumn = false,
+    this.firstColumnTrailingPadding =
+        AdminListMeasurements.defaultTrailingPadding,
     this.showTitlesRow = true,
     this.scrollHeader,
     this.scrollController,
@@ -38,6 +49,7 @@ class AdminModalRecordList extends StatelessWidget {
   final List<String> Function(int index) valuesAt;
 
   final Widget? Function(int row, int column)? cellBuilder;
+  final Widget? Function(int column)? titleBuilder;
   final ValueChanged<int>? onRowTap;
 
   /// Hide row-specific fields, retaining desktop column alignment.
@@ -62,6 +74,17 @@ class AdminModalRecordList extends StatelessWidget {
   /// Let an enclosing scroll view own vertical scrolling.
   final bool shrinkWrap;
   final bool horizontalOnDesktop;
+  final bool horizontalOnMobile;
+  final bool pinFirstColumn;
+  final bool centerFirstColumn;
+
+  /// Full frozen column width, including the card's left border/inset.
+  final double? fixedFirstColumnWidth;
+  final Color firstColumnBackgroundColor;
+  final Color firstColumnHeaderColor;
+  final bool squareCorners;
+  final bool compactLastColumn;
+  final double firstColumnTrailingPadding;
   final bool showTitlesRow;
 
   /// Header and rows share one lazy vertical viewport when supplied.
@@ -117,7 +140,22 @@ class AdminModalRecordList extends StatelessWidget {
       }
     }
     for (var i = 0; i < widths.length; i++) {
-      widths[i] = AdminListMeasurements.resolvedColumnWidth(widths[i]);
+      widths[i] = AdminListMeasurements.resolvedColumnWidth(
+        widths[i],
+        trailingPadding: compactLastColumn && i == widths.length - 1
+            ? 0
+            : i == 0
+            ? firstColumnTrailingPadding
+            : AdminListMeasurements.defaultTrailingPadding,
+        // Keep the text allowance even when outer trailing padding is removed.
+        // SelectableText needs room beyond the measured glyph width.
+        extraWidthAllowance: AdminListMeasurements.defaultExtraWidthAllowance,
+      );
+    }
+    if (pinFirstColumn && widths.isNotEmpty) {
+      widths[0] = fixedFirstColumnWidth != null
+          ? math.max(1, fixedFirstColumnWidth! - 17)
+          : widths[0] - AdminListMeasurements.defaultExtraWidthAllowance;
     }
     for (var row = 0; row < rows.length; row++) {
       final span = leadingColumnSpanAt?.call(row) ?? 1;
@@ -128,13 +166,27 @@ class AdminModalRecordList extends StatelessWidget {
       );
       if (required > available) widths[span - 1] += required - available;
     }
-    Widget valueText(String text, TextStyle style) => selectableCells
-        ? SelectableText(text, style: style)
-        : Text(text, style: style, softWrap: true);
-    Widget header(String title, {bool trailing = false}) => selectableCells
+    Widget valueText(String text, TextStyle style, {bool centered = false}) =>
+        selectableCells
+        ? SelectableText(
+            text,
+            style: style,
+            textAlign: centered ? TextAlign.center : TextAlign.start,
+          )
+        : Text(
+            text,
+            style: style,
+            softWrap: true,
+            textAlign: centered ? TextAlign.center : TextAlign.start,
+          );
+    Widget header(
+      String title, {
+      bool trailing = false,
+      bool compact = false,
+    }) => selectableCells
         ? AdminListBodyCell(
             alignment: trailing ? Alignment.centerRight : Alignment.centerLeft,
-            trailingPadding: trailing
+            trailingPadding: trailing || compact
                 ? 0
                 : AdminListMeasurements.defaultTrailingPadding,
             child: SelectableText(
@@ -147,7 +199,7 @@ class AdminModalRecordList extends StatelessWidget {
         : AdminListHeaderCell(
             label: title,
             alignment: trailing ? Alignment.centerRight : Alignment.centerLeft,
-            trailingPadding: trailing
+            trailingPadding: trailing || compact
                 ? 0
                 : AdminListMeasurements.defaultTrailingPadding,
           );
@@ -174,35 +226,68 @@ class AdminModalRecordList extends StatelessWidget {
           );
         }
         final tableWidth = layoutWidths.fold<double>(
-          _horizontalInsets,
+          _horizontalInsets + (pinFirstColumn ? 32 : 0),
           (sum, width) => sum + width,
         );
         final desktopRows =
-            horizontalOnDesktop && MediaQuery.sizeOf(context).width >= 900;
+            horizontalOnMobile ||
+            (horizontalOnDesktop && MediaQuery.sizeOf(context).width >= 900);
         final wide = desktopRows || tableWidth <= constraints.maxWidth;
+        final pinLeading = pinFirstColumn && desktopRows;
+        Widget pinnedRow(
+          Widget row,
+          Widget leading,
+          Color color, {
+          bool isHeader = false,
+        }) => pinLeading
+            ? _PinnedRecordRow(
+                row: row,
+                leading: leading,
+                width: layoutWidths.first,
+                viewportWidth: constraints.maxWidth,
+                color: color,
+                verticalInset: isHeader ? 15 : 17,
+                radius: squareCorners ? 0 : (isHeader ? 16 : 18),
+                centerLeading: isHeader || centerFirstColumn,
+              )
+            : row;
         Widget listContainer({required Widget child}) =>
             shrinkWrap ? child : Expanded(child: child);
         final tableHeader = AdminListHeaderBar(
           minHeight: 48,
-          borderRadius: 16,
+          borderRadius: squareCorners ? 0 : 16,
           horizontalPadding: 16,
           child: wide
-              ? Row(
-                  children: [
-                    for (var i = 0; i < titles.length; i++) ...[
-                      if (trailingActions && i == titles.length - 1)
-                        const Spacer(),
-                      AdminListFixedSlot(
-                        width: layoutWidths[i],
-                        child: header(
-                          titles[i],
-                          trailing: trailingActions && i == titles.length - 1,
+              ? pinnedRow(
+                  Row(
+                    children: [
+                      for (var i = 0; i < titles.length; i++) ...[
+                        if (pinFirstColumn && i == 1) const SizedBox(width: 32),
+                        if (trailingActions && i == titles.length - 1)
+                          const Spacer(),
+                        AdminListFixedSlot(
+                          width: layoutWidths[i],
+                          child: (pinLeading && i == 0)
+                              ? const SizedBox.shrink()
+                              : titleBuilder?.call(i) ??
+                                    header(
+                                      titles[i],
+                                      compact:
+                                          compactLastColumn &&
+                                          i == titles.length - 1,
+                                      trailing:
+                                          trailingActions &&
+                                          i == titles.length - 1,
+                                    ),
                         ),
-                      ),
+                      ],
                     ],
-                  ],
+                  ),
+                  titleBuilder?.call(0) ?? header(titles.first),
+                  firstColumnHeaderColor,
+                  isHeader: true,
                 )
-              : header(titles.first),
+              : titleBuilder?.call(0) ?? header(titles.first),
         );
         Widget buildRowContent(BuildContext context, int index) {
           final values = rows[index];
@@ -233,41 +318,76 @@ class AdminModalRecordList extends StatelessWidget {
               if (!hidden.contains(i) && (i == 0 || i >= leadingSpan)) i,
           ];
           return wide
-              ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    for (var i = 0; i < titles.length; i++)
-                      if (i == 0 || i >= leadingSpan) ...[
-                        if (trailingActions && i == titles.length - 1)
-                          const Spacer(),
-                        AdminListFixedSlot(
-                          width: i == 0
-                              ? layoutWidths
-                                    .take(leadingSpan)
-                                    .fold<double>(
-                                      0,
-                                      (sum, width) => sum + width,
-                                    )
-                              : layoutWidths[i],
-                          child: hidden.contains(i)
-                              ? const SizedBox.shrink()
-                              : AdminListBodyCell(
-                                  alignment:
-                                      trailingActions && i == titles.length - 1
-                                      ? Alignment.centerRight
-                                      : Alignment.centerLeft,
-                                  trailingPadding:
-                                      trailingActions && i == titles.length - 1
-                                      ? 0
-                                      : AdminListMeasurements
-                                            .defaultTrailingPadding,
-                                  child:
-                                      cellBuilder?.call(index, i) ??
-                                      valueText(values[i], valueStyles[i]),
-                                ),
+              ? pinnedRow(
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      for (var i = 0; i < titles.length; i++)
+                        if (i == 0 || i >= leadingSpan) ...[
+                          if (pinFirstColumn && i == 1)
+                            const SizedBox(width: 32),
+                          if (trailingActions && i == titles.length - 1)
+                            const Spacer(),
+                          AdminListFixedSlot(
+                            width: i == 0
+                                ? layoutWidths
+                                      .take(leadingSpan)
+                                      .fold<double>(
+                                        0,
+                                        (sum, width) => sum + width,
+                                      )
+                                : layoutWidths[i],
+                            child: hidden.contains(i) || (pinLeading && i == 0)
+                                ? const SizedBox.shrink()
+                                : AdminListBodyCell(
+                                    alignment:
+                                        trailingActions &&
+                                            i == titles.length - 1
+                                        ? Alignment.centerRight
+                                        : i == 0 && centerFirstColumn
+                                        ? Alignment.center
+                                        : Alignment.centerLeft,
+                                    trailingPadding:
+                                        compactLastColumn &&
+                                            i == titles.length - 1
+                                        ? 0
+                                        : trailingActions &&
+                                              i == titles.length - 1
+                                        ? 0
+                                        : i == 0 && centerFirstColumn
+                                        ? 0
+                                        : i == 0
+                                        ? firstColumnTrailingPadding
+                                        : AdminListMeasurements
+                                              .defaultTrailingPadding,
+                                    child:
+                                        cellBuilder?.call(index, i) ??
+                                        valueText(
+                                          values[i],
+                                          valueStyles[i],
+                                          centered: i == 0 && centerFirstColumn,
+                                        ),
+                                  ),
+                          ),
+                        ],
+                    ],
+                  ),
+                  AdminListBodyCell(
+                    alignment: centerFirstColumn
+                        ? Alignment.center
+                        : Alignment.centerLeft,
+                    trailingPadding: centerFirstColumn
+                        ? 0
+                        : firstColumnTrailingPadding,
+                    child:
+                        cellBuilder?.call(index, 0) ??
+                        valueText(
+                          values[0],
+                          valueStyles[0],
+                          centered: centerFirstColumn,
                         ),
-                      ],
-                  ],
+                  ),
+                  firstColumnBackgroundColor,
                 )
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -329,12 +449,14 @@ class AdminModalRecordList extends StatelessWidget {
         Widget buildGroup(BuildContext context, int index) {
           if (showEmpty) {
             return AdminListItemCard(
+              borderRadius: BorderRadius.circular(squareCorners ? 0 : 18),
               padding: const EdgeInsets.all(24),
               child: AdminListStateText(message: emptyMessage!),
             );
           }
           final group = groups[index];
           final card = AdminListItemCard(
+            borderRadius: BorderRadius.circular(squareCorners ? 0 : 18),
             child: group.end == group.start + 1
                 ? buildRowContent(context, group.start)
                 : Column(
@@ -364,7 +486,7 @@ class AdminModalRecordList extends StatelessWidget {
           return Semantics(
             button: true,
             child: InkWell(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(squareCorners ? 0 : 16),
               onTap: () => onRowTap!(group.start),
               child: card,
             ),
@@ -418,11 +540,12 @@ class AdminModalRecordList extends StatelessWidget {
                   ),
                 ],
               );
-        if (desktopRows && tableWidth > constraints.maxWidth) {
+        if (desktopRows &&
+            (pinFirstColumn || tableWidth > constraints.maxWidth)) {
           return SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: SizedBox(
-              width: tableWidth,
+              width: math.max(tableWidth, constraints.maxWidth),
               height: shrinkWrap ? null : constraints.maxHeight,
               child: content,
             ),
@@ -432,4 +555,101 @@ class AdminModalRecordList extends StatelessWidget {
       },
     );
   }
+}
+
+/// Paint the leading cell at the viewport's left edge while retaining one
+/// shared lazy vertical list and one horizontal scroll position.
+class _PinnedRecordRow extends StatelessWidget {
+  const _PinnedRecordRow({
+    required this.row,
+    required this.leading,
+    required this.width,
+    required this.viewportWidth,
+    required this.color,
+    required this.verticalInset,
+    required this.radius,
+    required this.centerLeading,
+  });
+  final Widget row;
+  final Widget leading;
+  final double width;
+  final double viewportWidth;
+  final Color color;
+  final double verticalInset;
+  final double radius;
+  final bool centerLeading;
+
+  @override
+  Widget build(BuildContext context) {
+    final position = Scrollable.of(context, axis: Axis.horizontal).position;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        ClipRect(
+          clipper: _PinnedRecordContentClipper(position, width + 32),
+          child: row,
+        ),
+        AnimatedBuilder(
+          animation: position,
+          child: Container(
+            padding: EdgeInsets.only(left: centerLeading ? 0 : 16),
+            decoration: BoxDecoration(
+              color: color,
+              border: Border.all(color: AppColors.primaryBorder, width: 1),
+              borderRadius: BorderRadius.horizontal(
+                left: Radius.circular(radius),
+              ),
+            ),
+            child: Align(
+              alignment: centerLeading
+                  ? Alignment.center
+                  : Alignment.centerLeft,
+              child: leading,
+            ),
+          ),
+          builder: (context, child) => Positioned(
+            left: position.pixels - 17,
+            top: -verticalInset,
+            bottom: -verticalInset,
+            width: width + 17,
+            child: ColoredBox(color: Colors.white, child: child!),
+          ),
+        ),
+        AnimatedBuilder(
+          animation: position,
+          child: const ColoredBox(color: AppColors.primaryBorder),
+          builder: (context, child) => Positioned(
+            // Row content begins 17px inside its card. Keep the border on
+            // the viewport edge instead of at the offscreen end of the table.
+            left: position.pixels + viewportWidth - 18,
+            top: -verticalInset,
+            bottom: -verticalInset,
+            width: 1,
+            child: IgnorePointer(child: child!),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PinnedRecordContentClipper extends CustomClipper<Rect> {
+  _PinnedRecordContentClipper(this.position, this.leadingWidth)
+    : super(reclip: position);
+
+  final ScrollPosition position;
+  final double leadingWidth;
+
+  @override
+  Rect getClip(Size size) => Rect.fromLTRB(
+    (position.pixels + leadingWidth).clamp(0.0, size.width),
+    0,
+    size.width,
+    size.height,
+  );
+
+  @override
+  bool shouldReclip(_PinnedRecordContentClipper oldClipper) =>
+      oldClipper.position != position ||
+      oldClipper.leadingWidth != leadingWidth;
 }

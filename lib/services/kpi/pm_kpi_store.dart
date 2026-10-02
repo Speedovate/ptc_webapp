@@ -232,18 +232,47 @@ class PmKpiStore {
     String account, {
     required bool localOnly,
   }) async {
+    // Run independent dependencies together within the UI read budget.
+    final results = await Future.wait<Object>([
+      Future<OperationsCatalog>.sync(() async {
+        if (localOnly) {
+          await _catalogStore.restore();
+          return _catalogStore.current;
+        }
+        return _catalogStore.load();
+      }),
+      _loadPmRecords(makeId, period, account, localOnly: localOnly),
+      Future<Map<String, dynamic>>.sync(
+        () => loadFleetRules(localOnly: localOnly),
+      ),
+    ]);
+    final stored = results[1] as KpiStoredData;
+    return KpiStoredData(
+      stored.records,
+      {
+        ...stored.settings,
+        'rating_rules': KpiRatingRules.fromMap(
+          results[2] as Map<String, dynamic>,
+        ).toMap(),
+      },
+      stored.fromCache,
+      fuel: stored.fuel,
+      catalog: results[0] as OperationsCatalog,
+    );
+  }
+
+  Future<KpiStoredData> _loadPmRecords(
+    String makeId,
+    KpiPeriod period,
+    String account, {
+    required bool localOnly,
+  }) async {
     final prefix = _prefix(makeId);
     final cacheKey = 'kpi:$account:$makeId:days';
     final settingsKey = 'kpi:$account:$makeId:settings';
     final fuelKey = 'kpi:$account:$makeId:fuel';
     var fuel =
         await _cache.readDocumentMaps(fuelKey) ?? <Map<String, dynamic>>[];
-    if (localOnly) {
-      await _catalogStore.restore();
-    }
-    final catalog = localOnly
-        ? _catalogStore.current
-        : await _catalogStore.load();
     var records =
         await _cache.readDocumentMaps(cacheKey) ?? <Map<String, dynamic>>[];
     var settings =
@@ -347,17 +376,11 @@ class PmKpiStore {
         'A KPI edit needs review in Queued Actions. Existing server data was preserved.',
       );
     }
-    final fleetRules = await loadFleetRules(localOnly: localOnly);
-    settings = {
-      ...settings,
-      'rating_rules': KpiRatingRules.fromMap(fleetRules).toMap(),
-    };
     return KpiStoredData(
       merged.values.toList(),
       settings,
       fromCache,
       fuel: fuelById.values.toList(),
-      catalog: catalog,
     );
   }
 

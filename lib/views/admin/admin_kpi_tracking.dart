@@ -1,4 +1,7 @@
 import 'package:webapp/views/admin/shared_kpi_rules_dialog.dart';
+import 'package:webapp/views/admin/admin_bookings.dart';
+import 'package:webapp/views/admin/kpi_utilization_view.dart';
+import 'package:webapp/services/kpi/kpi_fleet_rating.dart';
 import 'package:webapp/services/kpi/kpi_period_label.dart';
 import 'package:webapp/views/admin/pm_fuel_ledger_dialog.dart';
 import 'package:webapp/widgets/admin_modal_shell.dart';
@@ -18,7 +21,7 @@ import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/views/admin/pm_kpi_dialog.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
 import 'package:webapp/widgets/shared/admin_modal_record_list.dart';
-import 'package:webapp/widgets/shared/app_page_loading.dart';
+import 'package:webapp/widgets/shared/app_page_loading_overlay.dart';
 
 class AdminKpiTrackingView extends StatefulWidget {
   const AdminKpiTrackingView({super.key, this.store});
@@ -34,7 +37,7 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
   final data = <String, KpiStoredData>{};
   List<({VehicleMake make, PmKpi report})> reports = [];
   StreamSubscription<List<Booking>>? subscription;
-  String mode = 'All Time';
+  String mode = 'Monthly';
   DateTime month = kpiDate(DateTime.now());
   int week = 1;
   late KpiPeriod range = KpiPeriod.month(month.year, month.month);
@@ -43,6 +46,7 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
   int revision = 0;
   int visible = 15;
   String query = '';
+  bool utilization = false;
   final toolbarKey = GlobalKey();
 
   bool matches(VehicleMake make) {
@@ -145,29 +149,77 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
           calculate();
         });
       }, onError: (Object _) {});
-      for (final make in makes) {
-        final cached = await store
-            .readCached(make.id!, fetchPeriod)
-            .timeout(const Duration(seconds: 5));
+      final failedMakes = <String, String>{};
+      final nextData = <String, KpiStoredData>{};
+      var refreshFinished = false;
+      void publish() {
         if (!mounted || token != revision) return;
-        if (cached != null) data[make.id!] = cached;
+        setState(() {
+          calculate();
+          loading = false;
+          error = failedMakes.isEmpty
+              ? null
+              : failedMakes.entries
+                    .map((entry) => '${entry.key}: ${entry.value}')
+                    .join('\n');
+        });
       }
-      setState(() {
-        calculate();
-        loading = makes.isNotEmpty && reports.isEmpty;
-      });
-      // Sequential refresh avoids a fleet-wide burst of parallel Firestore reads.
+
       for (final make in makes) {
-        final stored = await store
-            .load(make.id!, fetchPeriod)
-            .timeout(const Duration(seconds: 15));
+        try {
+          final cached = await store
+              .readCached(make.id!, fetchPeriod)
+              .timeout(const Duration(seconds: 5));
+          if (!mounted || token != revision) return;
+          if (cached != null) {
+            nextData[make.id!] = cached;
+          }
+        } catch (_) {
+          // One unavailable cache must not prevent other PMs from loading.
+        }
         if (!mounted || token != revision) return;
-        data[make.id!] = stored;
       }
-      setState(() {
-        calculate();
-        loading = false;
-      });
+      if (nextData.isNotEmpty || makes.isEmpty) {
+        data.addAll(nextData);
+        publish();
+      }
+      // Refresh independently so one slow PM cannot starve the remaining fleet.
+      for (final make in makes) {
+        final name = make.code ?? make.id!;
+        final request =
+            Future<KpiStoredData>.sync(
+              () => store.load(make.id!, fetchPeriod),
+            ).then((stored) {
+              // Retain a successful late response after the UI timeout, but never
+              // apply it to a newer filter selection or a disposed view.
+              if (!mounted ||
+                  token != revision ||
+                  !store.canRead ||
+                  !store.canReadBookings) {
+                return;
+              }
+              nextData[make.id!] = stored;
+              failedMakes.remove(name);
+              if (refreshFinished) {
+                data.addAll(nextData);
+                publish();
+              }
+            });
+        try {
+          await request.timeout(const Duration(seconds: 15));
+        } catch (failure) {
+          if (!mounted || token != revision) return;
+          failedMakes[name] = failure is TimeoutException
+              ? 'Refresh is taking longer than expected. Saved data remains available; retry if needed.'
+              : failure is StateError
+              ? failure.message
+              : 'Refresh failed: $failure';
+        }
+        if (!mounted || token != revision) return;
+      }
+      refreshFinished = true;
+      data.addAll(nextData);
+      publish();
     } catch (e) {
       if (!mounted || token != revision) return;
       setState(() {
@@ -279,7 +331,7 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
         ],
       ],
       onClear: () => change(() {
-        mode = 'All Time';
+        mode = 'Monthly';
         week = 1;
         month = kpiDate(DateTime.now());
       }),
@@ -292,8 +344,13 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
         : null,
   );
 
-  Future<void> openActions() async {
-    final box = toolbarKey.currentContext!.findRenderObject()! as RenderBox;
+  Future<void> openActions({
+    GlobalKey? anchorKey,
+    KpiPeriod? actionPeriod,
+  }) async {
+    final box =
+        (anchorKey ?? toolbarKey).currentContext!.findRenderObject()!
+            as RenderBox;
     final overlay =
         Overlay.of(context).context.findRenderObject()! as RenderBox;
     final edge = box.localToGlobal(
@@ -332,12 +389,15 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
         ),
       );
     } else {
-      await pickMake(action);
+      await pickMake(action, selectedPeriodOverride: actionPeriod);
     }
     if (mounted) unawaited(load());
   }
 
-  Future<void> pickMake(String action) async {
+  Future<void> pickMake(
+    String action, {
+    KpiPeriod? selectedPeriodOverride,
+  }) async {
     var search = '';
     Widget? selectedView;
     await showAppDialog<void>(
@@ -348,15 +408,17 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
           if (selectedView != null) return selectedView!;
           void select(VehicleMake make) {
             void goBack() => update(() => selectedView = null);
-            final selectedPeriod = mode == 'All Time'
-                ? fleetTruckAllTimePeriod(
-                    make,
-                    makes,
-                    bookings,
-                    data[make.id] ?? const KpiStoredData([], {}, true),
-                    kpiDate(DateTime.now()),
-                  )
-                : period;
+            final selectedPeriod =
+                selectedPeriodOverride ??
+                (mode == 'All Time'
+                    ? fleetTruckAllTimePeriod(
+                        make,
+                        makes,
+                        bookings,
+                        data[make.id] ?? const KpiStoredData([], {}, true),
+                        kpiDate(DateTime.now()),
+                      )
+                    : period);
             update(() {
               selectedView = action == 'Fuel'
                   ? PmFuelLedgerDialog(
@@ -366,7 +428,7 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
                       store: store,
                       periodLabel: kpiPeriodLabel(
                         selectedPeriod,
-                        mode: mode,
+                        mode: selectedPeriodOverride == null ? mode : 'Range',
                         week: week,
                       ),
                       initialData: data[make.id],
@@ -442,6 +504,30 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
     );
   }
 
+  Widget viewSelector() => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      for (final entry in const {
+        'Overview': false,
+        'Utilization': true,
+      }.entries)
+        TextButton(
+          onPressed: () => setState(() => utilization = entry.value),
+          child: Text(
+            entry.key,
+            style: TextStyle(
+              color: utilization == entry.value
+                  ? AppColors.primaryColor
+                  : AppColors.textPrimary,
+              fontWeight: utilization == entry.value
+                  ? FontWeight.bold
+                  : FontWeight.normal,
+            ),
+          ),
+        ),
+    ],
+  );
+
   String amount(double value) {
     final parts = value.abs().toStringAsFixed(2).split('.');
     final digits = parts.first.replaceAllMapped(
@@ -456,8 +542,6 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
     report.revenue,
     report.fuel,
     report.driverSalary + report.helperSalary,
-    report.depreciation,
-    report.maintenance,
     report.expenses,
     report.gross,
     report.marginTarget,
@@ -476,7 +560,10 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
         );
       }
       final filtered = reports.where((entry) => matches(entry.make)).toList();
-      final totals = List<double>.filled(11, 0);
+      final totalRating = averageFleetRating(
+        filtered.map((entry) => entry.report),
+      );
+      final totals = List<double>.filled(9, 0);
       for (final entry in filtered) {
         final values = numbers(entry.report);
         for (var i = 0; i < values.length; i++) {
@@ -488,8 +575,31 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
         padding: const EdgeInsets.all(24),
         child: Column(
           children: [
-            toolbar(),
-            const SizedBox(height: 20),
+            if (!utilization) toolbar(),
+            if (!utilization) const SizedBox(height: 20),
+            if (!utilization)
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      switch (mode) {
+                        'All Time' => 'All Time',
+                        'Weekly' =>
+                          'Weekly · Week $week · ${MaterialLocalizations.of(context).formatMonthYear(month)}',
+                        'Monthly' =>
+                          'Monthly · ${MaterialLocalizations.of(context).formatMonthYear(month)}',
+                        _ => 'Range · ${kpiPeriodLabel(range)}',
+                      },
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                  viewSelector(),
+                ],
+              ),
+            if (!utilization) const SizedBox(height: 20),
             if (error != null)
               Row(
                 children: [
@@ -498,8 +608,48 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
                 ],
               ),
             Expanded(
-              child: loading
-                  ? const AppPageLoading()
+              child: utilization
+                  ? KpiUtilizationView(
+                      makes: makes,
+                      bookings: bookings,
+                      periodTrailing: viewSelector(),
+                      loading: loading,
+                      onOpenBooking: store.canReadBookings
+                          ? (booking) async {
+                              final user = await store.currentUser();
+                              if (!mounted ||
+                                  !context.mounted ||
+                                  user == null ||
+                                  !store.canReadBookings) {
+                                return;
+                              }
+                              await AdminBookingsView.openDetailPage(
+                                context,
+                                currentUser: user,
+                                booking: booking,
+                              );
+                            }
+                          : null,
+                      onOpenMake: (make) async {
+                        await showPmKpiDialog(context, make, store: store);
+                        if (mounted) unawaited(load());
+                      },
+                      onActions:
+                          store.canReadFuel ||
+                              store.canReadCatalog ||
+                              store.canEdit
+                          ? (anchor, selectedPeriod) => openActions(
+                              anchorKey: anchor,
+                              actionPeriod: selectedPeriod,
+                            )
+                          : null,
+                    )
+                  : loading
+                  ? const AppPageLoadingOverlay(
+                      isVisible: true,
+                      message: 'Loading KPI data ...',
+                      child: SizedBox.expand(),
+                    )
                   : NotificationListener<ScrollNotification>(
                       onNotification: (notice) {
                         if (notice.metrics.extentAfter < 200 &&
@@ -511,20 +661,19 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
                         return false;
                       },
                       child: AdminModalRecordList(
+                        squareCorners: true,
                         horizontalOnDesktop: true,
                         selectableCells: true,
                         titles: const [
-                          'PM',
+                          'Name',
                           'Revenue',
                           'Fuel',
                           'Salary',
-                          'Depreciation',
-                          'Maintenance',
                           'Expenses',
                           'Income',
-                          'Income Target',
+                          'Target Income',
                           'Variance',
-                          'Revenue Target',
+                          'Target Revenue',
                           'Income Goal',
                           'Rating',
                         ],
@@ -533,7 +682,7 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
                             ? 'No trucks available.'
                             : 'No matching trucks.',
                         valuesAt: (i) => i == 0
-                            ? ['Total', ...totals.map(amount), '—']
+                            ? ['Total', ...totals.map(amount), totalRating]
                             : [
                                 filtered[i - 1].make.code ??
                                     filtered[i - 1].make.id!,
@@ -572,7 +721,7 @@ class _AdminKpiTrackingViewState extends State<AdminKpiTrackingView> {
                               ),
                             );
                           }
-                          if (col > 0 && col < 12) {
+                          if (col > 0 && col <= totals.length) {
                             final value = (i == 0
                                 ? totals
                                 : numbers(filtered[i - 1].report))[col - 1];

@@ -235,12 +235,13 @@ class _AdminDashboardViewState extends State<AdminDashboardView> {
                         : null,
                   ),
                   const SizedBox(height: _toolbarSectionGap),
-                  AdminListItemCard(
-                    padding: EdgeInsets.all(24),
-                    child: AdminListStateText(
-                      message: 'No completed bookings yet.',
+                  if (!showInitialLoading)
+                    const AdminListItemCard(
+                      padding: EdgeInsets.all(24),
+                      child: AdminListStateText(
+                        message: 'No completed bookings yet.',
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),

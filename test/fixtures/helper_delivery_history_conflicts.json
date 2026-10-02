@@ -1,0 +1,1087 @@
+[
+  {
+    "server": {
+      "client_id": "9",
+      "created_at": "2026-09-25T09:01:21.693",
+      "billing_status": "unbilled",
+      "client_status": "ongoing",
+      "driver_status": "ongoing",
+      "helper_id": "23",
+      "delivered_at": null,
+      "photo_cleanup_claims": [],
+      "vehicle_make_id": "3",
+      "driver_id": "12",
+      "updated_at": "2026-09-30T08:12:09.092",
+      "photo_cleanup_paths": [],
+      "submission_key": "booking_8_9_1_1790298081693000",
+      "status_outputs": {
+        "pending__1790298112399000": {
+          "fields": {
+            "drop_off_time": "9:30 AM",
+            "pick_up_time": "8:30 AM",
+            "helper_id": "23",
+            "driver_id": "12",
+            "drop_off_date": "2026-09-25",
+            "pick_up_date": "2026-09-25"
+          },
+          "submitted_role": "dispatcher",
+          "submitted_at": "2026-09-25T09:01:52.399",
+          "status_form": {
+            "current_status_key": "pending",
+            "next_status_key": "assigned",
+            "status_text": null,
+            "id": "2",
+            "role": "admin",
+            "is_main_form": true,
+            "roles": [
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "button_text": "Assign Booking",
+            "is_active": true,
+            "status_subtext": null
+          },
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_by": "8",
+          "status_key": "pending"
+        },
+        "book__1790298081694000": {
+          "status_key": "book",
+          "submitted_role": "client",
+          "submitted_roles": [
+            "client"
+          ],
+          "submitted_by": "8",
+          "fields": {
+            "van_size": "1",
+            "van_number": "redacted",
+            "destination_barangay": "San Manuel",
+            "destination": "Puerto Princesa City",
+            "waybill_photo": {
+              "height": 810,
+              "size": 171228,
+              "width": 1080,
+              "name": "1000141835.jpg",
+              "download_url": "https://example.test/photo",
+              "storage_path": "bookings/144/status_outputs/book__1790298081694000/waybill_photo/1790298381908.jpg",
+              "mime_type": "image/jpeg"
+            },
+            "representative_phone": "redacted",
+            "waybill_number": "redacted",
+            "origin": "Puerto Princesa City",
+            "representative_name": "redacted",
+            "origin_barangay": "Bagong Pag-asa"
+          },
+          "submitted_at": "2026-09-25T09:01:21.694",
+          "status_form": {
+            "is_active": true,
+            "current_status_key": "book",
+            "roles": [
+              "client",
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "role": "client",
+            "button_text": "Submit Booking",
+            "status_text": null,
+            "is_main_form": true,
+            "next_status_key": "pending",
+            "status_subtext": null,
+            "id": "1"
+          }
+        },
+        "assigned__1790299608892000": {
+          "submitted_by": "23",
+          "submitted_roles": [
+            "helper"
+          ],
+          "status_key": "assigned",
+          "submitted_role": "helper",
+          "submitted_at": "2026-09-25T09:26:48.892",
+          "fields": {
+            "waybill_photo": {
+              "width": 1080,
+              "storage_path": "bookings/144/status_outputs/book__1790298081694000/waybill_photo/1790298381908.jpg",
+              "download_url": "https://example.test/photo",
+              "height": 810,
+              "mime_type": "image/jpeg",
+              "size": 171228,
+              "name": "1000141835.jpg"
+            },
+            "vehicle_make_id": "3"
+          },
+          "status_form": {
+            "is_active": true,
+            "status_subtext": null,
+            "status_text": null,
+            "roles": [
+              "driver",
+              "admin",
+              "helper",
+              "dispatcher",
+              "manager"
+            ],
+            "id": "4",
+            "role": "driver",
+            "is_main_form": true,
+            "current_status_key": "assigned",
+            "button_text": "Start Delivery",
+            "next_status_key": "ongoing"
+          }
+        },
+        "assigned__1790298334268000": {
+          "status_key": "assigned",
+          "submitted_role": "dispatcher",
+          "submitted_by": "8",
+          "fields": {
+            "waybill_photo": {
+              "height": 810,
+              "mime_type": "image/jpeg",
+              "size": 171228,
+              "name": "1000141835.jpg",
+              "storage_path": "bookings/144/status_outputs/assigned__1790298334268000/waybill_photo/1790298386539.jpg",
+              "download_url": "https://example.test/photo",
+              "width": 1080
+            },
+            "amount": "3400"
+          },
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_form": null,
+          "submitted_at": "2026-09-25T09:05:34.268"
+        },
+        "ongoing__1790727129085000": {
+          "submitted_role": "dispatcher",
+          "fields": {
+            "waybill_photo": {
+              "size": 171228,
+              "name": "1000141835.jpg",
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/144/status_outputs/book__1790298081694000/waybill_photo/1790298381908.jpg",
+              "download_url": "https://example.test/photo",
+              "height": 810,
+              "width": 1080
+            },
+            "amount": "4100"
+          },
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_form": null,
+          "submitted_by": "8",
+          "submitted_at": "2026-09-30T08:12:09.085",
+          "status_key": "ongoing"
+        }
+      },
+      "chassis_id": null,
+      "id": "144",
+      "helper_status": "ongoing"
+    },
+    "pending": {
+      "submission_key": "booking_8_9_1_1790298081693000",
+      "status_outputs": {
+        "book__1790298081694000": {
+          "submitted_by": "8",
+          "submitted_role": "client",
+          "submitted_at": "2026-09-25T09:01:21.694",
+          "status_form": {
+            "id": "1",
+            "button_text": "Submit Booking",
+            "status_subtext": null,
+            "role": "client",
+            "next_status_key": "pending",
+            "is_main_form": true,
+            "is_active": true,
+            "roles": [
+              "client",
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "current_status_key": "book",
+            "status_text": null
+          },
+          "fields": {
+            "origin": "Puerto Princesa City",
+            "representative_name": "redacted",
+            "destination_barangay": "San Manuel",
+            "van_number": "redacted",
+            "waybill_number": "redacted",
+            "van_size": "1",
+            "waybill_photo": {
+              "height": 810,
+              "mime_type": "image/jpeg",
+              "width": 1080,
+              "size": 171228,
+              "name": "1000141835.jpg",
+              "download_url": "https://example.test/photo",
+              "storage_path": "bookings/144/status_outputs/book__1790298081694000/waybill_photo/1790298381908.jpg"
+            },
+            "origin_barangay": "Bagong Pag-asa",
+            "destination": "Puerto Princesa City",
+            "representative_phone": "redacted"
+          },
+          "status_key": "book",
+          "submitted_roles": [
+            "client"
+          ]
+        },
+        "assigned__1790298334268000": {
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_form": null,
+          "submitted_by": "8",
+          "fields": {
+            "amount": "3400",
+            "waybill_photo": {
+              "name": "1000141835.jpg",
+              "size": 171228,
+              "storage_path": "bookings/144/status_outputs/assigned__1790298334268000/waybill_photo/1790298386539.jpg",
+              "download_url": "https://example.test/photo",
+              "height": 810,
+              "mime_type": "image/jpeg",
+              "width": 1080
+            }
+          },
+          "submitted_role": "dispatcher",
+          "status_key": "assigned",
+          "submitted_at": "2026-09-25T09:05:34.268"
+        },
+        "assigned__1790299608892000": {
+          "status_form": {
+            "is_main_form": true,
+            "button_text": "Start Delivery",
+            "role": "driver",
+            "next_status_key": "ongoing",
+            "roles": [
+              "driver",
+              "admin",
+              "helper",
+              "dispatcher",
+              "manager"
+            ],
+            "status_subtext": null,
+            "is_active": true,
+            "id": "4",
+            "status_text": null,
+            "current_status_key": "assigned"
+          },
+          "fields": {
+            "waybill_photo": {
+              "height": 810,
+              "width": 1080,
+              "storage_path": "bookings/144/status_outputs/book__1790298081694000/waybill_photo/1790298381908.jpg",
+              "download_url": "https://example.test/photo",
+              "size": 171228,
+              "name": "1000141835.jpg",
+              "mime_type": "image/jpeg"
+            },
+            "vehicle_make_id": "3"
+          },
+          "status_key": "assigned",
+          "submitted_roles": [
+            "helper"
+          ],
+          "submitted_at": "2026-09-25T09:26:48.892",
+          "submitted_role": "helper",
+          "submitted_by": "23"
+        },
+        "pending__1790298112399000": {
+          "status_key": "pending",
+          "submitted_at": "2026-09-25T09:01:52.399",
+          "submitted_by": "8",
+          "status_form": {
+            "status_subtext": null,
+            "button_text": "Assign Booking",
+            "next_status_key": "assigned",
+            "roles": [
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "status_text": null,
+            "current_status_key": "pending",
+            "is_active": true,
+            "is_main_form": true,
+            "id": "2",
+            "role": "admin"
+          },
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_role": "dispatcher",
+          "fields": {
+            "driver_id": "12",
+            "drop_off_date": "2026-09-25",
+            "pick_up_date": "2026-09-25",
+            "helper_id": "23",
+            "pick_up_time": "8:30 AM",
+            "drop_off_time": "9:30 AM"
+          }
+        },
+        "ongoing__1790301385573000": {
+          "fields": {
+            "delivery_form_photo": {
+              "name": "camera_1790301362233.jpg",
+              "size": 56631,
+              "download_url": "https://example.test/photo",
+              "pending_upload_id": "booking_upload_1790301385807000_60590ec2",
+              "mime_type": "image/jpeg",
+              "pending_upload": true
+            },
+            "chassis_id": "4",
+            "delivery_form_number": "036719"
+          },
+          "submitted_roles": [
+            "helper"
+          ],
+          "status_key": "ongoing",
+          "submitted_role": "helper",
+          "submitted_by": "23",
+          "status_form": {
+            "next_status_key": "delivered",
+            "role": "admin",
+            "button_text": "Submit Delivery",
+            "is_active": true,
+            "is_main_form": true,
+            "status_text": null,
+            "current_status_key": "ongoing",
+            "status_subtext": null,
+            "id": "6",
+            "roles": [
+              "admin",
+              "driver",
+              "helper",
+              "manager",
+              "dispatcher"
+            ]
+          },
+          "submitted_at": "2026-09-25T09:56:25.573"
+        }
+      },
+      "driver_id": "12",
+      "created_at": "2026-09-25T09:01:21.693",
+      "id": "144",
+      "helper_status": "delivered",
+      "vehicle_make_id": "3",
+      "chassis_id": "4",
+      "helper_id": "23",
+      "billing_status": "unbilled",
+      "updated_at": "2026-09-25T09:56:25.573",
+      "delivered_at": "2026-09-25T01:56:25.573Z",
+      "client_id": "9",
+      "client_status": "delivered",
+      "driver_status": "delivered"
+    },
+    "base": "2026-09-25T09:26:48.892"
+  },
+  {
+    "server": {
+      "created_at": "2026-09-24T13:09:31.333",
+      "helper_status": "ongoing",
+      "photo_cleanup_claims": [],
+      "billing_status": "unbilled",
+      "driver_id": "12",
+      "updated_at": "2026-09-30T08:16:34.135",
+      "helper_id": "23",
+      "photo_cleanup_paths": [],
+      "submission_key": "booking_8_9_1_1790226571333000",
+      "delivered_at": null,
+      "driver_status": "ongoing",
+      "chassis_id": null,
+      "status_outputs": {
+        "assigned__1790226959578000": {
+          "status_form": null,
+          "submitted_at": "2026-09-24T13:15:59.578",
+          "fields": {
+            "waybill_photo": {
+              "width": 1080,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/140/status_outputs/book__1790226571333000/waybill_photo/1790226805166.jpg",
+              "download_url": "https://example.test/photo",
+              "height": 810,
+              "name": "1000141829.jpg",
+              "size": 216609
+            },
+            "amount": "3000"
+          },
+          "submitted_role": "dispatcher",
+          "submitted_by": "8",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_key": "assigned"
+        },
+        "pending__1790226603089000": {
+          "submitted_by": "8",
+          "submitted_role": "dispatcher",
+          "submitted_at": "2026-09-24T13:10:03.089",
+          "status_form": {
+            "role": "admin",
+            "status_subtext": null,
+            "id": "2",
+            "status_text": null,
+            "roles": [
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "current_status_key": "pending",
+            "is_main_form": true,
+            "button_text": "Assign Booking",
+            "next_status_key": "assigned",
+            "is_active": true
+          },
+          "status_key": "pending",
+          "fields": {
+            "drop_off_date": "2026-09-24",
+            "helper_id": "23",
+            "pick_up_time": "1:30 PM",
+            "pick_up_date": "2026-09-24",
+            "driver_id": "12",
+            "drop_off_time": "2:30 PM"
+          },
+          "submitted_roles": [
+            "dispatcher"
+          ]
+        },
+        "assigned__1790228788109000": {
+          "submitted_role": "helper",
+          "submitted_by": "23",
+          "fields": {
+            "vehicle_make_id": "3"
+          },
+          "status_key": "assigned",
+          "submitted_at": "2026-09-24T13:46:28.109",
+          "status_form": {
+            "status_text": null,
+            "next_status_key": "ongoing",
+            "is_active": true,
+            "roles": [
+              "driver",
+              "admin",
+              "helper",
+              "dispatcher",
+              "manager"
+            ],
+            "status_subtext": null,
+            "is_main_form": true,
+            "current_status_key": "assigned",
+            "id": "4",
+            "role": "driver",
+            "button_text": "Start Delivery"
+          },
+          "submitted_roles": [
+            "helper"
+          ]
+        },
+        "book__1790226571333000": {
+          "submitted_at": "2026-09-24T13:09:31.333",
+          "status_form": {
+            "is_main_form": true,
+            "roles": [
+              "client",
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "current_status_key": "book",
+            "id": "1",
+            "status_text": null,
+            "next_status_key": "pending",
+            "button_text": "Submit Booking",
+            "role": "client",
+            "status_subtext": null,
+            "is_active": true
+          },
+          "fields": {
+            "destination": "Puerto Princesa City",
+            "waybill_photo": {
+              "width": 1080,
+              "mime_type": "image/jpeg",
+              "name": "1000141829.jpg",
+              "size": 216609,
+              "download_url": "https://example.test/photo",
+              "storage_path": "bookings/140/status_outputs/book__1790226571333000/waybill_photo/1790226805166.jpg",
+              "height": 810
+            },
+            "waybill_number": "redacted",
+            "origin_barangay": "Bagong Pag-asa",
+            "origin": "Puerto Princesa City",
+            "destination_barangay": "Tagumpay",
+            "representative_name": "redacted",
+            "van_number": "redacted",
+            "representative_phone": "redacted",
+            "van_size": "1"
+          },
+          "submitted_by": "8",
+          "submitted_role": "client",
+          "status_key": "book",
+          "submitted_roles": [
+            "client"
+          ]
+        },
+        "ongoing__1790727394131000": {
+          "submitted_by": "8",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "fields": {
+            "waybill_photo": {
+              "width": 1080,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/140/status_outputs/book__1790226571333000/waybill_photo/1790226805166.jpg",
+              "download_url": "https://example.test/photo",
+              "size": 216609,
+              "name": "1000141829.jpg",
+              "height": 810
+            },
+            "amount": "3500"
+          },
+          "submitted_at": "2026-09-30T08:16:34.131",
+          "status_form": null,
+          "submitted_role": "dispatcher",
+          "status_key": "ongoing"
+        }
+      },
+      "client_status": "ongoing",
+      "vehicle_make_id": "3",
+      "id": "140",
+      "client_id": "9"
+    },
+    "pending": {
+      "driver_status": "delivered",
+      "client_status": "delivered",
+      "helper_id": "23",
+      "created_at": "2026-09-24T13:09:31.333",
+      "billing_status": "unbilled",
+      "client_id": "9",
+      "vehicle_make_id": "3",
+      "helper_status": "delivered",
+      "id": "140",
+      "chassis_id": "1",
+      "delivered_at": "2026-09-24T23:57:26.642Z",
+      "driver_id": "12",
+      "status_outputs": {
+        "pending__1790226603089000": {
+          "submitted_role": "dispatcher",
+          "status_form": {
+            "next_status_key": "assigned",
+            "button_text": "Assign Booking",
+            "current_status_key": "pending",
+            "is_active": true,
+            "status_text": null,
+            "id": "2",
+            "roles": [
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "role": "admin",
+            "status_subtext": null,
+            "is_main_form": true
+          },
+          "submitted_at": "2026-09-24T13:10:03.089",
+          "status_key": "pending",
+          "submitted_by": "8",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "fields": {
+            "helper_id": "23",
+            "pick_up_date": "2026-09-24",
+            "drop_off_time": "2:30 PM",
+            "drop_off_date": "2026-09-24",
+            "driver_id": "12",
+            "pick_up_time": "1:30 PM"
+          }
+        },
+        "ongoing__1790294246642000": {
+          "status_form": {
+            "id": "6",
+            "is_active": true,
+            "next_status_key": "delivered",
+            "status_text": null,
+            "role": "admin",
+            "current_status_key": "ongoing",
+            "status_subtext": null,
+            "button_text": "Submit Delivery",
+            "roles": [
+              "admin",
+              "driver",
+              "helper",
+              "manager",
+              "dispatcher"
+            ],
+            "is_main_form": true
+          },
+          "submitted_role": "helper",
+          "submitted_roles": [
+            "helper"
+          ],
+          "submitted_at": "2026-09-25T07:57:26.642",
+          "status_key": "ongoing",
+          "submitted_by": "23",
+          "fields": {
+            "delivery_form_number": "036714",
+            "delivery_form_photo": {
+              "pending_upload_id": "booking_upload_1790294250949000_a951358c",
+              "mime_type": "image/jpeg",
+              "size": 191798,
+              "name": "1000031749.jpg",
+              "download_url": "https://example.test/photo",
+              "pending_upload": true
+            },
+            "chassis_id": "1"
+          }
+        },
+        "assigned__1790226959578000": {
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_at": "2026-09-24T13:15:59.578",
+          "fields": {
+            "waybill_photo": {
+              "name": "1000141829.jpg",
+              "width": 1080,
+              "download_url": "https://example.test/photo",
+              "storage_path": "bookings/140/status_outputs/book__1790226571333000/waybill_photo/1790226805166.jpg",
+              "size": 216609,
+              "mime_type": "image/jpeg",
+              "height": 810
+            },
+            "amount": "3000"
+          },
+          "submitted_by": "8",
+          "status_form": null,
+          "status_key": "assigned",
+          "submitted_role": "dispatcher"
+        },
+        "book__1790226571333000": {
+          "submitted_by": "8",
+          "fields": {
+            "van_size": "1",
+            "origin": "Puerto Princesa City",
+            "representative_phone": "redacted",
+            "van_number": "redacted",
+            "destination": "Puerto Princesa City",
+            "waybill_number": "redacted",
+            "origin_barangay": "Bagong Pag-asa",
+            "waybill_photo": {
+              "height": 810,
+              "storage_path": "bookings/140/status_outputs/book__1790226571333000/waybill_photo/1790226805166.jpg",
+              "download_url": "https://example.test/photo",
+              "mime_type": "image/jpeg",
+              "width": 1080,
+              "size": 216609,
+              "name": "1000141829.jpg"
+            },
+            "representative_name": "redacted",
+            "destination_barangay": "Tagumpay"
+          },
+          "status_key": "book",
+          "submitted_at": "2026-09-24T13:09:31.333",
+          "submitted_role": "client",
+          "submitted_roles": [
+            "client"
+          ],
+          "status_form": {
+            "status_text": null,
+            "id": "1",
+            "role": "client",
+            "current_status_key": "book",
+            "status_subtext": null,
+            "is_active": true,
+            "is_main_form": true,
+            "next_status_key": "pending",
+            "roles": [
+              "client",
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "button_text": "Submit Booking"
+          }
+        },
+        "assigned__1790228788109000": {
+          "status_key": "assigned",
+          "status_form": {
+            "is_main_form": true,
+            "is_active": true,
+            "role": "driver",
+            "status_text": null,
+            "button_text": "Start Delivery",
+            "status_subtext": null,
+            "next_status_key": "ongoing",
+            "roles": [
+              "driver",
+              "admin",
+              "helper",
+              "dispatcher",
+              "manager"
+            ],
+            "current_status_key": "assigned",
+            "id": "4"
+          },
+          "submitted_roles": [
+            "helper"
+          ],
+          "submitted_role": "helper",
+          "submitted_at": "2026-09-24T13:46:28.109",
+          "submitted_by": "23",
+          "fields": {
+            "vehicle_make_id": "3"
+          }
+        }
+      },
+      "submission_key": "booking_8_9_1_1790226571333000",
+      "updated_at": "2026-09-25T07:57:26.642"
+    },
+    "base": "2026-09-24T13:46:28.109"
+  },
+  {
+    "server": {
+      "photo_cleanup_claims": [],
+      "delivered_at": null,
+      "updated_at": "2026-10-02T09:50:45.784",
+      "vehicle_make_id": "3",
+      "helper_status": "ongoing",
+      "created_at": "2026-09-11T09:01:24.860",
+      "id": "63",
+      "driver_status": "ongoing",
+      "status_outputs": {
+        "book__1789088484862000": {
+          "submitted_by": "8",
+          "submitted_at": "2026-09-11T09:01:24.862",
+          "fields": {
+            "waybill_number": "redacted",
+            "representative_phone": "redacted",
+            "waybill_photo": {
+              "size": 221367,
+              "mime_type": "image/jpeg",
+              "download_url": "https://example.test/photo",
+              "height": 1080,
+              "width": 810,
+              "name": "1000139526.jpg",
+              "storage_path": "bookings/63/status_outputs/book__1789088484862000/waybill_photo/1789088492991.jpg"
+            },
+            "van_number": "redacted",
+            "van_size": "1",
+            "representative_name": "redacted",
+            "destination": "Puerto Princesa City",
+            "origin_barangay": "Bagong Pag-asa",
+            "origin": "Puerto Princesa City",
+            "destination_barangay": "San Pedro"
+          },
+          "submitted_role": "client",
+          "submitted_roles": [
+            "client"
+          ],
+          "status_form": {
+            "is_active": true,
+            "roles": [
+              "client",
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "status_text": null,
+            "is_main_form": true,
+            "status_subtext": null,
+            "id": "1",
+            "current_status_key": "book",
+            "button_text": "Submit Booking",
+            "role": "client",
+            "next_status_key": "pending"
+          },
+          "status_key": "book"
+        },
+        "pending__1789089264895000": {
+          "submitted_role": "dispatcher",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_key": "pending",
+          "fields": {
+            "drop_off_date": "2026-09-11",
+            "chassis_id": "6",
+            "helper_id": "19",
+            "pick_up_date": "2026-09-11",
+            "drop_off_time": "9:45 AM",
+            "driver_id": "12",
+            "pick_up_time": "9:14 AM"
+          },
+          "submitted_at": "2026-09-11T09:14:24.895",
+          "submitted_by": "8",
+          "status_form": {
+            "id": "2",
+            "current_status_key": "pending",
+            "button_text": "Assign Booking",
+            "roles": [
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "role": "admin",
+            "status_text": null,
+            "is_active": true,
+            "is_main_form": true,
+            "status_subtext": null,
+            "next_status_key": "assigned"
+          }
+        },
+        "assigned__1790905845784000": {
+          "fields": {},
+          "submitted_role": "dispatcher",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_form": {
+            "id": "4",
+            "role": "driver",
+            "is_main_form": true,
+            "button_text": "Start Delivery",
+            "is_active": true,
+            "current_status_key": "assigned",
+            "roles": [
+              "driver",
+              "admin",
+              "helper",
+              "dispatcher",
+              "manager"
+            ],
+            "status_text": null,
+            "next_status_key": "ongoing",
+            "status_subtext": null
+          },
+          "submitted_at": "2026-10-02T09:50:45.784",
+          "submitted_by": "8",
+          "status_key": "assigned"
+        },
+        "assigned__1789089300529000": {
+          "fields": {
+            "amount": "3000",
+            "waybill_photo": {
+              "name": "1000139526.jpg",
+              "storage_path": "bookings/63/status_outputs/book__1789088484862000/waybill_photo/1789088492991.jpg",
+              "width": 810,
+              "height": 1080,
+              "mime_type": "image/jpeg",
+              "size": 221367,
+              "download_url": "https://example.test/photo"
+            }
+          },
+          "submitted_role": "dispatcher",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_form": null,
+          "submitted_by": "8",
+          "submitted_at": "2026-09-11T09:15:00.529",
+          "status_key": "assigned"
+        }
+      },
+      "driver_id": "12",
+      "client_id": "9",
+      "helper_id": "19",
+      "photo_cleanup_paths": [],
+      "billing_status": "unbilled",
+      "submission_key": "booking_8_9_1_1789088484860000",
+      "client_status": "ongoing"
+    },
+    "pending": {
+      "status_outputs": {
+        "book__1789088484862000": {
+          "status_key": "book",
+          "submitted_roles": [
+            "client"
+          ],
+          "submitted_role": "client",
+          "fields": {
+            "waybill_number": "redacted",
+            "representative_name": "redacted",
+            "origin_barangay": "Bagong Pag-asa",
+            "van_size": "1",
+            "van_number": "redacted",
+            "destination_barangay": "San Pedro",
+            "representative_phone": "redacted",
+            "destination": "Puerto Princesa City",
+            "origin": "Puerto Princesa City",
+            "waybill_photo": {
+              "download_url": "https://example.test/photo",
+              "name": "1000139526.jpg",
+              "width": 810,
+              "size": 221367,
+              "height": 1080,
+              "storage_path": "bookings/63/status_outputs/book__1789088484862000/waybill_photo/1789088492991.jpg",
+              "mime_type": "image/jpeg"
+            }
+          },
+          "status_form": {
+            "is_active": true,
+            "is_main_form": true,
+            "role": "client",
+            "button_text": "Submit Booking",
+            "status_subtext": null,
+            "next_status_key": "pending",
+            "status_text": null,
+            "id": "1",
+            "current_status_key": "book",
+            "roles": [
+              "client",
+              "admin",
+              "manager",
+              "dispatcher"
+            ]
+          },
+          "submitted_at": "2026-09-11T09:01:24.862",
+          "submitted_by": "8"
+        },
+        "ongoing__1790906099857000": {
+          "submitted_role": "dispatcher",
+          "submitted_at": "2026-10-02T09:54:59.857",
+          "submitted_by": "8",
+          "status_key": "ongoing",
+          "fields": {
+            "delivery_form_number": "036603",
+            "vehicle_make_id": "3",
+            "delivery_form_photo": {
+              "pending_upload_id": "booking_upload_1790906100144000_76063579",
+              "download_url": "https://example.test/photo",
+              "name": "camera_1790906092944.jpg",
+              "pending_upload": true,
+              "size": 86845,
+              "mime_type": "image/jpeg"
+            }
+          },
+          "status_form": {
+            "next_status_key": "delivered",
+            "status_subtext": null,
+            "role": "admin",
+            "current_status_key": "ongoing",
+            "id": "6",
+            "status_text": null,
+            "is_active": true,
+            "is_main_form": true,
+            "button_text": "Submit Delivery",
+            "roles": [
+              "admin",
+              "driver",
+              "helper",
+              "manager",
+              "dispatcher"
+            ]
+          },
+          "submitted_roles": [
+            "dispatcher"
+          ]
+        },
+        "pending__1789089264895000": {
+          "submitted_role": "dispatcher",
+          "status_form": {
+            "next_status_key": "assigned",
+            "roles": [
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "button_text": "Assign Booking",
+            "status_text": null,
+            "id": "2",
+            "is_main_form": true,
+            "is_active": true,
+            "current_status_key": "pending",
+            "status_subtext": null,
+            "role": "admin"
+          },
+          "status_key": "pending",
+          "fields": {
+            "drop_off_time": "9:45 AM",
+            "pick_up_time": "9:14 AM",
+            "drop_off_date": "2026-09-11",
+            "driver_id": "12",
+            "helper_id": "19",
+            "pick_up_date": "2026-09-11",
+            "chassis_id": "6"
+          },
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_by": "8",
+          "submitted_at": "2026-09-11T09:14:24.895"
+        },
+        "assigned__1790905845784000": {
+          "status_key": "assigned",
+          "submitted_role": "dispatcher",
+          "fields": {},
+          "status_form": {
+            "roles": [
+              "driver",
+              "admin",
+              "helper",
+              "dispatcher",
+              "manager"
+            ],
+            "status_subtext": null,
+            "status_text": null,
+            "current_status_key": "assigned",
+            "role": "driver",
+            "next_status_key": "ongoing",
+            "button_text": "Start Delivery",
+            "is_main_form": true,
+            "is_active": true,
+            "id": "4"
+          },
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_at": "2026-10-02T09:50:45.784",
+          "submitted_by": "8"
+        },
+        "assigned__1789089300529000": {
+          "submitted_by": "8",
+          "submitted_at": "2026-09-11T09:15:00.529",
+          "status_key": "assigned",
+          "status_form": null,
+          "submitted_role": "dispatcher",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "fields": {
+            "waybill_photo": {
+              "storage_path": "bookings/63/status_outputs/book__1789088484862000/waybill_photo/1789088492991.jpg",
+              "width": 810,
+              "name": "1000139526.jpg",
+              "size": 221367,
+              "download_url": "https://example.test/photo",
+              "mime_type": "image/jpeg",
+              "height": 1080
+            },
+            "amount": "3000"
+          }
+        }
+      },
+      "id": "63",
+      "chassis_id": "6",
+      "client_status": "delivered",
+      "delivered_at": "2026-10-02T01:54:59.857Z",
+      "helper_id": "19",
+      "created_at": "2026-09-11T09:01:24.860",
+      "client_id": "9",
+      "submission_key": "booking_8_9_1_1789088484860000",
+      "billing_status": "unbilled",
+      "updated_at": "2026-10-02T09:54:59.857",
+      "driver_id": "12",
+      "vehicle_make_id": "3",
+      "driver_status": "delivered",
+      "helper_status": "delivered"
+    },
+    "base": "2026-09-14T05:47:03.894Z"
+  }
+]

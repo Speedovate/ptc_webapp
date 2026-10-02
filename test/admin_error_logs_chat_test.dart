@@ -137,7 +137,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a device row still chats with its user, not the device', (
+  testWidgets('expanded devices retain chat only on the user row', (
     tester,
   ) async {
     final db = FakeFirebaseFirestore();
@@ -164,15 +164,10 @@ void main() {
     await tester.tap(find.byTooltip('Expand errors'));
     await tester.pumpAndSettle();
 
-    // One chat action per row: the user group plus each device row.
-    expect(find.byTooltip('Chat with Alexis'), findsNWidgets(3));
-    for (var i = 0; i < 3; i++) {
-      await tester.tap(find.byTooltip('Chat with Alexis').at(i));
-      await tester.pumpAndSettle();
-    }
-
-    // Never a device id, and never empty.
-    expect(opened, ['8', '8', '8']);
+    expect(find.byTooltip('Chat with Alexis'), findsOneWidget);
+    await tester.tap(find.byTooltip('Chat with Alexis'));
+    await tester.pumpAndSettle();
+    expect(opened, ['8']);
     expect(tester.takeException(), isNull);
   });
 }
