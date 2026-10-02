@@ -331,13 +331,6 @@ class _KpiUtilizationViewState extends State<KpiUtilizationView> {
             if (widget.periodTrailing != null) widget.periodTrailing!,
           ],
         ),
-        if (result.unresolved > 0)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              '${result.unresolved} completed bookings need a delivery date or PM assignment.',
-            ),
-          ),
         const SizedBox(height: 20),
         Expanded(
           child: widget.loading

@@ -3179,7 +3179,8 @@ class OfflineMutationQueueService {
             entry.collectionKey == 'bookings' &&
             lastError.contains('chassis is active on another booking');
         final legacyRecovery =
-            (!entry.bookingDeliveryHistoryRechecked &&
+            ((!entry.bookingDeliveryHistoryRechecked ||
+                    !entry.bookingRepeatedDeliveryRechecked) &&
                 hasBookingConflict &&
                 entry.payload['client_status'] == 'delivered') ||
             (!entry.bookingEditArchiveRechecked &&
@@ -3205,6 +3206,7 @@ class OfflineMutationQueueService {
             isBlocked: false,
             bookingEditArchiveRechecked: true,
             bookingDeliveryHistoryRechecked: true,
+            bookingRepeatedDeliveryRechecked: true,
             bookingPhotoRechecked:
                 hasBookingConflict || entry.bookingPhotoRechecked,
             bookingMetadataRechecked:
@@ -3739,6 +3741,7 @@ class _OfflineMutationEntry {
     this.bookingEditArchiveRechecked = false,
     this.bookingAssignmentHistoryRechecked = false,
     this.bookingDeliveryHistoryRechecked = false,
+    this.bookingRepeatedDeliveryRechecked = false,
     this.catalogPredecessorVersions = const [],
     // A user entry only replays `is_online` when presence was the point of the
     // edit. Older persisted entries have no flag, so they keep the safe default
@@ -3773,6 +3776,7 @@ class _OfflineMutationEntry {
   final bool bookingEditArchiveRechecked;
   final bool bookingAssignmentHistoryRechecked;
   final bool bookingDeliveryHistoryRechecked;
+  final bool bookingRepeatedDeliveryRechecked;
   final List<String> catalogPredecessorVersions;
 
   /// True when this entry's `is_online` value is an intentional presence change
@@ -3801,6 +3805,7 @@ class _OfflineMutationEntry {
     bool? bookingEditArchiveRechecked,
     bool? bookingAssignmentHistoryRechecked,
     bool? bookingDeliveryHistoryRechecked,
+    bool? bookingRepeatedDeliveryRechecked,
     bool? replayPresence,
     Map<String, dynamic>? basePayload,
     String? baseUpdatedAt,
@@ -3843,6 +3848,9 @@ class _OfflineMutationEntry {
           bookingPhotoRechecked ?? this.bookingPhotoRechecked,
       bookingEditArchiveRechecked:
           bookingEditArchiveRechecked ?? this.bookingEditArchiveRechecked,
+      bookingRepeatedDeliveryRechecked:
+          bookingRepeatedDeliveryRechecked ??
+          this.bookingRepeatedDeliveryRechecked,
       bookingDeliveryHistoryRechecked:
           bookingDeliveryHistoryRechecked ??
           this.bookingDeliveryHistoryRechecked,
@@ -3877,6 +3885,7 @@ class _OfflineMutationEntry {
       'booking_edit_archive_rechecked': bookingEditArchiveRechecked,
       'booking_assignment_history_rechecked': bookingAssignmentHistoryRechecked,
       'booking_delivery_history_rechecked': bookingDeliveryHistoryRechecked,
+      'booking_repeated_delivery_rechecked': bookingRepeatedDeliveryRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
       'replay_presence': replayPresence,
@@ -3913,6 +3922,8 @@ class _OfflineMutationEntry {
       chassisConflictRechecked: map['chassis_conflict_rechecked'] == true,
       chassisTransferRechecked: map['chassis_transfer_rechecked'] == true,
       conflictRecoveryAttempted: map['conflict_recovery_attempted'] == true,
+      bookingRepeatedDeliveryRechecked:
+          map['booking_repeated_delivery_rechecked'] == true,
       bookingDeliveryHistoryRechecked:
           map['booking_delivery_history_rechecked'] == true,
       bookingMetadataRechecked: map['booking_metadata_rechecked'] == true,

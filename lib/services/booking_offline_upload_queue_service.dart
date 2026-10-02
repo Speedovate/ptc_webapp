@@ -882,6 +882,19 @@ class BookingOfflineUploadQueueService {
           fieldKey: entry.fieldKey,
         );
         final historicalKey = 'photo__${entry.id}';
+        if (bookingPhotoAlreadyUploaded(
+          photo: markerField,
+          bookingId: entry.bookingId,
+          statusKey: entry.statusKey,
+          fieldKey: entry.fieldKey,
+          fileName: entry.fileName,
+          size: entry.size,
+          mimeType: entry.mimeType,
+        )) {
+          confirmedSuccesses.add(entry.id);
+          mutated = true;
+          continue;
+        }
         final historical = _statusOutputsFromBooking(
           markerData,
         )?[historicalKey];

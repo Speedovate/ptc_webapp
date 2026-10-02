@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/admin_icon_action_button.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 import 'package:webapp/utils/location_display.dart';
 import 'package:webapp/utils/functions.dart';
@@ -49,7 +50,9 @@ class ChassisActionHistoryDialog extends StatelessWidget {
     this.usersById = const {},
     this.currentStatus,
     this.currentStatusAt,
+    this.onOpenBooking,
   });
+  final VoidCallback? onOpenBooking;
   final Map<String, UserModel> usersById;
   final String name;
   final String? currentStatus;
@@ -88,123 +91,167 @@ class ChassisActionHistoryDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) => DefaultTabController(
     length: 2,
-    child: AdminModalShell(
-      selectable: true,
-      title: 'Chassis $name History',
-      maxWidth: 960,
-      bodyHandlesScrolling: true,
-      flexibleBody: true,
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
-        ),
-      ],
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: ChassisElapsedText(history: history, clock: clock),
-          ),
-          const SizedBox(height: 12),
-          const TabBar(
-            tabs: [
-              Tab(text: 'Actions'),
-              Tab(text: 'Booking assignments'),
+    child: Builder(
+      builder: (context) {
+        final controller = DefaultTabController.of(context);
+        return AnimatedBuilder(
+          animation: controller,
+          builder: (context, _) => AdminModalShell(
+            selectable: true,
+            title: 'Chassis $name',
+            titleTrailing: onOpenBooking == null
+                ? null
+                : Tooltip(
+                    message: 'Open booking',
+                    child: AdminIconActionButton(
+                      icon: Icons.open_in_new_rounded,
+                      backgroundColor: AppColors.primaryColor,
+                      onTap: onOpenBooking,
+                    ),
+                  ),
+            maxWidth: 960,
+            bodyHandlesScrolling: true,
+            flexibleBody: true,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
             ],
-          ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: TabBarView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                history.events.isEmpty && !_showCurrentRow
-                    ? const Center(
-                        child: Text('No recorded actions available.'),
-                      )
-                    : Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: AdminModalRecordList(
-                          titles: const [
-                            'Status',
-                            'Booking',
-                            'DateTime',
-                            'Location',
-                            'Details',
-                          ],
-                          itemCount:
-                              history.events.length + (_showCurrentRow ? 1 : 0),
-                          columnStyles: const {
-                            0: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          },
-                          columnExtraWidths: const {0: 26},
-                          cellBuilder: (row, column) => column == 0
-                              ? ChassisStatusPill(
-                                  status: _showCurrentRow && row == 0
-                                      ? currentStatus!
-                                      : history
-                                                .events[row -
-                                                    (_showCurrentRow ? 1 : 0)]
-                                                .chassisStatus ??
-                                            '',
-                                )
-                              : null,
-                          valuesAt: (index) {
-                            if (_showCurrentRow && index == 0) {
-                              return [
-                                chassisStatusLabel(currentStatus!),
-                                '—',
-                                currentStatusAt == null
-                                    ? 'Not recorded'
-                                    : AdminUsersView.formatCreatedAt(
-                                        currentStatusAt!.toLocal(),
-                                      ),
-                                history.currentLocation?.trim().isNotEmpty ==
-                                        true
-                                    ? locationDisplayLabel(
-                                        history.currentLocation!,
-                                      )
-                                    : '—',
-                                'Current status',
-                              ];
-                            }
-                            final event = history
-                                .events[index - (_showCurrentRow ? 1 : 0)];
-                            final stage = chassisStatusLabel(
-                              event.chassisStatus ?? '',
-                            );
-                            final details = <String>[
-                              history.claimLabel(event) ??
-                                  humanizeDropdownValue(event.stage),
-                              if (event.actor != null)
-                                _userLabel(
-                                  event.actor!,
-                                  recordedRole: event.actorRole,
-                                ),
-                              if (event.driverId != null)
-                                'Return: ${_userLabel(event.driverId!, recordedRole: 'driver')}',
-                            ];
-                            return [
-                              stage,
-                              'Booking ${event.bookingId}',
-                              AdminUsersView.formatCreatedAt(
-                                event.at.toLocal(),
-                              ),
-                              history.locationLabel(event),
-                              details.isEmpty ? '—' : details.join('\n'),
-                            ];
-                          },
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: ChassisElapsedText(
+                          history: history,
+                          clock: clock,
                         ),
                       ),
-                _assignmentList(),
+                      for (var i = 0; i < 2; i++)
+                        TextButton(
+                          onPressed: () => controller.index = i,
+                          child: Text(
+                            i == 0 ? 'History' : 'Bookings',
+                            style: TextStyle(
+                              color: controller.index == i
+                                  ? AppColors.primaryColor
+                                  : AppColors.textPrimary,
+                              fontWeight: controller.index == i
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: IndexedStack(
+                    index: controller.index,
+                    children: [
+                      history.events.isEmpty && !_showCurrentRow
+                          ? const Center(
+                              child: Text('No recorded actions available.'),
+                            )
+                          : Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                              ),
+                              child: AdminModalRecordList(
+                                titles: const [
+                                  'Status',
+                                  'Booking',
+                                  'DateTime',
+                                  'Location',
+                                  'Details',
+                                ],
+                                itemCount:
+                                    history.events.length +
+                                    (_showCurrentRow ? 1 : 0),
+                                columnStyles: const {
+                                  0: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                },
+                                columnExtraWidths: const {0: 26},
+                                cellBuilder: (row, column) => column == 0
+                                    ? ChassisStatusPill(
+                                        status: _showCurrentRow && row == 0
+                                            ? currentStatus!
+                                            : history
+                                                      .events[row -
+                                                          (_showCurrentRow
+                                                              ? 1
+                                                              : 0)]
+                                                      .chassisStatus ??
+                                                  '',
+                                      )
+                                    : null,
+                                valuesAt: (index) {
+                                  if (_showCurrentRow && index == 0) {
+                                    return [
+                                      chassisStatusLabel(currentStatus!),
+                                      '—',
+                                      currentStatusAt == null
+                                          ? 'Not recorded'
+                                          : AdminUsersView.formatCreatedAt(
+                                              currentStatusAt!.toLocal(),
+                                            ),
+                                      history.currentLocation
+                                                  ?.trim()
+                                                  .isNotEmpty ==
+                                              true
+                                          ? locationDisplayLabel(
+                                              history.currentLocation!,
+                                            )
+                                          : '—',
+                                      'Current status',
+                                    ];
+                                  }
+                                  final event =
+                                      history.events[index -
+                                          (_showCurrentRow ? 1 : 0)];
+                                  final stage = chassisStatusLabel(
+                                    event.chassisStatus ?? '',
+                                  );
+                                  final details = <String>[
+                                    history.claimLabel(event) ??
+                                        humanizeDropdownValue(event.stage),
+                                    if (event.actor != null)
+                                      _userLabel(
+                                        event.actor!,
+                                        recordedRole: event.actorRole,
+                                      ),
+                                    if (event.driverId != null)
+                                      'Return: ${_userLabel(event.driverId!, recordedRole: 'driver')}',
+                                  ];
+                                  return [
+                                    stage,
+                                    'Booking ${event.bookingId}',
+                                    AdminUsersView.formatCreatedAt(
+                                      event.at.toLocal(),
+                                    ),
+                                    history.locationLabel(event),
+                                    details.isEmpty ? '—' : details.join('\n'),
+                                  ];
+                                },
+                              ),
+                            ),
+                      _assignmentList(),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
-        ],
-      ),
+        );
+      },
     ),
   );
 

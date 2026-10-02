@@ -1,3 +1,4 @@
+import 'package:webapp/services/chassis_waiting_badge.dart';
 import 'package:webapp/views/admin/admin_kpi_tracking.dart';
 import 'package:webapp/services/kpi/investor_kpi_store.dart';
 import 'package:webapp/utils/functions.dart' show normalizeRoleKey;
@@ -80,6 +81,8 @@ class _AdminHomeState extends State<AdminHome> {
   late UserModel _shellUser;
   StreamSubscription<List<Booking>>? _bookingsBadgeSubscription;
   StreamSubscription<List<Chassis>>? _chassisBadgeSubscription;
+  Timer? _chassisBadgeTimer;
+  List<DateTime> _chassisWaitingThresholds = const [];
   StreamSubscription<void>? _makesBadgeSubscription;
   StreamSubscription<List<SupportThread>>? _supportBadgeSubscription;
   StreamSubscription<void>? _supportReadBadgeSubscription;
@@ -180,6 +183,7 @@ class _AdminHomeState extends State<AdminHome> {
   @override
   void dispose() {
     PerformanceTrace.event('admin-home', 'dispose');
+    _chassisBadgeTimer?.cancel();
     _bookingsBadgeSubscription?.cancel();
     _chassisBadgeSubscription?.cancel();
     _makesBadgeSubscription?.cancel();
@@ -202,6 +206,7 @@ class _AdminHomeState extends State<AdminHome> {
     final userId = _shellUser.id?.trim();
     _sidebarBookings = BookingRequest.hydratedBookingsSnapshot;
     _sidebarChassis = ChassisRequest.instance.hydratedChassisSnapshot;
+    _refreshChassisWaitingBadge();
     _sidebarMakes = VehicleRequest.hydratedMakesSnapshot;
     _sidebarThreads = SupportRequest.hydratedAllThreadsSnapshot;
     _sidebarThreadReadMarkers = const <String, String>{};
@@ -218,6 +223,7 @@ class _AdminHomeState extends State<AdminHome> {
           return;
         }
         _sidebarBookings = List<Booking>.from(bookings);
+        _refreshChassisWaitingBadge();
         _notifySidebarBadgeChanged();
         PerformanceTrace.event(
           'admin-home',
@@ -232,6 +238,7 @@ class _AdminHomeState extends State<AdminHome> {
         return;
       }
       _sidebarChassis = List<Chassis>.from(chassis);
+      _refreshChassisWaitingBadge();
       _notifySidebarBadgeChanged();
     });
     _supportBadgeSubscription = _supportRequest.watchAllThreads().listen((
@@ -298,14 +305,38 @@ class _AdminHomeState extends State<AdminHome> {
     }
   }
 
-  int get _emptyChassisBadgeCount => _sidebarChassis.where((chassis) {
-    return chassis.isActive && chassis.currentStatus == Chassis.empty;
-  }).length;
+  void _refreshChassisWaitingBadge() {
+    _chassisWaitingThresholds = chassisWaitingBadgeThresholds(
+      _sidebarChassis,
+      _sidebarBookings,
+    );
+    _scheduleChassisBadgeThreshold();
+  }
+
+  void _scheduleChassisBadgeThreshold() {
+    _chassisBadgeTimer?.cancel();
+    final now = DateTime.now();
+    final next = _chassisWaitingThresholds
+        .where((at) => at.isAfter(now))
+        .firstOrNull;
+    if (next == null) return;
+    _chassisBadgeTimer = Timer(next.difference(now), () {
+      if (!mounted) return;
+      _notifySidebarBadgeChanged();
+      _scheduleChassisBadgeThreshold();
+    });
+  }
+
+  int get _waitingChassisBadgeCount => !_canReadChassis
+      ? 0
+      : _chassisWaitingThresholds
+            .where((at) => !at.isAfter(DateTime.now()))
+            .length;
 
   Widget _vehiclesTrailing(AdminHomeViewModel vm) {
     final badge = vm.isVehiclesExpanded
         ? null
-        : _sidebarBadge(_emptyChassisBadgeCount);
+        : _sidebarBadge(_waitingChassisBadgeCount, showActualCount: true);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -714,7 +745,10 @@ class _AdminHomeState extends State<AdminHome> {
                             vm.selectedSection == AdminSection.vehicles &&
                             vm.selectedVehiclesSection ==
                                 AdminVehiclesSection.chassis,
-                        trailing: _sidebarBadge(_emptyChassisBadgeCount),
+                        trailing: _sidebarBadge(
+                          _waitingChassisBadgeCount,
+                          showActualCount: true,
+                        ),
                         onTap: () {
                           vm.selectVehiclesSection(
                             AdminVehiclesSection.chassis,

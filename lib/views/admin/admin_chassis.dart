@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/admin_icon_action_button.dart';
 import 'package:webapp/utils/location_display.dart';
 import 'package:webapp/services/kpi/location_option_registry.dart';
 import 'package:webapp/services/kpi/operations_catalog_store.dart';
@@ -632,7 +633,7 @@ class _AdminChassisViewState extends State<AdminChassisView>
   Future<void> _openHistory(Chassis item) async {
     await (_editorOptionsFuture ??= _loadEditorOptions());
     if (!mounted) return;
-    await showAppDialog<void>(
+    final selectedBooking = await showAppDialog<String>(
       context: context,
       wrapInSelectionArea: false,
       barrierDismissible: true,
@@ -641,6 +642,9 @@ class _AdminChassisViewState extends State<AdminChassisView>
             valueListenable: _histories,
             builder: (context, histories, child) => ChassisActionHistoryDialog(
               name: item.name,
+              onOpenBooking: _canOpenBookings && item.bookingReferenceId != null
+                  ? () => Navigator.of(context).pop(item.bookingReferenceId)
+                  : null,
               currentStatus:
                   _items
                       .where((chassis) => chassis.id == item.id)
@@ -659,6 +663,9 @@ class _AdminChassisViewState extends State<AdminChassisView>
             ),
           ),
     );
+    if (mounted && selectedBooking != null) {
+      await _openBooking(selectedBooking);
+    }
   }
 
   Future<void> _toggleActive(Chassis item) async {
@@ -734,11 +741,12 @@ class _AdminChassisViewState extends State<AdminChassisView>
     var selectedBookingId = item?.bookingReferenceId?.toString();
     // Auto-resolve: a chassis without a booking has no driver, even when a
     // stale current_driver_id exists in the source data.
-    var selectedDriverId = item?.bookingReferenceId == null ||
-            selectedBookingId == null
+    var selectedDriverId =
+        item?.bookingReferenceId == null || selectedBookingId == null
         ? null
         : item?.driverReferenceId?.toString();
     var isSaving = false;
+    String? bookingToOpen;
     final saved = await showAppDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -748,6 +756,24 @@ class _AdminChassisViewState extends State<AdminChassisView>
               : item == null
               ? 'New Chassis'
               : 'Edit Chassis',
+          titleTrailing:
+              item != null &&
+                  _canOpenBookings &&
+                  item.bookingReferenceId != null
+              ? Tooltip(
+                  message: 'Open booking',
+                  child: AdminIconActionButton(
+                    icon: Icons.open_in_new_rounded,
+                    backgroundColor: AppColors.primaryColor,
+                    onTap: isSaving
+                        ? null
+                        : () {
+                            bookingToOpen = item.bookingReferenceId;
+                            Navigator.of(dialogContext).pop(false);
+                          },
+                  ),
+                )
+              : null,
           contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
           actions: readOnly
               ? [
@@ -964,8 +990,15 @@ class _AdminChassisViewState extends State<AdminChassisView>
       location.dispose();
       isActive.dispose();
     });
+    if (mounted && bookingToOpen != null) {
+      await _openBooking(bookingToOpen);
+    }
     if (saved != true) return;
   }
+
+  bool get _canOpenBookings => RoleAccessService.instance.canAccess(
+    DispatcherAccessCapability.bookingsRead,
+  );
 
   bool get _canOpenUsers => RoleAccessService.instance.canAccess(
     DispatcherAccessCapability.usersRead,

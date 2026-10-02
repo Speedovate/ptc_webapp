@@ -501,11 +501,18 @@ Map<String, dynamic>? reconcileBookingHistory(
     if (!_equal({...local, 'fields': fields}, remote)) return null;
     normalized['$key'] = remote;
   }
-  final archived = _reconcileSupersededAssignment(
+  final repeatedDelivery = _reconcileRepeatedDelivery(
     server,
     pending,
     normalized,
     baseUpdatedAt!,
+  );
+  if (repeatedDelivery != null) return repeatedDelivery;
+  final archived = _reconcileSupersededAssignment(
+    server,
+    pending,
+    normalized,
+    baseUpdatedAt,
     verifiedMake,
   );
   if (archived != null) return archived;
@@ -627,6 +634,94 @@ Map<String, dynamic>? reconcileBookingHistory(
     candidate['updated_at'] = server['updated_at'];
   }
   return candidate;
+}
+
+/// Two independently valid submissions for the same completed delivery are
+/// retained as history. The first committed delivery date stays authoritative.
+Map<String, dynamic>? _reconcileRepeatedDelivery(
+  Map<String, dynamic> server,
+  Map<String, dynamic> pending,
+  Map<String, dynamic> normalized,
+  String base,
+) {
+  if (server['client_status'] != 'delivered' ||
+      pending['client_status'] != 'delivered') {
+    return null;
+  }
+  final before = server['status_outputs'] as Map;
+  final remoteOnly = before.keys
+      .where((k) => !normalized.containsKey(k))
+      .toList();
+  final localOnly = normalized.keys
+      .where((k) => !before.containsKey(k))
+      .toList();
+  if (remoteOnly.length != 1 || localOnly.length > 1) return null;
+  final replay = localOnly.isEmpty;
+  if (replay) {
+    final matching = normalized.keys.where((key) {
+      final event = normalized[key];
+      return event is Map &&
+          event['submitted_at'] == pending['updated_at'] &&
+          event['status_form'] is Map &&
+          event['status_form']['next_status_key'] == 'delivered';
+    }).toList();
+    if (matching.length != 1) return null;
+    localOnly.add(matching.single);
+  }
+  final remote = before[remoteOnly.single];
+  final local = normalized[localOnly.single];
+  if (remote is! Map || local is! Map) return null;
+  String? number(Map action) {
+    final fields = action['fields'];
+    if (fields is! Map) return null;
+    final raw = '${fields['delivery_form_number'] ?? ''}'.trim();
+    if (raw.isEmpty) return null;
+    return RegExp(r'^\d+$').hasMatch(raw)
+        ? raw.replaceFirst(RegExp(r'^0+(?=\d)'), '')
+        : raw;
+  }
+
+  if (number(remote) == null || number(remote) != number(local)) return null;
+  final shared = Map<String, dynamic>.from(before)..remove(remoteOnly.single);
+  if (replay) shared.remove(localOnly.single);
+  final baseline = <String, dynamic>{
+    ...server,
+    'updated_at': base,
+    'client_status': 'ongoing',
+    'driver_status': 'ongoing',
+    'helper_status': 'ongoing',
+    'delivered_at': null,
+    'status_outputs': shared,
+  };
+  final candidate = <String, dynamic>{...pending, 'status_outputs': normalized};
+  for (final key in [
+    'media_synced_at',
+    'photo_cleanup_paths',
+    'photo_cleanup_claims',
+  ]) {
+    if (pending.containsKey(key) && !_equal(pending[key], server[key])) {
+      return null;
+    }
+    if (server.containsKey(key)) candidate[key] = server[key];
+  }
+  final originalServerDelivery = {
+    ...server,
+    'updated_at': remote['submitted_at'],
+    'status_outputs': {...shared, remoteOnly.single: remote},
+  };
+  if (!isSafeBookingStatusContinuation(baseline, originalServerDelivery) ||
+      !isSafeBookingStatusContinuation(baseline, candidate)) {
+    return null;
+  }
+  final serverTime = _bookingInstant(server['updated_at'])!;
+  final pendingTime = _bookingInstant(pending['updated_at'])!;
+  return {
+    ...server,
+    'status_outputs': {...before, ...normalized},
+    'updated_at': pendingTime.isAfter(serverTime)
+        ? pending['updated_at']
+        : server['updated_at'],
+  };
 }
 
 /// Retain a missed assignment as history only when the same actor subsequently

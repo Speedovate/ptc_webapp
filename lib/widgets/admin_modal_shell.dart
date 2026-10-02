@@ -13,6 +13,7 @@ class AdminModalShell extends StatelessWidget {
     super.key,
     required this.title,
     required this.child,
+    this.titleTrailing,
     this.maxWidth = 560,
     this.maxHeightFactor = 0.82,
     this.flexibleBody = false,
@@ -29,6 +30,7 @@ class AdminModalShell extends StatelessWidget {
   });
 
   final String title;
+  final Widget? titleTrailing;
   final Widget child;
   final double maxWidth;
   final double maxHeightFactor;
@@ -112,7 +114,20 @@ class AdminModalShell extends StatelessWidget {
                     children: [
                       Padding(
                         padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-                        child: selectable
+                        child: titleTrailing != null
+                            ? Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      title,
+                                      style: theme.textTheme.titleLarge,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  titleTrailing!,
+                                ],
+                              )
+                            : selectable
                             ? Text(title, style: theme.textTheme.titleLarge)
                             : SelectableText(
                                 title,

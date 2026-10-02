@@ -1,4 +1,27 @@
 /// Recover only a unique marker for the same upload and original photo metadata.
+bool bookingPhotoAlreadyUploaded({
+  required Object? photo,
+  required String bookingId,
+  required String statusKey,
+  required String fieldKey,
+  required String fileName,
+  required int? size,
+  required String? mimeType,
+}) {
+  if (photo is! Map || size == null || mimeType == null) return false;
+  final path = photo['storage_path'];
+  return photo['pending_upload'] != true &&
+      photo['pending_upload_id'] == null &&
+      photo['name'] == fileName &&
+      photo['size'] == size &&
+      photo['mime_type'] == mimeType &&
+      path is String &&
+      path.startsWith(
+        'bookings/$bookingId/status_outputs/$statusKey/$fieldKey/',
+      ) &&
+      Uri.tryParse('${photo['download_url']}')?.scheme == 'https';
+}
+
 String? matchingBookingPhotoStatus({
   required Map<String, dynamic> booking,
   required String uploadId,

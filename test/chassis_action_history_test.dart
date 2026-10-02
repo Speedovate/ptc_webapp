@@ -35,6 +35,45 @@ Booking booking(String stage, {DateTime? claim}) => Booking(
   },
 );
 void main() {
+  testWidgets('compact history header opens booking and switches views', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(375, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final clock = ValueNotifier(
+      delivered.add(const Duration(hours: 175, minutes: 51)),
+    );
+    addTearDown(clock.dispose);
+    var opened = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChassisActionHistoryDialog(
+            name: '20-16',
+            history: ChassisActionHistory.fromBookings(chassis, [
+              booking('delivered'),
+            ]),
+            clock: clock,
+            onOpenBooking: () => opened = true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Chassis 20-16'), findsOneWidget);
+    expect(find.byType(TabBar), findsNothing);
+    final waiting = tester.getCenter(find.text('Waiting for 175h 51m'));
+    final selector = tester.getCenter(find.text('Bookings'));
+    expect((waiting.dy - selector.dy).abs(), lessThan(1));
+    expect(selector.dx, greaterThan(waiting.dx));
+    await tester.tap(find.text('Bookings'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Open booking'));
+    expect(opened, true);
+    expect(tester.takeException(), isNull);
+  });
   test(
     'includes every linked advance booking without affecting live timing',
     () {
@@ -248,10 +287,10 @@ void main() {
     );
     await tester.tap(find.text('Open history'));
     await tester.pumpAndSettle();
-    expect(find.text('Chassis 20-14 History'), findsOneWidget);
+    expect(find.text('Chassis 20-14'), findsOneWidget);
     await tester.tapAt(const Offset(5, 5));
     await tester.pumpAndSettle();
-    expect(find.text('Chassis 20-14 History'), findsNothing);
+    expect(find.text('Chassis 20-14'), findsNothing);
   });
   for (final width in [400.0, 1200.0]) {
     testWidgets('history dialog is selectable and fits width $width', (
@@ -325,7 +364,7 @@ void main() {
           ),
         ),
       );
-      await tester.tap(find.text('Booking assignments'));
+      await tester.tap(find.text('Bookings'));
       await tester.pumpAndSettle();
       expect(find.text('Booking 11'), findsOneWidget);
       expect(find.text('Driver 21 | Advance Driver'), findsOneWidget);
