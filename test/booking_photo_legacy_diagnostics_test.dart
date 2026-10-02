@@ -52,11 +52,18 @@ void main() {
         }),
       ];
       final photos = SlowPhotos();
+      var now = DateTime.utc(2026, 10, 2);
+      var reads = 0;
       final service = BookingOfflineUploadQueueService(
         backend: backend,
         firestore: db,
         photoStorageService: photos,
         flushMutations: () async {},
+        now: () => now,
+        bookingReader: (_) async {
+          reads++;
+          return server;
+        },
         mutationQueue: OfflineMutationQueueService(
           backend: backend,
           firestore: db,
@@ -89,6 +96,22 @@ void main() {
         reason:
             'An unchanged missing action must not rewrite photo bytes or diagnostics each cycle',
       );
+      final beforeBackground = reads;
+      for (var i = 0; i < 10; i++) {
+        await service.flushPendingUploads(background: true);
+      }
+      expect(reads, beforeBackground);
+      expect(backend.data[key]!.single, snapshot);
+      now = now.add(const Duration(minutes: 5));
+      await service.flushPendingUploads(background: true);
+      expect(reads, beforeBackground + 1);
+      await service.flushPendingUploads();
+      expect(
+        reads,
+        beforeBackground + 2,
+        reason: 'Explicit retry bypasses cooldown',
+      );
+      expect(backend.data[key]!.single, snapshot);
     },
   );
 }

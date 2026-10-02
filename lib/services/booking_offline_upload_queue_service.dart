@@ -31,6 +31,7 @@ class BookingOfflineUploadQueueService {
     Future<Map<String, dynamic>?> Function(String bookingId)? bookingReader,
     Future<Map<String, dynamic>?> Function(String bookingId)?
     cachedBookingReader,
+    DateTime Function()? now,
   }) : _backend = backend ?? createBookingStorageBackend(),
        _providedFirestore = firestore,
        _photoStorageService =
@@ -41,7 +42,8 @@ class BookingOfflineUploadQueueService {
        _mutationQueue = mutationQueue ?? OfflineMutationQueueService.instance,
        _mutationFlushTimeout = mutationFlushTimeout,
        _bookingReader = bookingReader,
-       _cachedBookingReader = cachedBookingReader;
+       _cachedBookingReader = cachedBookingReader,
+       _now = now ?? DateTime.now;
 
   static final BookingOfflineUploadQueueService instance =
       BookingOfflineUploadQueueService();
@@ -58,6 +60,9 @@ class BookingOfflineUploadQueueService {
   static const _currentUserIdKey = 'paltranco_current_user_id';
   static const _knownSessionUserIdsKey = 'paltranco_known_session_user_ids';
   static const _retryInterval = Duration(seconds: 20);
+  static const _missingPhotoRecheckInterval = Duration(minutes: 5);
+  final DateTime Function() _now;
+  final Map<String, DateTime> _missingPhotoRecheckAt = {};
 
   /// Re-reading the booking to confirm a placeholder is a small single-document
   /// read, so it gets a generous budget. A phone on mobile data routinely needs
@@ -168,7 +173,7 @@ class BookingOfflineUploadQueueService {
     await _refreshStatusFromStorage();
     _retryTimer ??= Timer.periodic(_retryInterval, (_) {
       if (!isAppVisible()) return;
-      unawaited(flushPendingUploads());
+      unawaited(flushPendingUploads(background: true));
     });
     _networkSubscription ??= networkStatusEvents().listen((isOnline) {
       if (isOnline && isAppVisible()) {
@@ -270,7 +275,7 @@ class BookingOfflineUploadQueueService {
     }, originatingStorageKey: originatingStorageKey);
   }
 
-  Future<void> flushPendingUploads() async {
+  Future<void> flushPendingUploads({bool background = false}) async {
     await initialize();
     if (_isFlushing || !currentNetworkStatus()) {
       return;
@@ -280,7 +285,7 @@ class BookingOfflineUploadQueueService {
     // must not both proceed into the same upload batch.
     _isFlushing = true;
     try {
-      await _runFlushCycle();
+      await _runFlushCycle(background: background);
     } on TimeoutException catch (error) {
       // Release the flush lock on a stalled dependency so the next timer,
       // resume, or reconnect can try again. Entries are only removed after a
@@ -311,7 +316,7 @@ class BookingOfflineUploadQueueService {
     }
   }
 
-  Future<void> _runFlushCycle() async {
+  Future<void> _runFlushCycle({required bool background}) async {
     // Persist pending-upload markers before replacing them with storage URLs.
     // The booking mutation flush has no internal deadline, so bound it here:
     // a stall there would otherwise hold this queue's flush lock forever and
@@ -329,6 +334,7 @@ class BookingOfflineUploadQueueService {
       await _flushPendingUploadsForStorageKey(
         storageKey,
         updateStatus: storageKey == currentStorageKey,
+        background: background,
       );
     }
     await _refreshStatusFromStorage();
@@ -337,6 +343,8 @@ class BookingOfflineUploadQueueService {
   Future<bool> _applyUploadedPhoto({
     required _PendingBookingUploadEntry entry,
     required Map<String, dynamic> uploadedValue,
+    bool recoverHistoricalPhoto = false,
+    String? owner,
   }) async {
     final documentRef = _bookingsCollection.doc(entry.bookingId);
     var applied = false;
@@ -349,6 +357,32 @@ class BookingOfflineUploadQueueService {
       }
 
       final currentData = documentData(snapshot);
+      if (recoverHistoricalPhoto) {
+        final historyKey = 'photo__${entry.id}';
+        final outputs = _statusOutputsFromBooking(currentData);
+        if (outputs?[historyKey] != null) {
+          // An earlier transaction may have committed before its response was lost.
+          final existing = outputs![historyKey];
+          applied = existing is Map && existing['upload_id'] == entry.id;
+          return;
+        }
+        if (!_canRecoverHistoricalPhoto(entry, currentData)) {
+          return;
+        }
+        transaction.update(documentRef, {
+          'status_outputs.$historyKey': {
+            'status_key': 'photo',
+            'submitted_at': entry.createdAtIso,
+            if (owner != null && owner != 'signed_out') 'submitted_by': owner,
+            'recovered_photo': true,
+            'original_status_key': entry.statusKey,
+            'upload_id': entry.id,
+            'fields': {entry.fieldKey: uploadedValue},
+          },
+        });
+        applied = true;
+        return;
+      }
       final statusOutputs = _statusOutputsFromBooking(currentData);
       if (statusOutputs == null) {
         return;
@@ -377,6 +411,36 @@ class BookingOfflineUploadQueueService {
     });
 
     return applied;
+  }
+
+  // Preserve an older staged photo as photo-only history, never reconstruct a
+  // missing delivery form or roll the current booking back to an older status.
+  bool _canRecoverHistoricalPhoto(
+    _PendingBookingUploadEntry entry,
+    Map<String, dynamic> booking,
+  ) {
+    if (!entry.waitingForCommit ||
+        !entry.statusKey.startsWith('ongoing__') ||
+        entry.fieldKey != 'delivery_form_photo') {
+      return false;
+    }
+    final staged = DateTime.tryParse(entry.createdAtIso);
+    final delivered = DateTime.tryParse('${booking['delivered_at']}');
+    if (staged == null || delivered == null || !delivered.isAfter(staged)) {
+      return false;
+    }
+    final outputs = _statusOutputsFromBooking(booking);
+    if (outputs == null || outputs.containsKey(entry.statusKey)) {
+      return false;
+    }
+    return outputs.values.whereType<Map>().any((event) {
+      final form = event['status_form'];
+      final fields = event['fields'];
+      return form is Map &&
+          form['next_status_key'] == 'delivered' &&
+          fields is Map &&
+          fields[entry.fieldKey] is Map;
+    });
   }
 
   Future<bool> _shouldKeepEntryAfterFailure(
@@ -443,6 +507,14 @@ class BookingOfflineUploadQueueService {
     Object? readError,
     StackTrace? readStack,
   }) async {
+    if (reason == _PhotoWaitReason.photoFieldMissing ||
+        reason == _PhotoWaitReason.markerSuperseded) {
+      // A missing target cannot be repaired by polling every 20 seconds.
+      // Keep the bytes and allow explicit retry/reconnect to check immediately.
+      _missingPhotoRecheckAt['$storageKey/${entry.id}'] = _now().add(
+        _missingPhotoRecheckInterval,
+      );
+    }
     final waitCount = (_waitCycles[entry.id] ?? entry.waitCount) + 1;
     _waitCycles[entry.id] = waitCount;
     final reasonChanged = entry.waitReason != reason.key;
@@ -618,8 +690,18 @@ class BookingOfflineUploadQueueService {
   Future<void> _flushPendingUploadsForStorageKey(
     String storageKey, {
     required bool updateStatus,
+    required bool background,
   }) async {
     final entries = await _readEntriesForStorageKey(storageKey);
+    entries.sort((a, b) {
+      final order = (DateTime.tryParse(a.createdAtIso) ?? DateTime(1900))
+          .compareTo(DateTime.tryParse(b.createdAtIso) ?? DateTime(1900));
+      return order != 0 ? order : a.id.compareTo(b.id);
+    });
+    final liveKeys = entries.map((e) => '$storageKey/${e.id}').toSet();
+    _missingPhotoRecheckAt.removeWhere(
+      (key, _) => key.startsWith('$storageKey/') && !liveKeys.contains(key),
+    );
     if (updateStatus) {
       _setStatus(
         _currentStatus.copyWith(
@@ -646,6 +728,18 @@ class BookingOfflineUploadQueueService {
 
     for (final sourceEntry in entries) {
       var entry = sourceEntry;
+      // A newer photo for this booking must not overtake an unresolved older one.
+      if (remaining.any((older) => older.bookingId == entry.bookingId)) {
+        remaining.add(entry);
+        continue;
+      }
+      final recheckKey = '$storageKey/${entry.id}';
+      final recheckAt = _missingPhotoRecheckAt[recheckKey];
+      if (background && recheckAt != null && _now().isBefore(recheckAt)) {
+        remaining.add(entry);
+        continue;
+      }
+      _missingPhotoRecheckAt.remove(recheckKey);
       try {
         if (BookingIdResolver.isTemporary(entry.bookingId)) {
           final resolved = await BookingIdResolver(
@@ -787,7 +881,21 @@ class BookingOfflineUploadQueueService {
           statusKey: entry.statusKey,
           fieldKey: entry.fieldKey,
         );
-        if (_pendingUploadId(markerField) != entry.id) {
+        final historicalKey = 'photo__${entry.id}';
+        final historical = _statusOutputsFromBooking(
+          markerData,
+        )?[historicalKey];
+        if (historical is Map && historical['upload_id'] == entry.id) {
+          confirmedSuccesses.add(entry.id);
+          mutated = true;
+          continue;
+        }
+        final recoverHistoricalPhoto = _canRecoverHistoricalPhoto(
+          entry,
+          markerData,
+        );
+        if (_pendingUploadId(markerField) != entry.id &&
+            !recoverHistoricalPhoto) {
           // An unrelated newer booking edit does not prove that this staged
           // photo was committed or intentionally removed.
           final superseded = !entry.waitingForCommit;
@@ -840,7 +948,12 @@ class BookingOfflineUploadQueueService {
           remaining.add(wait.entry);
           continue;
         }
-        entry = entry.copyWith(waitingForCommit: false, clearWaitReason: true);
+        if (!recoverHistoricalPhoto) {
+          entry = entry.copyWith(
+            waitingForCommit: false,
+            clearWaitReason: true,
+          );
+        }
         final upload = await _photoStorageService
             .uploadBookingPhoto(
               bytes: base64Decode(entry.bytesBase64),
@@ -856,12 +969,17 @@ class BookingOfflineUploadQueueService {
         final applied = await _applyUploadedPhoto(
           entry: entry,
           uploadedValue: upload,
+          recoverHistoricalPhoto: recoverHistoricalPhoto,
+          owner: storageKey.substring('$_storageKey::'.length),
         ).timeout(const Duration(seconds: 15));
 
         if (!applied) {
           await _photoStorageService
               .deleteByPath(upload['storage_path']?.toString())
               .timeout(const Duration(seconds: 20));
+          if (recoverHistoricalPhoto) {
+            remaining.add(entry);
+          }
         }
 
         if (applied) {
