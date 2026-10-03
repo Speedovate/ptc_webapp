@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/services/kpi/kpi_period_label.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
@@ -82,10 +83,10 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(
+        title: AppSelectableText(
           alreadyAgreed ? 'Withdraw agreement?' : 'Record agreement?',
         ),
-        content: Text(
+        content: AppSelectableText(
           alreadyAgreed
               ? 'This cost will stop reducing the investor statement and go back '
                     'to pending.'
@@ -102,7 +103,7 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
             onPressed: () => Navigator.pop(dialogContext, true),
             child: Text(alreadyAgreed ? 'Withdraw' : 'Record agreement'),
           ),
-        ],
+        ].map((action) => SelectionArea(child: action)).toList(),
       ),
     );
     if (confirmed != true || !mounted) return;

@@ -1,4 +1,5 @@
 import 'package:webapp/widgets/shared/admin_icon_action_button.dart';
+import 'package:webapp/widgets/shared/retained_section_stack.dart';
 import 'package:webapp/widgets/shared/booking_record_card.dart';
 import 'package:webapp/utils/location_display.dart';
 import 'package:webapp/utils/functions.dart';
@@ -151,7 +152,7 @@ class ChassisActionHistoryDialog extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Expanded(
-                  child: IndexedStack(
+                  child: RetainedSectionStack(
                     index: controller.index,
                     children: [
                       history.events.isEmpty && !_showCurrentRow

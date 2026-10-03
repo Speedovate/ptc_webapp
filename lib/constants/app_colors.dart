@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 class AppColors {
   static const Color primaryColor = Color(0xFF5B34D6);
+  // Contrast on both white content and solid purple headers. Purple selection
+  // over a purple surface produces no visible change.
+  static const Color selectionHighlight = Color(0x8052C7EA);
   static const Color primaryDark = Color(0xFF20163D);
   static const Color primarySurface = Color(0xFFF6F1FF);
   static const Color primarySurfaceAlt = Color(0xFFEAE1FF);

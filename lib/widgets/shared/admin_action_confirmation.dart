@@ -134,7 +134,7 @@ class _AdminActionConfirmationDialogState
                 )
               : Text(widget.confirmLabel),
         ),
-      ],
+      ].map((action) => SelectionArea(child: action)).toList(),
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_popup_menu_item.dart';
 import 'package:webapp/widgets/shared/offline_queue_status_strip.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -659,7 +660,7 @@ class PlatformProfileChip extends StatelessWidget {
       shadowColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       itemBuilder: (context) => [
-        PopupMenuItem<void>(
+        AppSelectablePopupMenuItem<void>(
           enabled: false,
           height: 0,
           padding: EdgeInsets.zero,

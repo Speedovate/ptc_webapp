@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_popup_menu_item.dart';
 import 'package:webapp/utils/location_display.dart';
 import 'package:webapp/services/field_type_history_service.dart';
 import 'package:webapp/services/kpi/location_option_registry.dart';
@@ -344,7 +345,7 @@ class _AdminDropdownFormFieldState<T> extends State<AdminDropdownFormField<T>> {
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
       items: items
           .map(
-            (item) => PopupMenuItem<T>(
+            (item) => AppSelectablePopupMenuItem<T>(
               value: item.value,
               enabled: item.enabled,
               padding: EdgeInsets.zero,

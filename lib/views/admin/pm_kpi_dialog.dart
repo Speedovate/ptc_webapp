@@ -626,7 +626,6 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
               maxWidth: 420,
               title: 'Date Range',
 
-              selectable: false,
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext),
@@ -872,7 +871,6 @@ class _PmKpiDialogState extends State<PmKpiDialog> {
               ? 'Legacy PM Counts'
               : 'User Complaints & Accidents',
 
-          selectable: false,
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),

@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_popup_menu_item.dart';
 import 'package:webapp/widgets/status_form/status_form_runtime_fields.dart';
 import 'dart:async';
 
@@ -1907,7 +1908,7 @@ class _WorkflowAddFieldButton extends StatelessWidget {
               ),
               items: [
                 ...availableFields.map(
-                  (field) => PopupMenuItem<String>(
+                  (field) => AppSelectablePopupMenuItem<String>(
                     value: field.id,
                     child: Text(
                       field.title?.trim().isNotEmpty == true
@@ -1919,7 +1920,7 @@ class _WorkflowAddFieldButton extends StatelessWidget {
                 ),
                 if (availableFields.isNotEmpty)
                   const PopupMenuDivider(height: 1, thickness: 1),
-                PopupMenuItem<String>(
+                AppSelectablePopupMenuItem<String>(
                   value: '__create_new_field__',
                   child: Text(
                     'Create New Field',

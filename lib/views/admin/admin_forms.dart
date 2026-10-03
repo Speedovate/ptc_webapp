@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selectable_popup_menu_item.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
 
@@ -2441,7 +2442,7 @@ class _InlineAddFieldsButton extends StatelessWidget {
       onSelected: onSelected,
       itemBuilder: (context) => availableFields
           .map(
-            (field) => PopupMenuItem<String>(
+            (field) => AppSelectablePopupMenuItem<String>(
               value: field.id,
               child: Text(
                 field.title?.trim().isNotEmpty == true

@@ -914,17 +914,26 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
                           ),
                         ],
                       ),
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.translucent,
-                        onTap: () {
-                          FocusManager.instance.primaryFocus?.unfocus();
-                        },
-                        child: Padding(
-                          padding: widget.menuPadding,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: widget.menuChildren,
+                      child: SelectionArea(
+                        contextMenuBuilder: (context, state) => TapRegion(
+                          groupId: _tapRegionGroupId,
+                          child: AdaptiveTextSelectionToolbar.buttonItems(
+                            anchors: state.contextMenuAnchors,
+                            buttonItems: state.contextMenuButtonItems,
+                          ),
+                        ),
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onTap: () {
+                            FocusManager.instance.primaryFocus?.unfocus();
+                          },
+                          child: Padding(
+                            padding: widget.menuPadding,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: widget.menuChildren,
+                            ),
                           ),
                         ),
                       ),

@@ -363,7 +363,7 @@ class MyApp extends StatelessWidget {
         ),
         textSelectionTheme: TextSelectionThemeData(
           cursorColor: AppColors.primaryColor,
-          selectionColor: AppColors.primaryColor.withValues(alpha: 0.32),
+          selectionColor: AppColors.selectionHighlight,
           selectionHandleColor: AppColors.primaryColor,
         ),
       ),
@@ -444,9 +444,11 @@ class _AppBootstrapLoadingScreen extends StatelessWidget {
         child: ColoredBox(
           color: Color(0xFF5C33CF),
           child: Center(
-            child: AppPageLoading(
-              message: 'Starting PALTRANCO and preparing offline data ...',
-              compact: true,
+            child: SelectionArea(
+              child: AppPageLoading(
+                message: 'Starting PALTRANCO and preparing offline data ...',
+                compact: true,
+              ),
             ),
           ),
         ),
@@ -489,7 +491,7 @@ class _AppErrorFallback extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              const AppSelectableText(
                 'Application error',
                 style: TextStyle(
                   fontSize: 18,

@@ -414,7 +414,7 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
               ),
               child: const Text('Okay'),
             ),
-          ],
+          ].map((action) => SelectionArea(child: action)).toList(),
         );
       },
     );
