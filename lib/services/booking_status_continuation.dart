@@ -574,7 +574,48 @@ Map<String, dynamic>? reconcileBookingHistory(
       .toList();
   final combined = {...before, ...normalized};
   if (added.isEmpty) {
-    // Assignment already committed: acknowledge only a proven identical action.
+    if (_isCommittedDelivery(server, pending, normalized, baseUpdatedAt)) {
+      if (pending['billing_status'] == 'unbilled' &&
+          server['billing_status'] == 'billed') {
+        candidate['billing_status'] = server['billing_status'];
+      }
+      if (server['chassis_id'] == null && pending['chassis_id'] != null) {
+        final assignments = normalized.values
+            .whereType<Map>()
+            .where(
+              (event) =>
+                  event['fields'] is Map &&
+                  (event['fields'] as Map).containsKey('chassis_id'),
+            )
+            .toList();
+        final originalBase = _bookingInstant(baseUpdatedAt)!;
+        if (assignments.isEmpty ||
+            assignments.any(
+              (event) =>
+                  _bookingInstant(event['submitted_at']) == null ||
+                  _bookingInstant(event['submitted_at'])!.isAfter(originalBase),
+            )) {
+          return null;
+        }
+        assignments.sort(
+          (a, b) => _bookingInstant(
+            a['submitted_at'],
+          )!.compareTo(_bookingInstant(b['submitted_at'])!),
+        );
+        if (!_equal(
+          assignments.last['fields']['chassis_id'],
+          pending['chassis_id'],
+        )) {
+          return null;
+        }
+        if (server.containsKey('chassis_id')) {
+          candidate['chassis_id'] = server['chassis_id'];
+        } else {
+          candidate.remove('chassis_id');
+        }
+      }
+    }
+    // Action already committed: acknowledge only proven contents.
     for (final key in {...candidate.keys, ...server.keys}) {
       if (key == 'updated_at' || key == 'status_outputs') continue;
       if (!_equal(candidate[key], server[key])) return null;
@@ -643,6 +684,49 @@ Map<String, dynamic>? reconcileBookingHistory(
     candidate['updated_at'] = server['updated_at'];
   }
   return candidate;
+}
+
+// A matching delivery event proves this action committed before later billing
+// or chassis release. Callers acknowledge the server without replaying writes.
+bool _isCommittedDelivery(
+  Map<String, dynamic> server,
+  Map<String, dynamic> pending,
+  Map<String, dynamic> normalized,
+  String baseUpdatedAt,
+) {
+  for (final key in ['client_status', 'driver_status', 'helper_status']) {
+    if (server[key] != 'delivered' || pending[key] != 'delivered') return false;
+  }
+  final actionAt = _bookingInstant(pending['updated_at']);
+  final base = _bookingInstant(baseUpdatedAt);
+  final remoteAt = _bookingInstant(server['updated_at']);
+  if (actionAt == null ||
+      base == null ||
+      remoteAt == null ||
+      !actionAt.isAfter(base) ||
+      remoteAt.isBefore(actionAt) ||
+      actionAt != _bookingInstant(pending['delivered_at']) ||
+      actionAt != _bookingInstant(server['delivered_at'])) {
+    return false;
+  }
+  final actions = normalized.values
+      .whereType<Map>()
+      .where((event) => _bookingInstant(event['submitted_at']) == actionAt)
+      .toList();
+  if (actions.length != 1) return false;
+  final action = actions.single;
+  final form = action['status_form'];
+  final fields = action['fields'];
+  return action['status_key'] == 'ongoing' &&
+      '${action['submitted_by'] ?? ''}'.isNotEmpty &&
+      form is Map &&
+      form['is_main_form'] == true &&
+      form['current_status_key'] == 'ongoing' &&
+      form['next_status_key'] == 'delivered' &&
+      fields is Map &&
+      !fields.containsKey('chassis_id') &&
+      '${fields['delivery_form_number'] ?? ''}'.trim().isNotEmpty &&
+      fields['delivery_form_photo'] is Map;
 }
 
 /// Two independently valid submissions for the same completed delivery are

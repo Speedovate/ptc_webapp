@@ -3268,7 +3268,8 @@ class OfflineMutationQueueService {
                 hasBookingConflict &&
                 entry.payload['client_status'] == 'ongoing') ||
             ((!entry.bookingDeliveryHistoryRechecked ||
-                    !entry.bookingRepeatedDeliveryRechecked) &&
+                    !entry.bookingRepeatedDeliveryRechecked ||
+                    !entry.bookingCommittedDeliveryRechecked) &&
                 hasBookingConflict &&
                 entry.payload['client_status'] == 'delivered') ||
             (!entry.bookingEditArchiveRechecked &&
@@ -3295,6 +3296,7 @@ class OfflineMutationQueueService {
             bookingEditArchiveRechecked: true,
             bookingDeliveryHistoryRechecked: true,
             bookingRepeatedDeliveryRechecked: true,
+            bookingCommittedDeliveryRechecked: true,
             bookingStartArchiveRechecked: true,
             bookingConnectionFailureRechecked:
                 legacyConnectionFailure ||
@@ -3836,6 +3838,7 @@ class _OfflineMutationEntry {
     this.bookingAssignmentHistoryRechecked = false,
     this.bookingDeliveryHistoryRechecked = false,
     this.bookingRepeatedDeliveryRechecked = false,
+    this.bookingCommittedDeliveryRechecked = false,
     this.bookingStartArchiveRechecked = false,
     this.bookingConnectionFailureRechecked = false,
     this.catalogPredecessorVersions = const [],
@@ -3873,6 +3876,7 @@ class _OfflineMutationEntry {
   final bool bookingAssignmentHistoryRechecked;
   final bool bookingDeliveryHistoryRechecked;
   final bool bookingRepeatedDeliveryRechecked;
+  final bool bookingCommittedDeliveryRechecked;
   final bool bookingStartArchiveRechecked;
   final bool bookingConnectionFailureRechecked;
   final List<String> catalogPredecessorVersions;
@@ -3904,6 +3908,7 @@ class _OfflineMutationEntry {
     bool? bookingAssignmentHistoryRechecked,
     bool? bookingDeliveryHistoryRechecked,
     bool? bookingRepeatedDeliveryRechecked,
+    bool? bookingCommittedDeliveryRechecked,
     bool? bookingStartArchiveRechecked,
     bool? bookingConnectionFailureRechecked,
     bool? replayPresence,
@@ -3953,6 +3958,9 @@ class _OfflineMutationEntry {
       bookingRepeatedDeliveryRechecked:
           bookingRepeatedDeliveryRechecked ??
           this.bookingRepeatedDeliveryRechecked,
+      bookingCommittedDeliveryRechecked:
+          bookingCommittedDeliveryRechecked ??
+          this.bookingCommittedDeliveryRechecked,
       bookingDeliveryHistoryRechecked:
           bookingDeliveryHistoryRechecked ??
           this.bookingDeliveryHistoryRechecked,
@@ -3991,6 +3999,7 @@ class _OfflineMutationEntry {
       'booking_assignment_history_rechecked': bookingAssignmentHistoryRechecked,
       'booking_delivery_history_rechecked': bookingDeliveryHistoryRechecked,
       'booking_repeated_delivery_rechecked': bookingRepeatedDeliveryRechecked,
+      'booking_committed_delivery_rechecked': bookingCommittedDeliveryRechecked,
       'booking_start_archive_rechecked': bookingStartArchiveRechecked,
       'booking_connection_failure_rechecked': bookingConnectionFailureRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
@@ -4033,6 +4042,8 @@ class _OfflineMutationEntry {
           map['booking_start_archive_rechecked'] == true,
       bookingRepeatedDeliveryRechecked:
           map['booking_repeated_delivery_rechecked'] == true,
+      bookingCommittedDeliveryRechecked:
+          map['booking_committed_delivery_rechecked'] == true,
       bookingDeliveryHistoryRechecked:
           map['booking_delivery_history_rechecked'] == true,
       bookingConnectionFailureRechecked:
