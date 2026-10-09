@@ -652,7 +652,11 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                 children: [
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTapDown: (_) => _unfocusWithoutScroll(context),
+                    onTapDown: (details) {
+                      if (shouldDismissTextInputForDevice(details.kind)) {
+                        _unfocusWithoutScroll(context);
+                      }
+                    },
                     child: FilledButton(
                       focusNode: _primaryActionFocusNode,
                       onPressed:
@@ -774,7 +778,11 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                     if (vm.supportsAdditionalFields) const SizedBox(width: 12),
                     GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onTapDown: (_) => _unfocusWithoutScroll(context),
+                      onTapDown: (details) {
+                        if (shouldDismissTextInputForDevice(details.kind)) {
+                          _unfocusWithoutScroll(context);
+                        }
+                      },
                       child: TextButton(
                         onPressed: !canUpdateBooking || vm.isSubmitting
                             ? null
@@ -977,7 +985,11 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                 builder: (context, constraints) {
                   final cancelButton = GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTapDown: (_) => _unfocusWithoutScroll(context),
+                    onTapDown: (details) {
+                      if (shouldDismissTextInputForDevice(details.kind)) {
+                        _unfocusWithoutScroll(context);
+                      }
+                    },
                     child: _nonFocusable(
                       FilledButton(
                         onPressed: !canUpdateBooking || vm.isCancelSubmitting
@@ -1058,7 +1070,11 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                   );
                   final clearButton = GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTapDown: (_) => _unfocusWithoutScroll(context),
+                    onTapDown: (details) {
+                      if (shouldDismissTextInputForDevice(details.kind)) {
+                        _unfocusWithoutScroll(context);
+                      }
+                    },
                     child: TextButton(
                       onPressed: !canUpdateBooking || vm.isCancelSubmitting
                           ? null

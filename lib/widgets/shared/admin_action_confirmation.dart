@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/utils/functions.dart';
 import 'package:flutter/material.dart';
@@ -134,7 +135,7 @@ class _AdminActionConfirmationDialogState
                 )
               : Text(widget.confirmLabel),
         ),
-      ].map((action) => SelectionArea(child: action)).toList(),
+      ].map((action) => AppSelectionArea(child: action)).toList(),
     );
   }
 }

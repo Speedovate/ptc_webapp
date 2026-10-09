@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -631,7 +632,7 @@ class AdminModalRecordList extends StatelessWidget {
       },
     );
     return selectableCells && SelectionContainer.maybeOf(context) == null
-        ? SelectionArea(child: list)
+        ? AppSelectionArea(child: list)
         : list;
   }
 }

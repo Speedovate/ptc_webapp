@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:flutter/material.dart';
 
 /// Selection must live inside Dialog, not around its full-screen route, so
@@ -12,5 +13,5 @@ class AppSelectableDialog extends Dialog {
     super.shape,
     super.clipBehavior,
     required Widget child,
-  }) : super(child: SelectionArea(child: child));
+  }) : super(child: AppSelectionArea(child: child));
 }

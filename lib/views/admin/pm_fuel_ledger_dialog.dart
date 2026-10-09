@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/services/kpi/kpi_period_label.dart';
 import 'package:webapp/utils/functions.dart';
@@ -103,7 +104,7 @@ class _PmFuelLedgerDialogState extends State<PmFuelLedgerDialog> {
             onPressed: () => Navigator.pop(dialogContext, true),
             child: Text(alreadyAgreed ? 'Withdraw' : 'Record agreement'),
           ),
-        ].map((action) => SelectionArea(child: action)).toList(),
+        ].map((action) => AppSelectionArea(child: action)).toList(),
       ),
     );
     if (confirmed != true || !mounted) return;

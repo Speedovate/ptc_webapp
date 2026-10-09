@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:webapp/widgets/shared/retained_stream_builder.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
@@ -1053,7 +1054,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     if (widget.embedded) {
       return content;
     }
-    return SelectionArea(
+    return AppSelectionArea(
       child: Scaffold(
         backgroundColor: const Color(0xFFF7F7FB),
         body: SafeArea(

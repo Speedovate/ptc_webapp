@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:webapp/widgets/shared/user_session_actions_scope.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -77,7 +78,7 @@ class AppShell extends StatelessWidget {
                 },
               );
 
-        return SelectionArea(
+        return AppSelectionArea(
           child: AnnotatedRegion<SystemUiOverlayStyle>(
             value: const SystemUiOverlayStyle(
               systemNavigationBarColor: Colors.white,

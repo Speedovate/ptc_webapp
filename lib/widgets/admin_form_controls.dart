@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:webapp/widgets/shared/app_selectable_popup_menu_item.dart';
 import 'package:webapp/utils/location_display.dart';
 import 'package:webapp/services/field_type_history_service.dart';
@@ -958,7 +959,7 @@ class _AdminSearchSelectDialogState extends State<_AdminSearchSelectDialog> {
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       // Keep text selection inside the dialog's bounds so outside taps reach
       // the modal barrier instead of a route-wide selection gesture region.
-      child: SelectionArea(
+      child: AppSelectionArea(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520, maxHeight: 640),
           child: Padding(

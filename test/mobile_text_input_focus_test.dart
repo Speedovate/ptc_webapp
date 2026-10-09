@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webapp/models/status_field.dart';
+import 'package:webapp/widgets/admin_modal_shell.dart';
 import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:webapp/widgets/status_form/status_form_runtime_fields.dart';
 
@@ -13,13 +14,15 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  for (final booking in [false, true]) {
+  for (final input in ['chat', 'booking', 'empty booking']) {
+    final booking = input != 'chat';
+    final initialText = input == 'empty booking' ? '' : 'Draft';
     testWidgets(
-      '${booking ? 'booking' : 'chat'} touch selection keeps focus '
+      '$input touch selection keeps focus '
       'and accepts paste; mouse outside still dismisses',
       (tester) async {
         final focus = FocusNode();
-        final controller = TextEditingController(text: 'Draft');
+        final controller = TextEditingController(text: initialText);
         addTearDown(focus.dispose);
         addTearDown(controller.dispose);
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -42,25 +45,38 @@ void main() {
           MaterialApp(
             builder: (context, child) => AppTextInputFocusPolicy(child: child!),
             home: Scaffold(
-              body: Column(
-                children: [
-                  booking
-                      ? StatusFormRuntimeFieldCard(
-                          field: const StatusField(
-                            key: 'remarks',
-                            title: 'Remarks',
-                            type: 'text',
+              body: booking
+                  ? AdminModalShell(
+                      title: 'New Booking',
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          StatusFormRuntimeFieldCard(
+                            field: const StatusField(
+                              key: 'remarks',
+                              title: 'Remarks',
+                              type: 'text',
+                            ),
+                            initialValue: initialText,
+                            focusNode: focus,
+                            onChanged: (_) {},
                           ),
-                          initialValue: 'Draft',
-                          focusNode: focus,
-                          onChanged: (_) {},
-                        )
-                      : TextField(controller: controller, focusNode: focus),
-                  const Expanded(
-                    child: SizedBox.expand(key: ValueKey('outside')),
-                  ),
-                ],
-              ),
+                          const SizedBox(
+                            height: 160,
+                            width: double.infinity,
+                            key: ValueKey('outside'),
+                          ),
+                        ],
+                      ),
+                    )
+                  : Column(
+                      children: [
+                        TextField(controller: controller, focusNode: focus),
+                        const Expanded(
+                          child: SizedBox.expand(key: ValueKey('outside')),
+                        ),
+                      ],
+                    ),
             ),
           ),
         );

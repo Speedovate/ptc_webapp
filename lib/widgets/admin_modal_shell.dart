@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -39,7 +40,7 @@ class AdminModalShell extends StatelessWidget {
   final bool selectable;
 
   Widget _selectableContent(Widget child) =>
-      selectable ? SelectionArea(child: child) : child;
+      selectable ? AppSelectionArea(child: child) : child;
 
   /// Use a bounded body for a child that provides its own lazy viewport.
   final bool bodyHandlesScrolling;

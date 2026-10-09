@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'package:flutter/material.dart';
 import 'package:stacked/stacked.dart';
@@ -381,7 +382,11 @@ class _HistoryFiltersPanelState extends State<_HistoryFiltersPanel> {
           width: overlayWidth,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onTap: _unfocusFilterFields,
+            onTapUp: (details) {
+              if (shouldDismissTextInputForDevice(details.kind)) {
+                _unfocusFilterFields();
+              }
+            },
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(

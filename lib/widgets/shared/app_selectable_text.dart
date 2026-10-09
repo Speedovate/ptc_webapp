@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:flutter/material.dart';
 
 /// Selectable display text without EditableText's internal scrolling or caret.
@@ -13,7 +14,7 @@ class AppSelectableText extends StatelessWidget {
     final text = Text(data, style: style, textAlign: textAlign);
     // Reuse page/dialog selection so a drag can span adjacent display text.
     return SelectionContainer.maybeOf(context) == null
-        ? SelectionArea(child: text)
+        ? AppSelectionArea(child: text)
         : text;
   }
 }

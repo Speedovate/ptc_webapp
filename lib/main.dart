@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
 import 'dart:ui';
@@ -437,7 +438,7 @@ class _AppBootstrapLoadingScreen extends StatelessWidget {
         child: ColoredBox(
           color: Color(0xFF5C33CF),
           child: Center(
-            child: SelectionArea(
+            child: AppSelectionArea(
               child: AppPageLoading(
                 message: 'Starting PALTRANCO and preparing offline data ...',
                 compact: true,

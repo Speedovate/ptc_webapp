@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:webapp/widgets/shared/user_session_actions_scope.dart';
 import 'package:webapp/widgets/shared/inline_detail_host.dart';
 import 'package:webapp/widgets/shared/app_selectable_dialog.dart';
@@ -1034,7 +1035,11 @@ class _UsersFiltersPanelState extends State<_UsersFiltersPanel> {
           width: overlayWidth,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onTap: _unfocusFilterFields,
+            onTapUp: (details) {
+              if (shouldDismissTextInputForDevice(details.kind)) {
+                _unfocusFilterFields();
+              }
+            },
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(

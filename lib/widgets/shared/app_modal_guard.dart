@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -56,7 +57,7 @@ class AppModalGuard {
     final future = material.showDialog<T>(
       context: context,
       builder: (context) => wrapInSelectionArea
-          ? SelectionArea(child: builder(context))
+          ? AppSelectionArea(child: builder(context))
           : builder(context),
       barrierDismissible: barrierDismissible,
       barrierColor: barrierColor,
@@ -128,7 +129,7 @@ class AppModalGuard {
 
     final future = material.showModalBottomSheet<T>(
       context: context,
-      builder: (context) => SelectionArea(child: builder(context)),
+      builder: (context) => AppSelectionArea(child: builder(context)),
       backgroundColor: backgroundColor,
       barrierLabel: barrierLabel,
       elevation: elevation,

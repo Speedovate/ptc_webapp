@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:flutter/material.dart';
 
 /// Retains navigation state while limiting animation and repaint work to the
@@ -25,7 +26,7 @@ class RetainedSectionStack extends StatelessWidget {
           // Keep this wrapper stable so navigation retains drafts and scroll.
           child: TickerMode(
             enabled: i == index,
-            child: SelectionArea(child: children[i]),
+            child: AppSelectionArea(child: children[i]),
           ),
         ),
     ],

@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/services/role_access_service.dart';
 import 'package:webapp/views/admin/operations_catalog_dialog.dart';
@@ -1292,7 +1293,11 @@ class _CatalogFiltersPanelState extends State<_CatalogFiltersPanel> {
           width: overlayWidth,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onTap: _unfocusFilterFields,
+            onTapUp: (details) {
+              if (shouldDismissTextInputForDevice(details.kind)) {
+                _unfocusFilterFields();
+              }
+            },
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(

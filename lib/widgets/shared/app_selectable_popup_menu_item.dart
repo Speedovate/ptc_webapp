@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:flutter/material.dart';
 
 /// Keep selection inside the popup surface, outside its normal tap handler.
@@ -21,5 +22,5 @@ class _AppSelectablePopupMenuItemState<T>
     extends PopupMenuItemState<T, AppSelectablePopupMenuItem<T>> {
   @override
   Widget build(BuildContext context) =>
-      SelectionArea(child: super.build(context));
+      AppSelectionArea(child: super.build(context));
 }

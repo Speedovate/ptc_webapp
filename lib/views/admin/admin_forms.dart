@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:webapp/widgets/shared/app_selectable_popup_menu_item.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 import 'dart:async';
@@ -867,7 +868,11 @@ class _StatusFormsFiltersPanelState extends State<_StatusFormsFiltersPanel> {
           width: overlayWidth,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onTap: _unfocusFilterFields,
+            onTapUp: (details) {
+              if (shouldDismissTextInputForDevice(details.kind)) {
+                _unfocusFilterFields();
+              }
+            },
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(

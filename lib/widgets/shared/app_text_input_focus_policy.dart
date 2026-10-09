@@ -4,7 +4,15 @@ import 'package:flutter/widgets.dart';
 /// Touch editing must keep focus while mobile browser selection controls are
 /// active. Explicit form actions and keyboard completion still dismiss input.
 bool shouldDismissTextInputForPointer(PointerDownEvent event) =>
-    event.kind != PointerDeviceKind.touch;
+    shouldDismissTextInputForDevice(event.kind);
+
+bool shouldDismissTextInputForDevice(PointerDeviceKind? kind) =>
+    kind != PointerDeviceKind.touch;
+
+bool get isTextInputFocused =>
+    FocusManager.instance.primaryFocus?.context
+        ?.findAncestorStateOfType<EditableTextState>() !=
+    null;
 
 class AppTextInputFocusPolicy extends StatelessWidget {
   const AppTextInputFocusPolicy({super.key, required this.child});

@@ -1,3 +1,4 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/widgets/shared/app_selectable_dialog.dart';
 import 'dart:async';
@@ -414,7 +415,7 @@ class _AuthViewState extends State<AuthView> with WidgetsBindingObserver {
               ),
               child: const Text('Okay'),
             ),
-          ].map((action) => SelectionArea(child: action)).toList(),
+          ].map((action) => AppSelectionArea(child: action)).toList(),
         );
       },
     );

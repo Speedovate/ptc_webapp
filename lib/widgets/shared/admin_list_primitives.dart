@@ -1,3 +1,5 @@
+import 'package:webapp/widgets/shared/app_selection_area.dart';
+import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/widgets/admin_form_controls.dart';
@@ -471,7 +473,11 @@ class AdminListDynamicFiltersPanel extends StatelessWidget {
           width: overlayWidth,
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onTap: () => FocusScope.of(context).unfocus(),
+            onTapUp: (details) {
+              if (shouldDismissTextInputForDevice(details.kind)) {
+                FocusScope.of(context).unfocus();
+              }
+            },
             child: Padding(
               padding: const EdgeInsets.all(overlayPadding),
               child: Column(
@@ -886,7 +892,11 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
               right: useDesktopLeftAnchor ? null : popupRight,
               child: TapRegion(
                 groupId: _tapRegionGroupId,
-                onTapOutside: (_) {
+                onTapOutside: (event) {
+                  if (!shouldDismissTextInputForPointer(event) &&
+                      isTextInputFocused) {
+                    return;
+                  }
                   FocusManager.instance.primaryFocus?.unfocus();
                   _controller.hide();
                 },
@@ -914,7 +924,7 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
                           ),
                         ],
                       ),
-                      child: SelectionArea(
+                      child: AppSelectionArea(
                         contextMenuBuilder: (context, state) => TapRegion(
                           groupId: _tapRegionGroupId,
                           child: AdaptiveTextSelectionToolbar.buttonItems(
@@ -924,8 +934,10 @@ class _AdminListFiltersButtonState extends State<AdminListFiltersButton> {
                         ),
                         child: GestureDetector(
                           behavior: HitTestBehavior.translucent,
-                          onTap: () {
-                            FocusManager.instance.primaryFocus?.unfocus();
+                          onTapUp: (details) {
+                            if (shouldDismissTextInputForDevice(details.kind)) {
+                              FocusManager.instance.primaryFocus?.unfocus();
+                            }
                           },
                           child: Padding(
                             padding: widget.menuPadding,
