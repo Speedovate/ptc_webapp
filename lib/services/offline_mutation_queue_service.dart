@@ -10,6 +10,7 @@ import 'package:webapp/services/offline_cleanup_queue_service.dart';
 import 'package:webapp/services/support_read_marker_writer.dart';
 import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'dart:async';
+import 'package:webapp/services/booking_remote_document.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'package:webapp/services/offline_reference_mapper.dart';
@@ -2275,7 +2276,7 @@ class OfflineMutationQueueService {
             );
           }
           BookingPhotoCleanup.prepare(document, existingBooking.data());
-          transaction.set(bookingRef, document);
+          transaction.set(bookingRef, bookingRemoteDocument(document));
           return _BookingUpsertOutcome.applied;
         }).timeout(
           _remoteMutationTimeout,
@@ -2393,13 +2394,16 @@ class OfflineMutationQueueService {
             final source = idempotencySnapshot.data()?['source_document'];
             final retryMatches =
                 BookingIdResolver.reconcileCopies([
-                  {...entry.payload, 'id': entry.targetId},
-                  {
+                  bookingRemoteDocument({
+                    ...entry.payload,
+                    'id': entry.targetId,
+                  }),
+                  bookingRemoteDocument({
                     ...(source is Map
                         ? Map<String, dynamic>.from(source)
                         : existingBooking.data()!),
                     'id': finalId,
-                  },
+                  }),
                 ]).length ==
                 1;
             if (!retryMatches) {
@@ -2557,7 +2561,10 @@ class OfflineMutationQueueService {
               SetOptions(merge: true),
             );
           }
-          transaction.set(_bookingsCollection.doc(finalId), finalDocument);
+          transaction.set(
+            _bookingsCollection.doc(finalId),
+            bookingRemoteDocument(finalDocument),
+          );
           transaction.set(_bookingsCounterRef, {
             'next_id': max(
               int.tryParse(
@@ -2575,7 +2582,7 @@ class OfflineMutationQueueService {
             'submission_key': submissionKey,
             'provisional_id': entry.targetId,
             'source_updated_at': entry.payload['updated_at'],
-            'source_document': Map<String, dynamic>.from(entry.payload)
+            'source_document': bookingRemoteDocument(entry.payload)
               ..remove('local_sync_status'),
             'created_at':
                 idempotencySnapshot.data()?['created_at'] ??
@@ -3225,6 +3232,25 @@ class OfflineMutationQueueService {
       var changed = false;
       final recovered = saved.map((entry) {
         final lastError = entry.lastError ?? '';
+        if (entry.isBlocked &&
+            !entry.bookingInlinePreviewRechecked &&
+            (entry.collectionKey == 'bookings' ||
+                entry.kind == _OfflineMutationKind.bookingCreate) &&
+            lastError.contains('exceeds the maximum allowed size') &&
+            !_sameDocument(
+              entry.payload,
+              bookingRemoteDocument(entry.payload),
+            )) {
+          changed = true;
+          recoveredConflictIds.add(entry.id);
+          // Only retry a size failure when the payload actually shrinks. Keep
+          // the action ID/time and version checks; never force an overwrite.
+          return entry.copyWith(
+            bookingInlinePreviewRechecked: true,
+            isBlocked: false,
+            clearLastError: true,
+          );
+        }
         final hasBoxedError =
             isBoxedTransactionError(lastError) &&
             (entry.kind == _OfflineMutationKind.bookingCreate ||
@@ -3841,6 +3867,7 @@ class _OfflineMutationEntry {
     this.bookingCommittedDeliveryRechecked = false,
     this.bookingStartArchiveRechecked = false,
     this.bookingConnectionFailureRechecked = false,
+    this.bookingInlinePreviewRechecked = false,
     this.catalogPredecessorVersions = const [],
     // A user entry only replays `is_online` when presence was the point of the
     // edit. Older persisted entries have no flag, so they keep the safe default
@@ -3879,6 +3906,7 @@ class _OfflineMutationEntry {
   final bool bookingCommittedDeliveryRechecked;
   final bool bookingStartArchiveRechecked;
   final bool bookingConnectionFailureRechecked;
+  final bool bookingInlinePreviewRechecked;
   final List<String> catalogPredecessorVersions;
 
   /// True when this entry's `is_online` value is an intentional presence change
@@ -3911,6 +3939,7 @@ class _OfflineMutationEntry {
     bool? bookingCommittedDeliveryRechecked,
     bool? bookingStartArchiveRechecked,
     bool? bookingConnectionFailureRechecked,
+    bool? bookingInlinePreviewRechecked,
     bool? replayPresence,
     Map<String, dynamic>? basePayload,
     String? baseUpdatedAt,
@@ -3967,6 +3996,8 @@ class _OfflineMutationEntry {
       bookingConnectionFailureRechecked:
           bookingConnectionFailureRechecked ??
           this.bookingConnectionFailureRechecked,
+      bookingInlinePreviewRechecked:
+          bookingInlinePreviewRechecked ?? this.bookingInlinePreviewRechecked,
       catalogPredecessorVersions: catalogPredecessorVersions,
       replayPresence: replayPresence ?? this.replayPresence,
       basePayload: basePayload ?? this.basePayload,
@@ -4002,6 +4033,7 @@ class _OfflineMutationEntry {
       'booking_committed_delivery_rechecked': bookingCommittedDeliveryRechecked,
       'booking_start_archive_rechecked': bookingStartArchiveRechecked,
       'booking_connection_failure_rechecked': bookingConnectionFailureRechecked,
+      'booking_inline_preview_rechecked': bookingInlinePreviewRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
       'replay_presence': replayPresence,
@@ -4050,6 +4082,8 @@ class _OfflineMutationEntry {
           map['booking_connection_failure_rechecked'] == true,
       bookingMetadataRechecked: map['booking_metadata_rechecked'] == true,
       bookingPhotoRechecked: map['booking_photo_rechecked'] == true,
+      bookingInlinePreviewRechecked:
+          map['booking_inline_preview_rechecked'] == true,
       bookingEditArchiveRechecked:
           map['booking_edit_archive_rechecked'] == true,
       bookingAssignmentHistoryRechecked:

@@ -1,6 +1,7 @@
 import 'package:crypto/crypto.dart';
 import 'package:webapp/services/paged_booking_source.dart';
 import 'package:webapp/services/booking_photo_cleanup.dart';
+import 'package:webapp/services/booking_remote_document.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/services/booking_pm_assignment.dart';
 import 'package:webapp/utils/cached_snapshot_documents.dart';
@@ -1331,7 +1332,7 @@ class BookingRequest implements BookingRepository {
       );
     }
     BookingPhotoCleanup.prepare(document, existingBooking.data());
-    transaction.set(bookingRef, document);
+    transaction.set(bookingRef, bookingRemoteDocument(document));
   }
 
   Map<String, dynamic> _defaultChassisAssignmentPatch({

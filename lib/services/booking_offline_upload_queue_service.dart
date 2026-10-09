@@ -344,6 +344,7 @@ class BookingOfflineUploadQueueService {
     required _PendingBookingUploadEntry entry,
     required Map<String, dynamic> uploadedValue,
     bool recoverHistoricalPhoto = false,
+    String? matchingPendingUploadId,
     String? owner,
   }) async {
     final documentRef = _bookingsCollection.doc(entry.bookingId);
@@ -394,7 +395,19 @@ class BookingOfflineUploadQueueService {
         fieldKey: entry.fieldKey,
       );
       final currentPendingId = _pendingUploadId(currentField);
-      if (currentPendingId != entry.id) {
+      if (matchingPendingUploadId != null) {
+        // Recheck both ownership and image content after the Storage upload.
+        if (currentPendingId != matchingPendingUploadId ||
+            !bookingPendingPhotoMatchesBytes(
+              photo: currentField,
+              fileName: entry.fileName,
+              size: entry.size,
+              mimeType: entry.mimeType,
+              bytesBase64: entry.bytesBase64,
+            )) {
+          return;
+        }
+      } else if (currentPendingId != entry.id) {
         return;
       }
 
@@ -728,6 +741,7 @@ class BookingOfflineUploadQueueService {
     for (final sourceEntry in entries) {
       var entry = sourceEntry;
       var recoveringHistoricalPhoto = false;
+      var recoveringMatchingPhoto = false;
       // A newer photo for this booking must not overtake an unresolved older one.
       if (remaining.any((older) => older.bookingId == entry.bookingId)) {
         remaining.add(entry);
@@ -883,14 +897,23 @@ class BookingOfflineUploadQueueService {
         );
         final historicalKey = 'photo__${entry.id}';
         if (bookingPhotoAlreadyUploaded(
-          photo: markerField,
-          bookingId: entry.bookingId,
-          statusKey: entry.statusKey,
-          fieldKey: entry.fieldKey,
-          fileName: entry.fileName,
-          size: entry.size,
-          mimeType: entry.mimeType,
-        )) {
+              photo: markerField,
+              bookingId: entry.bookingId,
+              statusKey: entry.statusKey,
+              fieldKey: entry.fieldKey,
+              fileName: entry.fileName,
+              size: entry.size,
+              mimeType: entry.mimeType,
+            ) ||
+            (_pendingUploadId(markerField) != entry.id &&
+                bookingPhotoAlreadyUploadedInHistory(
+                  booking: markerData,
+                  bookingId: entry.bookingId,
+                  fieldKey: entry.fieldKey,
+                  fileName: entry.fileName,
+                  size: entry.size,
+                  mimeType: entry.mimeType,
+                ))) {
           confirmedSuccesses.add(entry.id);
           mutated = true;
           continue;
@@ -908,8 +931,21 @@ class BookingOfflineUploadQueueService {
           markerData,
         );
         recoveringHistoricalPhoto = recoverHistoricalPhoto;
+        final matchingPendingUploadId =
+            _pendingUploadId(markerField) != entry.id &&
+                bookingPendingPhotoMatchesBytes(
+                  photo: markerField,
+                  fileName: entry.fileName,
+                  size: entry.size,
+                  mimeType: entry.mimeType,
+                  bytesBase64: entry.bytesBase64,
+                )
+            ? _pendingUploadId(markerField)
+            : null;
+        recoveringMatchingPhoto = matchingPendingUploadId != null;
         if (_pendingUploadId(markerField) != entry.id &&
-            !recoverHistoricalPhoto) {
+            !recoverHistoricalPhoto &&
+            !recoveringMatchingPhoto) {
           // An unrelated newer booking edit does not prove that this staged
           // photo was committed or intentionally removed.
           final superseded = !entry.waitingForCommit;
@@ -962,7 +998,7 @@ class BookingOfflineUploadQueueService {
           remaining.add(wait.entry);
           continue;
         }
-        if (!recoverHistoricalPhoto) {
+        if (!recoverHistoricalPhoto && !recoveringMatchingPhoto) {
           entry = entry.copyWith(
             waitingForCommit: false,
             clearWaitReason: true,
@@ -984,6 +1020,7 @@ class BookingOfflineUploadQueueService {
           entry: entry,
           uploadedValue: upload,
           recoverHistoricalPhoto: recoverHistoricalPhoto,
+          matchingPendingUploadId: matchingPendingUploadId,
           owner: storageKey.substring('$_storageKey::'.length),
         ).timeout(const Duration(seconds: 15));
 
@@ -991,7 +1028,7 @@ class BookingOfflineUploadQueueService {
           await _photoStorageService
               .deleteByPath(upload['storage_path']?.toString())
               .timeout(const Duration(seconds: 20));
-          if (recoverHistoricalPhoto) {
+          if (recoverHistoricalPhoto || recoveringMatchingPhoto) {
             remaining.add(entry);
           }
         }
@@ -1042,6 +1079,7 @@ class BookingOfflineUploadQueueService {
         } else {
           final shouldKeep =
               recoveringHistoricalPhoto ||
+              recoveringMatchingPhoto ||
               entry.waitingForCommit ||
               await _shouldKeepEntryAfterFailure(entry);
           if (shouldKeep) {
