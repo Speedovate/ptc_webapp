@@ -1,4 +1,5 @@
 import 'package:webapp/services/chassis_waiting_badge.dart';
+import 'package:webapp/services/sync_error_badge_count.dart';
 import 'package:webapp/views/admin/admin_kpi_tracking.dart';
 import 'package:webapp/services/kpi/investor_kpi_store.dart';
 import 'package:webapp/utils/functions.dart' show normalizeRoleKey;
@@ -108,25 +109,31 @@ class _AdminHomeState extends State<AdminHome> {
     _errorLogsLoadingFor = account;
     final revision = ++_errorLogsCountRevision;
     try {
-      final result = await FirebaseFirestore.instance
-          .collection('sync_error_logs')
-          .where('attention_required', isEqualTo: true)
-          .count()
-          .get()
-          .timeout(const Duration(seconds: 8));
+      final count = await loadSyncErrorBadgeCount(
+        FirebaseFirestore.instance,
+      ).timeout(const Duration(seconds: 8));
       if (!mounted ||
           revision != _errorLogsCountRevision ||
           !_canReadErrorLogs ||
           _shellUser.id != widget.user.id) {
         return;
       }
-      _errorLogsCount = result.count ?? 0;
+      _errorLogsCount = count;
       _notifySidebarBadgeChanged();
     } catch (_) {
       // Keep the last known count offline; never create diagnostic retry loops.
     } finally {
       if (revision == _errorLogsCountRevision) _errorLogsLoadingFor = null;
     }
+  }
+
+  void _errorReportsLoaded(int count) {
+    if (!mounted || !_canReadErrorLogs) return;
+    // The page's post-cleanup snapshot supersedes any earlier count request.
+    _errorLogsCountRevision++;
+    _errorLogsLoadingFor = null;
+    _errorLogsCount = count;
+    _notifySidebarBadgeChanged();
   }
 
   String? _supportInitialTopicKey;
@@ -1052,7 +1059,7 @@ class _AdminHomeState extends State<AdminHome> {
       AdminSection.errorLogs => AdminErrorLogsView(
         user: _shellUser,
         refreshSignal: _errorLogsRefresh,
-        onReportsLoaded: _refreshErrorLogsCount,
+        onReportsLoaded: _errorReportsLoaded,
       ),
     };
   }

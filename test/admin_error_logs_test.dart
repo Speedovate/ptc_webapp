@@ -190,6 +190,7 @@ void main() {
     'deletes KPI diagnostics across devices but retains queued failures',
     (tester) async {
       final db = FakeFirebaseFirestore();
+      int? reportedCount;
       const warning =
           'Booking 124: No PM assigned; no PM has Driver 16 + Helper 19';
       for (final id in ['old', 'new', 'mixed', 'queue']) {
@@ -212,6 +213,7 @@ void main() {
             body: AdminErrorLogsView(
               user: const UserModel(role: 'admin'),
               firestore: db,
+              onReportsLoaded: (total) => reportedCount = total,
             ),
           ),
         ),
@@ -220,6 +222,7 @@ void main() {
       final remaining = await db.collection('sync_error_logs').get();
       expect(remaining.docs.map((doc) => doc.id), unorderedEquals(['queue']));
       expect(find.text('1 Error'), findsOneWidget);
+      expect(reportedCount, 1);
       expect((await db.collection('bookings').doc('124').get()).data(), {
         'status': 'delivered',
       });

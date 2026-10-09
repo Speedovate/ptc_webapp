@@ -29,7 +29,9 @@ class SupportRequest {
     OfflineMutationQueueService? offlineMutationQueueService,
     OfflineMediaSyncService? offlineMediaSyncService,
     FirestorePublicDocumentFetcher? firestorePublicDocumentFetcher,
+    FirestoreCacheStore? cacheStore,
   }) : _providedFirestore = firestore,
+       _providedCacheStore = cacheStore,
        _storage = storage ?? SupportStorageService.instance,
        _offlineMediaSyncService =
            offlineMediaSyncService ?? OfflineMediaSyncService.instance,
@@ -48,6 +50,7 @@ class SupportRequest {
       const <SupportThread>[];
 
   final FirebaseFirestore? _providedFirestore;
+  final FirestoreCacheStore? _providedCacheStore;
   FirebaseFirestore get _firestore =>
       _providedFirestore ?? FirebaseFirestore.instance;
   final SupportStorageService _storage;
@@ -56,7 +59,10 @@ class SupportRequest {
   final OfflineMutationQueueService _offlineMutationQueueService;
   late final FirestoreCollectionCache _cache = FirestoreCollectionCache(
     firestore: _firestore,
+    store: _providedCacheStore,
   );
+  final _messageCacheWritesByThreadId = <String, Future<void>>{};
+  final _messageCacheWriteRevisions = <String, Object>{};
   final Map<String, Map<String, dynamic>> _volatileThreadDocumentsById =
       <String, Map<String, dynamic>>{};
   final Map<String, Map<String, Map<String, dynamic>>>
@@ -716,92 +722,157 @@ class SupportRequest {
     );
     _messageWatchControllersByThreadId[normalizedThreadId] = controller;
 
-    Future<void> emitCachedMessages() async {
-      final cached = await _readVisibleMessageDocuments(normalizedThreadId);
-      final queuedDocuments = await _readQueuedSupportMessageDocumentsSafe(
-        normalizedThreadId,
-      );
-      final visibleDocuments = _mergeQueuedPendingMessageDocuments(
-        existingDocuments: cached,
-        queuedDocuments: queuedDocuments,
-      );
-      if (controller.isClosed) {
-        return;
-      }
-      if (visibleDocuments.isEmpty && cached.isEmpty) {
-        _lastVisibleMessagesByThreadId[normalizedThreadId] =
-            const <SupportMessage>[];
-        _touchMessageThread(normalizedThreadId);
-        controller.add(const <SupportMessage>[]);
-        return;
-      }
-      if (!_sameMessageDocumentSet(cached, visibleDocuments)) {
-        await _cache.writeDocuments(
-          resourceKey: _messageResourceKey(normalizedThreadId),
-          documents: visibleDocuments,
+    bool isActive() =>
+        !controller.isClosed &&
+        identical(
+          _messageWatchControllersByThreadId[normalizedThreadId],
+          controller,
         );
-      }
-      final messages = _storeVisibleMessages(
-        normalizedThreadId,
-        visibleDocuments,
-      );
-      controller.add(messages);
+    void reportMessageError(Object error, StackTrace stack) {
+      if (isActive()) controller.addError(error, stack);
     }
 
-    unawaited(emitCachedMessages());
+    // Render from memory as soon as any source answers. Slow local reads rebase
+    // on the latest snapshot, rather than publishing their earlier inventory.
+    var history = <Map<String, dynamic>>[
+      for (final message
+          in _lastVisibleMessagesByThreadId[normalizedThreadId] ??
+              const <SupportMessage>[])
+        message.toMap(),
+    ];
+    var queued = <Map<String, dynamic>>[];
+    List<Map<String, dynamic>>? remote;
+    var isFromCache = true;
+    var hasPendingWrites = false;
+    var cacheHydrated = false;
+    var cacheReadRevision = 0;
+    var queueReadRevision = 0;
+
+    void publish({bool persist = true}) {
+      if (!isActive()) return;
+      final local = mergeCachedSnapshotDocuments(
+        remote:
+            _volatileMessageDocumentsByThreadId[normalizedThreadId]?.values
+                .toList() ??
+            const <Map<String, dynamic>>[],
+        cached: history,
+        isFromCache: true,
+        hasPendingWrites: false,
+      );
+      final merged = _mergeVisibleMessageDocuments(
+        remoteDocuments: remote == null
+            ? local
+            : mergeCachedSnapshotDocuments(
+                remote: remote!,
+                cached: local,
+                isFromCache: isFromCache,
+                hasPendingWrites: hasPendingWrites,
+              ),
+        cachedDocuments: local,
+      );
+      history = _mergeQueuedPendingMessageDocuments(
+        existingDocuments: merged,
+        queuedDocuments: queued,
+      );
+      controller.add(_storeVisibleMessages(normalizedThreadId, history));
+      // Do not let an early SDK cache event overwrite unread durable history.
+      if (persist && cacheHydrated) {
+        _persistVisibleMessageDocuments(normalizedThreadId, history);
+      }
+    }
+
+    Future<void> hydrateCache() async {
+      final revision = ++cacheReadRevision;
+      final cached = await _readVisibleMessageDocuments(normalizedThreadId);
+      if (!isActive() || revision != cacheReadRevision) return;
+      cacheHydrated = true;
+      // Current in-memory records win over a late durable-cache read.
+      history = mergeCachedSnapshotDocuments(
+        remote: history,
+        cached: cached,
+        isFromCache: true,
+        hasPendingWrites: false,
+      );
+      publish(persist: remote != null || queued.isNotEmpty);
+    }
+
+    Future<void> hydrateQueue() async {
+      final revision = ++queueReadRevision;
+      final documents = await _readQueuedSupportMessageDocumentsSafe(
+        normalizedThreadId,
+      );
+      if (!isActive() || revision != queueReadRevision) return;
+      queued = documents;
+      publish(persist: remote != null || queued.isNotEmpty);
+    }
+
+    void refreshLocalMessages() {
+      unawaited(hydrateCache().catchError(reportMessageError));
+      unawaited(hydrateQueue().catchError(reportMessageError));
+    }
+
+    refreshLocalMessages();
 
     final remoteSubscription = _supportCollection
         .doc(normalizedThreadId)
         .collection('messages')
         .snapshots(includeMetadataChanges: true)
-        .asyncMap<void>((snapshot) async {
-          final documents = snapshot.docs.map(documentData).toList();
-          final cachedDocuments = await _readVisibleMessageDocuments(
-            normalizedThreadId,
-          );
-          final mergedDocuments = _mergeVisibleMessageDocuments(
-            remoteDocuments: mergeCachedSnapshotDocuments(
-              remote: documents,
-              cached: cachedDocuments,
-              isFromCache: snapshot.metadata.isFromCache,
-              hasPendingWrites: snapshot.metadata.hasPendingWrites,
-            ),
-            cachedDocuments: cachedDocuments,
-          );
-          final queuedDocuments = await _readQueuedSupportMessageDocumentsSafe(
-            normalizedThreadId,
-          );
-          final visibleDocuments = _mergeQueuedPendingMessageDocuments(
-            existingDocuments: mergedDocuments,
-            queuedDocuments: queuedDocuments,
-          );
-          await _cache.writeDocuments(
-            resourceKey: _messageResourceKey(normalizedThreadId),
-            documents: visibleDocuments,
-          );
-          if (controller.isClosed) {
-            return;
-          }
-          final messages = _storeVisibleMessages(
-            normalizedThreadId,
-            visibleDocuments,
-          );
-          controller.add(messages);
+        .map<void>((snapshot) {
+          remote = snapshot.docs.map(documentData).toList();
+          isFromCache = snapshot.metadata.isFromCache;
+          hasPendingWrites = snapshot.metadata.hasPendingWrites;
+          publish();
         })
-        .listen((_) {}, onError: controller.addError);
+        .listen((_) {}, onError: reportMessageError);
     _messageRemoteSubscriptionsByThreadId[normalizedThreadId] =
         remoteSubscription;
 
     final localSubscription = _messageCacheUpdates.stream.listen((threadId) {
-      if (normalizeId(threadId) != normalizedThreadId) {
-        return;
-      }
-      unawaited(emitCachedMessages());
-    }, onError: controller.addError);
+      if (normalizeId(threadId) == normalizedThreadId) refreshLocalMessages();
+    }, onError: reportMessageError);
     _messageLocalSubscriptionsByThreadId[normalizedThreadId] =
         localSubscription;
 
     return controller.stream;
+  }
+
+  void _persistVisibleMessageDocuments(
+    String threadId,
+    List<Map<String, dynamic>> documents,
+  ) {
+    final revision = Object();
+    _messageCacheWriteRevisions[threadId] = revision;
+    final previous =
+        _messageCacheWritesByThreadId[threadId] ?? Future<void>.value();
+    final write = previous
+        .then((_) async {
+          if (!identical(_messageCacheWriteRevisions[threadId], revision)) {
+            return;
+          }
+          await _cache.writeDocuments(
+            resourceKey: _messageResourceKey(threadId),
+            documents: documents,
+          );
+        })
+        .catchError((Object error, StackTrace stack) {
+          unawaited(
+            SyncErrorLogService.instance.report(
+              error,
+              stack,
+              source: 'support.request.dart',
+              operation: 'persist support message cache',
+            ),
+          );
+        });
+    _messageCacheWritesByThreadId[threadId] = write;
+    unawaited(
+      write.then((_) {
+        if (identical(_messageCacheWritesByThreadId[threadId], write)) {
+          _messageCacheWritesByThreadId.remove(threadId);
+          _messageCacheWriteRevisions.remove(threadId);
+        }
+      }),
+    );
   }
 
   List<SupportMessage> _storeVisibleMessages(
@@ -1875,44 +1946,6 @@ class SupportRequest {
       visibleMessages.add(queuedMessage);
     }
     return merged;
-  }
-
-  bool _sameMessageDocumentSet(
-    List<Map<String, dynamic>> left,
-    List<Map<String, dynamic>> right,
-  ) {
-    if (identical(left, right)) {
-      return true;
-    }
-    if (left.length != right.length) {
-      return false;
-    }
-    final leftSignatures = left
-        .map((document) => _supportMessageSignatureForMap(document))
-        .toList(growable: false);
-    final rightSignatures = right
-        .map((document) => _supportMessageSignatureForMap(document))
-        .toList(growable: false);
-    for (var index = 0; index < leftSignatures.length; index++) {
-      if (leftSignatures[index] != rightSignatures[index]) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  String _supportMessageSignatureForMap(Map<String, dynamic> document) {
-    final message = SupportMessage.fromMap(document);
-    return [
-      message.id?.trim() ?? '',
-      message.threadId?.trim() ?? '',
-      message.senderUserId?.trim() ?? '',
-      message.createdAt?.toIso8601String() ?? '',
-      message.updatedAt?.toIso8601String() ?? '',
-      message.localOrderKey?.trim() ?? '',
-      message.text?.trim() ?? '',
-      '${message.attachments.length}',
-    ].join('|');
   }
 
   Future<List<Map<String, dynamic>>> _readQueuedSupportMessageDocumentsSafe(

@@ -2,6 +2,7 @@ import 'package:webapp/utils/location_display.dart';
 import 'package:webapp/services/field_type_history_service.dart';
 import 'package:webapp/services/kpi/location_option_registry.dart';
 import 'package:webapp/widgets/shared/type_history_input.dart';
+import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webapp/constants/app_colors.dart';
@@ -575,6 +576,7 @@ class _TextFieldInputState extends State<_TextFieldInput> {
   }
 
   void _unfocusWithoutScroll(PointerDownEvent event) {
+    if (!shouldDismissTextInputForPointer(event)) return;
     final scrollPosition = Scrollable.maybeOf(context)?.position;
     final scrollOffset = scrollPosition?.hasPixels == true
         ? scrollPosition!.pixels

@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:webapp/services/app_widgets_binding.dart';
 import 'package:webapp/widgets/shared/app_snackbar.dart';
 import 'package:webapp/widgets/shared/app_resume_recovery.dart';
+import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:webapp/services/app_resume_service.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -200,15 +201,7 @@ class MyApp extends StatelessWidget {
       title: 'PALTRANCO Digital Platform',
       debugShowCheckedModeBanner: false,
       builder: (context, child) {
-        return GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onTap: () {
-            final currentFocus = FocusScope.of(context);
-            if (!currentFocus.hasPrimaryFocus &&
-                currentFocus.focusedChild != null) {
-              currentFocus.unfocus();
-            }
-          },
+        return AppTextInputFocusPolicy(
           child: AppResumeRecovery(
             recover: AppResumeService.recover,
             child: child ?? const SizedBox.shrink(),

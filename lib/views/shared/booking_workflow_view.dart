@@ -1,4 +1,5 @@
 import 'package:webapp/widgets/shared/app_selectable_popup_menu_item.dart';
+import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:webapp/widgets/status_form/status_form_runtime_fields.dart';
 import 'dart:async';
 
@@ -3075,6 +3076,7 @@ class _UnderlineTextFieldState extends State<_UnderlineTextField> {
   }
 
   void _unfocusWithoutScroll(PointerDownEvent event) {
+    if (!shouldDismissTextInputForPointer(event)) return;
     final preferredController = widget.preferredScrollController;
     final scrollPosition = preferredController?.hasClients == true
         ? preferredController!.position

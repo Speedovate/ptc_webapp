@@ -29,7 +29,7 @@ class AdminErrorLogsView extends StatefulWidget {
   });
   final UserModel user;
   final FirebaseFirestore? firestore;
-  final Future<void> Function()? onReportsLoaded;
+  final ValueChanged<int>? onReportsLoaded;
   final ValueListenable<int>? refreshSignal;
 
   @override
@@ -182,7 +182,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
         _hasMore = false;
       });
       final notify = widget.onReportsLoaded;
-      if (notify != null) unawaited(notify());
+      notify?.call(rows.length);
     } catch (error) {
       if (mounted) {
         setState(
