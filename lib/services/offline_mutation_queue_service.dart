@@ -11,6 +11,7 @@ import 'package:webapp/services/support_read_marker_writer.dart';
 import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'dart:async';
 import 'package:webapp/services/booking_remote_document.dart';
+import 'package:webapp/services/booking_original_create_recovery.dart';
 import 'package:webapp/services/transient_sync_failure.dart';
 import 'dart:convert';
 import 'dart:math';
@@ -1482,9 +1483,130 @@ class OfflineMutationQueueService {
     }
   }
 
-  Future<_OfflineMutationEntry> _resolveBookingReferences(
-    _OfflineMutationEntry entry,
+  /// Restore an orphaned dependency only from a verifiable original submission.
+  /// All server checks are fresh; a cache miss or resolver backoff is not proof
+  /// that a booking was never created.
+  Future<String?> recoverOriginalBookingIdentity({
+    required String temporaryId,
+    required Map<String, dynamic> document,
+    required String owner,
+    String? baseUpdatedAt,
+  }) async {
+    final original = originalBookingCreateForRecovery(
+      temporaryId: temporaryId,
+      document: document,
+      owner: owner,
+      baseUpdatedAt: baseUpdatedAt,
+    );
+    if (original == null) return null;
+    await _backend.initialize().timeout(_localStorageTimeout);
+    final storageKey = _storageKeyForUserId(owner);
+    final pending = await _readEntriesForStorageKey(storageKey);
+    if (pending.any(
+      (entry) =>
+          entry.kind == _OfflineMutationKind.bookingCreate &&
+          entry.targetId == temporaryId,
+    )) {
+      return null;
+    }
+    final evidence = await BookingIdResolver(firestore: _firestore)
+        .resolveRecoveryEvidence(
+          temporaryId,
+          owner,
+          () => _originalBookingIdentityEvidence(temporaryId, original),
+        );
+    if (evidence == null) return null;
+    final key = original['submission_key'] as String;
+    final confirmed = evidence == 'missing'
+        ? await _applyOfflineBookingCreate(
+            _OfflineMutationEntry(
+              id: 'recover_create_$key',
+              kind: _OfflineMutationKind.bookingCreate,
+              collectionKey: 'bookings',
+              targetId: temporaryId,
+              payload: original,
+              createdAtIso: parseBookingSyncTimestamp(
+                original['created_at'],
+              )!.toIso8601String(),
+              retryCount: 0,
+            ),
+            recoveryRequiresUnreservedIdentity: true,
+          )
+        : evidence;
+    BookingIdResolver(firestore: _firestore).invalidate(temporaryId);
+    final aliases = await _readResolvedIdAliases(storageKey);
+    aliases[temporaryId] = confirmed;
+    await _writeResolvedIdAliases(storageKey, aliases);
+    return confirmed;
+  }
+
+  Future<String?> _originalBookingIdentityEvidence(
+    String temporaryId,
+    Map<String, dynamic> original,
   ) async {
+    final key = original['submission_key'] as String;
+    final results = await Future.wait<dynamic>([
+      _firestore
+          .collection('booking_id_repairs')
+          .doc(temporaryId)
+          .get(const GetOptions(source: Source.server)),
+      _idManagementCollection
+          .doc(BookingIdResolver.reservationId(key))
+          .get(const GetOptions(source: Source.server)),
+      _bookingsCollection
+          .where('submission_key', isEqualTo: key)
+          .limit(2)
+          .get(const GetOptions(source: Source.server)),
+    ]);
+    final repair = results[0] as DocumentSnapshot<Map<String, dynamic>>;
+    if (repair.exists) {
+      throw StateError(
+        'Sync conflict: this booking has an identity repair. Original local work was preserved.',
+      );
+    }
+    final reservation = results[1] as DocumentSnapshot<Map<String, dynamic>>;
+    final reserved = reservation.data();
+    final reservedId = reserved?['document_id']?.toString();
+    if (reservation.exists &&
+        (reserved?['resource_key'] != 'bookings' ||
+            reserved?['submission_key'] != key ||
+            !BookingIdResolver.isNumeric(reservedId))) {
+      throw StateError(
+        'Sync conflict: booking reservation identity is inconsistent. Original local work was preserved.',
+      );
+    }
+    final matches = results[2] as QuerySnapshot<Map<String, dynamic>>;
+    if (matches.docs.isNotEmpty) {
+      final match = matches.docs.first;
+      if (matches.docs.length != 1 ||
+          !BookingIdResolver.isNumeric(match.id) ||
+          match.data()['id']?.toString() != match.id ||
+          match.data()['client_id'] != original['client_id'] ||
+          parseBookingSyncTimestamp(match.data()['created_at']) !=
+              parseBookingSyncTimestamp(original['created_at']) ||
+          (reservedId != null && reservedId != match.id)) {
+        throw StateError(
+          'Sync conflict: booking identity is ambiguous. Original local work was preserved.',
+        );
+      }
+      return match.id;
+    } else {
+      if (reservation.exists ||
+          reserved?['source_document'] != null ||
+          reserved?['source_updated_at'] != null ||
+          reserved?['committed_document'] != null) {
+        throw StateError(
+          'Sync conflict: a reserved booking is missing; its prior create or deletion cannot be verified. Original local work was preserved.',
+        );
+      }
+      return 'missing';
+    }
+  }
+
+  Future<_OfflineMutationEntry> _resolveBookingReferences(
+    _OfflineMutationEntry entry, {
+    required String owner,
+  }) async {
     final resolver = BookingIdResolver(firestore: _firestore);
     var targetId = entry.targetId;
     final payload = Map<String, dynamic>.from(entry.payload);
@@ -1499,10 +1621,20 @@ class OfflineMutationQueueService {
           'Sync conflict: deleting a temporary copy cannot delete its confirmed booking. Review the canonical record.',
         );
       }
-      final resolved = await resolver.resolve(
+      var resolved = await resolver.resolve(
         targetId,
         submissionKey: payload['submission_key']?.toString(),
       );
+      if (resolved == null &&
+          entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+          _parseSyncTimestamp(entry.baseUpdatedAt) != null) {
+        resolved = await recoverOriginalBookingIdentity(
+          temporaryId: targetId,
+          document: payload,
+          baseUpdatedAt: entry.baseUpdatedAt,
+          owner: owner,
+        );
+      }
       if (resolved == null) {
         throw StateError(
           'Booking identity is temporarily unavailable. Try again after its create syncs.',
@@ -2297,6 +2429,7 @@ class OfflineMutationQueueService {
     _OfflineMutationEntry entry, {
     Map<String, dynamic>? linkedChassis,
     String? linkedChassisSubmissionKey,
+    bool recoveryRequiresUnreservedIdentity = false,
   }) async {
     final submissionKey = entry.payload['submission_key']?.toString().trim();
     if (submissionKey == null || submissionKey.isEmpty) {
@@ -2369,6 +2502,20 @@ class OfflineMutationQueueService {
           final existingBooking = await transaction.get(
             _bookingsCollection.doc(finalId),
           );
+          if (recoveryRequiresUnreservedIdentity &&
+              idempotencySnapshot.exists &&
+              !existingBooking.exists) {
+            throw StateError(
+              'Sync conflict: booking identity changed during recovery. Original local work was preserved.',
+            );
+          }
+          if (!existingBooking.exists &&
+              (idempotencySnapshot.data()?['source_document'] != null ||
+                  idempotencySnapshot.data()?['source_updated_at'] != null)) {
+            throw StateError(
+              'Sync conflict: this booking previously committed but its server record is missing. Pending create was preserved.',
+            );
+          }
           DocumentReference<Map<String, dynamic>>? linkedReservation;
           Map<String, dynamic>? linkedIdentity;
           if (linkedChassis != null) {
@@ -3434,7 +3581,18 @@ class OfflineMutationQueueService {
           });
           continue;
         }
-        entry = await _resolveBookingReferences(sourceEntry);
+        entry = await _resolveBookingReferences(
+          sourceEntry,
+          owner: storageKey.substring('$_storageKey::'.length),
+        );
+        if (sourceEntry.collectionKey == 'bookings' &&
+            sourceEntry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+            BookingIdResolver.isTemporary(sourceEntry.targetId) &&
+            BookingIdResolver.isNumeric(entry.targetId)) {
+          aliases.addAll(await _readResolvedIdAliases(storageKey));
+          aliases[sourceEntry.targetId] = entry.targetId;
+          await _writeResolvedIdAliases(storageKey, aliases);
+        }
         entry = _resolveEntryAliases(entry, aliases);
         final resolvedId = await _applyEntry(
           entry,

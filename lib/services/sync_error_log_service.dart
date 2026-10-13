@@ -2,10 +2,12 @@ import 'kpi/kpi_diagnostic_policy.dart';
 import 'sync_diagnostic_outbox.dart';
 import 'diagnostic_write_lock.dart';
 import 'sync_error_environment.dart';
+import 'firebase_console_diagnostic.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -121,6 +123,8 @@ class SyncErrorLogService {
           ? 'profile'
           : 'debug',
       'app_origin': kIsWeb ? Uri.base.origin : null,
+      if (Firebase.apps.isNotEmpty)
+        'firebase_project_id': Firebase.app().options.projectId,
     };
   }
 
@@ -962,6 +966,11 @@ class SyncErrorLogService {
               final data = Map<String, dynamic>.from(current)
                 ..remove('dirty')
                 ..remove('last_uploaded_at');
+              // Also enrich recovered reports from older builds. Keep this
+              // compact evidence outside potentially truncated queue details.
+              data['firebase_console_diagnostic'] = firebaseConsoleDiagnostic(
+                data,
+              );
               data['copy_report'] = const JsonEncoder.withIndent(
                 '  ',
               ).convert(data);

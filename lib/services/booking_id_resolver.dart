@@ -14,6 +14,18 @@ class BookingIdResolver {
 
   void invalidate(String id) => _gate.invalidate(id);
 
+  /// Fresh recovery reads share the existing lookup budget. A timed-out SDK
+  /// read keeps its slot until completion; its late result must not create data.
+  Future<String?> resolveRecoveryEvidence(
+    String id,
+    String owner,
+    Future<String?> Function() lookup,
+  ) => _gate.resolve(
+    id,
+    jsonEncode(['original_create_recovery', id, owner]),
+    lookup,
+  );
+
   static bool isTemporary(String? id) => id?.startsWith('offline_') == true;
   static bool isNumeric(String? id) =>
       RegExp(r'^[1-9][0-9]*$').hasMatch(id ?? '');

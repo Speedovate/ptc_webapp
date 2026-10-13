@@ -747,9 +747,52 @@ class BookingOfflineUploadQueueService {
             remaining.add(wait.entry);
             continue;
           }
-          final resolved = await BookingIdResolver(
+          var resolved = await BookingIdResolver(
             firestore: _firestore,
           ).resolve(entry.bookingId);
+          if (resolved == null) {
+            final cachedReader = _cachedBookingReader;
+            final candidates = cachedReader != null
+                ? [
+                    await cachedReader(
+                      entry.bookingId,
+                    ).timeout(_localStoreTimeout),
+                  ]
+                : (await FirestoreCacheStore.instance
+                          .readDocumentMaps('bookings')
+                          .timeout(_localStoreTimeout)) ??
+                      <Map<String, dynamic>>[];
+            final cached = candidates
+                .whereType<Map<String, dynamic>>()
+                .where((row) => row['id']?.toString() == entry.bookingId)
+                .toList();
+            if (cached.length == 1 &&
+                cached.single['client_status'] == 'pending' &&
+                cached.single['driver_status'] == 'pending' &&
+                cached.single['helper_status'] == 'pending' &&
+                cached.single['driver_id'] == null &&
+                cached.single['helper_id'] == null &&
+                cached.single['vehicle_make_id'] == null &&
+                cached.single['chassis_id'] == null &&
+                _statusOutputsFromBooking(cached.single)?.length == 1) {
+              final photo = _fieldValueFromStatusOutputs(
+                _statusOutputsFromBooking(cached.single),
+                statusKey: entry.statusKey,
+                fieldKey: entry.fieldKey,
+              );
+              if (photo is Map &&
+                  _pendingUploadId(photo) == entry.id &&
+                  photo['name'] == entry.fileName &&
+                  photo['size'] == entry.size &&
+                  photo['mime_type'] == entry.mimeType) {
+                resolved = await _mutationQueue.recoverOriginalBookingIdentity(
+                  temporaryId: entry.bookingId,
+                  document: cached.single,
+                  owner: storageKey.substring('$_storageKey::'.length),
+                );
+              }
+            }
+          }
           if (resolved == null) {
             final wait = await _noteWait(
               entry,
