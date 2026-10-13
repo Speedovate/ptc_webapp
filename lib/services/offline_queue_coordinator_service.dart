@@ -53,7 +53,8 @@ class OfflineQueueCoordinatorService {
     final uploads = BookingOfflineUploadQueueService.instance;
     final media = OfflineMediaSyncService.instance;
     final cleanup = OfflineCleanupQueueService.instance;
-    if (mutations.currentStatus.pendingCount > 0) {
+    if (mutations.currentStatus.pendingCount > 0 ||
+        mutations.currentStatus.failedCount > 0) {
       await mutations.flushPendingMutations();
     }
     await Future.wait([

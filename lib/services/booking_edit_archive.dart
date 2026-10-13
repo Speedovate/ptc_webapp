@@ -5,6 +5,24 @@ Map<String, dynamic>? archiveSupersededBookingEdit(
 ) {
   bool equal(Object? a, Object? b) {
     if (a is Map && b is Map) {
+      // Remote writes omit inline previews, while the durable queue retains
+      // them. Only an omitted preview for the same pending upload is transport
+      // state; two different inline images must still compare unequal.
+      final uploadId = a['pending_upload_id'];
+      if (a['pending_upload'] == true &&
+          b['pending_upload'] == true &&
+          uploadId is String &&
+          uploadId.isNotEmpty &&
+          b['pending_upload_id'] == uploadId &&
+          ((!a.containsKey('download_url') &&
+                  '${b['download_url']}'.startsWith('data:image/')) ||
+              (!b.containsKey('download_url') &&
+                  '${a['download_url']}'.startsWith('data:image/')))) {
+        return equal(
+          {...a}..remove('download_url'),
+          {...b}..remove('download_url'),
+        );
+      }
       return a.length == b.length &&
           a.keys.every((key) => b.containsKey(key) && equal(a[key], b[key]));
     }

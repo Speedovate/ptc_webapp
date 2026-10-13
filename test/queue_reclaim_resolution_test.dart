@@ -64,99 +64,102 @@ Future<List<Map<String, dynamic>>> _outboxRows() async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a later reclaim clears the failure that queued the photo', () async {
-    // This is the production sequence: the upload failed on one day, and only
-    // much later did the server tell us the photo would never be accepted. The
-    // entry ends up settled, so the original failure must stop asking the admin
-    // to act - otherwise a correctly reclaimed photo leaves a permanent
-    // "needs attention" entry that nothing will ever clear.
-    SharedPreferences.setMockInitialValues({});
-    final auth = createAuthStorageBackend();
-    await auth.initialize();
-    await auth.writeString('paltranco_current_user_id', '13');
-    const storageKey = 'booking_pending_upload_queue_v1::13';
-    final db = FakeFirebaseFirestore();
-    final backend = MemoryBackend();
-    final uploads = _RejectingPhotoStorage();
-    final service = BookingOfflineUploadQueueService(
-      backend: backend,
-      firestore: db,
-      photoStorageService: uploads,
-      flushMutations: () async {},
-      mutationQueue: OfflineMutationQueueService(
-        backend: MemoryBackend(),
+  test(
+    'a missing marker retains the photo and does not resolve its failure',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final auth = createAuthStorageBackend();
+      await auth.initialize();
+      await auth.writeString('paltranco_current_user_id', '13');
+      const storageKey = 'booking_pending_upload_queue_v1::13';
+      final db = FakeFirebaseFirestore();
+      final backend = MemoryBackend();
+      final uploads = _RejectingPhotoStorage();
+      final service = BookingOfflineUploadQueueService(
+        backend: backend,
         firestore: db,
-        isOnline: () => false,
-      ),
-    );
-    await service.initialize();
-    await service.enqueueBookingPhoto(
-      bookingId: '1',
-      statusKey: 'book__1',
-      fieldKey: 'waybill_photo',
-      bytes: Uint8List.fromList(img.encodePng(img.Image(width: 2, height: 2))),
-      fileName: 'waybill.png',
-    );
-    final queued =
-        jsonDecode((await backend.readStringList(storageKey)).single)
-            as Map<String, dynamic>;
-    await db.collection('bookings').doc('1').set({
-      'id': '1',
-      'status_outputs': {
-        'book__1': {
-          'status_key': 'book',
-          'fields': {
-            'waybill_photo': {'pending_upload_id': queued['id']},
+        photoStorageService: uploads,
+        flushMutations: () async {},
+        mutationQueue: OfflineMutationQueueService(
+          backend: MemoryBackend(),
+          firestore: db,
+          isOnline: () => false,
+        ),
+      );
+      await service.initialize();
+      await service.enqueueBookingPhoto(
+        bookingId: '1',
+        statusKey: 'book__1',
+        fieldKey: 'waybill_photo',
+        bytes: Uint8List.fromList(
+          img.encodePng(img.Image(width: 2, height: 2)),
+        ),
+        fileName: 'waybill.png',
+      );
+      final queued =
+          jsonDecode((await backend.readStringList(storageKey)).single)
+              as Map<String, dynamic>;
+      await db.collection('bookings').doc('1').set({
+        'id': '1',
+        'status_outputs': {
+          'book__1': {
+            'status_key': 'book',
+            'fields': {
+              'waybill_photo': {'pending_upload_id': queued['id']},
+            },
           },
         },
-      },
-    });
+      });
 
-    // First cycle: the upload is rejected while the marker is still in place, so
-    // the entry is kept with a stored error and a failure is reported.
-    uploads.onUpload = () async {};
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    await service.flushPendingUploads();
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-    expect(await backend.readStringList(storageKey), hasLength(1));
-    var failureRows = (await _outboxRows()).where(
-      (row) =>
-          row['kind'] == 'queue_failure' &&
-          row['queue_entry_id'] == queued['id'],
-    );
-    expect(failureRows, isNotEmpty, reason: 'the rejection was reported');
-    for (final row in failureRows) {
-      expect(
-        row['resolved_at'],
-        isNull,
-        reason: 'nothing has settled this entry yet',
+      // First cycle: the upload is rejected while the marker is still in place, so
+      // the entry is kept with a stored error and a failure is reported.
+      uploads.onUpload = () async {};
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await service.flushPendingUploads();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(await backend.readStringList(storageKey), hasLength(1));
+      var failureRows = (await _outboxRows()).where(
+        (row) =>
+            row['kind'] == 'queue_failure' &&
+            row['queue_entry_id'] == queued['id'],
       );
-    }
+      expect(failureRows, isNotEmpty, reason: 'the rejection was reported');
+      for (final row in failureRows) {
+        expect(
+          row['resolved_at'],
+          isNull,
+          reason: 'nothing has settled this entry yet',
+        );
+      }
 
-    // Second cycle: the server drops the placeholder, so the queued photo can
-    // never be applied and the entry is reclaimed.
-    await db.collection('bookings').doc('1').set({
-      'id': '1',
-      'status_outputs': {
-        'book__1': {'status_key': 'book', 'fields': <String, dynamic>{}},
-      },
-    });
-    await service.flushPendingUploads();
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-    expect(await backend.readStringList(storageKey), isEmpty);
-
-    failureRows = (await _outboxRows()).where(
-      (row) =>
-          row['kind'] == 'queue_failure' &&
-          row['queue_entry_id'] == queued['id'],
-    );
-    expect(failureRows, isNotEmpty);
-    for (final row in failureRows) {
-      expect(
-        row['resolved_at'],
-        isNotNull,
-        reason: 'a reclaimed photo must resolve its own failure report',
+      // A missing server marker must not discard the original local image.
+      await db.collection('bookings').doc('1').set({
+        'id': '1',
+        'status_outputs': {
+          'book__1': {'status_key': 'book', 'fields': <String, dynamic>{}},
+        },
+      });
+      await service.flushPendingUploads();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final retained = jsonDecode(
+        (await backend.readStringList(storageKey)).single,
       );
-    }
-  });
+      expect(retained['bytes_base64'], queued['bytes_base64']);
+      expect(retained['created_at'], queued['created_at']);
+
+      failureRows = (await _outboxRows()).where(
+        (row) =>
+            row['kind'] == 'queue_failure' &&
+            row['queue_entry_id'] == queued['id'],
+      );
+      expect(failureRows, isNotEmpty);
+      for (final row in failureRows) {
+        expect(
+          row['resolved_at'],
+          isNull,
+          reason: 'unconfirmed photo bytes remain unresolved and durable',
+        );
+      }
+    },
+  );
 }

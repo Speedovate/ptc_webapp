@@ -25,7 +25,7 @@ import 'package:webapp/services/booking_chassis_lifecycle.dart';
 import 'package:webapp/services/offline_sync_status_service.dart';
 import 'package:webapp/utils/functions.dart';
 
-enum _BookingUpsertOutcome { applied, alreadyApplied, superseded }
+enum _BookingUpsertOutcome { applied, alreadyApplied, historyArchived }
 
 class OfflineMutationQueueService {
   OfflineMutationQueueService({
@@ -991,18 +991,10 @@ class OfflineMutationQueueService {
       );
       if (queuedBookingCreateIndex >= 0) {
         final queuedCreate = entries[queuedBookingCreateIndex];
-        entries[queuedBookingCreateIndex] = _OfflineMutationEntry(
-          id: queuedCreate.id,
-          kind: queuedCreate.kind,
-          targetId: queuedCreate.targetId,
-          collectionKey: queuedCreate.collectionKey,
+        entries[queuedBookingCreateIndex] = queuedCreate.copyWith(
           payload: Map<String, dynamic>.from(document)
             ..['id'] = queuedCreate.targetId
             ..['submission_key'] = queuedCreate.payload['submission_key'],
-          createdAtIso: queuedCreate.createdAtIso,
-          retryCount: queuedCreate.retryCount,
-          isBlocked: queuedCreate.isBlocked,
-          lastError: queuedCreate.lastError,
         );
         await _writeEntries(entries);
         _setStatus(_snapshotForEntries(entries));
@@ -1700,7 +1692,6 @@ class OfflineMutationQueueService {
     Map<String, dynamic>? patch,
   }) async {
     final document = patch ?? entry.payload;
-    var supersededOnServer = false;
     await runTransactionWithOriginalErrors(_firestore, (tx) async {
       final ref = collection.doc(entry.targetId);
       final existing = await tx.get(ref);
@@ -1781,6 +1772,22 @@ class OfflineMutationQueueService {
             server: existing.data() ?? const <String, dynamic>{},
             replayPresence: entry.replayPresence,
           );
+          final original = entry.basePayload;
+          if (original != null) {
+            for (final field in document.entries) {
+              if (field.key == 'updated_at' ||
+                  (field.key == 'is_online' && !entry.replayPresence)) {
+                continue;
+              }
+              if (!_sameDocument(original[field.key], field.value) &&
+                  !_sameDocument(existing.data()?[field.key], field.value) &&
+                  !merge.containsKey(field.key)) {
+                throw StateError(
+                  'Sync conflict: profile field ${field.key} changed remotely. Pending edit was preserved.',
+                );
+              }
+            }
+          }
           if (merge.isNotEmpty) {
             tx.set(ref, {
               ...existing.data()!,
@@ -1788,12 +1795,9 @@ class OfflineMutationQueueService {
             }, SetOptions(merge: true));
             return;
           }
-          // Nothing this device changed survived the office's newer save, and
-          // keeping the entry blocked would wedge every later edit for this
-          // person behind a snapshot that can never win. Retire it, and report
-          // the drop so the office can see the edit never landed.
-          supersededOnServer = true;
-          return;
+          throw StateError(
+            'Sync conflict: queued profile changes are not confirmed on the server. Pending edit was preserved.',
+          );
         }
         throw StateError(
           'Sync conflict: ${collection.path}/${entry.targetId} changed remotely. '
@@ -1845,29 +1849,6 @@ class OfflineMutationQueueService {
         });
       }
     }).timeout(_remoteMutationTimeout);
-    if (supersededOnServer) {
-      // The entry retires above without a write, so this report is the only
-      // trace that the person's queued edit never reached the server.
-      unawaited(
-        SyncErrorLogService.instance.report(
-          StateError(
-            'Queued profile edit for ${collection.path}/${entry.targetId} was '
-            'dropped: a newer version was already saved on the server. The '
-            'server document was left exactly as it is.',
-          ),
-          StackTrace.current,
-          source: 'offline_mutation_queue_service.dart',
-          operation: 'apply queued user upsert',
-          target: '${collection.path}/${entry.targetId}',
-          kind: 'queue_edit_superseded',
-          details: {
-            'base_updated_at': entry.baseUpdatedAt,
-            'pending_updated_at': entry.payload['updated_at']?.toString(),
-            'entry_id': entry.id,
-          },
-        ),
-      );
-    }
   }
 
   Future<void> _publishCollectionVersion(String? collectionKey) async {
@@ -2094,9 +2075,11 @@ class OfflineMutationQueueService {
               );
               if (historyOnly) {
                 transaction.update(existingBooking.reference, {
-                  'status_outputs': reconciled['status_outputs'],
+                  'status_outputs': bookingRemoteDocument(
+                    reconciled,
+                  )['status_outputs'],
                 });
-                return _BookingUpsertOutcome.applied;
+                return _BookingUpsertOutcome.historyArchived;
               }
               document
                 ..clear()
@@ -2111,7 +2094,27 @@ class OfflineMutationQueueService {
                 document,
                 baseUpdatedAt: entry.baseUpdatedAt,
               )) {
-                return _BookingUpsertOutcome.superseded;
+                final history = Map<String, dynamic>.from(
+                  existingBooking.data()!['status_outputs'] as Map,
+                );
+                final pendingHistory = document['status_outputs'] as Map;
+                final missing = pendingHistory.entries.where(
+                  (event) => !history.containsKey(event.key),
+                );
+                if (missing.isEmpty) {
+                  return _BookingUpsertOutcome.alreadyApplied;
+                }
+                // A superseded action is not a successful upload. Preserve its
+                // original fields and timestamp as history before completing it.
+                history.addEntries(
+                  missing.map((event) => MapEntry('${event.key}', event.value)),
+                );
+                transaction.update(existingBooking.reference, {
+                  'status_outputs': bookingRemoteDocument({
+                    'status_outputs': history,
+                  })['status_outputs'],
+                });
+                return _BookingUpsertOutcome.historyArchived;
               }
               throw OfflineSyncConflict(
                 'Sync conflict: booking changed remotely before applying this edit.',
@@ -3297,6 +3300,8 @@ class OfflineMutationQueueService {
             entry.collectionKey == 'bookings' &&
             lastError.trim().toLowerCase() == 'connection failed.';
         final legacyRecovery =
+            (!entry.bookingQueuedHistoryPreservationRechecked &&
+                hasBookingConflict) ||
             legacyConnectionFailure ||
             ((!entry.bookingStartArchiveRechecked ||
                     !entry.bookingStartPhotoHistoryRechecked) &&
@@ -3328,6 +3333,7 @@ class OfflineMutationQueueService {
           recoveredConflictIds.add(entry.id);
           return entry.copyWith(
             isBlocked: false,
+            bookingQueuedHistoryPreservationRechecked: true,
             bookingEditArchiveRechecked: true,
             bookingDeliveryHistoryRechecked: true,
             bookingRepeatedDeliveryRechecked: true,
@@ -3879,6 +3885,7 @@ class _OfflineMutationEntry {
     this.bookingCommittedDeliveryRechecked = false,
     this.bookingStartArchiveRechecked = false,
     this.bookingStartPhotoHistoryRechecked = false,
+    this.bookingQueuedHistoryPreservationRechecked = false,
     this.bookingConnectionFailureRechecked = false,
     this.bookingInlinePreviewRechecked = false,
     this.catalogPredecessorVersions = const [],
@@ -3919,6 +3926,7 @@ class _OfflineMutationEntry {
   final bool bookingCommittedDeliveryRechecked;
   final bool bookingStartArchiveRechecked;
   final bool bookingStartPhotoHistoryRechecked;
+  final bool bookingQueuedHistoryPreservationRechecked;
   final bool bookingConnectionFailureRechecked;
   final bool bookingInlinePreviewRechecked;
   final List<String> catalogPredecessorVersions;
@@ -3953,6 +3961,7 @@ class _OfflineMutationEntry {
     bool? bookingCommittedDeliveryRechecked,
     bool? bookingStartArchiveRechecked,
     bool? bookingStartPhotoHistoryRechecked,
+    bool? bookingQueuedHistoryPreservationRechecked,
     bool? bookingConnectionFailureRechecked,
     bool? bookingInlinePreviewRechecked,
     bool? replayPresence,
@@ -4011,6 +4020,9 @@ class _OfflineMutationEntry {
       bookingStartPhotoHistoryRechecked:
           bookingStartPhotoHistoryRechecked ??
           this.bookingStartPhotoHistoryRechecked,
+      bookingQueuedHistoryPreservationRechecked:
+          bookingQueuedHistoryPreservationRechecked ??
+          this.bookingQueuedHistoryPreservationRechecked,
       bookingConnectionFailureRechecked:
           bookingConnectionFailureRechecked ??
           this.bookingConnectionFailureRechecked,
@@ -4052,6 +4064,8 @@ class _OfflineMutationEntry {
       'booking_start_archive_rechecked': bookingStartArchiveRechecked,
       'booking_start_photo_history_rechecked':
           bookingStartPhotoHistoryRechecked,
+      'booking_queued_history_preservation_rechecked':
+          bookingQueuedHistoryPreservationRechecked,
       'booking_connection_failure_rechecked': bookingConnectionFailureRechecked,
       'booking_inline_preview_rechecked': bookingInlinePreviewRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
@@ -4094,6 +4108,8 @@ class _OfflineMutationEntry {
           map['booking_start_archive_rechecked'] == true,
       bookingStartPhotoHistoryRechecked:
           map['booking_start_photo_history_rechecked'] == true,
+      bookingQueuedHistoryPreservationRechecked:
+          map['booking_queued_history_preservation_rechecked'] == true,
       bookingRepeatedDeliveryRechecked:
           map['booking_repeated_delivery_rechecked'] == true,
       bookingCommittedDeliveryRechecked:

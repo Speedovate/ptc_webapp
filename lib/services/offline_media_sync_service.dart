@@ -572,10 +572,15 @@ class OfflineMediaSyncService {
     }
 
     final currentUser = await _usersCollection.doc(userId).get();
-    if (!currentUser.exists ||
-        _photoWasAcknowledged(entry, documentData(currentUser), pending) ||
-        !_canApplyUserPhoto(entry, documentData(currentUser))) {
+    if (currentUser.exists &&
+        _photoWasAcknowledged(entry, documentData(currentUser), pending)) {
       return true;
+    }
+    if (!currentUser.exists ||
+        !_canApplyUserPhoto(entry, documentData(currentUser))) {
+      throw StateError(
+        'Sync conflict: queued profile photo is not confirmed. Local image was preserved.',
+      );
     }
     final uploaded = await _photoStorageService.uploadUserPhoto(
       bytes: base64Decode(bytesBase64),
@@ -585,17 +590,22 @@ class OfflineMediaSyncService {
       mimeType: entry.mimeType,
       size: entry.size,
     );
+    var acknowledged = false;
     final applied = await runTransactionWithOriginalErrors<bool>(_firestore, (
       transaction,
     ) async {
+      acknowledged = false;
       final userRef = _usersCollection.doc(userId);
       final snapshot = await transaction.get(userRef);
       if (!snapshot.exists) {
         return false;
       }
       final data = documentData(snapshot);
-      if (_photoWasAcknowledged(entry, data, pending) ||
-          !_canApplyUserPhoto(entry, data)) {
+      if (_photoWasAcknowledged(entry, data, pending)) {
+        acknowledged = true;
+        return false;
+      }
+      if (!_canApplyUserPhoto(entry, data)) {
         return false;
       }
 
@@ -620,6 +630,11 @@ class OfflineMediaSyncService {
       await _photoStorageService.deleteByPath(
         uploaded['storage_path']?.toString(),
       );
+      if (!acknowledged) {
+        throw StateError(
+          'Sync conflict: profile photo changed during upload. Local image was preserved.',
+        );
+      }
     }
     return true;
   }

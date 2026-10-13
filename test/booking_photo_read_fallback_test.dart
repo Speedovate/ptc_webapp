@@ -124,11 +124,14 @@ void main() {
       expect(saved['updated_at'], cached['updated_at']);
       expect(saved['client_status'], 'assigned');
       if (scenario == 'matching' || scenario == 'replaced') {
-        expect(photos.uploads, 1);
-        expect(backend.data[key], isEmpty);
+        expect(photos.uploads, scenario == 'replaced' ? 2 : 1);
+        if (scenario == 'matching') expect(backend.data[key], isEmpty);
         if (scenario == 'replaced') {
           expect(saved, server);
-          expect(photos.deleted, ['uploaded']);
+          expect(photos.deleted, ['uploaded', 'uploaded']);
+          final retained = jsonDecode(backend.data[key]!.single);
+          expect(retained['bytes_base64'], 'AQID');
+          expect(retained['created_at'], at);
         } else {
           expect(
             saved['status_outputs']['book__1']['fields']['waybill_photo']['download_url'],

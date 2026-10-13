@@ -1,3 +1,4 @@
+import 'package:webapp/services/booking_remote_document.dart';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -113,6 +114,7 @@ void main() {
           'conflict_recovery_attempted': true,
         }),
       ];
+      final retry = backend.data[storageKey]!.single;
       final queue = OfflineMutationQueueService(
         firestore: db,
         backend: backend,
@@ -121,8 +123,20 @@ void main() {
       await queue.flushPendingMutations();
       expect(backend.data[storageKey], isEmpty);
       final saved = (await db.collection('bookings').doc('163').get()).data()!;
-      expect(saved, archiveSupersededBookingEdit(server(), pending()));
+      expect(
+        saved,
+        bookingRemoteDocument(
+          archiveSupersededBookingEdit(server(), pending())!,
+        ),
+      );
+      backend.data[storageKey] = [
+        jsonEncode({
+          ...jsonDecode(retry) as Map<String, dynamic>,
+          'is_blocked': false,
+        }),
+      ];
       await queue.flushPendingMutations();
+      expect(backend.data[storageKey], isEmpty);
       expect((await db.collection('bookings').doc('163').get()).data(), saved);
     },
   );

@@ -1,7 +1,6 @@
 import 'sync_error_log_service.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'booking_photo_marker_match.dart';
-import 'transient_sync_failure.dart';
 import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
 import 'package:webapp/models/offline_queue_item.dart';
@@ -456,29 +455,6 @@ class BookingOfflineUploadQueueService {
     });
   }
 
-  Future<bool> _shouldKeepEntryAfterFailure(
-    _PendingBookingUploadEntry entry,
-  ) async {
-    try {
-      final snapshot = await _bookingsCollection
-          .doc(entry.bookingId)
-          .get()
-          .timeout(const Duration(seconds: 10));
-      if (!snapshot.exists) {
-        return false;
-      }
-      final statusOutputs = _statusOutputsFromBooking(documentData(snapshot));
-      final currentField = _fieldValueFromStatusOutputs(
-        statusOutputs,
-        statusKey: entry.statusKey,
-        fieldKey: entry.fieldKey,
-      );
-      return _pendingUploadId(currentField) == entry.id;
-    } catch (_) {
-      return true;
-    }
-  }
-
   /// Returns true when a queued booking mutation still owns this booking, and
   /// null when the check itself could not finish. A failure here must never be
   /// read as "no pending write": uploading early would patch a booking that
@@ -731,18 +707,14 @@ class BookingOfflineUploadQueueService {
     }
 
     var mutated = false;
-    // Ids whose queued work has reached an end state: uploaded, or legitimately
-    // reclaimed because the server already holds a newer photo. Either way the
-    // crew has nothing left to do, so the original failure report must stop
-    // asking for attention instead of lingering forever.
+    // Complete local work only after a confirmed server upload or preserved
+    // history. Missing markers and permanent errors are not acknowledgements.
     final confirmedSuccesses = <String>{};
     final remaining = <_PendingBookingUploadEntry>[];
     var processed = 0;
 
     for (final sourceEntry in entries) {
       var entry = sourceEntry;
-      var recoveringHistoricalPhoto = false;
-      var recoveringMatchingPhoto = false;
       // A newer photo for this booking must not overtake an unresolved older one.
       if (remaining.any((older) => older.bookingId == entry.bookingId)) {
         remaining.add(entry);
@@ -949,7 +921,6 @@ class BookingOfflineUploadQueueService {
           entry,
           markerData,
         );
-        recoveringHistoricalPhoto = recoverHistoricalPhoto;
         final matchingPendingUploadId =
             _pendingUploadId(markerField) != entry.id &&
                 bookingPendingPhotoMatchesBytes(
@@ -961,50 +932,12 @@ class BookingOfflineUploadQueueService {
                 )
             ? _pendingUploadId(markerField)
             : null;
-        recoveringMatchingPhoto = matchingPendingUploadId != null;
+        final recoveringMatchingPhoto = matchingPendingUploadId != null;
         if (_pendingUploadId(markerField) != entry.id &&
             !recoverHistoricalPhoto &&
             !recoveringMatchingPhoto) {
           // An unrelated newer booking edit does not prove that this staged
           // photo was committed or intentionally removed.
-          final superseded = !entry.waitingForCommit;
-          if (superseded) {
-            // The placeholder that owned this entry is gone and no queued
-            // booking write can bring it back. Reclaim the queued bytes
-            // instead of waiting forever for a marker that never returns.
-            mutated = true;
-            // The photo was settled one way or another, so the failure that
-            // queued it must stop asking the admin to act on it.
-            confirmedSuccesses.add(entry.id);
-            unawaited(
-              SyncErrorLogService.instance.report(
-                StateError(
-                  'Dropped a queued booking photo that the server no longer accepts.',
-                ),
-                StackTrace.current,
-                source: 'booking_offline_upload_queue_service.dart',
-                operation: 'bookingPhotoUpload',
-                target:
-                    'bookings/${entry.bookingId}/${entry.statusKey}/${entry.fieldKey}',
-                owner: storageKey.substring('$_storageKey::'.length),
-                kind: 'queue_reclaimed',
-                // The reclaim itself is the correct outcome, not a new problem,
-                // so it is recorded for audit without demanding attention.
-                attentionRequired: false,
-                details: {
-                  'reason': markerField == null
-                      ? 'photo_field_missing'
-                      : 'marker_superseded',
-                  'server_photo_pending_upload_id':
-                      _pendingUploadId(markerField) ?? 'none',
-                  'queued_photo_id': entry.id,
-                  'booking_updated_at': markerData['updated_at']?.toString(),
-                  'photo_staged_at': entry.createdAtIso,
-                },
-              ),
-            );
-            continue;
-          }
           final wait = await _noteWait(
             entry,
             markerField == null
@@ -1047,9 +980,7 @@ class BookingOfflineUploadQueueService {
           await _photoStorageService
               .deleteByPath(upload['storage_path']?.toString())
               .timeout(const Duration(seconds: 20));
-          if (recoverHistoricalPhoto || recoveringMatchingPhoto) {
-            remaining.add(entry);
-          }
+          remaining.add(entry);
         }
 
         if (applied) {
@@ -1083,67 +1014,15 @@ class BookingOfflineUploadQueueService {
             'media_size': entry.size,
           },
         );
-        if (_isRetryableUploadError(normalizedError, error: error) ||
-            normalizedError.toLowerCase().contains('sync conflict')) {
-          // Persist the failure. Without this the entry keeps retrying with no
-          // stored error, so the wait is indistinguishable from a fresh one.
-          mutated = true;
-          remaining.add(
-            entry.copyWith(
-              retryCount: entry.retryCount + 1,
-              lastError: normalizedError,
-              diagnostics: diagnostics,
-            ),
-          );
-        } else {
-          final shouldKeep =
-              recoveringHistoricalPhoto ||
-              recoveringMatchingPhoto ||
-              entry.waitingForCommit ||
-              await _shouldKeepEntryAfterFailure(entry);
-          if (shouldKeep) {
-            // Persist the failure so a permanently failing upload is visible in
-            // the queued actions list instead of retrying with no record.
-            mutated = true;
-            remaining.add(
-              entry.copyWith(
-                retryCount: entry.retryCount + 1,
-                lastError: normalizedError,
-                diagnostics: diagnostics,
-              ),
-            );
-          } else {
-            // The queued photo cannot be applied to this booking any more.
-            // Reclaim the bytes, but never without a record: a silent discard
-            // looks identical to a successful upload.
-            mutated = true;
-            confirmedSuccesses.add(entry.id);
-            unawaited(
-              SyncErrorLogService.instance.report(
-                StateError(
-                  'Dropped a queued booking photo that no longer applies.',
-                ),
-                StackTrace.current,
-                source: 'booking_offline_upload_queue_service.dart',
-                operation: 'bookingPhotoUpload',
-                target:
-                    'bookings/${entry.bookingId}/${entry.statusKey}/${entry.fieldKey}',
-                owner: storageKey.substring('$_storageKey::'.length),
-                kind: 'queue_reclaimed',
-                // A photo the server will never accept is a settled outcome, not
-                // an outstanding failure, so it must not keep asking for action.
-                attentionRequired: false,
-                details: {
-                  'reason': 'upload_failed_permanently',
-                  'error': normalizedError,
-                  'queued_photo_id': entry.id,
-                  'photo_staged_at': entry.createdAtIso,
-                  'attempt': entry.retryCount + 1,
-                },
-              ),
-            );
-          }
-        }
+        // Every unconfirmed failure retains the only durable local copy.
+        mutated = true;
+        remaining.add(
+          entry.copyWith(
+            retryCount: entry.retryCount + 1,
+            lastError: normalizedError,
+            diagnostics: diagnostics,
+          ),
+        );
       } finally {
         processed++;
         if (updateStatus) {
@@ -1264,17 +1143,6 @@ class BookingOfflineUploadQueueService {
       return null;
     }
     return pendingId;
-  }
-
-  bool _isRetryableUploadError(String message, {Object? error}) {
-    if (error is FirebaseException) return isTransientSyncFailure(error);
-    if (error is TimeoutException) return true;
-    final normalized = message.trim().toLowerCase();
-    return normalized.contains('internet connection') ||
-        isTransientSyncFailure(message) ||
-        normalized.contains('temporarily unavailable') ||
-        normalized.contains('request took too long') ||
-        normalized.contains('try again');
   }
 
   String _nextEntryId() {

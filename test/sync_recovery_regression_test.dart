@@ -423,90 +423,39 @@ void main() {
     expect(saved['is_online'], isFalse, reason: 'presence is server-owned');
   });
 
-  test('a field both sides changed is left to whoever saved last', () async {
-    const base = <String, dynamic>{
-      'id': '12',
-      'name': 'Manolito Jamot',
-      'phone': '+639979727996',
-      'updated_at': '2026-09-23T10:12:38.902Z',
-    };
-    final db = FakeFirebaseFirestore();
-    await db.collection('users').doc('12').set({
-      ...base,
-      // The office corrected the name after the edit was queued.
-      'name': 'Manolito S. Jamot',
-      'updated_at': '2026-09-25T10:30:00.000Z',
-    });
-    final backend = MemoryBackend();
-    await backend.writeStringList(_queueKey, [
-      jsonEncode({
-        'id': 'user_upsert_12_both_changed',
-        'kind': 'collectionDocumentUpsert',
-        'target_id': '12',
-        'collection_key': 'users',
-        'base_updated_at': base['updated_at'],
-        'base_payload': base,
-        'payload': <String, dynamic>{
-          ...base,
-          'name': 'Manolito Jamot Jr',
-          'updated_at': '2026-09-25T09:11:56.919',
-        },
-        'created_at': '2026-09-25T01:12:04.922Z',
-        'retry_count': 1,
-        'is_blocked': false,
-      }),
-    ]);
-    final queue = OfflineMutationQueueService(
-      firestore: db,
-      backend: backend,
-      isOnline: () => true,
-    );
-
-    await queue.flushPendingMutations();
-
-    final saved = (await db.collection('users').doc('12').get()).data()!;
-    expect(
-      saved['name'],
-      'Manolito S. Jamot',
-      reason: 'a field the office changed after the edit is theirs to keep',
-    );
-    expect(await backend.readStringList(_queueKey), isEmpty);
-  });
-
   test(
-    'a legacy user entry with no base cannot be merged, so it is reported',
+    'conflicting profile field stays queued and preserves the server value',
     () async {
-      // Entries queued by the old build never stored the pre-edit document, so
-      // there is no way to tell which field the crew changed. Retiring with a
-      // report is the only honest outcome: the newer server document is kept and
-      // the drop is visible instead of silent.
-      const payload = <String, dynamic>{
+      const base = <String, dynamic>{
         'id': '12',
         'name': 'Manolito Jamot',
-        'role': 'driver',
-        'phone': '+639171234567',
-        'updated_at': '2026-09-25T09:11:56.919',
+        'phone': '+639979727996',
+        'updated_at': '2026-09-23T10:12:38.902Z',
       };
       final db = FakeFirebaseFirestore();
       await db.collection('users').doc('12').set({
-        ...payload,
-        'phone': '+639979727996',
-        'photo': 'https://example.test/users/12/profile_photo/new.png',
+        ...base,
+        // The office corrected the name after the edit was queued.
+        'name': 'Manolito S. Jamot',
         'updated_at': '2026-09-25T10:30:00.000Z',
       });
       final backend = MemoryBackend();
       await backend.writeStringList(_queueKey, [
         jsonEncode({
-          'id': 'user_upsert_12_legacy',
+          'id': 'user_upsert_12_both_changed',
           'kind': 'collectionDocumentUpsert',
           'target_id': '12',
           'collection_key': 'users',
-          'base_updated_at': '2026-09-23T10:12:38.902Z',
-          'payload': payload,
+          'base_updated_at': base['updated_at'],
+          'base_payload': base,
+          'payload': <String, dynamic>{
+            ...base,
+            'name': 'Manolito Jamot Jr',
+            'updated_at': '2026-09-25T09:11:56.919',
+          },
           'created_at': '2026-09-25T01:12:04.922Z',
-          'retry_count': 3,
-          'is_blocked': true,
-          'last_error': _boxedError,
+          'retry_count': 1,
+          'is_blocked': false,
         }),
       ]);
       final queue = OfflineMutationQueueService(
@@ -517,19 +466,76 @@ void main() {
 
       await queue.flushPendingMutations();
 
-      expect(await backend.readStringList(_queueKey), isEmpty);
       final saved = (await db.collection('users').doc('12').get()).data()!;
       expect(
-        saved['phone'],
-        '+639979727996',
-        reason: 'without a base, writing would be a blind overwrite',
+        saved['name'],
+        'Manolito S. Jamot',
+        reason: 'a field the office changed after the edit is theirs to keep',
       );
-      expect(
-        saved['photo'],
-        'https://example.test/users/12/profile_photo/new.png',
-      );
+      final retained = await backend.readStringList(_queueKey);
+      expect(retained, hasLength(1));
+      expect(jsonDecode(retained.single)['is_blocked'], true);
+      expect(jsonDecode(retained.single)['payload'], isNotEmpty);
     },
   );
+
+  test('legacy user entry with no base remains queued for review', () async {
+    // Entries queued by the old build never stored the pre-edit document, so
+    // there is no way to tell which field the crew changed. Retiring with a
+    // report is the only honest outcome: the newer server document is kept and
+    // the drop is visible instead of silent.
+    const payload = <String, dynamic>{
+      'id': '12',
+      'name': 'Manolito Jamot',
+      'role': 'driver',
+      'phone': '+639171234567',
+      'updated_at': '2026-09-25T09:11:56.919',
+    };
+    final db = FakeFirebaseFirestore();
+    await db.collection('users').doc('12').set({
+      ...payload,
+      'phone': '+639979727996',
+      'photo': 'https://example.test/users/12/profile_photo/new.png',
+      'updated_at': '2026-09-25T10:30:00.000Z',
+    });
+    final backend = MemoryBackend();
+    await backend.writeStringList(_queueKey, [
+      jsonEncode({
+        'id': 'user_upsert_12_legacy',
+        'kind': 'collectionDocumentUpsert',
+        'target_id': '12',
+        'collection_key': 'users',
+        'base_updated_at': '2026-09-23T10:12:38.902Z',
+        'payload': payload,
+        'created_at': '2026-09-25T01:12:04.922Z',
+        'retry_count': 3,
+        'is_blocked': true,
+        'last_error': _boxedError,
+      }),
+    ]);
+    final queue = OfflineMutationQueueService(
+      firestore: db,
+      backend: backend,
+      isOnline: () => true,
+    );
+
+    await queue.flushPendingMutations();
+
+    final retained = await backend.readStringList(_queueKey);
+    expect(retained, hasLength(1));
+    expect(jsonDecode(retained.single)['is_blocked'], true);
+    expect(jsonDecode(retained.single)['payload'], isNotEmpty);
+    final saved = (await db.collection('users').doc('12').get()).data()!;
+    expect(
+      saved['phone'],
+      '+639979727996',
+      reason: 'without a base, writing would be a blind overwrite',
+    );
+    expect(
+      saved['photo'],
+      'https://example.test/users/12/profile_photo/new.png',
+    );
+  });
 
   test('users/12 boxed mismatch remains blocked without overwrite', () async {
     final db = FakeFirebaseFirestore();
@@ -567,10 +573,11 @@ void main() {
 
     await queue.flushPendingMutations();
 
-    // The queued snapshot lost the race against a newer server version. It is
-    // retired rather than left blocking, and the server's document is not
-    // touched. The drop itself is reported as a `queue_edit_superseded` error.
-    expect(await backend.readStringList(_queueKey), isEmpty);
+    // A newer server save must neither be overwritten nor discard the local edit.
+    final retained = await backend.readStringList(_queueKey);
+    expect(retained, hasLength(1));
+    expect(jsonDecode(retained.single)['is_blocked'], true);
+    expect(jsonDecode(retained.single)['payload'], isNotEmpty);
     expect(
       (await db.collection('users').doc('12').get()).data()?['name'],
       'Server name',
@@ -739,10 +746,12 @@ void main() {
       'D-77',
       reason: 'fields added by the office must survive the replay',
     );
-    // Retired, not blocked: keeping it queued would wedge every later edit for
-    // this person behind a snapshot that can never win.
-    expect(await backend.readStringList(_queueKey), isEmpty);
-    expect(await queue.readPendingItems('manager'), isEmpty);
+    // No remote acknowledgement: retain the complete local edit for review.
+    final retained = await backend.readStringList(_queueKey);
+    expect(retained, hasLength(1));
+    expect(jsonDecode(retained.single)['is_blocked'], true);
+    expect(jsonDecode(retained.single)['payload'], isNotEmpty);
+    expect(await queue.readPendingItems('manager'), hasLength(1));
   });
 }
 

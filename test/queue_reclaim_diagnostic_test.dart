@@ -43,27 +43,6 @@ class _RejectingPhotoStorage extends PhotoStorageService {
   Future<void> deleteByPath(String? storagePath) async {}
 }
 
-/// The shared error-log singleton binds to the first mock store it sees, so this
-/// assertion lives in its own file.
-Future<bool> _waitsForReclaimedLog() async {
-  final deadline = DateTime.now().add(const Duration(seconds: 10));
-  while (DateTime.now().isBefore(deadline)) {
-    final preferences = await SharedPreferences.getInstance();
-    for (final key in preferences.getKeys().where(
-      (key) => key.startsWith('${SyncDiagnosticOutbox.prefix}_row_'),
-    )) {
-      for (final value in preferences.getStringList(key) ?? const <String>[]) {
-        final row = jsonDecode(value);
-        if (row is Map && row['kind'] == 'queue_reclaimed') {
-          return true;
-        }
-      }
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 25));
-  }
-  return false;
-}
-
 /// Every diagnostic row this device is currently holding, newest last.
 Future<List<Map<String, dynamic>>> _outboxRows() async {
   final preferences = await SharedPreferences.getInstance();
@@ -82,87 +61,82 @@ Future<List<Map<String, dynamic>>> _outboxRows() async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a discarded queued photo leaves a diagnostic record', () async {
-    SharedPreferences.setMockInitialValues({});
-    final auth = createAuthStorageBackend();
-    await auth.initialize();
-    await auth.writeString('paltranco_current_user_id', '13');
-    const storageKey = 'booking_pending_upload_queue_v1::13';
-    final db = FakeFirebaseFirestore();
-    final backend = MemoryBackend();
-    final uploads = _RejectingPhotoStorage();
-    final service = BookingOfflineUploadQueueService(
-      backend: backend,
-      firestore: db,
-      photoStorageService: uploads,
-      flushMutations: () async {},
-      mutationQueue: OfflineMutationQueueService(
-        backend: MemoryBackend(),
+  test(
+    'a permanent failure after marker loss retains bytes and diagnostics',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final auth = createAuthStorageBackend();
+      await auth.initialize();
+      await auth.writeString('paltranco_current_user_id', '13');
+      const storageKey = 'booking_pending_upload_queue_v1::13';
+      final db = FakeFirebaseFirestore();
+      final backend = MemoryBackend();
+      final uploads = _RejectingPhotoStorage();
+      final service = BookingOfflineUploadQueueService(
+        backend: backend,
         firestore: db,
-        isOnline: () => false,
-      ),
-    );
-    await service.initialize();
-    await service.enqueueBookingPhoto(
-      bookingId: '1',
-      statusKey: 'delivered',
-      fieldKey: 'proof',
-      bytes: Uint8List.fromList(img.encodePng(img.Image(width: 2, height: 2))),
-      fileName: 'proof.png',
-    );
-    final queued =
-        jsonDecode((await backend.readStringList(storageKey)).single)
-            as Map<String, dynamic>;
-    // The server owns this placeholder when the upload starts.
-    await db.collection('bookings').doc('1').set({
-      'id': '1',
-      'status_outputs': {
-        'delivered': {
-          'status_key': 'delivered',
-          'fields': {
-            'proof': {'pending_upload_id': queued['id']},
-          },
-        },
-      },
-    });
-    // The placeholder disappears during the upload, so the queued bytes can no
-    // longer be applied to this booking.
-    uploads.onUpload = () async {
+        photoStorageService: uploads,
+        flushMutations: () async {},
+        mutationQueue: OfflineMutationQueueService(
+          backend: MemoryBackend(),
+          firestore: db,
+          isOnline: () => false,
+        ),
+      );
+      await service.initialize();
+      await service.enqueueBookingPhoto(
+        bookingId: '1',
+        statusKey: 'delivered',
+        fieldKey: 'proof',
+        bytes: Uint8List.fromList(
+          img.encodePng(img.Image(width: 2, height: 2)),
+        ),
+        fileName: 'proof.png',
+      );
+      final queued =
+          jsonDecode((await backend.readStringList(storageKey)).single)
+              as Map<String, dynamic>;
+      // The server owns this placeholder when the upload starts.
       await db.collection('bookings').doc('1').set({
         'id': '1',
         'status_outputs': {
           'delivered': {
             'status_key': 'delivered',
-            'fields': <String, dynamic>{},
+            'fields': {
+              'proof': {'pending_upload_id': queued['id']},
+            },
           },
         },
       });
-    };
+      // The placeholder disappears during the upload, so the queued bytes can no
+      // longer be applied to this booking.
+      uploads.onUpload = () async {
+        await db.collection('bookings').doc('1').set({
+          'id': '1',
+          'status_outputs': {
+            'delivered': {
+              'status_key': 'delivered',
+              'fields': <String, dynamic>{},
+            },
+          },
+        });
+      };
 
-    // Let the enqueue-triggered flush finish, then run a deterministic cycle.
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    await service.flushPendingUploads();
+      // Let the enqueue-triggered flush finish, then run a deterministic cycle.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await service.flushPendingUploads();
 
-    expect(await backend.readStringList(storageKey), isEmpty);
-    expect(
-      await _waitsForReclaimedLog(),
-      isTrue,
-      reason: 'discarding queued bytes must leave a diagnostic record',
-    );
-
-    // The queued photo is settled, so the failure that put it in the log must
-    // stop asking the admin to act. Otherwise a correctly reclaimed photo leaves
-    // a permanent "needs attention" entry that nothing will ever clear.
-    final reclaims = (await _outboxRows()).where(
-      (row) => row['kind'] == 'queue_reclaimed',
-    );
-    expect(reclaims, isNotEmpty);
-    for (final row in reclaims) {
-      expect(
-        row['attention_required'],
-        isFalse,
-        reason: 'a correct reclaim is a settled outcome, not a new problem',
+      final retained = jsonDecode(
+        (await backend.readStringList(storageKey)).single,
       );
-    }
-  });
+      expect(retained['bytes_base64'], queued['bytes_base64']);
+      expect(retained['created_at'], queued['created_at']);
+      expect(retained['last_error'], isNotEmpty);
+      expect(retained['error_diagnostics'], isNotEmpty);
+      expect(
+        (await _outboxRows()).where((row) => row['kind'] == 'queue_reclaimed'),
+        isEmpty,
+      );
+    },
+  );
 }
