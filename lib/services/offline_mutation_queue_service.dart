@@ -11,6 +11,7 @@ import 'package:webapp/services/support_read_marker_writer.dart';
 import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'dart:async';
 import 'package:webapp/services/booking_remote_document.dart';
+import 'package:webapp/services/transient_sync_failure.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'package:webapp/services/offline_reference_mapper.dart';
@@ -3232,6 +3233,13 @@ class OfflineMutationQueueService {
       var changed = false;
       final recovered = saved.map((entry) {
         final lastError = entry.lastError ?? '';
+        if (entry.isBlocked && isTransientSyncFailure(lastError)) {
+          changed = true;
+          recoveredConflictIds.add(entry.id);
+          // Connectivity is not a conflict. Retain the original payload,
+          // identity and version checks when replaying previously blocked work.
+          return entry.copyWith(isBlocked: false);
+        }
         if (entry.isBlocked &&
             !entry.bookingInlinePreviewRechecked &&
             (entry.collectionKey == 'bookings' ||
@@ -3290,7 +3298,8 @@ class OfflineMutationQueueService {
             lastError.trim().toLowerCase() == 'connection failed.';
         final legacyRecovery =
             legacyConnectionFailure ||
-            (!entry.bookingStartArchiveRechecked &&
+            ((!entry.bookingStartArchiveRechecked ||
+                    !entry.bookingStartPhotoHistoryRechecked) &&
                 hasBookingConflict &&
                 entry.payload['client_status'] == 'ongoing') ||
             ((!entry.bookingDeliveryHistoryRechecked ||
@@ -3324,6 +3333,7 @@ class OfflineMutationQueueService {
             bookingRepeatedDeliveryRechecked: true,
             bookingCommittedDeliveryRechecked: true,
             bookingStartArchiveRechecked: true,
+            bookingStartPhotoHistoryRechecked: true,
             bookingConnectionFailureRechecked:
                 legacyConnectionFailure ||
                 entry.bookingConnectionFailureRechecked,
@@ -3481,8 +3491,7 @@ class OfflineMutationQueueService {
             companion.copyWith(
               isBlocked:
                   _isConflictError(normalizedError) ||
-                  (!_isRetryable(normalizedError) &&
-                      error is! TimeoutException),
+                  !_isRetryable(normalizedError, error: error),
               retryCount: companion.retryCount + 1,
               lastError: normalizedError,
               diagnostics: diagnostics,
@@ -3497,7 +3506,7 @@ class OfflineMutationQueueService {
               diagnostics: diagnostics,
             ),
           );
-        } else if (_isRetryable(normalizedError) || error is TimeoutException) {
+        } else if (_isRetryable(normalizedError, error: error)) {
           remaining.add(
             entry.copyWith(
               retryCount: entry.retryCount + 1,
@@ -3806,9 +3815,12 @@ class OfflineMutationQueueService {
     }
   }
 
-  bool _isRetryable(String message) {
+  bool _isRetryable(String message, {Object? error}) {
+    if (error is FirebaseException) return isTransientSyncFailure(error);
+    if (error is TimeoutException) return true;
     final normalized = message.trim().toLowerCase();
     return normalized == 'connection failed.' ||
+        isTransientSyncFailure(message) ||
         normalized.contains('internet connection') ||
         normalized.contains('temporarily unavailable') ||
         normalized.contains('request took too long') ||
@@ -3866,6 +3878,7 @@ class _OfflineMutationEntry {
     this.bookingRepeatedDeliveryRechecked = false,
     this.bookingCommittedDeliveryRechecked = false,
     this.bookingStartArchiveRechecked = false,
+    this.bookingStartPhotoHistoryRechecked = false,
     this.bookingConnectionFailureRechecked = false,
     this.bookingInlinePreviewRechecked = false,
     this.catalogPredecessorVersions = const [],
@@ -3905,6 +3918,7 @@ class _OfflineMutationEntry {
   final bool bookingRepeatedDeliveryRechecked;
   final bool bookingCommittedDeliveryRechecked;
   final bool bookingStartArchiveRechecked;
+  final bool bookingStartPhotoHistoryRechecked;
   final bool bookingConnectionFailureRechecked;
   final bool bookingInlinePreviewRechecked;
   final List<String> catalogPredecessorVersions;
@@ -3938,6 +3952,7 @@ class _OfflineMutationEntry {
     bool? bookingRepeatedDeliveryRechecked,
     bool? bookingCommittedDeliveryRechecked,
     bool? bookingStartArchiveRechecked,
+    bool? bookingStartPhotoHistoryRechecked,
     bool? bookingConnectionFailureRechecked,
     bool? bookingInlinePreviewRechecked,
     bool? replayPresence,
@@ -3993,6 +4008,9 @@ class _OfflineMutationEntry {
       bookingDeliveryHistoryRechecked:
           bookingDeliveryHistoryRechecked ??
           this.bookingDeliveryHistoryRechecked,
+      bookingStartPhotoHistoryRechecked:
+          bookingStartPhotoHistoryRechecked ??
+          this.bookingStartPhotoHistoryRechecked,
       bookingConnectionFailureRechecked:
           bookingConnectionFailureRechecked ??
           this.bookingConnectionFailureRechecked,
@@ -4032,6 +4050,8 @@ class _OfflineMutationEntry {
       'booking_repeated_delivery_rechecked': bookingRepeatedDeliveryRechecked,
       'booking_committed_delivery_rechecked': bookingCommittedDeliveryRechecked,
       'booking_start_archive_rechecked': bookingStartArchiveRechecked,
+      'booking_start_photo_history_rechecked':
+          bookingStartPhotoHistoryRechecked,
       'booking_connection_failure_rechecked': bookingConnectionFailureRechecked,
       'booking_inline_preview_rechecked': bookingInlinePreviewRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
@@ -4072,6 +4092,8 @@ class _OfflineMutationEntry {
       conflictRecoveryAttempted: map['conflict_recovery_attempted'] == true,
       bookingStartArchiveRechecked:
           map['booking_start_archive_rechecked'] == true,
+      bookingStartPhotoHistoryRechecked:
+          map['booking_start_photo_history_rechecked'] == true,
       bookingRepeatedDeliveryRechecked:
           map['booking_repeated_delivery_rechecked'] == true,
       bookingCommittedDeliveryRechecked:

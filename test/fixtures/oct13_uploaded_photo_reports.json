@@ -1,0 +1,192 @@
+[
+  {
+    "queue_entry_id": "booking_upload_1791431216765000_486596e7",
+    "action_at": "2026-10-08T03:46:56.720Z",
+    "photo_upload": {
+      "field_key": "delivery_form_photo",
+      "waiting_for_commit": true,
+      "status_key": "delivered__1791431216630000",
+      "wait_count": 83,
+      "file_name": "Screenshot 2026-10-08 114633.png",
+      "local_bytes_present": true,
+      "mime_type": "image/png",
+      "booking_id": "147",
+      "size": 691171,
+      "wait_reason": "photo_field_missing"
+    },
+    "server_document": {
+      "id": "147",
+      "submission_key": "booking_8_9_1_1790305660824000",
+      "updated_at": "2026-10-08T11:46:44.923",
+      "client_status": "delivered",
+      "billing_status": "unbilled",
+      "status_outputs": {
+        "ongoing__1790921665124000": {
+          "fields": {
+            "delivery_form_photo": {
+              "width": 480,
+              "storage_path": "bookings/147/status_outputs/ongoing__1790921665124000/delivery_form_photo/1790928120354.jpg",
+              "size": 63819,
+              "height": 640,
+              "name": "camera_1790921658859.jpg",
+              "mime_type": "image/jpeg",
+              "download_url": "https://example.test/already-uploaded-photo"
+            }
+          }
+        },
+        "delivered__1791431204922000": {
+          "fields": {
+            "delivery_form_photo": {
+              "name": "Screenshot_2026-10-08_114633.png",
+              "storage_path": "bookings/147/status_outputs/delivered__1791431204922000/delivery_form_photo/1791431219217.png",
+              "size": 691171,
+              "mime_type": "image/png",
+              "width": 601,
+              "height": 748,
+              "download_url": "https://example.test/already-uploaded-photo"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "queue_entry_id": "booking_upload_1791440159443000_c88f1c90",
+    "action_at": "2026-10-08T06:15:59.375Z",
+    "photo_upload": {
+      "mime_type": "image/jpeg",
+      "booking_id": "213",
+      "wait_reason": "photo_field_missing",
+      "local_bytes_present": true,
+      "waiting_for_commit": true,
+      "file_name": "camera_1791439936334.jpg",
+      "size": 91869,
+      "status_key": "ongoing__1791440159165000",
+      "wait_count": 24,
+      "field_key": "waybill_photo"
+    },
+    "server_document": {
+      "id": "213",
+      "submission_key": "booking_8_9_1_1791439976272000",
+      "updated_at": "2026-10-08T15:20:29.051",
+      "client_status": "delivered",
+      "billing_status": "billed",
+      "status_outputs": {
+        "book__1791439976272000": {
+          "fields": {
+            "waybill_photo": {
+              "pending_upload_id": "booking_upload_1791440227247000_dd7ee3dd",
+              "pending_upload": true,
+              "mime_type": "image/jpeg",
+              "size": 91869,
+              "name": "camera_1791439936334.jpg"
+            }
+          }
+        },
+        "assigned__1791440138612000": {
+          "fields": {
+            "waybill_photo": {
+              "size": 91869,
+              "name": "camera_1791439936334.jpg",
+              "height": 640,
+              "mime_type": "image/jpeg",
+              "width": 480,
+              "storage_path": "bookings/213/status_outputs/assigned__1791440138612000/waybill_photo/1791440260320.jpg",
+              "download_url": "https://example.test/already-uploaded-photo"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "queue_entry_id": "booking_upload_1791436556596000_2cdc52e1",
+    "action_at": "2026-10-08T05:15:56.524Z",
+    "photo_upload": {
+      "booking_id": "168",
+      "local_bytes_present": true,
+      "field_key": "delivery_form_photo",
+      "file_name": "Screenshot 2026-10-08 131529.png",
+      "size": 555652,
+      "waiting_for_commit": true,
+      "wait_reason": "marker_superseded",
+      "wait_count": 46,
+      "status_key": "delivered__1791436539913000",
+      "mime_type": "image/png"
+    },
+    "server_document": {
+      "id": "168",
+      "submission_key": "booking_8_9_1_1790734042250000",
+      "updated_at": "2026-10-08T14:32:46.208",
+      "client_status": "delivered",
+      "billing_status": "billed",
+      "status_outputs": {
+        "delivered__1791436539913000": {
+          "fields": {
+            "delivery_form_photo": {
+              "name": "Screenshot_2026-10-08_131529.png",
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "height": 638,
+              "size": 555652,
+              "mime_type": "image/png",
+              "width": 517,
+              "download_url": "https://example.test/already-uploaded-photo"
+            }
+          }
+        },
+        "ongoing__1790924384139000": {
+          "fields": {
+            "delivery_form_photo": {
+              "size": 63947,
+              "name": "camera_1790924377615.jpg",
+              "storage_path": "bookings/168/status_outputs/ongoing__1790924384139000/delivery_form_photo/1790928201627.jpg",
+              "height": 640,
+              "width": 480,
+              "mime_type": "image/jpeg",
+              "download_url": "https://example.test/already-uploaded-photo"
+            }
+          }
+        },
+        "delivered__1791439072066000": {
+          "fields": {
+            "delivery_form_photo": {
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "mime_type": "image/png",
+              "width": 517,
+              "name": "Screenshot_2026-10-08_131529.png",
+              "size": 555652,
+              "height": 638,
+              "download_url": "https://example.test/already-uploaded-photo"
+            }
+          }
+        },
+        "delivered__1791438201803000": {
+          "fields": {
+            "delivery_form_photo": {
+              "height": 638,
+              "mime_type": "image/png",
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "width": 517,
+              "size": 555652,
+              "name": "Screenshot_2026-10-08_131529.png",
+              "download_url": "https://example.test/already-uploaded-photo"
+            }
+          }
+        },
+        "delivered__1791439157846000": {
+          "fields": {
+            "delivery_form_photo": {
+              "name": "Screenshot_2026-10-08_131529.png",
+              "size": 555652,
+              "mime_type": "image/png",
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "height": 638,
+              "width": 517,
+              "download_url": "https://example.test/already-uploaded-photo"
+            }
+          }
+        }
+      }
+    }
+  }
+]

@@ -1010,8 +1010,47 @@ Map<String, dynamic>? _reconcileHistoricalStart(
   )) {
     return null;
   }
+  bool isRecoveredPhoto(MapEntry event) {
+    final value = event.value;
+    if (value is! Map) return false;
+    final uploadId = value['upload_id'];
+    final originalStatus = value['original_status_key'];
+    final fields = value['fields'];
+    final photo = fields is Map ? fields['delivery_form_photo'] : null;
+    final at = _bookingInstant(value['submitted_at']);
+    final baseAt = _bookingInstant(baseUpdatedAt);
+    final serverAt = _bookingInstant(server['updated_at']);
+    return uploadId is String &&
+        uploadId.isNotEmpty &&
+        event.key == 'photo__$uploadId' &&
+        value['status_key'] == 'photo' &&
+        value['recovered_photo'] == true &&
+        value['status_form'] == null &&
+        originalStatus is String &&
+        originalStatus.startsWith('ongoing__') &&
+        fields is Map &&
+        fields.length == 1 &&
+        photo is Map &&
+        photo['pending_upload'] != true &&
+        photo['pending_upload_id'] == null &&
+        '${photo['storage_path'] ?? ''}'.startsWith(
+          'bookings/${server['id']}/status_outputs/$originalStatus/delivery_form_photo/',
+        ) &&
+        '${photo['download_url'] ?? ''}'.startsWith('https://') &&
+        at != null &&
+        baseAt != null &&
+        serverAt != null &&
+        at.isAfter(baseAt) &&
+        !at.isAfter(serverAt);
+  }
+
   final remoteEvents = history.entries
-      .where((event) => !normalized.containsKey(event.key))
+      // Already committed photo-only recovery is retained verbatim. It is not
+      // another workflow transition and cannot justify changing live fields.
+      .where(
+        (event) =>
+            !normalized.containsKey(event.key) && !isRecoveredPhoto(event),
+      )
       .toList();
   if (remoteEvents.length != 2) {
     return null;

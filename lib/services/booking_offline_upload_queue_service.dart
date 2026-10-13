@@ -1,6 +1,7 @@
 import 'sync_error_log_service.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'booking_photo_marker_match.dart';
+import 'transient_sync_failure.dart';
 import 'package:webapp/services/firestore_transaction_errors.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
 import 'package:webapp/models/offline_queue_item.dart';
@@ -756,6 +757,24 @@ class BookingOfflineUploadQueueService {
       _missingPhotoRecheckAt.remove(recheckKey);
       try {
         if (BookingIdResolver.isTemporary(entry.bookingId)) {
+          // Local creates must commit before looking for a remote identity.
+          // An offline resolver read cannot help a still-pending local create.
+          final dependency = await _hasPendingBookingMutation(
+            entry.bookingId,
+            storageKey,
+          );
+          if (dependency != false) {
+            final wait = await _noteWait(
+              entry,
+              dependency == null
+                  ? _PhotoWaitReason.mutationCheckTimedOut
+                  : _PhotoWaitReason.bookingMutationPending,
+              storageKey: storageKey,
+            );
+            mutated = mutated || wait.persisted;
+            remaining.add(wait.entry);
+            continue;
+          }
           final resolved = await BookingIdResolver(
             firestore: _firestore,
           ).resolve(entry.bookingId);
@@ -1064,7 +1083,7 @@ class BookingOfflineUploadQueueService {
             'media_size': entry.size,
           },
         );
-        if (_isRetryableUploadError(normalizedError) ||
+        if (_isRetryableUploadError(normalizedError, error: error) ||
             normalizedError.toLowerCase().contains('sync conflict')) {
           // Persist the failure. Without this the entry keeps retrying with no
           // stored error, so the wait is indistinguishable from a fresh one.
@@ -1247,9 +1266,12 @@ class BookingOfflineUploadQueueService {
     return pendingId;
   }
 
-  bool _isRetryableUploadError(String message) {
+  bool _isRetryableUploadError(String message, {Object? error}) {
+    if (error is FirebaseException) return isTransientSyncFailure(error);
+    if (error is TimeoutException) return true;
     final normalized = message.trim().toLowerCase();
     return normalized.contains('internet connection') ||
+        isTransientSyncFailure(message) ||
         normalized.contains('temporarily unavailable') ||
         normalized.contains('request took too long') ||
         normalized.contains('try again');

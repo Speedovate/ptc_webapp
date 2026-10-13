@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webapp/services/booking_offline_upload_queue_service.dart';
@@ -13,6 +15,29 @@ import 'support/merge_aware_firestore.dart';
 
 const _mutationKey = 'offline_mutation_queue_v1::signed_out';
 const _photoKey = 'booking_pending_upload_queue_v1::signed_out';
+
+class _OfflineFirestore extends MergeAwareFirestore {
+  bool offline = true;
+  @override
+  Future<T> runTransaction<T>(
+    TransactionHandler<T> handler, {
+    Duration timeout = const Duration(seconds: 30),
+    int maxAttempts = 5,
+  }) {
+    if (offline) {
+      throw FirebaseException(
+        plugin: 'cloud_firestore',
+        code: 'unavailable',
+        message: 'Failed to get document because the client is offline.',
+      );
+    }
+    return super.runTransaction(
+      handler,
+      timeout: timeout,
+      maxAttempts: maxAttempts,
+    );
+  }
+}
 
 class _Photos extends PhotoStorageService {
   final uploads = <String>[];
@@ -71,6 +96,172 @@ Map<String, dynamic> _queuedPhoto({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  final uploadedReports =
+      jsonDecode(
+            File(
+              'test/fixtures/oct13_uploaded_photo_reports.json',
+            ).readAsStringSync(),
+          )
+          as List;
+  for (final report in uploadedReports) {
+    test(
+      'Oct 13 uploaded-photo report ${report['photo_upload']['booking_id']} settles without writes',
+      () async {
+        final db = MergeAwareFirestore();
+        final disk = MemoryBackend();
+        final photos = _Photos();
+        final p = report['photo_upload'] as Map;
+        final server = Map<String, dynamic>.from(report['server_document']);
+        final ref = db.collection('bookings').doc(p['booking_id']);
+        await ref.set(server);
+        disk.data[_photoKey] = [
+          jsonEncode({
+            ..._queuedPhoto(
+              id: report['queue_entry_id'],
+              booking: p['booking_id'],
+              status: p['status_key'],
+              field: p['field_key'],
+              name: p['file_name'],
+              size: p['size'],
+              mime: p['mime_type'],
+            ),
+            'created_at': report['action_at'],
+            'wait_count': p['wait_count'],
+            'wait_reason': p['wait_reason'],
+          }),
+        ];
+        final mutations = OfflineMutationQueueService(
+          firestore: db,
+          backend: MemoryBackend(),
+          isOnline: () => false,
+        );
+        addTearDown(mutations.dispose);
+        final uploader = BookingOfflineUploadQueueService(
+          firestore: db,
+          backend: disk,
+          mutationQueue: mutations,
+          photoStorageService: photos,
+          flushMutations: () async {},
+        );
+        await uploader.flushPendingUploads();
+        expect(disk.data[_photoKey], isEmpty);
+        expect(photos.uploads, isEmpty);
+        expect((await ref.get()).data(), server);
+      },
+    );
+  }
+
+  for (final previouslyBlocked in [false, true]) {
+    test(
+      'Oct 13 offline create and dependent photo recover; blocked=$previouslyBlocked',
+      () async {
+        final db = _OfflineFirestore();
+        final disk = MemoryBackend();
+        final photos = _Photos();
+        const submission = 'booking_8_9_1_1791850210240000';
+        const temporary = 'offline_$submission';
+        const status = 'book__1791850210240000';
+        const photoId = 'booking_upload_1791850220223000_21a9908';
+        const action = '2026-10-13T00:10:20.275Z';
+        final payload = {
+          'id': temporary,
+          'submission_key': submission,
+          'client_id': '9',
+          'client_status': 'assigned',
+          'driver_id': '17',
+          'helper_id': '19',
+          'created_at': '2026-10-13T08:10:10.240',
+          'updated_at': '2026-10-13T08:12:24.931',
+          'status_outputs': {
+            status: {
+              'fields': {
+                'waybill_photo': {
+                  'pending_upload': true,
+                  'pending_upload_id': photoId,
+                  'name': '1000142030.jpg',
+                  'size': 3,
+                  'mime_type': 'image/jpeg',
+                  'download_url': 'data:image/jpeg;base64,AQID',
+                },
+              },
+            },
+            'pending__1791850344931000': {
+              'fields': {'driver_id': '17', 'helper_id': '19'},
+            },
+          },
+        };
+        disk.data[_mutationKey] = [
+          jsonEncode({
+            'id': 'booking_create_1791850220275000_2a76ed4a',
+            'kind': 'bookingCreate',
+            'collection_key': 'bookings',
+            'target_id': temporary,
+            'payload': payload,
+            'created_at': action,
+            'retry_count': 2,
+            'is_blocked': previouslyBlocked,
+            'last_error': previouslyBlocked
+                ? 'Failed to get document because the client is offline.'
+                : null,
+          }),
+        ];
+        disk.data[_photoKey] = [
+          jsonEncode(
+            _queuedPhoto(
+              id: photoId,
+              booking: temporary,
+              status: status,
+              field: 'waybill_photo',
+              name: '1000142030.jpg',
+              size: 3,
+              mime: 'image/jpeg',
+            ),
+          ),
+        ];
+        final mutations = OfflineMutationQueueService(
+          firestore: db,
+          backend: disk,
+          isOnline: () => true,
+        );
+        addTearDown(mutations.dispose);
+        final uploader = BookingOfflineUploadQueueService(
+          firestore: db,
+          backend: disk,
+          mutationQueue: mutations,
+          photoStorageService: photos,
+          flushMutations: mutations.flushPendingMutations,
+        );
+        await uploader.flushPendingUploads();
+        final pending = jsonDecode(disk.data[_mutationKey]!.single);
+        expect(pending['is_blocked'], false);
+        expect(pending['payload'], payload);
+        expect(pending['created_at'], action);
+        final waiting = jsonDecode(disk.data[_photoKey]!.single);
+        expect(waiting['bytes_base64'], 'AQID');
+        expect(waiting['wait_reason'], 'booking_mutation_pending');
+        expect(photos.uploads, isEmpty);
+        db.offline = false;
+        await uploader.flushPendingUploads();
+        expect(disk.data[_mutationKey], isEmpty);
+        expect(disk.data[_photoKey], isEmpty);
+        expect(photos.uploads, hasLength(1));
+        final bookings = (await db.collection('bookings').get()).docs;
+        expect(bookings, hasLength(1));
+        expect(bookings.single.id, isNot(startsWith('offline_')));
+        final saved = bookings.single.data();
+        expect(saved['submission_key'], submission);
+        expect(saved['updated_at'], payload['updated_at']);
+        expect(saved['client_status'], 'assigned');
+        expect(saved['driver_id'], '17');
+        expect(saved['helper_id'], '19');
+        expect(jsonEncode(saved), isNot(contains('data:image')));
+        await uploader.flushPendingUploads();
+        expect((await db.collection('bookings').get()).docs, hasLength(1));
+        expect(photos.uploads, hasLength(1));
+      },
+    );
+  }
 
   for (final scenario in [
     'same image',
