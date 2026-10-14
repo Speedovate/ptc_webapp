@@ -1,0 +1,830 @@
+[
+  {
+    "queue_entry_id": "booking_upload_1791957854281000_4a51fd83",
+    "action_at": "2026-10-14T06:04:10.527Z",
+    "photo_upload": {
+      "file_name": "1000142073.jpg",
+      "wait_count": 20,
+      "status_key": "book__1791957845495000",
+      "size": 200100,
+      "waiting_for_commit": true,
+      "booking_id": "offline_booking_8_9_1_1791957845495000",
+      "field_key": "waybill_photo",
+      "wait_reason": "temporary_booking_id",
+      "local_bytes_present": true,
+      "mime_type": "image/jpeg"
+    },
+    "error": "This photo is still waiting: the saved booking has no server ID yet. Open the booking, check the photo field, and retry the upload.",
+    "build": "52"
+  },
+  {
+    "queue_entry_id": "booking_upload_1791929179742000_bb9462bf",
+    "action_at": "2026-10-13T22:06:16.112Z",
+    "photo_upload": {
+      "field_key": "waybill_photo",
+      "booking_id": "offline_booking_8_9_1_1791929171081000",
+      "mime_type": "image/jpeg",
+      "local_bytes_present": true,
+      "wait_count": 61,
+      "status_key": "book__1791929171081000",
+      "file_name": "1000142021.jpg",
+      "wait_reason": "temporary_booking_id",
+      "waiting_for_commit": true,
+      "size": 238479
+    },
+    "error": "Failed to get document because the client is offline.",
+    "build": "52"
+  },
+  {
+    "queue_entry_id": "booking_upload_1791960707132000_409d279a",
+    "action_at": "2026-10-14T06:51:46.988Z",
+    "photo_upload": {
+      "file_name": "1000142075.jpg",
+      "booking_id": "offline_booking_8_9_1_1791960701949000",
+      "size": 72531,
+      "waiting_for_commit": true,
+      "field_key": "waybill_photo",
+      "wait_reason": "temporary_booking_id",
+      "mime_type": "image/jpeg",
+      "status_key": "book__1791960701949000",
+      "local_bytes_present": true,
+      "wait_count": 19
+    },
+    "error": "This photo is still waiting: the saved booking has no server ID yet. Open the booking, check the photo field, and retry the upload.",
+    "build": "52"
+  },
+  {
+    "queue_entry_id": "booking_upload_1791431216765000_486596e7",
+    "action_at": "2026-10-08T03:46:56.720Z",
+    "photo_upload": {
+      "size": 691171,
+      "booking_id": "147",
+      "local_bytes_present": true,
+      "field_key": "delivery_form_photo",
+      "waiting_for_commit": true,
+      "mime_type": "image/png",
+      "status_key": "delivered__1791431216630000",
+      "wait_reason": "photo_field_missing",
+      "file_name": "Screenshot 2026-10-08 114633.png",
+      "wait_count": 83
+    },
+    "error": "This photo is still waiting: the booking on the server no longer has this photo field. Open the booking, check the photo field, and retry the upload.",
+    "build": "46",
+    "server_document": {
+      "chassis_id": null,
+      "driver_status": "delivered",
+      "created_at": "2026-09-25T11:07:40.824",
+      "media_synced_at": "2026-10-08T03:47:06.185Z",
+      "id": "147",
+      "client_status": "delivered",
+      "photo_cleanup_claims": [],
+      "delivered_at": "2026-10-02T06:14:25.124Z",
+      "submission_key": "booking_8_9_1_1790305660824000",
+      "client_id": "9",
+      "vehicle_make_id": "3",
+      "billing_status": "unbilled",
+      "updated_at": "2026-10-08T11:46:44.923",
+      "helper_id": "23",
+      "driver_id": "12",
+      "helper_status": "delivered",
+      "photo_cleanup_paths": [],
+      "status_outputs": {
+        "ongoing__1790921665124000": {
+          "submitted_role": "dispatcher",
+          "submitted_at": "2026-10-02T14:14:25.124",
+          "status_key": "ongoing",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_by": "8",
+          "status_form": {
+            "id": "6",
+            "status_subtext": null,
+            "status_text": null,
+            "roles": [
+              "admin",
+              "driver",
+              "helper",
+              "manager",
+              "dispatcher"
+            ],
+            "is_main_form": true,
+            "role": "admin",
+            "current_status_key": "ongoing",
+            "is_active": true,
+            "button_text": "Submit Delivery",
+            "next_status_key": "delivered"
+          },
+          "fields": {
+            "delivery_form_photo": {
+              "mime_type": "image/jpeg",
+              "name": "camera_1790921658859.jpg",
+              "height": 640,
+              "storage_path": "bookings/147/status_outputs/ongoing__1790921665124000/delivery_form_photo/1790928120354.jpg",
+              "size": 63819,
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F147%2Fstatus_outputs%2Fongoing__1790921665124000%2Fdelivery_form_photo%2F1790928120354.jpg?alt=media&token=[REDACTED]",
+              "width": 480
+            }
+          }
+        },
+        "book__1790305660824000": {
+          "submitted_by": "8",
+          "status_key": "book",
+          "submitted_roles": [
+            "client"
+          ],
+          "status_form": {
+            "id": "1",
+            "next_status_key": "pending",
+            "status_text": null,
+            "is_active": true,
+            "role": "client",
+            "roles": [
+              "client",
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "is_main_form": true,
+            "status_subtext": null,
+            "current_status_key": "book",
+            "button_text": "Submit Booking"
+          },
+          "submitted_role": "client",
+          "submitted_at": "2026-09-25T11:07:40.824",
+          "fields": {
+            "waybill_photo": {
+              "name": "1000141851.jpg",
+              "height": 810,
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F147%2Fstatus_outputs%2Fbook__1790305660824000%2Fwaybill_photo%2F1790312246148.jpg?alt=media&token=[REDACTED]",
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "width": 1080,
+              "size": 257997,
+              "mime_type": "image/jpeg"
+            }
+          }
+        },
+        "assigned__1790317080379000": {
+          "submitted_role": "dispatcher",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_by": "8",
+          "status_key": "assigned",
+          "submitted_at": "2026-09-25T14:18:00.379",
+          "status_form": null,
+          "fields": {
+            "waybill_photo": {
+              "size": 257997,
+              "width": 1080,
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "height": 810,
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F147%2Fstatus_outputs%2Fbook__1790305660824000%2Fwaybill_photo%2F1790312246148.jpg?alt=media&token=[REDACTED]",
+              "name": "1000141851.jpg",
+              "mime_type": "image/jpeg"
+            }
+          }
+        },
+        "assigned__1790725582478000": {
+          "submitted_role": "dispatcher",
+          "submitted_at": "2026-09-30T07:46:22.478",
+          "status_key": "assigned",
+          "submitted_by": "8",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_form": null,
+          "fields": {
+            "waybill_photo": {
+              "height": 810,
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F147%2Fstatus_outputs%2Fbook__1790305660824000%2Fwaybill_photo%2F1790312246148.jpg?alt=media&token=[REDACTED]",
+              "name": "1000141851.jpg",
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "width": 1080,
+              "mime_type": "image/jpeg",
+              "size": 257997
+            }
+          }
+        },
+        "pending__1790316353772000": {
+          "status_form": {
+            "roles": [
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "status_subtext": null,
+            "next_status_key": "assigned",
+            "id": "2",
+            "current_status_key": "pending",
+            "button_text": "Assign Booking",
+            "is_main_form": true,
+            "status_text": null,
+            "role": "admin",
+            "is_active": true
+          },
+          "submitted_at": "2026-09-25T14:05:53.772",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_by": "8",
+          "submitted_role": "dispatcher",
+          "status_key": "pending",
+          "fields": {}
+        },
+        "delivered__1791431204922000": {
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_form": null,
+          "submitted_by": "8",
+          "submitted_role": "dispatcher",
+          "submitted_at": "2026-10-08T11:46:44.922",
+          "status_key": "delivered",
+          "fields": {
+            "waybill_photo": {
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "height": 810,
+              "name": "1000141851.jpg",
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F147%2Fstatus_outputs%2Fbook__1790305660824000%2Fwaybill_photo%2F1790312246148.jpg?alt=media&token=[REDACTED]",
+              "width": 1080,
+              "mime_type": "image/jpeg",
+              "size": 257997
+            },
+            "delivery_form_photo": {
+              "mime_type": "image/png",
+              "size": 691171,
+              "storage_path": "bookings/147/status_outputs/delivered__1791431204922000/delivery_form_photo/1791431219217.png",
+              "width": 601,
+              "name": "Screenshot_2026-10-08_114633.png",
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F147%2Fstatus_outputs%2Fdelivered__1791431204922000%2Fdelivery_form_photo%2F1791431219217.png?alt=media&token=[REDACTED]",
+              "height": 748
+            }
+          }
+        },
+        "assigned__1790384606850000": {
+          "submitted_at": "2026-09-26T09:03:26.850",
+          "status_form": null,
+          "submitted_by": "8",
+          "submitted_role": "dispatcher",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_key": "assigned",
+          "fields": {
+            "waybill_photo": {
+              "mime_type": "image/jpeg",
+              "name": "1000141851.jpg",
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F147%2Fstatus_outputs%2Fbook__1790305660824000%2Fwaybill_photo%2F1790312246148.jpg?alt=media&token=[REDACTED]",
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "width": 1080,
+              "height": 810,
+              "size": 257997
+            }
+          }
+        },
+        "assigned__1790317057987000": {
+          "status_form": null,
+          "submitted_at": "2026-09-25T14:17:37.987",
+          "submitted_role": "dispatcher",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_by": "8",
+          "status_key": "assigned",
+          "fields": {
+            "waybill_photo": {
+              "height": 810,
+              "name": "1000141851.jpg",
+              "width": 1080,
+              "mime_type": "image/jpeg",
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F147%2Fstatus_outputs%2Fbook__1790305660824000%2Fwaybill_photo%2F1790312246148.jpg?alt=media&token=[REDACTED]",
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "size": 257997
+            }
+          }
+        },
+        "assigned__1790909131200000": {
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_by": "8",
+          "submitted_at": "2026-10-02T10:45:31.200",
+          "status_key": "assigned",
+          "submitted_role": "dispatcher",
+          "status_form": {
+            "current_status_key": "assigned",
+            "is_active": true,
+            "is_main_form": true,
+            "button_text": "Start Delivery",
+            "next_status_key": "ongoing",
+            "id": "4",
+            "roles": [
+              "driver",
+              "admin",
+              "helper",
+              "dispatcher",
+              "manager"
+            ],
+            "role": "driver",
+            "status_subtext": null,
+            "status_text": null
+          },
+          "fields": {}
+        }
+      }
+    }
+  },
+  {
+    "queue_entry_id": "booking_upload_1791440159443000_c88f1c90",
+    "action_at": "2026-10-08T06:15:59.375Z",
+    "photo_upload": {
+      "booking_id": "213",
+      "local_bytes_present": true,
+      "wait_reason": "photo_field_missing",
+      "waiting_for_commit": true,
+      "field_key": "waybill_photo",
+      "status_key": "ongoing__1791440159165000",
+      "mime_type": "image/jpeg",
+      "size": 91869,
+      "file_name": "camera_1791439936334.jpg",
+      "wait_count": 24
+    },
+    "error": "This photo is still waiting: the booking on the server no longer has this photo field. Open the booking, check the photo field, and retry the upload.",
+    "build": "46",
+    "server_document": {
+      "vehicle_make_id": "1",
+      "photo_cleanup_claims": [],
+      "helper_status": "delivered",
+      "updated_at": "2026-10-08T15:20:29.051",
+      "client_id": "9",
+      "chassis_id": null,
+      "delivered_at": "2026-10-08T06:17:07.067Z",
+      "media_synced_at": "2026-10-08T06:17:45.833Z",
+      "created_at": "2026-10-08T14:12:56.272",
+      "id": "213",
+      "submission_key": "booking_8_9_1_1791439976272000",
+      "driver_status": "delivered",
+      "billing_status": "billed",
+      "photo_cleanup_paths": [],
+      "driver_id": "16",
+      "helper_id": "15",
+      "client_status": "delivered",
+      "status_outputs": {
+        "assigned__1791440071571000": {
+          "submitted_by": "8",
+          "submitted_role": "dispatcher",
+          "status_form": {
+            "button_text": "Start Delivery",
+            "is_main_form": true,
+            "is_active": true,
+            "role": "driver",
+            "next_status_key": "ongoing",
+            "current_status_key": "assigned",
+            "status_subtext": null,
+            "status_text": null,
+            "roles": [
+              "driver",
+              "admin",
+              "helper",
+              "dispatcher",
+              "manager"
+            ],
+            "id": "4"
+          },
+          "submitted_at": "2026-10-08T14:14:31.571",
+          "status_key": "assigned",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "fields": {}
+        },
+        "book__1791439976272000": {
+          "submitted_roles": [
+            "client"
+          ],
+          "status_form": {
+            "next_status_key": "pending",
+            "is_main_form": true,
+            "id": "1",
+            "status_text": null,
+            "status_subtext": null,
+            "is_active": true,
+            "roles": [
+              "client",
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "button_text": "Submit Booking",
+            "role": "client",
+            "current_status_key": "book"
+          },
+          "submitted_by": "8",
+          "status_key": "book",
+          "submitted_role": "client",
+          "submitted_at": "2026-10-08T14:12:56.272",
+          "fields": {
+            "waybill_photo": {
+              "pending_upload_id": "booking_upload_1791440227247000_dd7ee3dd",
+              "name": "camera_1791439936334.jpg",
+              "mime_type": "image/jpeg",
+              "download_url": "[INLINE MEDIA OMITTED: image/jpeg; encoded_chars=122492; sha256=e2a7aea6961586c25bbfc04458458f236bf9214a9a22ace9be53f7d7727fb54e]",
+              "size": 91869,
+              "pending_upload": true
+            }
+          }
+        },
+        "assigned__1791440138612000": {
+          "submitted_at": "2026-10-08T14:15:38.612",
+          "status_form": {
+            "is_main_form": true,
+            "status_subtext": null,
+            "is_active": true,
+            "current_status_key": "assigned",
+            "status_text": null,
+            "button_text": "Start Delivery",
+            "roles": [
+              "driver",
+              "admin",
+              "helper",
+              "dispatcher",
+              "manager"
+            ],
+            "role": "driver",
+            "id": "4",
+            "next_status_key": "ongoing"
+          },
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_role": "dispatcher",
+          "status_key": "assigned",
+          "submitted_by": "8",
+          "fields": {
+            "waybill_photo": {
+              "storage_path": "bookings/213/status_outputs/assigned__1791440138612000/waybill_photo/1791440260320.jpg",
+              "mime_type": "image/jpeg",
+              "name": "camera_1791439936334.jpg",
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F213%2Fstatus_outputs%2Fassigned__1791440138612000%2Fwaybill_photo%2F1791440260320.jpg?alt=media&token=[REDACTED]",
+              "height": 640,
+              "size": 91869,
+              "width": 480
+            }
+          }
+        },
+        "ongoing__1791440227067000": {
+          "submitted_at": "2026-10-08T14:17:07.067",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_key": "ongoing",
+          "submitted_role": "dispatcher",
+          "status_form": {
+            "id": "6",
+            "button_text": "Submit Delivery",
+            "role": "admin",
+            "roles": [
+              "admin",
+              "driver",
+              "helper",
+              "manager",
+              "dispatcher"
+            ],
+            "is_active": true,
+            "current_status_key": "ongoing",
+            "is_main_form": true,
+            "status_subtext": null,
+            "status_text": null,
+            "next_status_key": "delivered"
+          },
+          "submitted_by": "8",
+          "fields": {
+            "delivery_form_photo": {
+              "size": 541343,
+              "download_url": "[INLINE MEDIA OMITTED: image/png; encoded_chars=721792; sha256=fbad994d8b81a0a289b814fff3ea3f09057619ed0ea503ce9b546b0d713499a4]",
+              "name": "Screenshot 2026-10-08 141439.png",
+              "mime_type": "image/png",
+              "pending_upload": true,
+              "pending_upload_id": "booking_upload_1791440227562000_429e1719"
+            }
+          }
+        },
+        "pending__1791440032185000": {
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_key": "pending",
+          "submitted_by": "8",
+          "submitted_role": "dispatcher",
+          "submitted_at": "2026-10-08T14:13:52.185",
+          "status_form": {
+            "status_text": null,
+            "is_active": true,
+            "status_subtext": null,
+            "is_main_form": true,
+            "roles": [
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "id": "2",
+            "next_status_key": "assigned",
+            "role": "admin",
+            "button_text": "Assign Booking",
+            "current_status_key": "pending"
+          },
+          "fields": {}
+        }
+      }
+    }
+  },
+  {
+    "queue_entry_id": "booking_upload_1791436556596000_2cdc52e1",
+    "action_at": "2026-10-08T05:15:56.524Z",
+    "photo_upload": {
+      "size": 555652,
+      "booking_id": "168",
+      "field_key": "delivery_form_photo",
+      "local_bytes_present": true,
+      "wait_count": 46,
+      "mime_type": "image/png",
+      "status_key": "delivered__1791436539913000",
+      "wait_reason": "marker_superseded",
+      "waiting_for_commit": true,
+      "file_name": "Screenshot 2026-10-08 131529.png"
+    },
+    "error": "Bad state: Queued booking photo made no progress: this booking field already holds a newer photo.",
+    "build": "46",
+    "server_document": {
+      "photo_cleanup_paths": [],
+      "id": "168",
+      "updated_at": "2026-10-08T14:32:46.208",
+      "billing_status": "billed",
+      "media_synced_at": "2026-10-08T05:15:49.761Z",
+      "helper_status": "delivered",
+      "submission_key": "booking_8_9_1_1790734042250000",
+      "chassis_id": null,
+      "driver_id": "12",
+      "helper_id": "23",
+      "created_at": "2026-09-30T10:07:22.250",
+      "driver_status": "delivered",
+      "photo_cleanup_claims": [],
+      "client_status": "delivered",
+      "delivered_at": "2026-10-02T06:59:44.139Z",
+      "client_id": "9",
+      "vehicle_make_id": "3",
+      "status_outputs": {
+        "book__1790734042250000": {
+          "status_form": {
+            "status_subtext": null,
+            "status_text": null,
+            "role": "client",
+            "id": "1",
+            "roles": [
+              "client",
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "button_text": "Submit Booking",
+            "is_active": true,
+            "current_status_key": "book",
+            "is_main_form": true,
+            "next_status_key": "pending"
+          },
+          "submitted_at": "2026-09-30T10:07:22.250",
+          "submitted_role": "client",
+          "submitted_roles": [
+            "client"
+          ],
+          "status_key": "book",
+          "submitted_by": "8",
+          "fields": {
+            "waybill_photo": {
+              "size": 213885,
+              "width": 1080,
+              "height": 810,
+              "mime_type": "image/jpeg",
+              "name": "1000141904.jpg",
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F168%2Fstatus_outputs%2Fbook__1790734042250000%2Fwaybill_photo%2F1790734092303.jpg?alt=media&token=[REDACTED]",
+              "storage_path": "bookings/168/status_outputs/book__1790734042250000/waybill_photo/1790734092303.jpg"
+            }
+          }
+        },
+        "delivered__1791439072066000": {
+          "submitted_role": "dispatcher",
+          "status_form": null,
+          "submitted_by": "24",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "status_key": "delivered",
+          "submitted_at": "2026-10-08T13:57:52.066",
+          "fields": {
+            "delivery_form_photo": {
+              "size": 555652,
+              "height": 638,
+              "mime_type": "image/png",
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F168%2Fstatus_outputs%2Fdelivered__1791436539913000%2Fdelivery_form_photo%2F1791436542836.png?alt=media&token=[REDACTED]",
+              "width": 517,
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "name": "Screenshot_2026-10-08_131529.png"
+            },
+            "waybill_photo": {
+              "size": 213885,
+              "width": 1080,
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F168%2Fstatus_outputs%2Fbook__1790734042250000%2Fwaybill_photo%2F1790734092303.jpg?alt=media&token=[REDACTED]",
+              "name": "1000141904.jpg",
+              "storage_path": "bookings/168/status_outputs/book__1790734042250000/waybill_photo/1790734092303.jpg",
+              "height": 810,
+              "mime_type": "image/jpeg"
+            }
+          }
+        },
+        "delivered__1791439157846000": {
+          "submitted_by": "24",
+          "submitted_role": "dispatcher",
+          "status_form": null,
+          "status_key": "delivered",
+          "submitted_at": "2026-10-08T13:59:17.846",
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "fields": {
+            "waybill_photo": {
+              "width": 1080,
+              "size": 213885,
+              "mime_type": "image/jpeg",
+              "name": "1000141904.jpg",
+              "height": 810,
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F168%2Fstatus_outputs%2Fbook__1790734042250000%2Fwaybill_photo%2F1790734092303.jpg?alt=media&token=[REDACTED]",
+              "storage_path": "bookings/168/status_outputs/book__1790734042250000/waybill_photo/1790734092303.jpg"
+            },
+            "delivery_form_photo": {
+              "name": "Screenshot_2026-10-08_131529.png",
+              "width": 517,
+              "mime_type": "image/png",
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "height": 638,
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F168%2Fstatus_outputs%2Fdelivered__1791436539913000%2Fdelivery_form_photo%2F1791436542836.png?alt=media&token=[REDACTED]",
+              "size": 555652
+            }
+          }
+        },
+        "pending__1790734086223000": {
+          "submitted_by": "8",
+          "submitted_role": "dispatcher",
+          "status_key": "pending",
+          "status_form": {
+            "is_main_form": true,
+            "button_text": "Assign Booking",
+            "next_status_key": "assigned",
+            "is_active": true,
+            "role": "admin",
+            "current_status_key": "pending",
+            "roles": [
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "status_subtext": null,
+            "id": "2",
+            "status_text": null
+          },
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_at": "2026-09-30T10:08:06.223",
+          "fields": {}
+        },
+        "delivered__1791438201803000": {
+          "submitted_role": "dispatcher",
+          "submitted_by": "24",
+          "submitted_at": "2026-10-08T13:43:21.803",
+          "status_key": "delivered",
+          "status_form": null,
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "fields": {
+            "delivery_form_photo": {
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F168%2Fstatus_outputs%2Fdelivered__1791436539913000%2Fdelivery_form_photo%2F1791436542836.png?alt=media&token=[REDACTED]",
+              "size": 555652,
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "height": 638,
+              "width": 517,
+              "mime_type": "image/png",
+              "name": "Screenshot_2026-10-08_131529.png"
+            },
+            "waybill_photo": {
+              "mime_type": "image/jpeg",
+              "size": 213885,
+              "storage_path": "bookings/168/status_outputs/book__1790734042250000/waybill_photo/1790734092303.jpg",
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F168%2Fstatus_outputs%2Fbook__1790734042250000%2Fwaybill_photo%2F1790734092303.jpg?alt=media&token=[REDACTED]",
+              "width": 1080,
+              "name": "1000141904.jpg",
+              "height": 810
+            }
+          }
+        },
+        "assigned__1790909750398000": {
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_at": "2026-10-02T10:55:50.398",
+          "status_key": "assigned",
+          "submitted_role": "dispatcher",
+          "submitted_by": "8",
+          "status_form": {
+            "status_subtext": null,
+            "current_status_key": "assigned",
+            "role": "driver",
+            "button_text": "Start Delivery",
+            "roles": [
+              "driver",
+              "admin",
+              "helper",
+              "dispatcher",
+              "manager"
+            ],
+            "next_status_key": "ongoing",
+            "status_text": null,
+            "is_main_form": true,
+            "is_active": true,
+            "id": "4"
+          },
+          "fields": {}
+        },
+        "ongoing__1790924384139000": {
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_by": "8",
+          "submitted_role": "dispatcher",
+          "submitted_at": "2026-10-02T14:59:44.139",
+          "status_form": {
+            "current_status_key": "ongoing",
+            "is_main_form": true,
+            "role": "admin",
+            "status_text": null,
+            "roles": [
+              "admin",
+              "driver",
+              "helper",
+              "manager",
+              "dispatcher"
+            ],
+            "status_subtext": null,
+            "button_text": "Submit Delivery",
+            "next_status_key": "delivered",
+            "id": "6",
+            "is_active": true
+          },
+          "status_key": "ongoing",
+          "fields": {
+            "delivery_form_photo": {
+              "height": 640,
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F168%2Fstatus_outputs%2Fongoing__1790924384139000%2Fdelivery_form_photo%2F1790928201627.jpg?alt=media&token=[REDACTED]",
+              "storage_path": "bookings/168/status_outputs/ongoing__1790924384139000/delivery_form_photo/1790928201627.jpg",
+              "name": "camera_1790924377615.jpg",
+              "width": 480,
+              "size": 63947,
+              "mime_type": "image/jpeg"
+            }
+          }
+        },
+        "delivered__1791436539913000": {
+          "submitted_by": "8",
+          "submitted_role": "dispatcher",
+          "status_key": "delivered",
+          "status_form": null,
+          "submitted_roles": [
+            "dispatcher"
+          ],
+          "submitted_at": "2026-10-08T13:15:39.913",
+          "fields": {
+            "waybill_photo": {
+              "width": 1080,
+              "height": 810,
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F168%2Fstatus_outputs%2Fbook__1790734042250000%2Fwaybill_photo%2F1790734092303.jpg?alt=media&token=[REDACTED]",
+              "size": 213885,
+              "storage_path": "bookings/168/status_outputs/book__1790734042250000/waybill_photo/1790734092303.jpg",
+              "name": "1000141904.jpg",
+              "mime_type": "image/jpeg"
+            },
+            "delivery_form_photo": {
+              "name": "Screenshot_2026-10-08_131529.png",
+              "width": 517,
+              "download_url": "https://firebasestorage.googleapis.com/v0/b/ptc-mvp.firebasestorage.app/o/bookings%2F168%2Fstatus_outputs%2Fdelivered__1791436539913000%2Fdelivery_form_photo%2F1791436542836.png?alt=media&token=[REDACTED]",
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "height": 638,
+              "mime_type": "image/png",
+              "size": 555652
+            }
+          }
+        }
+      }
+    }
+  }
+]

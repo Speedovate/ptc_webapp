@@ -495,6 +495,7 @@ class BookingOfflineUploadQueueService {
     Map<String, dynamic>? serverDocument,
     Object? readError,
     StackTrace? readStack,
+    Map<String, dynamic>? identityLookup,
   }) async {
     if (reason == _PhotoWaitReason.photoFieldMissing ||
         reason == _PhotoWaitReason.markerSuperseded) {
@@ -518,6 +519,14 @@ class BookingOfflineUploadQueueService {
         lastError != null &&
         (reasonChanged ||
             !(entry.diagnostics ?? '').contains('photo_dependency_state_v2') ||
+            (identityLookup != null &&
+                (!(entry.diagnostics ?? '').contains(
+                      'booking_identity_lookup_v1',
+                    ) ||
+                    (identityLookup['stage'] == 'completed' &&
+                        !(entry.diagnostics ?? '').contains(
+                          '"result":"${identityLookup['result']}"',
+                        )))) ||
             (readError != null &&
                 !(entry.diagnostics ?? '').contains('marker_read_failure')));
     if (escalate || enrich) {
@@ -577,6 +586,7 @@ class BookingOfflineUploadQueueService {
               'cache_fallback': 'no_exact_marker',
             },
           ...evidence,
+          'identity_lookup': ?identityLookup,
           'wait_reason': reason.key,
           'wait_cycles': waitCount,
           'booking_status': entry.statusKey,
@@ -715,6 +725,11 @@ class BookingOfflineUploadQueueService {
 
     for (final sourceEntry in entries) {
       var entry = sourceEntry;
+      final identityLookup = <String, dynamic>{
+        'schema': 'booking_identity_lookup_v1',
+        'lookup_started': false,
+        'result': 'deferred_or_shared_lookup',
+      };
       // A newer photo for this booking must not overtake an unresolved older one.
       if (remaining.any((older) => older.bookingId == entry.bookingId)) {
         remaining.add(entry);
@@ -749,7 +764,7 @@ class BookingOfflineUploadQueueService {
           }
           var resolved = await BookingIdResolver(
             firestore: _firestore,
-          ).resolve(entry.bookingId);
+          ).resolve(entry.bookingId, lookupEvidence: identityLookup);
           if (resolved == null) {
             final cachedReader = _cachedBookingReader;
             final candidates = cachedReader != null
@@ -766,6 +781,8 @@ class BookingOfflineUploadQueueService {
                 .whereType<Map<String, dynamic>>()
                 .where((row) => row['id']?.toString() == entry.bookingId)
                 .toList();
+            identityLookup['original_cached_submission_available'] =
+                cached.length == 1;
             if (cached.length == 1 &&
                 cached.single['client_status'] == 'pending' &&
                 cached.single['driver_status'] == 'pending' &&
@@ -798,6 +815,7 @@ class BookingOfflineUploadQueueService {
               entry,
               _PhotoWaitReason.temporaryBookingId,
               storageKey: storageKey,
+              identityLookup: identityLookup,
             );
             mutated = mutated || wait.persisted;
             remaining.add(wait.entry);
@@ -1055,6 +1073,8 @@ class BookingOfflineUploadQueueService {
             'booking_status': entry.statusKey,
             'field_key': entry.fieldKey,
             'media_size': entry.size,
+            if (identityLookup['lookup_started'] == true)
+              'identity_lookup': identityLookup,
           },
         );
         // Every unconfirmed failure retains the only durable local copy.

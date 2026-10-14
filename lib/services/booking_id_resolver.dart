@@ -34,29 +34,54 @@ class BookingIdResolver {
   static String reservationId(String key) =>
       'bookings_${base64UrlEncode(utf8.encode(key))}';
 
-  Future<String?> resolve(String id, {String? submissionKey}) {
+  Future<String?> resolve(
+    String id, {
+    String? submissionKey,
+    Map<String, dynamic>? lookupEvidence,
+  }) {
     if (!isTemporary(id)) return Future.value(id);
     // Include the supplied key: never share a result with a different identity.
     return _gate.resolve(
       id,
       jsonEncode([id, submissionKey?.trim()]),
-      () => _resolveOnce(id, submissionKey: submissionKey),
+      () => _resolveOnce(
+        id,
+        submissionKey: submissionKey,
+        evidence: lookupEvidence,
+      ),
     );
   }
 
-  Future<String?> _resolveOnce(String id, {String? submissionKey}) async {
+  Future<String?> _resolveOnce(
+    String id, {
+    String? submissionKey,
+    Map<String, dynamic>? evidence,
+  }) async {
+    evidence?.addAll({
+      'schema': 'booking_identity_lookup_v1',
+      'read_source': 'server',
+      'lookup_started': true,
+      'result': 'in_progress',
+      'observed_at': DateTime.now().toUtc().toIso8601String(),
+      'stage': 'submission_key',
+    });
     var key = submissionKey?.trim();
     if (key == null || key.isEmpty) {
-      final legacy = await _firestore.collection('bookings').doc(id).get();
-      key = legacy.data()?['submission_key']?.toString().trim();
       // Historical client keys use this exact reversible format. This is only
       // a lookup candidate; both reservation and final document must verify it.
+      // Do not read a non-existent temporary document first: offline/cache-miss
+      // errors on that unrelated read prevent finding the committed numeric ID.
       final candidate = id.substring('offline_'.length);
-      if ((key == null || key.isEmpty) &&
-          RegExp(
-            r'^booking_(?:[0-9]+|[0-9]+_[0-9]+_[0-9]+_[0-9]+)$',
-          ).hasMatch(candidate)) {
+      if (RegExp(
+        r'^booking_(?:[0-9]+|[0-9]+_[0-9]+_[0-9]+_[0-9]+)$',
+      ).hasMatch(candidate)) {
         key = candidate;
+      } else {
+        final legacy = await _firestore
+            .collection('bookings')
+            .doc(id)
+            .get(const GetOptions(source: Source.server));
+        key = legacy.data()?['submission_key']?.toString().trim();
       }
     }
     if (key == null || key.isEmpty) return null;
@@ -65,11 +90,13 @@ class BookingIdResolver {
         'Sync conflict: temporary booking identity does not match its submission key.',
       );
     }
+    evidence?.addAll({'submission_key': key, 'stage': 'repair_read'});
     final repair = await _firestore
         .collection('booking_id_repairs')
         .doc(id)
-        .get();
+        .get(const GetOptions(source: Source.server));
     final migration = repair.data();
+    evidence?['repair_exists'] = repair.exists;
     if (migration?['resolution'] == 'keep_both_new_id') {
       final targetKey = migration?['target_submission_key']?.toString();
       final targetId = migration?['target_id']?.toString();
@@ -85,11 +112,11 @@ class BookingIdResolver {
       final reserved = await _firestore
           .collection('manage_id')
           .doc(reservationId(targetKey!))
-          .get();
+          .get(const GetOptions(source: Source.server));
       final target = await _firestore
           .collection('bookings')
           .doc(targetId)
-          .get();
+          .get(const GetOptions(source: Source.server));
       if (reserved.data()?['resource_key'] != 'bookings' ||
           reserved.data()?['submission_key'] != targetKey ||
           reserved.data()?['document_id']?.toString() != targetId ||
@@ -101,18 +128,30 @@ class BookingIdResolver {
       }
       return targetId;
     }
+    evidence?['stage'] = 'reservation_read';
     final reservation = await _firestore
         .collection('manage_id')
         .doc(reservationId(key))
-        .get();
+        .get(const GetOptions(source: Source.server));
+    evidence?['reservation_exists'] = reservation.exists;
     if (!reservation.exists) {
       // Some completed legacy/online creates have no reservation document.
       // Read-only fallback: require exactly one numeric, matching identity.
+      evidence?['stage'] = 'canonical_query';
       final matches = await _firestore
           .collection('bookings')
           .where('submission_key', isEqualTo: key)
           .limit(2)
-          .get();
+          .get(const GetOptions(source: Source.server));
+      evidence?.addAll({
+        'canonical_match_count': matches.docs.length,
+        'stage': 'completed',
+        'result': matches.docs.isEmpty
+            ? 'no_server_identity'
+            : matches.docs.length > 1
+            ? 'ambiguous_server_identity'
+            : 'identity_validation',
+      });
       if (matches.docs.length != 1) return null;
       final match = matches.docs.single;
       if (!isNumeric(match.id) ||
@@ -120,6 +159,7 @@ class BookingIdResolver {
           match.data()['id']?.toString() != match.id) {
         return null;
       }
+      evidence?.addAll({'result': 'confirmed', 'canonical_id': match.id});
       return match.id;
     }
     final data = reservation.data()!;
@@ -131,10 +171,18 @@ class BookingIdResolver {
         'Sync conflict: booking reservation identity is inconsistent.',
       );
     }
+    evidence?['stage'] = 'canonical_read';
     final confirmed = await _firestore
         .collection('bookings')
         .doc(finalId)
-        .get();
+        .get(const GetOptions(source: Source.server));
+    evidence?.addAll({
+      'canonical_exists': confirmed.exists,
+      'stage': 'completed',
+      'result': confirmed.exists
+          ? 'identity_validation'
+          : 'reserved_booking_missing',
+    });
     if (!confirmed.exists) {
       return null; // A reserved number is not a saved booking.
     }
@@ -143,6 +191,7 @@ class BookingIdResolver {
         'Sync conflict: reserved booking belongs to another submission.',
       );
     }
+    evidence?.addAll({'result': 'confirmed', 'canonical_id': finalId});
     return finalId;
   }
 

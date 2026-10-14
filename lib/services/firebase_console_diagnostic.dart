@@ -7,11 +7,21 @@ Map<String, dynamic> firebaseConsoleDiagnostic(Map<String, dynamic> report) {
   final error = '${report['error'] ?? ''}';
   final stack = '${report['stack_trace'] ?? ''}';
   final text = error.toLowerCase();
+  final identityLookup = details['identity_lookup'];
+  final missingIdentity =
+      identityLookup is Map &&
+      identityLookup['stage'] == 'completed' &&
+      const {
+        'no_server_identity',
+        'ambiguous_server_identity',
+        'reserved_booking_missing',
+      }.contains(identityLookup['result']);
   final local =
       text.contains('sync conflict') ||
       text.contains('booking identity is temporarily unavailable') ||
       text.contains('photo is still waiting') ||
-      text.contains('queued booking photo made no progress');
+      text.contains('queued booking photo made no progress') ||
+      missingIdentity;
   final bracket = RegExp(
     r'\[(cloud_firestore|firebase_storage|firebase_auth|firebase_app_check)/([a-z-]+)\]',
   );
@@ -55,6 +65,7 @@ Map<String, dynamic> firebaseConsoleDiagnostic(Map<String, dynamic> report) {
     'project_id': report['firebase_project_id'],
     'app_origin': report['app_origin'],
     'console_state_verified': false,
+    if (identityLookup is Map) 'identity_lookup': identityLookup,
   };
   String status = 'unknown';
   String category = 'insufficient_evidence';
