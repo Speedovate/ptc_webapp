@@ -131,6 +131,24 @@ bool isSafeBookingStatusContinuation(
 
 bool _equal(Object? a, Object? b) {
   if (a is Map && b is Map) {
+    // The remote writer omits inline previews while the durable local queue
+    // retains them. Only omission for the exact same pending photo is transport
+    // state; never equate two different previews or different upload markers.
+    final uploadId = a['pending_upload_id'];
+    if (a['pending_upload'] == true &&
+        b['pending_upload'] == true &&
+        uploadId is String &&
+        uploadId.isNotEmpty &&
+        b['pending_upload_id'] == uploadId &&
+        ((!a.containsKey('download_url') &&
+                '${b['download_url']}'.startsWith('data:image/')) ||
+            (!b.containsKey('download_url') &&
+                '${a['download_url']}'.startsWith('data:image/')))) {
+      return _equal(
+        {...a}..remove('download_url'),
+        {...b}..remove('download_url'),
+      );
+    }
     return a.length == b.length &&
         a.keys.every((key) => b.containsKey(key) && _equal(a[key], b[key]));
   }

@@ -82,6 +82,7 @@ class _Doc implements DocumentReference<Map<String, dynamic>> {
 
 class _Photos extends PhotoStorageService {
   int uploads = 0;
+  Future<void> Function()? duringUpload;
   @override
   Future<Map<String, dynamic>> uploadBookingPhoto({
     required Uint8List bytes,
@@ -93,6 +94,7 @@ class _Photos extends PhotoStorageService {
     int? size,
   }) async {
     uploads++;
+    await duringUpload?.call();
     return {
       'name': fileName,
       'size': size,
@@ -252,6 +254,131 @@ void main() {
         }
         await uploader.flushPendingUploads();
         expect(photos.uploads, temporary && succeeds ? 1 : 0);
+      });
+    }
+  }
+
+  for (final report in reports.take(3)) {
+    final p = report['photo_upload'] as Map;
+    for (final scenario in [
+      'matching_marker',
+      'wrong_actor',
+      'wrong_client',
+      'wrong_metadata',
+      'ambiguous',
+      'replaced_during_upload',
+    ]) {
+      test('orphan photo exact marker ${p['booking_id']}: $scenario', () async {
+        final db = _Db();
+        final disk = MemoryBackend();
+        final photos = _Photos();
+        const scope = 'booking_pending_upload_queue_v1::signed_out';
+        final sourceKey = (p['booking_id'] as String).substring(
+          'offline_'.length,
+        );
+        final canonicalKey = sourceKey.replaceFirst(
+          RegExp(r'[0-9]+$'),
+          '1792024716308000',
+        );
+        final server = <String, dynamic>{
+          'id': '501',
+          'submission_key': canonicalKey,
+          'client_id': scenario == 'wrong_client' ? '99' : '9',
+          'client_status': 'assigned',
+          'driver_status': 'assigned',
+          'helper_status': 'assigned',
+          'driver_id': '13',
+          'helper_id': '18',
+          'billing_status': 'unbilled',
+          'updated_at': '2026-10-15T09:00:00',
+          'status_outputs': {
+            p['status_key']: {
+              'status_key': 'book',
+              'submitted_by': scenario == 'wrong_actor' ? '99' : '8',
+              'fields': {
+                p['field_key']: {
+                  'pending_upload': true,
+                  'pending_upload_id': report['queue_entry_id'],
+                  'name': p['file_name'],
+                  'size': scenario == 'wrong_metadata' ? 1 : p['size'],
+                  'mime_type': p['mime_type'],
+                },
+              },
+            },
+          },
+        };
+        await db.collection('bookings').doc('501').set(server);
+        if (scenario == 'ambiguous') {
+          await db.collection('bookings').doc('502').set({
+            ...server,
+            'id': '502',
+          });
+        }
+        disk.data[scope] = [
+          jsonEncode({
+            'id': report['queue_entry_id'],
+            'booking_id': p['booking_id'],
+            'status_key': p['status_key'],
+            'field_key': p['field_key'],
+            'file_name': p['file_name'],
+            'size': p['size'],
+            'mime_type': p['mime_type'],
+            'bytes_base64': base64Encode(Uint8List(p['size'])),
+            'created_at': report['action_at'],
+            'waiting_for_commit': true,
+            'wait_reason': 'temporary_booking_id',
+            'wait_count': 30,
+            'retry_count': 1,
+            'last_error': report['error'],
+          }),
+        ];
+        final mutations = OfflineMutationQueueService(
+          firestore: db,
+          backend: disk,
+          isOnline: () => false,
+        );
+        addTearDown(mutations.dispose);
+        if (scenario == 'replaced_during_upload') {
+          photos.duringUpload = () async =>
+              db.collection('bookings').doc('501').update({
+                'status_outputs.${p['status_key']}.fields.${p['field_key']}.pending_upload_id':
+                    'newer_upload',
+              });
+        }
+        final uploader = BookingOfflineUploadQueueService(
+          firestore: db,
+          backend: disk,
+          mutationQueue: mutations,
+          photoStorageService: photos,
+          flushMutations: () async {},
+          cachedBookingReader: (_) async => null,
+        );
+        await uploader.flushPendingUploads();
+        final succeeds = scenario == 'matching_marker';
+        expect(disk.data[scope]?.length, succeeds ? 0 : 1);
+        expect(
+          photos.uploads,
+          succeeds || scenario == 'replaced_during_upload' ? 1 : 0,
+        );
+        final saved = (await db.collection('bookings').doc('501').get())
+            .data()!;
+        expect(saved['client_status'], 'assigned');
+        expect(saved['driver_id'], '13');
+        expect(saved['billing_status'], 'unbilled');
+        expect(saved['updated_at'], server['updated_at']);
+        expect(saved['submission_key'], canonicalKey);
+        if (!succeeds) {
+          final retained = jsonDecode(disk.data[scope]!.single);
+          expect(base64Decode(retained['bytes_base64']).length, p['size']);
+          if (scenario == 'replaced_during_upload') {
+            expect(
+              saved['status_outputs'][p['status_key']]['fields'][p['field_key']]['pending_upload_id'],
+              'newer_upload',
+            );
+          } else {
+            expect(saved, server);
+          }
+        }
       });
     }
   }

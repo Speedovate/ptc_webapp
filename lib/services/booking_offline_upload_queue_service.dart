@@ -478,6 +478,96 @@ class BookingOfflineUploadQueueService {
     }
   }
 
+  /// A retried form may have committed under another submission key. Resolve
+  /// only a unique server booking that still owns this exact upload marker,
+  /// original event, actor, client and metadata. Never synthesize a booking or
+  /// replace a reservation/repair mapping. The upload transaction rechecks it.
+  Future<String?> _resolvePhotoBookingByMarker(
+    _PendingBookingUploadEntry entry,
+    Map<String, dynamic> evidence,
+  ) async {
+    if (evidence['result'] != 'no_server_identity' ||
+        evidence['reservation_exists'] != false ||
+        evidence['repair_exists'] != false) {
+      return null;
+    }
+    final parts = RegExp(
+      r'^offline_booking_([0-9]+)_([0-9]+)_([0-9]+)_([0-9]+)$',
+    ).firstMatch(entry.bookingId);
+    if (parts == null ||
+        entry.statusKey != 'book__${parts[4]}' ||
+        entry.fieldKey != 'waybill_photo') {
+      return null;
+    }
+    return BookingIdResolver(
+      firestore: _firestore,
+    ).resolveRecoveryEvidence(entry.bookingId, 'photo_marker_${entry.id}', () async {
+      evidence['photo_marker_lookup'] = {
+        'stage': 'query_started',
+        'read_source': 'server',
+      };
+      final matches = await _bookingsCollection
+          .where(
+            'status_outputs.${entry.statusKey}.fields.${entry.fieldKey}.pending_upload_id',
+            isEqualTo: entry.id,
+          )
+          .limit(2)
+          .get(const GetOptions(source: Source.server));
+      final markerEvidence = <String, dynamic>{
+        'stage': 'completed',
+        'match_count': matches.docs.length,
+        'result': matches.docs.isEmpty ? 'no_photo_marker' : 'not_verified',
+        'read_source': 'server',
+      };
+      evidence['photo_marker_lookup'] = markerEvidence;
+      if (matches.docs.isEmpty) return null;
+      if (matches.docs.length != 1) {
+        throw StateError(
+          'Sync conflict: more than one booking owns this photo marker. Local photo was preserved.',
+        );
+      }
+      final match = matches.docs.single;
+      final data = match.data();
+      final event = _statusOutputsFromBooking(data)?[entry.statusKey];
+      final photo = _fieldValueFromStatusOutputs(
+        _statusOutputsFromBooking(data),
+        statusKey: entry.statusKey,
+        fieldKey: entry.fieldKey,
+      );
+      final key = data['submission_key'];
+      final keyParts = key is String
+          ? RegExp(
+              r'^booking_([0-9]+)_([0-9]+)_([0-9]+)_([0-9]+)$',
+            ).firstMatch(key)
+          : null;
+      if (!BookingIdResolver.isNumeric(match.id) ||
+          data['id'] != match.id ||
+          data['client_id'] != parts[2] ||
+          keyParts == null ||
+          keyParts[1] != parts[1] ||
+          keyParts[2] != parts[2] ||
+          keyParts[3] != parts[3] ||
+          event is! Map ||
+          event['status_key'] != 'book' ||
+          event['submitted_by'] != parts[1] ||
+          photo is! Map ||
+          photo['pending_upload'] != true ||
+          photo['pending_upload_id'] != entry.id ||
+          photo['name'] != entry.fileName ||
+          photo['size'] != entry.size ||
+          photo['mime_type'] != entry.mimeType) {
+        throw StateError(
+          'Sync conflict: photo marker ownership or metadata is inconsistent. Local photo was preserved.',
+        );
+      }
+      markerEvidence.addAll({
+        'result': 'confirmed_exact_photo_marker',
+        'canonical_id': match.id,
+      });
+      return match.id;
+    });
+  }
+
   /// Records why this entry stayed on the device. A wait is normal for a few
   /// cycles while the booking write lands, so only the first wait and a change
   /// of reason are written back. Once the same wait survives
@@ -523,6 +613,10 @@ class BookingOfflineUploadQueueService {
                 (!(entry.diagnostics ?? '').contains(
                       'booking_identity_lookup_v1',
                     ) ||
+                    (identityLookup.containsKey('photo_marker_lookup') &&
+                        !(entry.diagnostics ?? '').contains(
+                          'photo_marker_lookup',
+                        )) ||
                     (identityLookup['stage'] == 'completed' &&
                         !(entry.diagnostics ?? '').contains(
                           '"result":"${identityLookup['result']}"',
@@ -765,6 +859,10 @@ class BookingOfflineUploadQueueService {
           var resolved = await BookingIdResolver(
             firestore: _firestore,
           ).resolve(entry.bookingId, lookupEvidence: identityLookup);
+          resolved ??= await _resolvePhotoBookingByMarker(
+            entry,
+            identityLookup,
+          );
           if (resolved == null) {
             final cachedReader = _cachedBookingReader;
             final candidates = cachedReader != null

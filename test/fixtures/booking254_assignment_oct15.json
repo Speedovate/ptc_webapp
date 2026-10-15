@@ -1,0 +1,171 @@
+{
+  "base_updated_at": "2026-10-15T08:38:36.307",
+  "server_document": {
+    "driver_id": null,
+    "billing_status": "unbilled",
+    "updated_at": "2026-10-15T08:38:36.308",
+    "photo_cleanup_claims": [],
+    "photo_cleanup_paths": [],
+    "helper_status": "pending",
+    "chassis_id": null,
+    "submission_key": "booking_8_9_1_1792024716308000",
+    "driver_status": "pending",
+    "client_status": "pending",
+    "vehicle_make_id": null,
+    "helper_id": null,
+    "delivered_at": null,
+    "client_id": "9",
+    "status_outputs": {
+      "book__1792024716308000": {
+        "submitted_role": "client",
+        "submitted_by": "8",
+        "fields": {
+          "van_size": "1",
+          "waybill_photo": {
+            "name": "1000142087.jpg",
+            "mime_type": "image/jpeg",
+            "pending_upload": true,
+            "size": 258047,
+            "pending_upload_id": "booking_upload_1792024722045000_c91f36b9"
+          },
+          "representative_name": "Test Client",
+          "representative_phone": "+639171234567",
+          "destination": "Puerto Princesa City",
+          "destination_barangay": "San Manuel",
+          "origin": "Puerto Princesa City",
+          "origin_barangay": "Bagong Pag-asa"
+        },
+        "status_form": {
+          "id": "1",
+          "role": "client",
+          "status_text": null,
+          "button_text": "Submit Booking",
+          "is_main_form": true,
+          "roles": [
+            "client",
+            "admin",
+            "manager",
+            "dispatcher"
+          ],
+          "status_subtext": null,
+          "next_status_key": "pending",
+          "is_active": true,
+          "current_status_key": "book"
+        },
+        "status_key": "book",
+        "submitted_roles": [
+          "client"
+        ],
+        "submitted_at": "2026-10-15T08:38:36.308"
+      }
+    },
+    "id": "254",
+    "created_at": "2026-10-15T08:38:36.307"
+  },
+  "queue_snapshot": {
+    "operation": "collectionDocumentUpsert",
+    "collection": "bookings",
+    "queue_entry_id": "vehicle_upsert_1792024759859000_d5dad55",
+    "pending_payload": {
+      "created_at": "2026-10-15T08:38:36.307",
+      "delivered_at": null,
+      "status_outputs": {
+        "book__1792024716308000": {
+          "submitted_at": "2026-10-15T08:38:36.308",
+          "status_key": "book",
+          "status_form": {
+            "button_text": "Submit Booking",
+            "id": "1",
+            "roles": [
+              "client",
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "current_status_key": "book",
+            "next_status_key": "pending",
+            "is_main_form": true,
+            "status_text": null,
+            "is_active": true,
+            "role": "client",
+            "status_subtext": null
+          },
+          "submitted_by": "8",
+          "submitted_role": "client",
+          "submitted_roles": [
+            "client"
+          ],
+          "fields": {
+            "origin": "Puerto Princesa City",
+            "origin_barangay": "Bagong Pag-asa",
+            "destination_barangay": "San Manuel",
+            "van_size": "1",
+            "representative_phone": "+639171234567",
+            "representative_name": "Test Client",
+            "destination": "Puerto Princesa City",
+            "waybill_photo": {
+              "download_url": "data:image/jpeg;base64,AQID",
+              "size": 258047,
+              "pending_upload": true,
+              "name": "1000142087.jpg",
+              "pending_upload_id": "booking_upload_1792024722045000_c91f36b9",
+              "mime_type": "image/jpeg"
+            }
+          }
+        },
+        "pending__1792024759350000": {
+          "submitted_by": "8",
+          "status_form": {
+            "roles": [
+              "admin",
+              "manager",
+              "dispatcher"
+            ],
+            "id": "2",
+            "role": "admin",
+            "next_status_key": "assigned",
+            "button_text": "Assign Booking",
+            "status_text": null,
+            "is_main_form": true,
+            "status_subtext": null,
+            "is_active": true,
+            "current_status_key": "pending"
+          },
+          "submitted_role": "dispatcher",
+          "submitted_at": "2026-10-15T08:39:19.350",
+          "status_key": "pending",
+          "fields": {
+            "drop_off_date": "2026-10-15",
+            "pick_up_date": "2026-10-15",
+            "drop_off_time": "10:00 AM",
+            "driver_id": "13",
+            "pick_up_time": "8:40 AM",
+            "helper_id": "18"
+          },
+          "submitted_roles": [
+            "dispatcher"
+          ]
+        }
+      },
+      "driver_id": "13",
+      "chassis_id": null,
+      "helper_status": "assigned",
+      "driver_status": "assigned",
+      "submission_key": "booking_8_9_1_1792024716308000",
+      "client_status": "assigned",
+      "id": "254",
+      "vehicle_make_id": "4",
+      "client_id": "9",
+      "helper_id": "18",
+      "updated_at": "2026-10-15T08:39:19.350",
+      "billing_status": "unbilled"
+    },
+    "original_document_unavailable_reason": "The queue retains the original version timestamp, not the pre-edit document.",
+    "base_updated_at": "2026-10-15T08:38:36.307",
+    "pending_payload_available": true,
+    "action_at": "2026-10-15T00:39:19.859Z",
+    "original_document_available": false,
+    "schema_version": 2,
+    "target_id": "254"
+  }
+}
