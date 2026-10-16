@@ -3447,6 +3447,7 @@ class OfflineMutationQueueService {
             entry.collectionKey == 'bookings' &&
             lastError.trim().toLowerCase() == 'connection failed.';
         final legacyRecovery =
+            (!entry.bookingCommittedSnapshotRechecked && hasBookingConflict) ||
             (!entry.bookingQueuedHistoryPreservationRechecked &&
                 hasBookingConflict) ||
             legacyConnectionFailure ||
@@ -3487,6 +3488,8 @@ class OfflineMutationQueueService {
           return entry.copyWith(
             isBlocked: false,
             bookingQueuedHistoryPreservationRechecked: true,
+            bookingCommittedSnapshotRechecked:
+                hasBookingConflict || entry.bookingCommittedSnapshotRechecked,
             bookingPendingPreviewRechecked:
                 hasBookingConflict || entry.bookingPendingPreviewRechecked,
             bookingEditArchiveRechecked: true,
@@ -4055,6 +4058,7 @@ class _OfflineMutationEntry {
     this.bookingConnectionFailureRechecked = false,
     this.bookingInlinePreviewRechecked = false,
     this.bookingPendingPreviewRechecked = false,
+    this.bookingCommittedSnapshotRechecked = false,
     this.catalogPredecessorVersions = const [],
     // A user entry only replays `is_online` when presence was the point of the
     // edit. Older persisted entries have no flag, so they keep the safe default
@@ -4097,6 +4101,7 @@ class _OfflineMutationEntry {
   final bool bookingConnectionFailureRechecked;
   final bool bookingInlinePreviewRechecked;
   final bool bookingPendingPreviewRechecked;
+  final bool bookingCommittedSnapshotRechecked;
   final List<String> catalogPredecessorVersions;
 
   /// True when this entry's `is_online` value is an intentional presence change
@@ -4133,6 +4138,7 @@ class _OfflineMutationEntry {
     bool? bookingConnectionFailureRechecked,
     bool? bookingInlinePreviewRechecked,
     bool? bookingPendingPreviewRechecked,
+    bool? bookingCommittedSnapshotRechecked,
     bool? replayPresence,
     Map<String, dynamic>? basePayload,
     String? baseUpdatedAt,
@@ -4199,6 +4205,9 @@ class _OfflineMutationEntry {
           bookingInlinePreviewRechecked ?? this.bookingInlinePreviewRechecked,
       bookingPendingPreviewRechecked:
           bookingPendingPreviewRechecked ?? this.bookingPendingPreviewRechecked,
+      bookingCommittedSnapshotRechecked:
+          bookingCommittedSnapshotRechecked ??
+          this.bookingCommittedSnapshotRechecked,
       catalogPredecessorVersions: catalogPredecessorVersions,
       replayPresence: replayPresence ?? this.replayPresence,
       basePayload: basePayload ?? this.basePayload,
@@ -4240,6 +4249,7 @@ class _OfflineMutationEntry {
       'booking_connection_failure_rechecked': bookingConnectionFailureRechecked,
       'booking_inline_preview_rechecked': bookingInlinePreviewRechecked,
       'booking_pending_preview_rechecked': bookingPendingPreviewRechecked,
+      'booking_committed_snapshot_rechecked': bookingCommittedSnapshotRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
       'replay_presence': replayPresence,
@@ -4296,6 +4306,8 @@ class _OfflineMutationEntry {
           map['booking_inline_preview_rechecked'] == true,
       bookingPendingPreviewRechecked:
           map['booking_pending_preview_rechecked'] == true,
+      bookingCommittedSnapshotRechecked:
+          map['booking_committed_snapshot_rechecked'] == true,
       bookingEditArchiveRechecked:
           map['booking_edit_archive_rechecked'] == true,
       bookingAssignmentHistoryRechecked:

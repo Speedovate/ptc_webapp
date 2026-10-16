@@ -12,6 +12,7 @@ class OfflineQueueItem {
     this.diagnostics,
     this.nextRetryAt,
     this.pendingMessage,
+    this.photoRecoveryId,
   });
   final String? conflictId;
   final String? collectionKey;
@@ -27,6 +28,7 @@ class OfflineQueueItem {
   /// Why a queued action is still on this device. Shown instead of the generic
   /// sync line so a wait is never indistinguishable from a stalled queue.
   final String? pendingMessage;
+  final String? photoRecoveryId;
 
   String get statusLabel => isBlocked
       ? 'Needs review'

@@ -1,4 +1,5 @@
 import 'package:webapp/widgets/shared/app_selectable_dialog.dart';
+import 'orphan_photo_recovery_dialog.dart';
 import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/requests/auth.request.dart';
 import 'package:webapp/services/role_access_service.dart';
@@ -65,6 +66,23 @@ Future<void> showOfflineQueueItems(
     },
     canResolveConflicts: () =>
         RoleAccessService.instance.canAccess('sync.read'),
+    recoverPhoto: (id) async {
+      if ((await AuthRequest.instance.getCurrentUser())?.id != userId ||
+          !RoleAccessService.instance.canAccess('sync.read')) {
+        throw StateError('Reopen the queue with its owner and sync access.');
+      }
+      if (!context.mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => OrphanPhotoRecoveryDialog(
+          service:
+              BookingOfflineUploadQueueService.instance.orphanPhotoRecovery,
+          owner: userId,
+          entryId: id,
+        ),
+      );
+    },
     reviewConflict: (id) async {
       Future<void> checkAccess() async {
         if ((await AuthRequest.instance.getCurrentUser())?.id != userId ||
@@ -169,6 +187,7 @@ class OfflineQueueDialog extends StatefulWidget {
     this.resolveConflict,
     this.canResolveConflicts,
     this.reviewConflict,
+    this.recoverPhoto,
   });
   final Future<List<OfflineQueueItem>> Function() load;
   final Future<void> Function()? retryFailedChat;
@@ -177,6 +196,7 @@ class OfflineQueueDialog extends StatefulWidget {
   final Future<void> Function(String id, bool keepLocal)? resolveConflict;
   final bool Function()? canResolveConflicts;
   final Future<void> Function(String id)? reviewConflict;
+  final Future<void> Function(String id)? recoverPhoto;
   @override
   State<OfflineQueueDialog> createState() => _OfflineQueueDialogState();
 }
@@ -187,6 +207,25 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
   bool _refreshScheduled = false;
   bool _hadItems = false;
   bool _resolving = false;
+
+  Future<void> _recoverPhoto(String id) async {
+    setState(() {
+      _resolving = true;
+      _retryError = null;
+    });
+    try {
+      await widget.recoverPhoto!(id);
+    } catch (error) {
+      if (mounted) setState(() => _retryError = '$error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _resolving = false;
+          _items = _readItems();
+        });
+      }
+    }
+  }
 
   Future<List<OfflineQueueItem>> _readItems() async {
     final generation = ++_readGeneration;
@@ -422,6 +461,23 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
                     valuesAt: (index) => _valuesForItem(items[index]),
                     cellBuilder: (row, column) {
                       final item = items[row];
+                      if (column == 3 &&
+                          item.photoRecoveryId != null &&
+                          widget.recoverPhoto != null &&
+                          widget.canResolveConflicts?.call() == true) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            AppSelectableText(_valuesForItem(item)[3]),
+                            TextButton(
+                              onPressed: _resolving
+                                  ? null
+                                  : () => _recoverPhoto(item.photoRecoveryId!),
+                              child: const Text('Recover saved photo'),
+                            ),
+                          ],
+                        );
+                      }
                       if (column != 3 ||
                           !item.isBlocked ||
                           item.conflictId == null ||

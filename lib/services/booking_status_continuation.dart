@@ -543,6 +543,39 @@ Map<String, dynamic>? reconcileBookingHistory(
     verifiedMake,
   );
   if (archived != null) return archived;
+  // A committed action may be followed by any later server edit. Acknowledge
+  // the exact local action without replaying it or replacing that later history.
+  final pendingAt = _bookingInstant(pending['updated_at']);
+  final serverAt = _bookingInstant(server['updated_at']);
+  final baseAt = _bookingInstant(baseUpdatedAt);
+  final represented = normalized.keys.every((key) => before.containsKey(key));
+  final hasOriginalAction = normalized.entries.any((entry) {
+    final event = entry.value;
+    return event is Map &&
+        _isForwardWorkflowEvent(Map<String, dynamic>.from(event)) &&
+        _bookingInstant(event['submitted_at']) == pendingAt;
+  });
+  if (represented &&
+      hasOriginalAction &&
+      pendingAt != null &&
+      serverAt != null &&
+      baseAt != null &&
+      pendingAt.isAfter(baseAt) &&
+      !serverAt.isBefore(pendingAt)) {
+    final sameContents = {...server.keys, ...pending.keys}.every(
+      (key) =>
+          const {
+            'status_outputs',
+            'updated_at',
+            'media_synced_at',
+            'photo_cleanup_paths',
+            'photo_cleanup_claims',
+            'local_sync_status',
+          }.contains(key) ||
+          _equal(server[key], pending[key]),
+    );
+    if (sameContents) return Map<String, dynamic>.from(server);
+  }
   // Remote-only events must be non-workflow amount/photo edits, never reassignment.
   for (final key in before.keys.where((key) => !after.containsKey(key))) {
     final event = before[key];

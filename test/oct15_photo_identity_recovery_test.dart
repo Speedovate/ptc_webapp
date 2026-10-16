@@ -11,6 +11,7 @@ import 'package:webapp/services/booking_offline_upload_queue_service.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
 import 'package:webapp/services/photo_storage_service.dart';
 import 'package:webapp/services/firebase_console_diagnostic.dart';
+import 'package:webapp/services/orphan_photo_recovery_service.dart';
 import 'booking_id_resolver_test.dart' show MemoryBackend;
 import 'support/merge_aware_firestore.dart';
 
@@ -206,6 +207,7 @@ void main() {
           flushMutations: () async {},
           cachedBookingReader: (_) async => null,
         );
+        final originalRaw = disk.data[scope]!.single;
         await uploader.flushPendingUploads();
         expect(db.temporaryReads, 0);
         if (temporary) expect(db.identitySources, everyElement(Source.server));
@@ -222,6 +224,17 @@ void main() {
           final retained = jsonDecode(disk.data[scope]!.single);
           expect(base64Decode(retained['bytes_base64']).length, p['size']);
           if (scenario == 'missing') {
+            expect(
+              disk.data[OrphanPhotoRecoveryService.originalEvidenceKey(
+                'signed_out',
+                report['queue_entry_id'],
+              )],
+              [originalRaw],
+            );
+            expect(
+              retained['last_error'],
+              contains('original booking submission is missing'),
+            );
             expect(
               retained['error_diagnostics'],
               contains('no_server_identity'),

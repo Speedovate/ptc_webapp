@@ -20,6 +20,7 @@ import 'package:webapp/services/network_status_events.dart';
 class SyncErrorLogService {
   SyncErrorLogService({
     BookingStorageBackend? backend,
+    FirebaseFirestore? firestore,
     Future<void> Function(String id, Map<String, dynamic> data)? writer,
     Future<Map<String, dynamic>> Function(String? owner)? metadata,
     Future<void> Function(String id)? deleter,
@@ -30,10 +31,13 @@ class SyncErrorLogService {
     this.uploadTimeout = const Duration(seconds: 30),
     this.stallAfter = const Duration(seconds: 90),
   }) : _backend = backend ?? createBookingStorageBackend(),
-       _writer = writer ?? _write,
+       _writer =
+           writer ??
+           ((id, data) =>
+               _write(firestore ?? FirebaseFirestore.instance, id, data)),
        _deleter =
            deleter ??
-           ((id) => FirebaseFirestore.instance
+           ((id) => (firestore ?? FirebaseFirestore.instance)
                .collection(collection)
                .doc(id)
                .delete()),
@@ -81,11 +85,16 @@ class SyncErrorLogService {
     _migrated = true;
   }
 
-  static Future<void> _write(String id, Map<String, dynamic> data) =>
-      FirebaseFirestore.instance.collection(collection).doc(id).set({
-        ...data,
-        'received_at': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+  static Future<void> _write(
+    FirebaseFirestore firestore,
+    String id,
+    Map<String, dynamic> data,
+  ) => firestore.collection(collection).doc(id).set({
+    ...data,
+    'received_at': FieldValue.serverTimestamp(),
+    // Replace each owned top-level map as a whole; recursive merges can combine
+    // a new deferred lookup with stale "completed" evidence from an older upload.
+  }, SetOptions(mergeFields: {...data.keys, 'received_at'}.toList()));
 
   static Future<Map<String, dynamic>> _context(String? owner) async {
     final auth = createAuthStorageBackend();
@@ -721,7 +730,39 @@ class SyncErrorLogService {
             final attentionChanged =
                 attentionRequired != null &&
                 row['attention_required'] != attentionRequired;
-            if (!attentionChanged && additions.isEmpty) return null;
+            final correctedMissingSource =
+                safeError.toLowerCase().contains(
+                  'original booking submission is missing',
+                ) &&
+                !'${row['error']}'.toLowerCase().contains(
+                  'original booking submission is missing',
+                );
+            if (!attentionChanged &&
+                additions.isEmpty &&
+                !correctedMissingSource) {
+              return null;
+            }
+            if (correctedMissingSource) {
+              row['original_failure'] ??= {
+                for (final key in [
+                  'error',
+                  'stack_trace',
+                  'first_failed_at',
+                  'last_failed_at',
+                  'action_at',
+                ])
+                  key: row[key],
+              };
+              row['error'] = safeError.length > 16000
+                  ? safeError.substring(0, 16000)
+                  : safeError;
+              row['stack_trace'] = safeStack.length > 48000
+                  ? safeStack.substring(0, 48000)
+                  : safeStack;
+              row['current_condition_observed_at'] = _now()
+                  .toUtc()
+                  .toIso8601String();
+            }
             if (attentionChanged) row['attention_required'] = attentionRequired;
             row['details'] = sanitizeDetails({...storedDetails, ...additions});
             row['dirty'] = true;
@@ -750,6 +791,24 @@ class SyncErrorLogService {
               row['attention_required'] != attentionRequired) {
             // Count transitions must not wait for the repeated-error throttle.
             row.remove('last_uploaded_at');
+          }
+          if (safeError.toLowerCase().contains(
+                'original booking submission is missing',
+              ) &&
+              row['error'] != null &&
+              !'${row['error']}'.toLowerCase().contains(
+                'original booking submission is missing',
+              )) {
+            row['original_failure'] ??= {
+              for (final key in [
+                'error',
+                'stack_trace',
+                'first_failed_at',
+                'last_failed_at',
+                'action_at',
+              ])
+                key: row[key],
+            };
           }
           row.addAll({
             ...metadata,

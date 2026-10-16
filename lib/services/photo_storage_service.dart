@@ -1,4 +1,6 @@
 import 'package:firebase_storage/firebase_storage.dart';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:webapp/services/image_upload_processor.dart';
 import 'package:webapp/services/network_status_events.dart';
@@ -20,6 +22,44 @@ class PhotoStorageService {
   final ImageUploadProcessor _imageUploadProcessor =
       ImageUploadProcessor.instance;
   final OfflineCleanupQueueService _offlineCleanupQueueService;
+
+  /// Store the original bytes and evidence without image recompression. The
+  /// content-addressed path makes interrupted archive retries idempotent.
+  Future<Map<String, dynamic>> uploadBookingRecoveryBundle({
+    required String owner,
+    required String entryId,
+    required Map<String, dynamic> bundle,
+  }) async {
+    if (!RegExp(r'^[0-9]+$').hasMatch(owner) ||
+        !RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(entryId)) {
+      throw StateError('Invalid photo recovery identity.');
+    }
+    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(bundle)));
+    final digest = sha256.convert(bytes).toString();
+    final path = 'booking_photo_recoveries/$owner/$entryId/$digest.json';
+    final reference = _storage.ref(path);
+    await reference.putData(
+      bytes,
+      SettableMetadata(
+        contentType: 'application/json',
+        customMetadata: {'sha256': digest},
+      ),
+    );
+    final metadata = await reference.getMetadata();
+    if (metadata.size != bytes.length ||
+        metadata.customMetadata?['sha256'] != digest) {
+      throw StateError(
+        'The recovery upload could not be verified. Original data remains on the device.',
+      );
+    }
+    return {
+      'storage_path': path,
+      'download_url': await reference.getDownloadURL(),
+      'sha256': digest,
+      'size': bytes.length,
+      'mime_type': 'application/json',
+    };
+  }
 
   Future<Map<String, dynamic>> uploadBookingPhoto({
     required Uint8List bytes,

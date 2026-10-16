@@ -1,4 +1,5 @@
 import 'sync_error_log_service.dart';
+import 'orphan_photo_recovery_service.dart';
 import 'package:webapp/requests/firestore_cache_store.dart';
 import 'booking_photo_marker_match.dart';
 import 'package:webapp/services/firestore_transaction_errors.dart';
@@ -103,6 +104,43 @@ class BookingOfflineUploadQueueService {
       _statusController.stream;
   OfflineQueueStatusSnapshot get currentStatus => _currentStatus;
 
+  OrphanPhotoRecoveryService get orphanPhotoRecovery => _photoRecoveryService();
+
+  OrphanPhotoRecoveryService _photoRecoveryService({bool automatic = false}) =>
+      OrphanPhotoRecoveryService(
+        backend: _backend,
+        firestore: _firestore,
+        photos: _photoStorageService,
+        requireOwner: (owner) async {
+          if (automatic) {
+            if (!RegExp(r'^[0-9]+$').hasMatch(owner)) {
+              throw StateError('The original queue owner cannot be verified.');
+            }
+            return;
+          }
+          await _authStorage.initialize();
+          if (owner.isEmpty ||
+              owner == 'signed_out' ||
+              await _authStorage.readString(_currentUserIdKey) != owner) {
+            throw StateError(
+              'The active account changed. Reopen the queue for its owner.',
+            );
+          }
+        },
+        hasPending: (id, owner) =>
+            _hasPendingBookingMutation(id, _storageKeyForUserId(owner)),
+        withQueueLock: (action) => _mutateQueue(action),
+        onResolved: (owner, id) async {
+          await _refreshStatusFromStorage();
+          unawaited(
+            SyncErrorLogService.instance.resolveQueueEntries(
+              _storageKeyForUserId(owner),
+              {id},
+            ),
+          );
+        },
+      );
+
   /// Inspect only the requested account's persisted queue without starting sync.
   Future<List<OfflineQueueItem>> readPendingItems(String userId) async {
     if (userId.trim().isEmpty) {
@@ -121,6 +159,11 @@ class BookingOfflineUploadQueueService {
             hasError: entry.lastError?.isNotEmpty == true,
             errorMessage: entry.lastError,
             diagnostics: entry.diagnostics,
+            photoRecoveryId:
+                BookingIdResolver.isTemporary(entry.bookingId) &&
+                    entry.waitReason == 'temporary_booking_id'
+                ? entry.id
+                : null,
             pendingMessage: _PhotoWaitReason.fromKey(
               entry.waitReason,
             )?.pendingMessage,
@@ -336,6 +379,83 @@ class BookingOfflineUploadQueueService {
         updateStatus: storageKey == currentStorageKey,
         background: background,
       );
+      final owner = storageKey.substring('$_storageKey::'.length);
+      if (RegExp(r'^[0-9]+$').hasMatch(owner)) {
+        await _photoRecoveryService(
+          automatic: true,
+        ).reconcileUnassigned(owner, (original, archive) async {
+          var entry = _PendingBookingUploadEntry.fromMap(original);
+          final lookup = <String, dynamic>{};
+          var resolved = await BookingIdResolver(
+            firestore: _firestore,
+          ).resolve(entry.bookingId, lookupEvidence: lookup);
+          resolved ??= await _resolvePhotoBookingByMarker(entry, lookup);
+          if (resolved == null ||
+              await _hasPendingBookingMutation(entry.bookingId, storageKey) !=
+                  false ||
+              await _hasPendingBookingMutation(resolved, storageKey) != false) {
+            return null;
+          }
+          entry = entry.copyWith(bookingId: resolved);
+          final data =
+              (await _bookingsCollection
+                      .doc(resolved)
+                      .get(const GetOptions(source: Source.server))
+                      .timeout(markerCheckTimeout))
+                  .data();
+          if (data == null) return null;
+          if (bookingPhotoAlreadyUploadedInHistory(
+            booking: data,
+            bookingId: resolved,
+            fieldKey: entry.fieldKey,
+            fileName: entry.fileName,
+            size: entry.size,
+            mimeType: entry.mimeType,
+          )) {
+            return {'booking_id': resolved};
+          }
+          final photo = _fieldValueFromStatusOutputs(
+            _statusOutputsFromBooking(data),
+            statusKey: entry.statusKey,
+            fieldKey: entry.fieldKey,
+          );
+          if (photo is! Map ||
+              _pendingUploadId(photo) != entry.id ||
+              photo['name'] != entry.fileName ||
+              photo['size'] != entry.size ||
+              photo['mime_type'] != entry.mimeType) {
+            return null;
+          }
+          Map<String, dynamic>? uploaded;
+          if (archive['association_booking_id'] == resolved &&
+              archive['association_photo'] is Map) {
+            uploaded = Map<String, dynamic>.from(archive['association_photo']);
+          }
+          uploaded ??= await _photoStorageService.uploadBookingPhoto(
+            bytes: base64Decode(entry.bytesBase64),
+            bookingId: resolved,
+            statusKey: entry.statusKey,
+            fieldKey: entry.fieldKey,
+            fileName: entry.fileName,
+            mimeType: entry.mimeType,
+            size: entry.size,
+          );
+          archive.addAll({
+            'association_booking_id': resolved,
+            'association_photo': uploaded,
+          });
+          final key = OrphanPhotoRecoveryService.archiveKey(owner, entry.id);
+          await _backend.writeStringList(key, [jsonEncode(archive)]);
+          if (!await _applyUploadedPhoto(
+            entry: entry,
+            uploadedValue: uploaded,
+            strictOriginalMetadata: true,
+          )) {
+            return null;
+          }
+          return {'booking_id': resolved};
+        }, force: !background);
+      }
     }
     await _refreshStatusFromStorage();
   }
@@ -346,6 +466,7 @@ class BookingOfflineUploadQueueService {
     bool recoverHistoricalPhoto = false,
     String? matchingPendingUploadId,
     String? owner,
+    bool strictOriginalMetadata = false,
   }) async {
     final documentRef = _bookingsCollection.doc(entry.bookingId);
     var applied = false;
@@ -395,6 +516,13 @@ class BookingOfflineUploadQueueService {
         fieldKey: entry.fieldKey,
       );
       final currentPendingId = _pendingUploadId(currentField);
+      if (strictOriginalMetadata &&
+          (currentField is! Map ||
+              currentField['name'] != entry.fileName ||
+              currentField['size'] != entry.size ||
+              currentField['mime_type'] != entry.mimeType)) {
+        return;
+      }
       if (matchingPendingUploadId != null) {
         // Recheck both ownership and image content after the Storage upload.
         if (currentPendingId != matchingPendingUploadId ||
@@ -598,9 +726,43 @@ class BookingOfflineUploadQueueService {
     final waitCount = (_waitCycles[entry.id] ?? entry.waitCount) + 1;
     _waitCycles[entry.id] = waitCount;
     final reasonChanged = entry.waitReason != reason.key;
+    final missingOriginal =
+        identityLookup?['stage'] == 'completed' &&
+        identityLookup?['result'] == 'no_server_identity' &&
+        identityLookup?['photo_marker_lookup'] is Map &&
+        identityLookup?['photo_marker_lookup']['result'] == 'no_photo_marker' &&
+        identityLookup?['original_cached_submission_available'] == false;
+    const missingOriginalMessage =
+        'The original booking submission is missing. The photo and original timestamps remain saved on this device. Automatic recovery will preserve it in server recovery storage when connectivity is available.';
+    if (missingOriginal && entry.lastError != missingOriginalMessage) {
+      // Preserve the exact earlier record, including bytes and error time,
+      // before replacing a stale connectivity message with current evidence.
+      final owner = storageKey.substring('$_storageKey::'.length);
+      final archiveKey = OrphanPhotoRecoveryService.originalEvidenceKey(
+        owner,
+        entry.id,
+      );
+      try {
+        if ((await _backend.readStringList(archiveKey)).isEmpty) {
+          final original = (await _backend.readStringList(storageKey))
+              .where((raw) => (jsonDecode(raw) as Map)['id'] == entry.id)
+              .toList();
+          if (original.length != 1) {
+            return _WaitOutcome(entry, persisted: false);
+          }
+          await _backend.writeStringList(archiveKey, [original.single]);
+        }
+      } catch (_) {
+        // A failed archive is not permission to replace the only remaining
+        // original failure record with a new diagnostic message.
+        return _WaitOutcome(entry, persisted: false);
+      }
+    }
     final escalate =
         entry.lastError == null && waitCount > _escalateWaitAfterCycles;
-    final lastError = (escalate || (reasonChanged && entry.lastError != null))
+    final lastError = missingOriginal
+        ? missingOriginalMessage
+        : (escalate || (reasonChanged && entry.lastError != null))
         ? 'This photo is still waiting: ${reason.explanation}. '
               'Open the booking, check the photo field, and retry the upload.'
         : entry.lastError;
@@ -608,6 +770,7 @@ class BookingOfflineUploadQueueService {
     final enrich =
         lastError != null &&
         (reasonChanged ||
+            lastError != entry.lastError ||
             !(entry.diagnostics ?? '').contains('photo_dependency_state_v2') ||
             (identityLookup != null &&
                 (!(entry.diagnostics ?? '').contains(
@@ -654,7 +817,9 @@ class BookingOfflineUploadQueueService {
         error:
             readError ??
             StateError(
-              'Queued booking photo made no progress: ${reason.explanation}.',
+              missingOriginal
+                  ? missingOriginalMessage
+                  : 'Queued booking photo made no progress: ${reason.explanation}.',
             ),
         stack: readStack ?? StackTrace.current,
         source: 'booking_offline_upload_queue_service.dart',
@@ -881,6 +1046,23 @@ class BookingOfflineUploadQueueService {
                 .toList();
             identityLookup['original_cached_submission_available'] =
                 cached.length == 1;
+            final owner = storageKey.substring('$_storageKey::'.length);
+            if (cached.isEmpty &&
+                entry.waitReason == 'temporary_booking_id' &&
+                entry.waitCount >= 3 &&
+                identityLookup['stage'] == 'completed' &&
+                identityLookup['result'] == 'no_server_identity' &&
+                identityLookup['photo_marker_lookup'] is Map &&
+                identityLookup['photo_marker_lookup']['result'] ==
+                    'no_photo_marker' &&
+                RegExp(r'^[0-9]+$').hasMatch(owner)) {
+              await _photoRecoveryService(
+                automatic: true,
+              ).archiveUnassigned(owner: owner, entryId: entry.id);
+              confirmedSuccesses.add(entry.id);
+              mutated = true;
+              continue;
+            }
             if (cached.length == 1 &&
                 cached.single['client_status'] == 'pending' &&
                 cached.single['driver_status'] == 'pending' &&
@@ -1205,7 +1387,11 @@ class BookingOfflineUploadQueueService {
         final processedIds = entries.map((entry) => entry.id).toSet();
         final merged = [
           ...latest.where((entry) => !processedIds.contains(entry.id)),
-          ...remaining,
+          // A reviewed recovery can complete while this older flush is reading
+          // the server. Never resurrect an entry already archived and completed.
+          ...remaining.where(
+            (entry) => latest.any((current) => current.id == entry.id),
+          ),
         ];
         await _writeEntriesForStorageKey(storageKey, merged);
         final mergedIds = merged.map((entry) => entry.id).toSet();

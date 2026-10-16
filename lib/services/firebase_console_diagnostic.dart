@@ -20,6 +20,7 @@ Map<String, dynamic> firebaseConsoleDiagnostic(Map<String, dynamic> report) {
       text.contains('sync conflict') ||
       text.contains('booking identity is temporarily unavailable') ||
       text.contains('photo is still waiting') ||
+      text.contains('original booking submission is missing') ||
       text.contains('queued booking photo made no progress') ||
       missingIdentity;
   final bracket = RegExp(
