@@ -107,8 +107,10 @@ void main() {
       'success',
       'upload failure',
       'archive failure',
+      'original evidence failure',
       'commit failure',
       'completion failure',
+      'recovery index write failure',
       'bad upload evidence',
       'booking appears during upload',
     ]) {
@@ -160,8 +162,16 @@ void main() {
           if (scenario == 'archive failure') {
             disk.failPrefix = 'booking_photo_recovery_archive_v1';
           }
+          if (scenario == 'original evidence failure') {
+            disk.failPrefix = 'booking_photo_original_evidence_v1';
+          }
           if (scenario == 'commit failure') db.failCommit = true;
           if (scenario == 'completion failure') disk.failPrefix = scope;
+          if (scenario == 'recovery index write failure') {
+            disk.failPrefix = OrphanPhotoRecoveryService.unassignedIndexKey(
+              '8',
+            );
+          }
           if (scenario == 'bad upload evidence') photos.badHash = true;
           if (scenario == 'booking appears during upload') {
             photos.duringBundle = () =>
@@ -183,19 +193,37 @@ void main() {
               jsonDecode(disk.data[scope]!.single)['bytes_base64'],
               row['bytes_base64'],
             );
-            if (scenario != 'completion failure') {
+            if (scenario == 'original evidence failure') {
+              final retained = jsonDecode(disk.data[scope]!.single);
+              expect(retained['last_error'], row['last_error']);
+              expect(retained['error_diagnostics'], row['error_diagnostics']);
+            }
+            if (scenario != 'completion failure' &&
+                scenario != 'recovery index write failure') {
               expect(
                 (await db.collection('booking_photo_recoveries').get()).docs,
                 isEmpty,
               );
-              return;
             }
+            if (scenario == 'booking appears during upload') return;
+            // Reconnect/retry must finish preservation after every injected
+            // failure, not merely pass an assertion that data survived once.
             disk.failPrefix = null;
+            db.failCommit = false;
+            photos.fail = false;
+            photos.badHash = false;
             BookingIdResolver(firestore: db).invalidate(p['booking_id']);
             await queue.flushPendingUploads();
           }
-          expect(disk.data[scope], isEmpty);
-          expect(photos.bundles, 1);
+          // A verified recovery backup must never masquerade as a synced booking.
+          expect(disk.data[scope], hasLength(1));
+          final stillPending = jsonDecode(disk.data[scope]!.single);
+          expect(stillPending['bytes_base64'], row['bytes_base64']);
+          expect(stillPending['created_at'], row['created_at']);
+          expect(stillPending['last_error'], isNotEmpty);
+          expect(queue.currentStatus.pendingCount, 1);
+          expect(queue.currentStatus.failedCount, 1);
+          expect(photos.bundles, scenario == 'bad upload evidence' ? 2 : 1);
           expect(photos.attachments, 0);
           expect((await db.collection('bookings').get()).docs, isEmpty);
           final receipt =
@@ -216,6 +244,31 @@ void main() {
             disk.data[OrphanPhotoRecoveryService.unassignedIndexKey('8')],
             [id],
           );
+          // Migrate the previously deployed behavior: an archived orphan had
+          // disappeared from its active queue despite having no booking.
+          disk.data[scope] = [];
+          final recovery = OrphanPhotoRecoveryService(
+            backend: disk,
+            firestore: db,
+            photos: photos,
+            requireOwner: (_) async {},
+            hasPending: (_, _) async => false,
+            withQueueLock: (action) => action(),
+            onResolved: (_, _) async => fail('Preservation is not resolution'),
+          );
+          await recovery.restoreUnassignedPending('8');
+          expect(jsonDecode(disk.data[scope]!.single), row);
+          await recovery.restoreUnassignedPending('8');
+          expect(disk.data[scope], hasLength(1));
+          await recovery.archiveUnassigned(owner: '8', entryId: id);
+          expect(disk.data[scope], hasLength(1));
+          expect(photos.bundles, scenario == 'bad upload evidence' ? 2 : 1);
+          disk.data[scope] = [];
+          await queue.flushPendingUploads();
+          expect(disk.data[scope], hasLength(1));
+          expect(queue.currentStatus.pendingCount, 1);
+          expect(queue.currentStatus.failedCount, 1);
+          expect(photos.bundles, scenario == 'bad upload evidence' ? 2 : 1);
           // A late booking with the exact original marker is completed on the
           // existing flush path, with no user selection and no status rollback.
           final server = <String, dynamic>{
@@ -251,7 +304,8 @@ void main() {
           BookingIdResolver(firestore: db).invalidate(p['booking_id']);
           await queue.flushPendingUploads();
           expect(photos.attachments, 1);
-          expect(photos.bundles, 1);
+          expect(disk.data[scope], isEmpty);
+          expect(photos.bundles, scenario == 'bad upload evidence' ? 2 : 1);
           expect(
             disk.data[OrphanPhotoRecoveryService.unassignedIndexKey('8')],
             isEmpty,

@@ -65,7 +65,7 @@ class OrphanPhotoRecoveryService {
       'booking_unassigned_photo_recovery_v1::$owner';
 
   /// Synchronize a proven orphan into durable recovery storage automatically.
-  /// This acknowledges preservation of the photo, never creation of a booking.
+  /// Preservation never completes the booking operation or clears its queue.
   Future<void> archiveUnassigned({
     required String owner,
     required String entryId,
@@ -84,6 +84,11 @@ class OrphanPhotoRecoveryService {
     final original = await backend.readStringList(
       originalEvidenceKey(owner, entryId),
     );
+    if (original.isEmpty) {
+      // The recovery-archive write may itself fail. Save the first failure
+      // evidence separately before a retry can replace the active diagnostics.
+      await _saveArchive(originalEvidenceKey(owner, entryId), row);
+    }
     final archive = saved.isEmpty
         ? <String, dynamic>{
             'schema_version': 1,
@@ -204,8 +209,8 @@ class OrphanPhotoRecoveryService {
     });
     archive['state'] = 'preserved_unassigned';
     await _saveArchive(key, archive);
-    // Keep a separate acknowledged index for automatic association if the
-    // original booking arrives late. It is not a failed business mutation.
+    // Keep a recovery index as well as the active queue so older releases can
+    // be repaired and late booking identities can be associated automatically.
     final index = await backend.readStringList(unassignedIndexKey(owner));
     if (!index.contains(entryId)) {
       await backend.writeStringList(unassignedIndexKey(owner), [
@@ -213,21 +218,42 @@ class OrphanPhotoRecoveryService {
         entryId,
       ]);
     }
-    final latest = await backend.readStringList(queueKey(owner));
-    final retained = <String>[];
-    for (final raw in latest) {
-      final current = Map<String, dynamic>.from(jsonDecode(raw));
-      if (current['id'] == entryId) {
-        if (_sourceHash(current) != digest) {
-          throw StateError('A newer local photo was preserved.');
-        }
-      } else {
-        retained.add(raw);
-      }
-    }
-    await backend.writeStringList(queueKey(owner), retained);
-    await onResolved(owner, entryId);
+    // A durable backup is not a synced booking. Keep the active operation and
+    // its error visible until an actual booking attachment is confirmed.
   });
+
+  /// Repair releases which removed preserved-but-unattached photos from the
+  /// active queue. Restore the exact archived record without changing its dates.
+  Future<void> restoreUnassignedPending(String owner) =>
+      withQueueLock(() async {
+        await requireOwner(owner);
+        final index = await backend.readStringList(unassignedIndexKey(owner));
+        // Browser storage returns a fixed-length list; restoration needs its
+        // own growable copy before appending archived entries.
+        final rows = [...await backend.readStringList(queueKey(owner))];
+        final ids = rows.map((raw) => (jsonDecode(raw) as Map)['id']).toSet();
+        var changed = false;
+        for (final id in index) {
+          if (ids.contains(id)) continue;
+          final saved = await backend.readStringList(archiveKey(owner, id));
+          if (saved.length != 1) continue;
+          final archive = Map<String, dynamic>.from(jsonDecode(saved.single));
+          if (archive['state'] != 'preserved_unassigned') continue;
+          final original = Map<String, dynamic>.from(archive['original_entry']);
+          if (original['id'] != id ||
+              !'${original['booking_id']}'.startsWith(
+                'offline_booking_${owner}_',
+              )) {
+            continue;
+          }
+          final bytes = base64Decode('${original['bytes_base64']}');
+          if (bytes.isEmpty || bytes.length != original['size']) continue;
+          rows.add(jsonEncode(original));
+          ids.add(id);
+          changed = true;
+        }
+        if (changed) await backend.writeStringList(queueKey(owner), rows);
+      });
 
   Future<void> reconcileUnassigned(
     String owner,
@@ -284,6 +310,19 @@ class OrphanPhotoRecoveryService {
         archive.addAll({'state': 'associated', ...attached});
         await _saveArchive(archiveKey(owner, id), archive);
         await withQueueLock(() async {
+          final pending = await backend.readStringList(queueKey(owner));
+          final retained = <String>[];
+          for (final raw in pending) {
+            final current = Map<String, dynamic>.from(jsonDecode(raw));
+            if (current['id'] == id) {
+              if (_sourceHash(current) != _sourceHash(original)) {
+                throw StateError('A newer local photo remains pending.');
+              }
+            } else {
+              retained.add(raw);
+            }
+          }
+          await backend.writeStringList(queueKey(owner), retained);
           final latest = await backend.readStringList(
             unassignedIndexKey(owner),
           );
@@ -293,6 +332,7 @@ class OrphanPhotoRecoveryService {
           );
           probes.remove('$prefix$id');
         });
+        await onResolved(owner, id);
       } catch (_) {
         // The original photo is already verified on the server. An unavailable
         // association keeps its acknowledged index and retries on existing ticks.

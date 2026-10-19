@@ -374,12 +374,17 @@ class BookingOfflineUploadQueueService {
     final currentStorageKey = await _resolvedStorageKey();
     final storageKeys = await _allKnownStorageKeys();
     for (final storageKey in storageKeys) {
+      final owner = storageKey.substring('$_storageKey::'.length);
+      if (RegExp(r'^[0-9]+$').hasMatch(owner)) {
+        await _photoRecoveryService(
+          automatic: true,
+        ).restoreUnassignedPending(owner);
+      }
       await _flushPendingUploadsForStorageKey(
         storageKey,
         updateStatus: storageKey == currentStorageKey,
         background: background,
       );
-      final owner = storageKey.substring('$_storageKey::'.length);
       if (RegExp(r'^[0-9]+$').hasMatch(owner)) {
         await _photoRecoveryService(
           automatic: true,
@@ -733,7 +738,7 @@ class BookingOfflineUploadQueueService {
         identityLookup?['photo_marker_lookup']['result'] == 'no_photo_marker' &&
         identityLookup?['original_cached_submission_available'] == false;
     const missingOriginalMessage =
-        'The original booking submission is missing. The photo and original timestamps remain saved on this device. Automatic recovery will preserve it in server recovery storage when connectivity is available.';
+        'The original booking submission is missing. The photo and original timestamps remain saved. Recovery storage is only a backup; this booking is not synced. The operation remains pending until its booking attachment is confirmed.';
     if (missingOriginal && entry.lastError != missingOriginalMessage) {
       // Preserve the exact earlier record, including bytes and error time,
       // before replacing a stale connectivity message with current evidence.
@@ -1059,8 +1064,14 @@ class BookingOfflineUploadQueueService {
               await _photoRecoveryService(
                 automatic: true,
               ).archiveUnassigned(owner: owner, entryId: entry.id);
-              confirmedSuccesses.add(entry.id);
-              mutated = true;
+              final wait = await _noteWait(
+                entry,
+                _PhotoWaitReason.temporaryBookingId,
+                storageKey: storageKey,
+                identityLookup: identityLookup,
+              );
+              remaining.add(wait.entry);
+              mutated = mutated || wait.persisted;
               continue;
             }
             if (cached.length == 1 &&
@@ -1357,6 +1368,37 @@ class BookingOfflineUploadQueueService {
               'identity_lookup': identityLookup,
           },
         );
+        if (BookingIdResolver.isTemporary(sourceEntry.bookingId) &&
+            sourceEntry.lastError != null) {
+          try {
+            final owner = storageKey.substring('$_storageKey::'.length);
+            final key = OrphanPhotoRecoveryService.originalEvidenceKey(
+              owner,
+              sourceEntry.id,
+            );
+            await _mutateQueue(() async {
+              if ((await _backend.readStringList(key)).isNotEmpty) return;
+              final original = (await _backend.readStringList(storageKey))
+                  .where(
+                    (raw) => (jsonDecode(raw) as Map)['id'] == sourceEntry.id,
+                  )
+                  .toList();
+              if (original.length != 1) {
+                throw StateError('Original photo changed.');
+              }
+              await _backend.writeStringList(key, original);
+              final saved = await _backend.readStringList(key);
+              if (saved.length != 1 || saved.single != original.single) {
+                throw StateError('Original photo evidence was not saved.');
+              }
+            });
+          } catch (_) {
+            // Current failure was logged above. Do not replace the only local
+            // copy of the first error when its evidence cannot be archived.
+            remaining.add(sourceEntry);
+            continue;
+          }
+        }
         // Every unconfirmed failure retains the only durable local copy.
         mutated = true;
         remaining.add(

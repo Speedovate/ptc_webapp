@@ -21,14 +21,18 @@ class OfflineCleanupQueueService {
     FirebaseStorage? storage,
     FirebaseFirestore? firestore,
     bool Function()? isOnline,
-    Duration operationTimeout = const Duration(seconds: 30),
+    Duration? operationTimeout,
+    Duration bookingRequestTimeout = const Duration(seconds: 30),
     Duration flushTimeout = const Duration(minutes: 2),
     Duration localStorageTimeout = const Duration(seconds: 30),
   }) : _backend = backend ?? createBookingStorageBackend(),
        _providedStorage = storage,
        _providedFirestore = firestore,
        _isOnline = isOnline ?? currentNetworkStatus,
-       _operationTimeout = operationTimeout,
+       _operationTimeout = operationTimeout ?? const Duration(seconds: 30),
+       _bookingOperationTimeout =
+           operationTimeout ?? const Duration(seconds: 90),
+       _bookingRequestTimeout = bookingRequestTimeout,
        _flushTimeout = flushTimeout,
        _localStorageTimeout = localStorageTimeout;
 
@@ -49,6 +53,10 @@ class OfflineCleanupQueueService {
   final FirebaseFirestore? _providedFirestore;
   final bool Function() _isOnline;
   final Duration _operationTimeout;
+  // Booking-photo cleanup has several sequential remote steps. Generic file
+  // and folder cleanup retain their original 30-second operation budget.
+  final Duration _bookingOperationTimeout;
+  final Duration _bookingRequestTimeout;
   final Duration _flushTimeout;
   final Duration _localStorageTimeout;
   Future<void> _queueMutationTail = Future<void>.value();
@@ -320,7 +328,13 @@ class OfflineCleanupQueueService {
     await initialize();
     final active = _flushFuture;
     if (active != null) {
-      return active;
+      try {
+        await active;
+      } on TimeoutException {
+        // The owning invocation records the timeout and releases the lock.
+        // A resume/timer caller sharing that flush must not leak its raw error.
+      }
+      return;
     }
     if (!_isOnline()) {
       return;
@@ -333,6 +347,9 @@ class OfflineCleanupQueueService {
     try {
       await flush;
     } on TimeoutException catch (error, stack) {
+      if (generation == _flushGeneration) {
+        ++_flushGeneration;
+      }
       // A stuck local read, Storage request, or Firestore callback must not
       // hold the cleanup lock forever. The entry remains persisted and the
       // normal retry timer/network signal can make another bounded attempt.
@@ -381,7 +398,7 @@ class OfflineCleanupQueueService {
           generation: generation,
         );
       }
-      await _refreshStatusFromStorage();
+      await _refreshStatusFromStorage(generation: generation);
     } finally {
       if (_currentStatus.isSyncing && generation == _flushGeneration) {
         _setStatus(
@@ -395,7 +412,10 @@ class OfflineCleanupQueueService {
     }
   }
 
-  Future<_CleanupApplyResult> _applyEntry(_OfflineCleanupEntry entry) async {
+  Future<_CleanupApplyResult> _applyEntry(
+    _OfflineCleanupEntry entry,
+    _CleanupAttempt attempt,
+  ) async {
     switch (entry.kind) {
       case _OfflineCleanupKind.bookingPhoto:
         final target = _parseBookingPhotoTarget(entry.targetPath);
@@ -404,16 +424,23 @@ class OfflineCleanupQueueService {
         if (target == null) return _CleanupApplyResult.alreadyResolved;
         final firestore = _providedFirestore ?? FirebaseFirestore.instance;
         final ref = firestore.collection('bookings').doc(target.bookingId);
+        attempt.context['cleanup_target'] = {
+          'booking_id': target.bookingId,
+          'storage_path': target.path,
+        };
 
         // Preflight recovered work against the current server state before
         // reopening a transaction for work another attempt already completed.
         // Fresh work skips the extra read; the transaction recheck below always
         // decides, and read failures still flow through the transient path.
         if (entry.retryCount > 0 || entry.lastError != null) {
-          final current = await ref
-              .get(const GetOptions(source: Source.server))
-              .timeout(const Duration(seconds: 10));
+          final current = await attempt.step(
+            'booking_preflight',
+            'cloud_firestore',
+            () => ref.get(const GetOptions(source: Source.server)),
+          );
           final state = _bookingCleanupState(current.data(), target.path);
+          attempt.context['observed_cleanup_state'] = state.name;
           if (state != _BookingCleanupState.pending) {
             if (state == _BookingCleanupState.claimed) {
               return _recoverClaimedBookingPhoto(
@@ -421,16 +448,25 @@ class OfflineCleanupQueueService {
                 target.path,
                 entryId: entry.id,
                 cleanupQueuedAtIso: entry.createdAtIso,
+                attempt: attempt,
               );
             }
             return _CleanupApplyResult.alreadyResolved;
           }
         }
 
-        final claimed = await runTransactionWithOriginalErrors<bool>(
-          firestore,
-          (transaction) async {
+        final claimed = await attempt.step(
+          'claim_booking_photo',
+          'cloud_firestore',
+          () => runTransactionWithOriginalErrors<bool>(firestore, (
+            transaction,
+          ) async {
             final snapshot = await transaction.get(ref);
+            attempt.checkActive();
+            attempt.context['observed_cleanup_state'] = _bookingCleanupState(
+              snapshot.data(),
+              target.path,
+            ).name;
             if (_bookingCleanupState(snapshot.data(), target.path) !=
                 _BookingCleanupState.pending) {
               return false;
@@ -439,37 +475,50 @@ class OfflineCleanupQueueService {
               'photo_cleanup_claims': FieldValue.arrayUnion([target.path]),
             });
             return true;
-          },
-        ).timeout(const Duration(seconds: 10));
+          }, timeout: _bookingRequestTimeout),
+        );
         if (!claimed) {
           return _recoverClaimedBookingPhoto(
             ref,
             target.path,
             entryId: entry.id,
             cleanupQueuedAtIso: entry.createdAtIso,
+            attempt: attempt,
           );
         }
-        await _deleteByPathNow(
-          target.path,
-        ).timeout(const Duration(seconds: 20));
+        await attempt.step(
+          'delete_superseded_photo',
+          'firebase_storage',
+          () => _deleteByPathNow(target.path),
+        );
         // A claim is only a lease for the delete operation. Once Storage has
         // confirmed deletion, remove both the work item and the claim in the
         // same Firestore update. Leaving either field behind can block future
         // booking edits or make a later retry falsely appear complete.
-        await ref
-            .update({
-              'photo_cleanup_paths': FieldValue.arrayRemove([target.path]),
-              'photo_cleanup_claims': FieldValue.arrayRemove([target.path]),
-            })
-            .timeout(const Duration(seconds: 10));
+        await attempt.step(
+          'finalize_booking_cleanup',
+          'cloud_firestore',
+          () => ref.update({
+            'photo_cleanup_paths': FieldValue.arrayRemove([target.path]),
+            'photo_cleanup_claims': FieldValue.arrayRemove([target.path]),
+          }),
+        );
         return _CleanupApplyResult.deleted;
       case _OfflineCleanupKind.deleteByPath:
-        await _deleteByPathNow(entry.targetPath).timeout(_operationTimeout);
+        await attempt.step(
+          'delete_file',
+          'firebase_storage',
+          () => _deleteByPathNow(entry.targetPath),
+          timeout: _operationTimeout,
+        );
         return _CleanupApplyResult.deleted;
       case _OfflineCleanupKind.deleteFolder:
-        await _deleteFolderRecursively(
-          entry.targetPath,
-        ).timeout(_operationTimeout);
+        await attempt.step(
+          'delete_folder',
+          'firebase_storage',
+          () => _deleteFolderRecursively(entry.targetPath),
+          timeout: _operationTimeout,
+        );
         return _CleanupApplyResult.deleted;
     }
   }
@@ -489,18 +538,27 @@ class OfflineCleanupQueueService {
     String path, {
     String? entryId,
     String? cleanupQueuedAtIso,
+    required _CleanupAttempt attempt,
   }) async {
-    final current = await ref
-        .get(const GetOptions(source: Source.server))
-        .timeout(const Duration(seconds: 10));
+    final current = await attempt.step(
+      'recover_claim_read',
+      'cloud_firestore',
+      () => ref.get(const GetOptions(source: Source.server)),
+    );
     final state = _bookingCleanupState(current.data(), path);
+    attempt.context['observed_cleanup_state'] = state.name;
     if (state != _BookingCleanupState.claimed) {
       return state == _BookingCleanupState.pending
           ? (_throwCleanupRace(path))
           : _CleanupApplyResult.alreadyResolved;
     }
 
-    final object = await _storageObjectAge(path);
+    final object = await _storageObjectAge(path, attempt);
+    attempt.context.addAll({
+      'storage_object_exists': object.exists,
+      'storage_object_created_at': object.createdAt?.toUtc().toIso8601String(),
+      'cleanup_action_at': cleanupQueuedAtIso,
+    });
     if (object.exists) {
       final queuedAt = DateTime.tryParse(cleanupQueuedAtIso ?? '');
       // Only positive proof allows an unattended delete: the object must have a
@@ -524,13 +582,21 @@ class OfflineCleanupQueueService {
           );
         }
       }
-      await _deleteByPathNow(path).timeout(_operationTimeout);
+      await attempt.step(
+        'delete_claimed_superseded_photo',
+        'firebase_storage',
+        () => _deleteByPathNow(path),
+      );
     }
 
-    final finalized = await runTransactionWithOriginalErrors<bool>(
-      _firestoreOrProvided(),
-      (transaction) async {
+    final finalized = await attempt.step(
+      'finalize_recovered_claim',
+      'cloud_firestore',
+      () => runTransactionWithOriginalErrors<bool>(_firestoreOrProvided(), (
+        transaction,
+      ) async {
         final snapshot = await transaction.get(ref);
+        attempt.checkActive();
         final latestState = _bookingCleanupState(snapshot.data(), path);
         if (latestState == _BookingCleanupState.notPending ||
             latestState == _BookingCleanupState.referenced ||
@@ -547,8 +613,8 @@ class OfflineCleanupQueueService {
           'photo_cleanup_claims': FieldValue.arrayRemove([path]),
         });
         return true;
-      },
-    ).timeout(const Duration(seconds: 10));
+      }, timeout: _bookingRequestTimeout),
+    );
     return finalized
         ? _CleanupApplyResult.deleted
         : _CleanupApplyResult.alreadyResolved;
@@ -562,12 +628,14 @@ class OfflineCleanupQueueService {
   /// creation time; that is deliberately not the same as "absent".
   Future<({bool exists, DateTime? createdAt})> _storageObjectAge(
     String path,
+    _CleanupAttempt attempt,
   ) async {
     try {
-      final metadata = await _storage
-          .ref(path)
-          .getMetadata()
-          .timeout(const Duration(seconds: 10));
+      final metadata = await attempt.step(
+        'read_storage_metadata',
+        'firebase_storage',
+        () => _storage.ref(path).getMetadata(),
+      );
       return (exists: true, createdAt: metadata.timeCreated);
     } on FirebaseException catch (error) {
       if (error.code == 'object-not-found') {
@@ -811,16 +879,34 @@ class OfflineCleanupQueueService {
     final remaining = <_OfflineCleanupEntry>[];
     var processed = 0;
     for (final entry in entries) {
+      if (generation != _flushGeneration) return;
+      final attempt = _CleanupAttempt(
+        requestTimeout: _bookingRequestTimeout,
+        isCurrent: () => generation == _flushGeneration,
+      );
+      final operationBudget = entry.kind == _OfflineCleanupKind.bookingPhoto
+          ? _bookingOperationTimeout
+          : _operationTimeout;
       try {
         if (entry.nextRetryAt?.isAfter(DateTime.now().toUtc()) == true) {
           remaining.add(entry);
           continue;
         }
-        await _applyEntry(entry).timeout(_operationTimeout);
+        await _applyEntry(entry, attempt).timeout(
+          operationBudget,
+          onTimeout: () {
+            attempt.cancelled = true;
+            throw TimeoutException(
+              'Cleanup ${attempt.context['cleanup_phase'] ?? 'operation'} exceeded its operation budget. The cleanup remains queued.',
+              operationBudget,
+            );
+          },
+        );
         // A terminal no-op (malformed target, already claimed, or already
         // removed) is also a completed action and must clear old diagnostics.
         confirmedSuccesses.add(entry.id);
       } catch (error, stackTrace) {
+        if (generation != _flushGeneration) return;
         final normalizedError = normalizeUserErrorText(
           error.toString(),
           fallback: 'Something went wrong. Please try again.',
@@ -844,7 +930,11 @@ class OfflineCleanupQueueService {
               attempt: entry.retryCount + 1,
               owner: storageKey.substring('$_storageKey::'.length),
               actionAt: entry.createdAtIso,
-              context: {'next_retry_delay_seconds': delaySeconds},
+              context: {
+                ...attempt.context,
+                'cleanup_operation_timeout_ms': operationBudget.inMilliseconds,
+                'next_retry_delay_seconds': delaySeconds,
+              },
             ),
             nextRetryAt: DateTime.now().toUtc().add(
               Duration(seconds: delaySeconds),
@@ -852,6 +942,7 @@ class OfflineCleanupQueueService {
           ),
         );
       } finally {
+        attempt.cancelled = true;
         processed++;
         if (updateStatus) {
           _setStatusForGeneration(
@@ -868,6 +959,7 @@ class OfflineCleanupQueueService {
     }
 
     await _serializeQueueMutation(() async {
+      if (generation != _flushGeneration) return;
       final latest = await _readEntriesForStorageKey(storageKey);
       final retainedIds = latest.map((entry) => entry.id).toSet();
       await _writeEntriesForStorageKey(storageKey, [
@@ -875,6 +967,8 @@ class OfflineCleanupQueueService {
         ...latest.where((entry) => !originalIds.contains(entry.id)),
       ]);
     });
+
+    if (generation != _flushGeneration) return;
 
     unawaited(
       SyncErrorLogService.instance.resolveQueueEntries(
@@ -899,14 +993,17 @@ class OfflineCleanupQueueService {
     }
   }
 
-  Future<void> _refreshStatusFromStorage() async {
+  Future<void> _refreshStatusFromStorage({int? generation}) async {
     final entries = await _readEntries();
-    _setStatus(
-      _currentStatus.copyWith(
-        pendingCount: entries.length,
-        failedCount: entries.where((entry) => entry.lastError != null).length,
-      ),
+    final status = _currentStatus.copyWith(
+      pendingCount: entries.length,
+      failedCount: entries.where((entry) => entry.lastError != null).length,
     );
+    if (generation == null) {
+      _setStatus(status);
+    } else {
+      _setStatusForGeneration(generation, status);
+    }
   }
 
   void _setStatus(OfflineQueueStatusSnapshot nextStatus) {
@@ -936,6 +1033,52 @@ class OfflineCleanupQueueService {
 }
 
 enum _OfflineCleanupKind { deleteByPath, deleteFolder, bookingPhoto }
+
+/// A Dart timeout does not cancel the underlying SDK future. Check the attempt
+/// again after each await and inside transaction retries before writing claims
+/// or starting a deletion from an expired attempt.
+class _CleanupAttempt {
+  _CleanupAttempt({required this.requestTimeout, required this.isCurrent});
+  final Duration requestTimeout;
+  final bool Function() isCurrent;
+  final context = <String, dynamic>{};
+  bool cancelled = false;
+
+  void checkActive() {
+    if (cancelled || !isCurrent()) {
+      throw TimeoutException(
+        'Cleanup attempt expired; the operation remains queued.',
+      );
+    }
+  }
+
+  Future<T> step<T>(
+    String phase,
+    String service,
+    Future<T> Function() action, {
+    Duration? timeout,
+  }) async {
+    checkActive();
+    final budget = timeout ?? requestTimeout;
+    context.addAll({
+      'cleanup_phase': phase,
+      'request_service': service,
+      'request_timeout_ms': budget.inMilliseconds,
+    });
+    final result = await action().timeout(
+      budget,
+      onTimeout: () {
+        cancelled = true;
+        throw TimeoutException(
+          'Cleanup $phase ($service) did not complete. The cleanup remains queued for retry.',
+          budget,
+        );
+      },
+    );
+    checkActive();
+    return result;
+  }
+}
 
 enum _CleanupApplyResult { deleted, alreadyResolved }
 

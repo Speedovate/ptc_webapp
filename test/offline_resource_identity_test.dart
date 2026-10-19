@@ -189,11 +189,19 @@ void main() {
       (await db.collection('users').doc('7').get()).data()!['name'],
       'Remote',
     );
-    // The queued snapshot lost the race against a newer server version, so it is
-    // retired instead of blocking every later edit for this person behind a
-    // snapshot that can never win. The newer document stays exactly as it was,
-    // and the drop is reported as a `queue_edit_superseded` sync error.
-    expect(await backend.readStringList(storageKey), isEmpty);
+    // A newer server version is not proof that this local edit was applied.
+    // Preserve the conflicting payload and its original action time.
+    final retained = jsonDecode(
+      (await backend.readStringList(storageKey)).single,
+    );
+    expect(retained['is_blocked'], true);
+    expect(retained['payload'], {
+      'id': '7',
+      'name': 'Offline',
+      'updated_at': '2026-09-02T00:00:00Z',
+    });
+    expect(retained['created_at'], '2026-09-02T00:00:00Z');
+    expect(retained['last_error'], contains('Pending edit was preserved'));
   });
   test(
     'resource aliases survive restart and stay isolated by user scope',

@@ -59,14 +59,20 @@ void main() {
           backend: backend,
           isOnline: () => true,
         );
+        addTearDown(queue.dispose);
         await queue.initialize();
         await queue.flushPendingMutations();
         final saved = await backend.readStringList(storageKey);
-        if (scenario == 'reassigned') {
+        if (scenario != 'different photo') {
+          // Exact uploaded evidence confirms the work even when the chassis
+          // owner is unknown. Acknowledgement does not alter that chassis.
           expect(saved, isEmpty);
         } else {
           expect(saved, hasLength(1));
-          expect(jsonDecode(saved.single)['is_blocked'], true);
+          final retained = jsonDecode(saved.single);
+          expect(retained['is_blocked'], true);
+          expect(retained['payload'], pending);
+          expect(retained['created_at'], fixture['action_at']);
         }
         expect(
           (await db.collection('bookings').doc('86').get()).data(),
@@ -74,7 +80,21 @@ void main() {
         );
         expect((await db.collection('chassis').doc('8').get()).data(), chassis);
         await queue.flushPendingMutations();
-        expect(await backend.readStringList(storageKey), saved);
+        final retried = await backend.readStringList(storageKey);
+        if (scenario == 'different photo') {
+          expect(retried, hasLength(1));
+          final retained = jsonDecode(retried.single);
+          expect(retained['is_blocked'], true);
+          expect(retained['payload'], pending);
+          expect(retained['created_at'], fixture['action_at']);
+        } else {
+          expect(retried, isEmpty);
+        }
+        expect(
+          (await db.collection('bookings').doc('86').get()).data(),
+          server,
+        );
+        expect((await db.collection('chassis').doc('8').get()).data(), chassis);
       });
     }
   }

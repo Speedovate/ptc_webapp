@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/services/offline_cleanup_queue_service.dart';
 import 'package:webapp/services/offline_mutation_queue_service.dart';
+import 'package:webapp/services/booking_remote_document.dart';
 import 'booking_id_resolver_test.dart' show MemoryBackend;
 
 /// Full-fidelity replay of every `sync_error_logs` entry reported from
@@ -16,9 +17,8 @@ import 'booking_id_resolver_test.dart' show MemoryBackend;
 /// The queued payload, the server booking, the owning booking and the chassis
 /// document are copied verbatim from the reports (photo byte payloads keep the
 /// logs' `[INLINE MEDIA OMITTED]` placeholder, since only their shape matters).
-/// Each case asserts both halves of the contract: the stale action is retired
-/// when the evidence proves it, and nothing on the server is overwritten when
-/// the evidence does not.
+/// Confirmed work completes; unconfirmed conflicts remain durable.
+/// Historical recovery must preserve current business state and offline dates.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -59,7 +59,11 @@ void main() {
   };
 
   for (final c in cases.where((c) => c['kind'] != 'cleanup_timeout')) {
-    test('${c['name']} -> ${c['expect']}', () async {
+    final preserveConflict =
+        c['collection'] == 'users' &&
+        '${c['name']}'.contains('queued edit superseded');
+    final historyOnly = c['kind'] == 'booking_changed_remotely';
+    test('${c['name']} -> ${preserveConflict ? 'preserved' : c['expect']}', () async {
       final db = FakeFirebaseFirestore();
       if (c['collection'] == 'bookings') {
         await db
@@ -95,10 +99,11 @@ void main() {
         isOnline: () => true,
       );
 
+      addTearDown(queue.dispose);
       await queue.flushPendingMutations();
 
       final remaining = await backend.readStringList(queueKey);
-      if (c['expect'] == 'retired') {
+      if (c['expect'] == 'retired' && !preserveConflict) {
         expect(
           remaining,
           isEmpty,
@@ -109,6 +114,8 @@ void main() {
         final retained = jsonDecode(remaining.single) as Map<String, dynamic>;
         expect(retained['is_blocked'], isTrue);
         expect('${retained['last_error']}', isNotEmpty);
+        expect(retained['payload'], c['pending_payload']);
+        expect(retained['created_at'], c['action_at']);
         final item = (await queue.readPendingItems('manager')).single;
         expect(item.isBlocked, isTrue);
         expect(item.conflictId, c['entry_id']);
@@ -135,10 +142,8 @@ void main() {
             isTrue,
             reason: 'the queued status event $key must survive the replay',
           );
-          // The delivery form photo is still marked pending on the server. That
-          // marker is what the photo-upload queue matches against, so it is the
-          // only thing that lets the captured bytes finish uploading; dropping
-          // the action used to strand them with nowhere to attach.
+          // Keep the matching pending marker and immutable metadata on the
+          // server. Inline bytes remain local to avoid Firestore size failures.
           final event = Map<String, dynamic>.from(outputs[key] as Map);
           final fields = Map<String, dynamic>.from(
             event['fields'] as Map? ?? const {},
@@ -153,13 +158,18 @@ void main() {
                   'a pending photo needs its upload id so the captured bytes '
                   'can still be attached to $key',
             );
-            expect(
-              '${photo['download_url'] ?? ''}',
-              startsWith('data:'),
-              reason:
-                  'the placeholder must stay a local preview until the '
-                  'upload completes',
-            );
+            final originalPhoto =
+                c['pending_payload']['status_outputs'][key]['fields'][field
+                    .key];
+            for (final metadata in [
+              'pending_upload_id',
+              'name',
+              'size',
+              'mime_type',
+            ]) {
+              expect(photo[metadata], originalPhoto[metadata]);
+            }
+            expect(jsonEncode(photo), isNot(contains('data:')));
           }
         }
         expect(saved['driver_status'], c['expect_booking_status']);
@@ -187,7 +197,9 @@ void main() {
       final protectedTargets = <String>[
         // A chassis conflict writes the trip it is about, so only the *other*
         // bookings are held to a byte-identical comparison.
-        if (c['collection'] == 'bookings' && c['expect_booking_status'] == null)
+        if (c['collection'] == 'bookings' &&
+            c['expect_booking_status'] == null &&
+            !historyOnly)
           c['target_id'] as String,
         if (c['owner_booking'] != null) '${(c['owner_booking'] as Map)['id']}',
       ];
@@ -200,6 +212,50 @@ void main() {
           jsonEncode(afterDoc),
           jsonEncode(beforeDoc),
           reason: 'bookings/$id must be left exactly as the server had it',
+        );
+      }
+      if (historyOnly) {
+        final original = Map<String, dynamic>.from(c['server_booking']);
+        final saved =
+            (await db.collection('bookings').doc('${c['target_id']}').get())
+                .data()!;
+        for (final field in original.entries.where(
+          (field) => field.key != 'status_outputs',
+        )) {
+          expect(
+            saved[field.key],
+            field.value,
+            reason: 'History recovery must preserve live ${field.key}',
+          );
+        }
+        final oldEvents = original['status_outputs'] as Map;
+        final queuedEvents =
+            bookingRemoteDocument(
+                  Map<String, dynamic>.from(c['pending_payload']),
+                )['status_outputs']
+                as Map;
+        final savedEvents = saved['status_outputs'] as Map;
+        for (final event in oldEvents.entries) {
+          expect(savedEvents[event.key], event.value);
+        }
+        for (final event in queuedEvents.entries.where(
+          (event) => !oldEvents.containsKey(event.key),
+        )) {
+          expect(
+            savedEvents[event.key],
+            event.value,
+            reason: 'Offline history and submitted_at must survive',
+          );
+        }
+        expect(savedEvents.keys.toSet(), {
+          ...oldEvents.keys,
+          ...queuedEvents.keys,
+        });
+      }
+      if (preserveConflict) {
+        expect(
+          (await db.collection('users').doc('${c['target_id']}').get()).data(),
+          c['server_document'],
         );
       }
       final beforeChassis = before['chassis'] as Map?;
