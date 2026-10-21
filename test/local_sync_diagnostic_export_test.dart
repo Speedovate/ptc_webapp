@@ -6,8 +6,111 @@ import 'package:webapp/services/sync_error_log_service.dart';
 import 'sync_error_log_service_test.dart'
     show MemoryLogs, capture, reports, waitFor;
 
+class _SlowIndexLogs extends MemoryLogs {
+  final entered = Completer<void>();
+  final release = Completer<void>();
+  bool delayIndex = false;
+  @override
+  Future<List<String>> readStringList(String key) async {
+    if (delayIndex && key == 'sync_error_log_v2_index_0') {
+      if (!entered.isCompleted) entered.complete();
+      await release.future;
+    }
+    return super.readStringList(key);
+  }
+}
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  test('active errors upload before a stalled resolved-log deletion', () async {
+    final backend = MemoryLogs();
+    final deleteGate = Completer<void>();
+    final operations = <String>[];
+    final service = SyncErrorLogService(
+      backend: backend,
+      online: () => true,
+      uploadTimeout: const Duration(milliseconds: 30),
+      metadata: (owner) async => {'user_id': owner},
+      writer: (_, data) async {
+        operations.add('write:${data['queue_entry_id']}');
+      },
+      deleter: (_) {
+        operations.add('delete');
+        return deleteGate.future;
+      },
+    );
+    addTearDown(service.dispose);
+    addTearDown(() {
+      if (!deleteGate.isCompleted) deleteGate.complete();
+    });
+    await capture(service, entry: 'old_completed');
+    await service.resolveQueueEntries('offline_media_sync_queue_v1::13', {
+      'old_completed',
+    });
+    await capture(service, entry: 'still_failed');
+    await service.start();
+    await waitFor(() => operations.contains('delete'));
+    expect(operations, ['write:still_failed', 'delete']);
+    final report = await service.localDiagnosticReport('13');
+    expect(
+      report['diagnostic_upload']['phase'],
+      'delete_resolved_remote_report',
+    );
+    final active = (report['reports'] as List).singleWhere(
+      (row) => row['queue_entry_id'] == 'still_failed',
+    );
+    expect(active['dirty'], false);
+    expect(active['action_at'], '2026-09-22T01:00:00Z');
+    deleteGate.complete();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  });
+
+  test(
+    'slow local index scan continues past capture deadline and uploads once',
+    () async {
+      final backend = _SlowIndexLogs();
+      var writes = 0;
+      final service = SyncErrorLogService(
+        backend: backend,
+        online: () => true,
+        localPersistenceTimeout: const Duration(milliseconds: 10),
+        uploadTimeout: const Duration(milliseconds: 30),
+        metadata: (owner) async => {'user_id': owner},
+        writer: (_, _) async {
+          writes++;
+        },
+      );
+      addTearDown(service.dispose);
+      addTearDown(() {
+        if (!backend.release.isCompleted) backend.release.complete();
+      });
+      await capture(service);
+      backend.delayIndex = true;
+      await service.start();
+      await backend.entered.future;
+      final blocked = await service.localDiagnosticReport('13');
+      expect(blocked['reports_complete'], false);
+      expect(blocked['diagnostic_upload']['phase'], 'read_local_outbox');
+      expect(blocked['diagnostic_upload']['in_flight'], true);
+      expect(blocked['diagnostic_upload']['last_error'], isNull);
+      expect(blocked['diagnostic_upload']['caller_wait_expired'], true);
+      expect(writes, 0);
+      expect(jsonDecode(reports(backend).single)['dirty'], true);
+      backend.release.complete();
+      await waitFor(
+        () =>
+            writes == 1 &&
+            jsonDecode(reports(backend).single)['dirty'] == false,
+      );
+      await service.flush();
+      expect(writes, 1);
+      expect(
+        jsonDecode(reports(backend).single)['action_at'],
+        '2026-09-22T01:00:00Z',
+      );
+    },
+  );
 
   test(
     'failed diagnostic upload is visible locally without recursive logging',

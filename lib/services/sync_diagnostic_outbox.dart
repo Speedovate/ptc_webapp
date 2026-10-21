@@ -213,8 +213,11 @@ class SyncDiagnosticOutbox {
         if (row != null && row['dirty'] == true) result.add(row);
         if (result.length == limit) return result;
       }
-      // Large backlogs must leave room for input/paint between index shards.
-      await Future<void>.delayed(Duration.zero);
+      // Yield per batch: one timer per shard can incur mobile/background timer
+      // throttling 64 times even when most indexes are empty.
+      if ((shard + 1) % 8 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
     }
     return result;
   }

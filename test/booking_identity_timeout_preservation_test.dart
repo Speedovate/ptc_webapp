@@ -99,11 +99,17 @@ void main() {
             'Failed at (UTC): 2026-10-21T05:27:38.186Z\nOriginal evidence',
       };
       disk.data[scope] = [jsonEncode(original)];
-      // Use the real production 30s gate budget to reproduce the reported stall.
-      await queue.flushPendingUploads().timeout(const Duration(seconds: 45));
+      // Exercise the real production 120s budget, including durable timeout
+      // evidence and a safe retry after the original SDK read completes late.
+      await queue.flushPendingUploads().timeout(const Duration(seconds: 150));
       final retained = jsonDecode(disk.data[scope]!.single);
       expect(retained['last_error'], contains('identity check timed out'));
       expect(retained['error_diagnostics'], contains('TimeoutException'));
+      expect(retained['error_diagnostics'], contains('0:02:00.000000'));
+      expect(
+        retained['error_diagnostics'],
+        contains('"lookup_timeout_ms":120000'),
+      );
       expect(
         retained['error_diagnostics'],
         contains('"gate_reason":"request_timeout"'),
@@ -158,6 +164,6 @@ void main() {
       expect(saved['updated_at'], booking['updated_at']);
       expect(saved['status_outputs'][event]['submitted_at'], actionAt);
     },
-    timeout: const Timeout(Duration(seconds: 60)),
+    timeout: const Timeout(Duration(seconds: 180)),
   );
 }

@@ -9,6 +9,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:webapp/services/booking_id_resolver.dart';
+import 'booking_resolution_gate.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -836,7 +837,12 @@ class BookingOfflineUploadQueueService {
             (lookupTimedOut
                 ? TimeoutException(
                     identityTimeoutMessage,
-                    const Duration(seconds: 30),
+                    Duration(
+                      milliseconds:
+                          (identityLookup?['lookup_timeout_ms'] as num?)
+                              ?.toInt() ??
+                          BookingResolutionGate.defaultTimeout.inMilliseconds,
+                    ),
                   )
                 : StateError(
                     missingOriginal

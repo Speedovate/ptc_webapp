@@ -3,6 +3,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:webapp/services/booking_resolution_gate.dart';
 
 void main() {
+  test('default lookup waits two minutes for weak connections', () {
+    expect(BookingResolutionGate().timeout, const Duration(minutes: 2));
+  });
+
+  test(
+    'response after former 30s deadline completes without a timeout',
+    () async {
+      final gate = BookingResolutionGate();
+      final evidence = <String, dynamic>{};
+      var calls = 0;
+      final lookup = gate.resolve('temp', 'slow-but-successful', () async {
+        calls++;
+        await Future<void>.delayed(const Duration(seconds: 35));
+        return '700';
+      }, evidence: evidence);
+      final shared = gate.resolve('temp', 'slow-but-successful', () async {
+        calls++;
+        return 'unexpected';
+      });
+      expect(await lookup, '700');
+      expect(await shared, '700');
+      expect(calls, 1);
+      expect(evidence['gate_reason'], isNull);
+      expect(gate.activeCount, 0);
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
   test(
     'timeout records network at request start and deadline without releasing read',
     () async {

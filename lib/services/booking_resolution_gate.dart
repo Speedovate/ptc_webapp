@@ -8,9 +8,12 @@ import 'sync_error_environment.dart';
 class BookingResolutionGate {
   BookingResolutionGate({
     DateTime Function()? now,
-    this.timeout = const Duration(seconds: 30),
+    this.timeout = defaultTimeout,
   }) : _now = now ?? DateTime.now;
 
+  // Give slow/intermittent links time to finish server identity reads. Timeout
+  // ends the caller wait only; the unfinished SDK read still owns its slot.
+  static const defaultTimeout = Duration(minutes: 2);
   static const maxStates = 256;
   static const maxConcurrent = 4;
   static const maxStartsPerMinute = 16;
@@ -95,6 +98,11 @@ class BookingResolutionGate {
         explain('request_timeout', retryAt: state.retryAt);
         evidence?.addAll({
           'lookup_elapsed_ms': stopwatch.elapsedMilliseconds,
+          'lookup_wall_elapsed_ms': _now().difference(now).inMilliseconds,
+          'deadline_callback_lag_ms': max(
+            0,
+            stopwatch.elapsedMilliseconds - timeout.inMilliseconds,
+          ),
           'lookup_timeout_ms': timeout.inMilliseconds,
           'network_at_lookup_timeout': syncNetworkEnvironment(),
         });

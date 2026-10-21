@@ -70,6 +70,8 @@ class SyncErrorLogService {
   DateTime? _uploadStartedAt;
   String? _lastUploadError;
   bool _uploadWaitExpired = false;
+  String _uploadPhase = 'idle';
+  String? _lastFailedUploadPhase;
   static Future<PackageInfo>? _package;
   late final _outbox = SyncDiagnosticOutbox(_backend);
   bool _migrated = false;
@@ -78,19 +80,26 @@ class SyncErrorLogService {
   Future<Map<String, dynamic>> localDiagnosticReport(String owner) async {
     if (owner.trim().isEmpty) throw ArgumentError('Queue owner is required');
     final network = syncNetworkEnvironment();
-    final rows = await _locked(() async {
-      await _prepareOutbox();
-      final reports = <Map<String, dynamic>>[];
-      for (final prefix in const [
-        'offline_mutation_queue_v1',
-        'offline_media_sync_queue_v1',
-        'offline_cleanup_queue_v1',
-        'booking_pending_upload_queue_v1',
-      ]) {
-        reports.addAll(await _outbox.reportsForScope('$prefix::$owner'));
-      }
-      return reports;
-    });
+    String? localReadError;
+    var rows = <Map<String, dynamic>>[];
+    try {
+      rows = await _locked(() async {
+        await _prepareOutbox();
+        final reports = <Map<String, dynamic>>[];
+        for (final prefix in const [
+          'offline_mutation_queue_v1',
+          'offline_media_sync_queue_v1',
+          'offline_cleanup_queue_v1',
+          'booking_pending_upload_queue_v1',
+        ]) {
+          reports.addAll(await _outbox.reportsForScope('$prefix::$owner'));
+        }
+        return reports;
+      });
+    } catch (error) {
+      // A blocked local scan must not hide the uploader's phase evidence.
+      localReadError = sanitize(error.toString());
+    }
     return {
       'schema': 'local_sync_diagnostic_export_v1',
       'exported_at': _now().toUtc().toIso8601String(),
@@ -98,6 +107,8 @@ class SyncErrorLogService {
       'network_at_export': network,
       'network_at_export_is_original_failure_network': false,
       'firestore_transport': FirestoreOfflineService.transportEvidence,
+      'reports_complete': localReadError == null,
+      'local_report_read_error': ?localReadError,
       'diagnostic_upload': {
         'observation_scope': 'current_app_session',
         'enabled': _enabled,
@@ -105,6 +116,8 @@ class SyncErrorLogService {
         'started_at': _uploadStartedAt?.toUtc().toIso8601String(),
         'caller_wait_expired': _uploadWaitExpired,
         'last_error': _lastUploadError,
+        'phase': _uploadPhase,
+        'last_failed_phase': _lastFailedUploadPhase,
         'retry_after': _retryAfter?.toUtc().toIso8601String(),
         'timeout_does_not_confirm_server_receipt': true,
       },
@@ -186,12 +199,16 @@ class SyncErrorLogService {
     };
   }
 
-  Future<T> _locked<T>(Future<T> Function() action) {
+  Future<T> _serialized<T>(Future<T> Function() action) {
     final result = _serial.then((_) => action());
     _serial = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return result;
+  }
+
+  Future<T> _locked<T>(Future<T> Function() action) {
     // Bound callers, but retain the actual lock until storage settles. A late
     // write must never overwrite a newer outbox snapshot.
-    return result.timeout(localPersistenceTimeout);
+    return _serialized(action).timeout(localPersistenceTimeout);
   }
 
   Future<List<Map<String, dynamic>>> _readLegacy() async {
@@ -1056,16 +1073,28 @@ class SyncErrorLogService {
     String? writerFailure;
     try {
       while (_online()) {
-        final ready = await _locked(() async {
+        _uploadPhase = 'read_local_outbox';
+        // The complete upload already has a bounded caller future. Retain
+        // ownership while local reads finish instead of discarding their result
+        // after the short capture deadline and restarting the entire scan.
+        final ready = await _serialized(() async {
           await _prepareOutbox();
           return _outbox.ready(_now());
         });
         if (ready.isEmpty) break;
+        // Report current failures before maintenance deletes of resolved logs.
+        ready.sort(
+          (a, b) => (a['resolved_at'] != null ? 1 : 0).compareTo(
+            b['resolved_at'] != null ? 1 : 0,
+          ),
+        );
         for (final row in ready) {
           if (!_online()) return;
+          _uploadPhase = 'wait_remote_lock';
           // Cross-tab ordering includes the actual SDK future, even if this
           // caller times out. A late upload cannot run after its deletion.
           await withDiagnosticWriteLock(() async {
+            _uploadPhase = 'reload_local_report';
             final current = await _outbox.get(row['fingerprint'] as String);
             if (current == null || current['dirty'] != true) return;
             if (!_isSyncError(current['kind']) ||
@@ -1123,6 +1152,7 @@ class SyncErrorLogService {
                   'Refusing to delete a report from another device',
                 );
               }
+              _uploadPhase = 'delete_resolved_remote_report';
               await _deleter(current['id'] as String);
             } else {
               final data = Map<String, dynamic>.from(current)
@@ -1137,6 +1167,7 @@ class SyncErrorLogService {
                 '  ',
               ).convert(data);
               try {
+                _uploadPhase = 'write_remote_report';
                 await _writer(current['id'] as String, data);
               } catch (error) {
                 // Preserve the SDK error before a browser Web Locks promise
@@ -1145,7 +1176,9 @@ class SyncErrorLogService {
                 rethrow;
               }
               _lastUploadError = null;
+              _lastFailedUploadPhase = null;
             }
+            _uploadPhase = 'acknowledge_local_report';
             await _outbox.update(current['fingerprint'] as String, (
               saved,
             ) async {
@@ -1164,9 +1197,12 @@ class SyncErrorLogService {
         await Future<void>.delayed(Duration.zero);
       }
     } catch (error) {
+      _lastFailedUploadPhase = _uploadPhase;
       _lastUploadError = writerFailure ?? sanitize(error.toString());
       _retryAfter = _now().add(const Duration(minutes: 1));
       // Never report logger failures back through itself or a business queue.
+    } finally {
+      _uploadPhase = 'idle';
     }
   }
 }

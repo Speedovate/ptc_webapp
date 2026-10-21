@@ -45,6 +45,7 @@ Map<String, Object?> browserNetworkEvidence(JSObject navigator) {
   return {
     'observed_at': DateTime.now().toUtc().toIso8601String(),
     'source': 'browser_network_information',
+    'document_visibility': html.document.visibilityState,
     'browser_online': read(navigator, 'onLine'),
     'network_information_supported': connection != null,
     'connection_type': knownType ? type : 'unknown',
