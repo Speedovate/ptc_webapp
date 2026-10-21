@@ -67,6 +67,67 @@ class _DelayedQuery extends _StallsOnOrderQuery {
   }
 }
 
+/// The list opens promptly but the server copy query answers after 12 seconds.
+class _DelayedCopyFirestore extends FakeFirebaseFirestore {
+  @override
+  CollectionReference<Map<String, dynamic>> collection(String path) {
+    final ref = super.collection(path);
+    return path == 'sync_error_logs' ? _DelayedCopyCollection(ref) : ref;
+  }
+}
+
+class _DelayedCopyCollection extends _StalledOrderedCollection {
+  _DelayedCopyCollection(super.ref);
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.memberName == #where) {
+      return _DelayedCopyQuery(
+        ref.where(
+          invocation.positionalArguments.first,
+          isEqualTo: invocation.namedArguments[#isEqualTo],
+        ),
+      );
+    }
+    return super.noSuchMethod(invocation);
+  }
+}
+
+class _DelayedCopyQuery implements Query<Map<String, dynamic>> {
+  _DelayedCopyQuery(this.ref, {this.ordered = false});
+  final Query<Map<String, dynamic>> ref;
+  final bool ordered;
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.memberName == #where) {
+      return _DelayedCopyQuery(
+        ref.where(
+          invocation.positionalArguments.first,
+          isEqualTo: invocation.namedArguments[#isEqualTo],
+        ),
+        ordered: ordered,
+      );
+    }
+    return super.noSuchMethod(invocation);
+  }
+
+  @override
+  Query<Map<String, dynamic>> orderBy(
+    Object field, {
+    bool descending = false,
+  }) => _DelayedCopyQuery(
+    ref.orderBy(field, descending: descending),
+    ordered: true,
+  );
+  @override
+  Query<Map<String, dynamic>> limit(int count) =>
+      _DelayedCopyQuery(ref.limit(count), ordered: ordered);
+  @override
+  Future<QuerySnapshot<Map<String, dynamic>>> get([GetOptions? options]) async {
+    if (ordered) await Future<void>.delayed(const Duration(seconds: 15));
+    return ref.get(options);
+  }
+}
+
 class _StalledOrderedCollection
     implements CollectionReference<Map<String, dynamic>> {
   _StalledOrderedCollection(this.ref);
@@ -581,6 +642,55 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('No error logs.'), findsOneWidget);
     expect(find.text('Retry'), findsNothing);
+  });
+
+  testWidgets('copy waits for a slow server response beyond 12 seconds', (
+    tester,
+  ) async {
+    final db = _DelayedCopyFirestore();
+    await db.collection('sync_error_logs').doc('slow-error').set({
+      'attention_required': true,
+      'user_id': '13',
+      'device_id': 'device-A',
+      'operation': 'bookingPhotoUpload',
+      'error': 'Original booking is missing',
+      'last_failed_at': '2026-10-21T09:08:51Z',
+    });
+    String? clipboard;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          clipboard = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AdminErrorLogsView(
+            user: const UserModel(id: '1', role: 'admin'),
+            firestore: db,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Copy all user errors'));
+    await tester.pump(const Duration(seconds: 13));
+    expect(clipboard, isNull);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    final copied = jsonDecode(clipboard!) as List;
+    expect(copied, hasLength(1));
+    expect(copied.single['document_id'], 'slow-error');
   });
   for (final width in [390.0, 1400.0]) {
     testWidgets('groups and copies full diagnostics at width $width', (

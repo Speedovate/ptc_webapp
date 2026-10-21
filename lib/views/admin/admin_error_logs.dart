@@ -356,7 +356,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
         final doc = await collection
             .doc(id)
             .get(const GetOptions(source: Source.server))
-            .timeout(const Duration(seconds: 12));
+            .timeout(_initialServerReadTimeout);
         if (!doc.exists) {
           throw StateError(
             'This error is no longer in Firestore. Reopen Error Logs.',
@@ -384,7 +384,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
               await (cursor == null ? query : query.startAfterDocument(cursor))
                   .limit(100)
                   .get(const GetOptions(source: Source.server))
-                  .timeout(const Duration(seconds: 12));
+                  .timeout(_initialServerReadTimeout);
           records.addAll(page.docs.map(export));
           if (page.docs.length < 100) break;
           cursor = page.docs.last;

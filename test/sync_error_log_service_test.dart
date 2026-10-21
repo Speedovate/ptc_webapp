@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webapp/repositories/local/auth_storage_backend.dart';
 import 'package:webapp/repositories/local/booking_storage_backend.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/services/sync_diagnostic_outbox.dart';
@@ -750,6 +751,171 @@ void main() {
       await service.refreshQueueDiagnostics();
       await service.flush();
       expect(writes, uploads);
+    },
+  );
+
+  test(
+    'reuploads every active photo failure after server logs are deleted',
+    () async {
+      final auth = createAuthStorageBackend();
+      await auth.initialize();
+      await auth.writeStringList('paltranco_known_session_user_ids', ['8']);
+      await auth.writeString('paltranco_current_user_id', '8');
+      addTearDown(() async {
+        await auth.remove('paltranco_known_session_user_ids');
+        await auth.remove('paltranco_current_user_id');
+      });
+      final backend = MemoryLogs();
+      const scope = 'booking_pending_upload_queue_v1::8';
+      final originalPhotos = <String>[
+        for (var i = 0; i < 3; i++)
+          jsonEncode({
+            'id': 'photo-$i',
+            'booking_id': 'offline_booking_$i',
+            'status_key': 'book__$i',
+            'field_key': 'waybill_photo',
+            'file_name': 'original-$i.jpg',
+            'size': 3,
+            'bytes_base64': base64Encode([1, 2, i]),
+            'created_at': '2026-10-14T0$i:00:00Z',
+            'retry_count': 11,
+            'last_error': 'Server identity check timed out',
+            'error_diagnostics': 'Failed at (UTC): 2026-10-21T08:00:00Z',
+          }),
+      ];
+      backend.values[scope] = List.of(originalPhotos);
+      final remote = <String, Map<String, dynamic>>{};
+      var writes = 0;
+      SyncErrorLogService service() => SyncErrorLogService(
+        backend: backend,
+        online: () => true,
+        metadata: (_) async => {'user_id': '8'},
+        writer: (id, data) async {
+          remote[id] = data;
+          writes++;
+        },
+      );
+
+      final firstSession = service();
+      await firstSession.start();
+      expect(remote, hasLength(3));
+      final originalFailureTimes = {
+        for (final row in remote.values)
+          row['queue_entry_id']: row['first_failed_at'],
+      };
+      remote.clear(); // Admin deleted the Firestore diagnostics, not the queue.
+      const otherScope = 'offline_mutation_queue_v1::signed_out';
+      final misplacedCreate = jsonEncode({
+        'id': 'create-1',
+        'kind': 'bookingCreate',
+        'target_id': 'offline_booking_1',
+        'payload': {'id': 'offline_booking_1'},
+        'created_at': '2026-10-14T01:00:00Z',
+      });
+      backend.values[otherScope] = [misplacedCreate];
+
+      final nextSession = service();
+      await nextSession.start();
+      expect(remote, hasLength(3));
+      expect(remote.values.map((row) => row['queue_entry_id']).toSet(), {
+        'photo-0',
+        'photo-1',
+        'photo-2',
+      });
+      for (final row in remote.values) {
+        final inventory = row['details']['local_inventory'] as Map;
+        expect(
+          row['first_failed_at'],
+          originalFailureTimes[row['queue_entry_id']],
+        );
+        expect(inventory['photo_action_at'], row['action_at']);
+        expect(inventory['photo_queue']['bytes_status'], 'decoded');
+        expect(inventory['photo_queue']['size_matches'], isTrue);
+        expect(inventory['booking_actions']['read_status'], 'complete');
+        final assessment = inventory['recovery_assessment'] as Map;
+        expect(assessment['photo_bytes_verified'], isTrue);
+        expect(assessment['booking_synced'], isFalse);
+        expect(assessment['safe_to_discard_queue'], isFalse);
+        expect(assessment['historical_loss_cause_known'], isFalse);
+        expect(
+          assessment['next_step'],
+          row['queue_entry_id'] == 'photo-1'
+              ? 'verify_owner_before_recovering_booking_action'
+              : 'create_replacement_booking_then_review_photo_attachment',
+        );
+        expect(
+          inventory['source_verdict'],
+          row['queue_entry_id'] == 'photo-1'
+              ? 'booking_action_in_other_owner_scope'
+              : 'only_photo_found_in_checked_local_sources',
+        );
+      }
+      expect(backend.values[scope], originalPhotos);
+      expect(backend.values[otherScope], [misplacedCreate]);
+      final uploaded = writes;
+      await nextSession.refreshQueueDiagnostics();
+      await nextSession.flush();
+      expect(
+        writes,
+        uploaded,
+        reason: 'stable evidence must not upload on every scan',
+      );
+    },
+  );
+
+  test(
+    'photo inventory identifies a remaining unverified form draft',
+    () async {
+      final auth = createAuthStorageBackend();
+      await auth.initialize();
+      await auth.writeStringList('paltranco_known_session_user_ids', ['8']);
+      await auth.writeString('paltranco_current_user_id', '8');
+      const draftKey = 'booking_form_draft_v1:8:9:1';
+      await auth.writeString(
+        draftKey,
+        jsonEncode({
+          'answers': {'representative_name': 'Example'},
+        }),
+      );
+      addTearDown(() async {
+        await auth.remove('paltranco_known_session_user_ids');
+        await auth.remove('paltranco_current_user_id');
+        await auth.remove(draftKey);
+      });
+      final backend = MemoryLogs();
+      backend.values['booking_pending_upload_queue_v1::8'] = [
+        jsonEncode({
+          'id': 'photo-draft',
+          'booking_id': 'offline_booking_8_9_1_123',
+          'status_key': 'book__123',
+          'field_key': 'waybill_photo',
+          'file_name': 'photo.jpg',
+          'size': 3,
+          'bytes_base64': 'AQID',
+          'created_at': '2026-10-14T06:00:00Z',
+          'last_error': 'Original booking submission is missing',
+        }),
+      ];
+      final remote = <String, Map<String, dynamic>>{};
+      await SyncErrorLogService(
+        backend: backend,
+        online: () => true,
+        metadata: (_) async => {'user_id': '8'},
+        writer: (id, data) async => remote[id] = data,
+      ).start();
+      final inventory =
+          remote.values.single['details']['local_inventory'] as Map;
+      expect(inventory['form_draft']['available'], isTrue);
+      expect(inventory['form_draft']['answer_keys'], ['representative_name']);
+      expect(
+        inventory['form_draft']['attribution'],
+        'unverified_shared_form_draft',
+      );
+      expect(inventory['source_verdict'], 'unverified_form_draft_candidate');
+      expect(
+        inventory['recovery_assessment']['next_step'],
+        'review_draft_attribution_and_missing_booking_fields',
+      );
     },
   );
 

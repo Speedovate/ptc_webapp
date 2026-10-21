@@ -1655,7 +1655,7 @@ class BookingRequest implements BookingRepository {
     if (!shouldApply) {
       return;
     }
-    final documents = mergeCachedSnapshotDocuments(
+    final documents = mergeBookingSnapshotDocuments(
       remote: snapshot.docs.map(documentData).toList(growable: false),
       cached: await _cache.readDocuments(_bookingsResourceKey) ?? const [],
       isFromCache: fromCache,
@@ -1752,7 +1752,7 @@ class BookingRequest implements BookingRepository {
           _log(() => 'refresh background skip pending local booking write');
           return;
         }
-        documents = mergeCachedSnapshotDocuments(
+        documents = mergeBookingSnapshotDocuments(
           remote: snapshot.docs.map(documentData).toList(growable: false),
           cached: await _cache.readDocuments(_bookingsResourceKey) ?? const [],
           isFromCache: snapshot.metadata.isFromCache,
@@ -1874,7 +1874,7 @@ class BookingRequest implements BookingRepository {
       _log(() => 'getBookings sdk-only skip pending local booking write');
       return await _cache.readDocuments(_bookingsResourceKey) ?? const [];
     }
-    final documents = mergeCachedSnapshotDocuments(
+    final documents = mergeBookingSnapshotDocuments(
       remote: snapshot.docs.map(documentData).toList(growable: false),
       cached: await _cache.readDocuments(_bookingsResourceKey) ?? const [],
       isFromCache: snapshot.metadata.isFromCache,

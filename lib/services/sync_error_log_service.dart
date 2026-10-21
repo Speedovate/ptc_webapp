@@ -59,6 +59,7 @@ class SyncErrorLogService {
   Timer? _maintenance;
   StreamSubscription<bool>? _networkSubscription;
   final Map<String, _QueueProgress> _progress = {};
+  final Set<String> _reassertedActiveEntries = {};
   final List<Map<String, dynamic>> _transitions = [];
   Future<void>? _starting;
   bool? _lastOnline;
@@ -498,6 +499,247 @@ class SyncErrorLogService {
     if (changed) unawaited(flush());
   }
 
+  /// A persisted photo failure can be uploaded before its next retry. Inspect
+  /// its current local sources so that an old stack trace does not hide the
+  /// available image backup or imply that an unreadable booking is missing.
+  Future<Map<String, dynamic>> _persistedPhotoInventory(
+    Map<String, dynamic> entry,
+    String owner,
+    Set<String> knownOwners,
+  ) async {
+    final id = '${entry['id']}';
+    final bookingId = '${entry['booking_id']}';
+    final evidence = <String, dynamic>{
+      'schema': 'local_booking_photo_inventory_v1',
+      'scope': 'device_local_storage',
+      'booking_id': bookingId,
+      'photo_queue_entry_id': id,
+      'photo_action_at': entry['created_at'],
+      'photo_queue': {
+        'read_status': 'complete',
+        'matching_count': 1,
+        'file_name': entry['file_name'],
+        'declared_size': entry['size'],
+        'original_action_at': entry['created_at'],
+      },
+    };
+    final photo = evidence['photo_queue'] as Map<String, dynamic>;
+    try {
+      final bytes = base64Decode('${entry['bytes_base64'] ?? ''}');
+      photo.addAll({
+        'bytes_status': bytes.isEmpty ? 'missing' : 'decoded',
+        'byte_count': bytes.length,
+        'size_matches': bytes.length == entry['size'],
+        if (bytes.isNotEmpty) 'sha256': sha256.convert(bytes).toString(),
+      });
+    } catch (error) {
+      photo.addAll({
+        'bytes_status': 'invalid_base64',
+        'decode_error': '$error',
+      });
+    }
+    Future<void> inspect(
+      String name,
+      String key,
+      Map<String, dynamic> Function(List<String>) summarize,
+    ) async {
+      try {
+        final rows = await _backend
+            .readStringList(key)
+            .timeout(const Duration(seconds: 3));
+        evidence[name] = {'read_status': 'complete', ...summarize(rows)};
+      } catch (error) {
+        evidence[name] = {'read_status': 'error', 'read_error': '$error'};
+      }
+    }
+
+    await inspect('booking_actions', 'offline_mutation_queue_v1::$owner', (
+      rows,
+    ) {
+      final matches = <Map<String, dynamic>>[];
+      var malformed = 0;
+      for (final raw in rows) {
+        try {
+          final action = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+          if (action['target_id'] == bookingId ||
+              (action['payload'] as Map?)?['id'] == bookingId) {
+            matches.add(pendingMutationSnapshot(action));
+          }
+        } catch (_) {
+          malformed++;
+        }
+      }
+      return {
+        'matching_count': matches.length,
+        'malformed_entry_count': malformed,
+        'entries': matches,
+      };
+    });
+    final otherScopeMatches = <Map<String, dynamic>>[];
+    final otherScopeErrors = <Map<String, dynamic>>[];
+    for (final candidateOwner in knownOwners.where((id) => id != owner)) {
+      try {
+        final rows = await _backend
+            .readStringList('offline_mutation_queue_v1::$candidateOwner')
+            .timeout(const Duration(seconds: 3));
+        for (final raw in rows) {
+          try {
+            final action = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+            if (action['target_id'] == bookingId ||
+                (action['payload'] as Map?)?['id'] == bookingId) {
+              otherScopeMatches.add({
+                'owner': candidateOwner,
+                'queue_entry_id': action['id'],
+                'operation': action['kind'],
+                'action_at': action['created_at'],
+              });
+            }
+          } catch (_) {}
+        }
+      } catch (error) {
+        otherScopeErrors.add({'owner': candidateOwner, 'error': '$error'});
+      }
+    }
+    evidence['other_owner_booking_actions'] = {
+      'known_owner_count': knownOwners.length,
+      'matches': otherScopeMatches,
+      'read_errors': otherScopeErrors,
+    };
+    try {
+      final cached = await FirestoreCacheStore.instance
+          .readDocumentMaps('bookings')
+          .timeout(const Duration(seconds: 3));
+      final matches = (cached ?? <Map<String, dynamic>>[])
+          .where((row) => row['id']?.toString() == bookingId)
+          .toList();
+      evidence['cached_booking'] = {
+        'read_status': 'complete',
+        'matching_count': matches.length,
+        if (matches.length == 1) 'document': matches.single,
+      };
+    } catch (error) {
+      evidence['cached_booking'] = {
+        'read_status': 'error',
+        'read_error': '$error',
+      };
+    }
+    final bookingParts = RegExp(
+      r'^offline_booking_([0-9]+)_([0-9]+)_([0-9]+)_([0-9]+)$',
+    ).firstMatch(bookingId);
+    if (bookingParts != null && bookingParts[1] == owner) {
+      final draftKey =
+          'booking_form_draft_v1:$owner:${bookingParts[2]}:${bookingParts[3]}';
+      try {
+        final auth = createAuthStorageBackend();
+        await auth.initialize().timeout(const Duration(seconds: 3));
+        final raw = await auth
+            .readString(draftKey)
+            .timeout(const Duration(seconds: 3));
+        final draft = raw == null
+            ? null
+            : Map<String, dynamic>.from(jsonDecode(raw) as Map);
+        final answers = draft?['answers'];
+        evidence['form_draft'] = {
+          'read_status': 'complete',
+          'key': draftKey,
+          'available': answers is Map && answers.isNotEmpty,
+          'attribution': 'unverified_shared_form_draft',
+          if (answers is Map)
+            'answer_keys': answers.keys.map((key) => '$key').toList(),
+        };
+      } catch (error) {
+        evidence['form_draft'] = {
+          'read_status': 'error',
+          'key': draftKey,
+          'read_error': '$error',
+        };
+      }
+    }
+    await inspect(
+      'original_evidence',
+      'booking_photo_original_evidence_v1::$owner::$id',
+      (rows) => {'entry_count': rows.length},
+    );
+    await inspect(
+      'recovery_archive',
+      'booking_photo_recovery_archive_v1::$owner::$id',
+      (rows) {
+        if (rows.length != 1) return {'entry_count': rows.length};
+        final archive = Map<String, dynamic>.from(
+          jsonDecode(rows.single) as Map,
+        );
+        final bundle = archive['unassigned_bundle'];
+        return {
+          'entry_count': 1,
+          'state': archive['state'],
+          'archived_at': archive['archived_at'],
+          'original_photo_recorded': archive['original_entry'] is Map,
+          'recovery_bundle_recorded': bundle is Map,
+          if (bundle is Map)
+            'image_backup': {
+              'format': 'application/json',
+              'contains_original_photo_bytes': true,
+              'storage_path': bundle['storage_path'],
+              'sha256': bundle['sha256'],
+              'size': bundle['size'],
+              'recovery_receipt_path': 'booking_photo_recoveries/${owner}_$id',
+            },
+          'server_receipt_checked': false,
+        };
+      },
+    );
+    await inspect(
+      'recovery_index',
+      'booking_unassigned_photo_recovery_v1::$owner',
+      (rows) => {'contains_photo_entry': rows.contains(id)},
+    );
+    final bookingActions = evidence['booking_actions'] as Map;
+    final cachedBooking = evidence['cached_booking'] as Map;
+    final formDraft = evidence['form_draft'] as Map?;
+    evidence['source_verdict'] =
+        bookingActions['read_status'] != 'complete' ||
+            cachedBooking['read_status'] != 'complete' ||
+            (formDraft != null && formDraft['read_status'] != 'complete') ||
+            otherScopeErrors.isNotEmpty
+        ? 'local_inventory_incomplete'
+        : (bookingActions['matching_count'] as int) > 0 ||
+              (cachedBooking['matching_count'] as int) > 0
+        ? 'booking_payload_candidate_available'
+        : otherScopeMatches.isNotEmpty
+        ? 'booking_action_in_other_owner_scope'
+        : formDraft?['available'] == true
+        ? 'unverified_form_draft_candidate'
+        : 'only_photo_found_in_checked_local_sources';
+    final verdict = evidence['source_verdict'] as String;
+    final usablePhoto =
+        photo['bytes_status'] == 'decoded' && photo['size_matches'] == true;
+    evidence['recovery_assessment'] = {
+      'schema': 'photo_recovery_assessment_v1',
+      'photo_bytes_verified': usablePhoto,
+      'booking_payload_verified': false,
+      'booking_synced': false,
+      'safe_to_discard_queue': false,
+      'historical_loss_cause_known': false,
+      'next_step': !usablePhoto
+          ? 'inspect_original_evidence_and_recovery_archive_for_usable_bytes'
+          : switch (verdict) {
+              'local_inventory_incomplete' =>
+                'retry_failed_local_reads_before_deciding',
+              'booking_payload_candidate_available' =>
+                'validate_candidate_booking_and_resume_create_before_photo',
+              'booking_action_in_other_owner_scope' =>
+                'verify_owner_before_recovering_booking_action',
+              'unverified_form_draft_candidate' =>
+                'review_draft_attribution_and_missing_booking_fields',
+              _ => 'create_replacement_booking_then_review_photo_attachment',
+            },
+      'explanation': verdict == 'only_photo_found_in_checked_local_sources'
+          ? 'No booking submission was found in the checked local sources. A photo alone cannot recreate the original booking or identify why its data disappeared.'
+          : 'A possible recovery source needs validation before this photo can be attached or the queue can be resolved.',
+    };
+    return evidence;
+  }
+
   Future<void> _backfill() async {
     try {
       await _backend.initialize();
@@ -537,12 +779,25 @@ class SyncErrorLogService {
               }
               await _locked(() async {
                 await _prepareOutbox();
+                final fingerprint = _actionFingerprint(scope, id);
                 await _outbox.reopenPersistedFailure(
                   scope,
                   id,
-                  _actionFingerprint(scope, id),
+                  fingerprint,
                   _now().toUtc().toIso8601String(),
                 );
+                // A report may have been manually removed from Firestore after
+                // its local upload was acknowledged. Reassert each still-failed
+                // action once per app session without changing the action.
+                if (!_reassertedActiveEntries.contains(fingerprint)) {
+                  await _outbox.update(fingerprint, (row) async {
+                    if (row == null || row['resolved_at'] != null) return null;
+                    row['dirty'] = true;
+                    row.remove('last_uploaded_at');
+                    return row;
+                  });
+                  _reassertedActiveEntries.add(fingerprint);
+                }
               });
               await capture(
                 source: prefix,
@@ -574,6 +829,12 @@ class SyncErrorLogService {
                   'blocked': entry['is_blocked'],
                   'next_retry_at': entry['next_retry_at'],
                   'recovered_from_device': true,
+                  if (prefix == 'booking_pending_upload_queue_v1')
+                    'local_inventory': await _persistedPhotoInventory(
+                      entry,
+                      owner,
+                      scopes,
+                    ),
                 },
               );
             } catch (_) {

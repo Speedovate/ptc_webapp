@@ -100,7 +100,7 @@ class _OrphanPhotoRecoveryDialogState extends State<OrphanPhotoRecoveryDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const AppSelectableText(
-                  'Select the existing booking this photo belongs to. The photo will be added to its history. The original local photo, timestamps, and error details will remain archived.',
+                  'Select the existing booking this photo belongs to. If the original offline booking is missing, create and save its replacement first. Review the photo and booking before attaching it; the original photo, timestamp, and error details remain archived.',
                 ),
                 const SizedBox(height: 16),
                 FutureBuilder<OrphanPhotoSource>(
