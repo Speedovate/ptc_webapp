@@ -402,7 +402,9 @@ class SyncErrorLogService {
 
   static bool requiresAttention(String prefix, Map<String, dynamic> entry) {
     if (prefix == 'offline_mutation_queue_v1') {
-      return entry['is_blocked'] == true;
+      return entry['is_blocked'] == true ||
+          ((entry['retry_count'] as num? ?? 0) >= 3 &&
+              '${entry['last_error'] ?? ''}'.trim().isNotEmpty);
     }
     // A photo wait is normally informational, but once the queue has recorded a
     // retryable error it is no longer silent. Keep it in the review stream just
@@ -467,6 +469,15 @@ class SyncErrorLogService {
                 await _clearAttention('$prefix::$owner', '${entry['id']}');
                 continue;
               }
+              await _locked(() async {
+                await _prepareOutbox();
+                await _outbox.reopenPersistedFailure(
+                  scope,
+                  id,
+                  _actionFingerprint(scope, id),
+                  _now().toUtc().toIso8601String(),
+                );
+              });
               await capture(
                 source: prefix,
                 operation: '${entry['kind'] ?? 'bookingPhotoUpload'}',
@@ -675,6 +686,11 @@ class SyncErrorLogService {
       final scope = prefix == null
           ? null
           : '$prefix::${owner ?? metadata['user_id'] ?? 'signed_out'}';
+      if (attentionRequired == null &&
+          prefix == 'offline_mutation_queue_v1' &&
+          attempt >= 3) {
+        attentionRequired = true;
+      }
       final fingerprint = scope != null
           ? _actionFingerprint(scope, entryId)
           : sha256
@@ -1040,8 +1056,10 @@ class SyncErrorLogService {
               saved,
             ) async {
               if (saved == null) return null;
-              if (saved['occurrences'] == current['occurrences'] &&
-                  saved['resolved_at'] == current['resolved_at']) {
+              // Same-attempt evidence/attention can change while the SDK write
+              // is pending without increasing occurrences. Acknowledge only
+              // the exact snapshot that actually reached the server.
+              if (jsonEncode(saved) == jsonEncode(current)) {
                 saved['last_uploaded_at'] = _now().toUtc().toIso8601String();
                 saved['dirty'] = false;
               }

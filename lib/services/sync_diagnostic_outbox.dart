@@ -72,6 +72,38 @@ class SyncDiagnosticOutbox {
   Future<bool> isResolved(String scope, String entry) async =>
       (await backend.readStringList(_doneKey(scope, entry))).isNotEmpty;
 
+  /// Reopen a previous completion only with a fresh persisted failed action.
+  /// Late failure callbacks alone must never resurrect completed diagnostics.
+  Future<void> reopenPersistedFailure(
+    String scope,
+    String entry,
+    String fingerprint,
+    String at,
+  ) => withDiagnosticWriteLock(() async {
+    final done = await backend.readStringList(_doneKey(scope, entry));
+    if (done.isEmpty) return;
+    final stillQueued = (await backend.readStringList(scope)).any((raw) {
+      try {
+        final row = jsonDecode(raw) as Map;
+        return row['id'] == entry &&
+            '${row['last_error'] ?? ''}'.trim().isNotEmpty;
+      } catch (_) {
+        return false;
+      }
+    });
+    if (!stillQueued) return;
+    final row = await get(fingerprint);
+    if (row != null) {
+      row['previous_resolution_at'] ??= row['resolved_at'] ?? done.first;
+      row['reopened_at'] = at;
+      row.remove('resolved_at');
+      row.remove('last_uploaded_at');
+      row['dirty'] = true;
+      await _put(row);
+    }
+    await backend.writeStringList(_doneKey(scope, entry), []);
+  });
+
   Future<void> update(
     String fingerprint,
     Future<Map<String, dynamic>?> Function(Map<String, dynamic>?) action,

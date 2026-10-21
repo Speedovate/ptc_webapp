@@ -781,6 +781,10 @@ class BookingOfflineUploadQueueService {
                 (!(entry.diagnostics ?? '').contains(
                       'booking_identity_lookup_v1',
                     ) ||
+                    (identityLookup['gate_reason'] != null &&
+                        !(entry.diagnostics ?? '').contains(
+                          '"gate_reason":"${identityLookup['gate_reason']}"',
+                        )) ||
                     (identityLookup.containsKey('photo_marker_lookup') &&
                         !(entry.diagnostics ?? '').contains(
                           'photo_marker_lookup',
@@ -1026,9 +1030,16 @@ class BookingOfflineUploadQueueService {
             remaining.add(wait.entry);
             continue;
           }
-          var resolved = await BookingIdResolver(
-            firestore: _firestore,
-          ).resolve(entry.bookingId, lookupEvidence: identityLookup);
+          final resolver = BookingIdResolver(firestore: _firestore);
+          if (!background) {
+            // Explicit retry/reconnect may clear idle lookup backoff. Active
+            // SDK reads keep ownership and all global rate limits still apply.
+            resolver.invalidate(entry.bookingId);
+          }
+          var resolved = await resolver.resolve(
+            entry.bookingId,
+            lookupEvidence: identityLookup,
+          );
           resolved ??= await _resolvePhotoBookingByMarker(
             entry,
             identityLookup,

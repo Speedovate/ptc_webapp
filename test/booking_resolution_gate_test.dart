@@ -3,6 +3,45 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:webapp/services/booking_resolution_gate.dart';
 
 void main() {
+  test(
+    'deferred lookup explains backoff and preserves last SDK failure evidence',
+    () async {
+      final now = DateTime.utc(2026, 10, 21, 5, 27);
+      final gate = BookingResolutionGate(now: () => now);
+      var calls = 0;
+      Future<String?> lookup() async {
+        calls++;
+        throw StateError('[cloud_firestore/unavailable] Connection failed.');
+      }
+
+      await expectLater(
+        gate.resolve('temp', 'identity', lookup),
+        throwsStateError,
+      );
+      final evidence = <String, dynamic>{};
+      expect(
+        await gate.resolve('temp', 'identity', lookup, evidence: evidence),
+        isNull,
+      );
+      expect(calls, 1);
+      expect(evidence['gate_reason'], 'backoff');
+      expect(
+        evidence['gate_retry_at'],
+        now.add(const Duration(seconds: 30)).toIso8601String(),
+      );
+      expect(
+        evidence['gate_last_lookup_error'],
+        contains('cloud_firestore/unavailable'),
+      );
+      expect(evidence['gate_last_lookup_finished_at'], now.toIso8601String());
+      expect(
+        evidence['stage'],
+        isNull,
+        reason: 'Deferred lookup is not fresh server absence proof',
+      );
+    },
+  );
+
   test('coalesces concurrent lookups and releases completed state', () async {
     final gate = BookingResolutionGate();
     final pending = Completer<String?>();

@@ -32,12 +32,31 @@ class BookingResolutionGate {
   Future<String?> resolve(
     String id,
     String identity,
-    Future<String?> Function() lookup,
-  ) {
+    Future<String?> Function() lookup, {
+    Map<String, dynamic>? evidence,
+  }) {
     final existing = _states[identity];
-    if (existing?.active != null) return existing!.active!;
+    void explain(String reason, {DateTime? retryAt}) {
+      evidence?.addAll({
+        'gate_reason': reason,
+        'gate_retry_at': (retryAt ?? existing?.retryAt)
+            ?.toUtc()
+            .toIso8601String(),
+        'gate_active_requests': _active,
+        'gate_last_lookup_error': existing?.lastError,
+        'gate_last_lookup_finished_at': existing?.finishedAt
+            ?.toUtc()
+            .toIso8601String(),
+      });
+    }
+
+    if (existing?.active != null) {
+      explain('shared_in_flight');
+      return existing!.active!;
+    }
     final now = _now();
     if (existing?.retryAt != null && now.isBefore(existing!.retryAt!)) {
+      explain('backoff');
       return Future.value(null);
     }
     if (_window == null ||
@@ -46,6 +65,10 @@ class BookingResolutionGate {
       _starts = 0;
     }
     if (_active >= maxConcurrent || _starts >= maxStartsPerMinute) {
+      explain(
+        _active >= maxConcurrent ? 'concurrency_limit' : 'rate_limit',
+        retryAt: _window?.add(const Duration(minutes: 1)),
+      );
       return Future.value(null);
     }
     if (existing == null && _states.length >= maxStates) {
@@ -66,6 +89,7 @@ class BookingResolutionGate {
       onTimeout: () {
         timedOut = true;
         _defer(state);
+        explain('request_timeout', retryAt: state.retryAt);
         return null;
       },
     );
@@ -74,6 +98,7 @@ class BookingResolutionGate {
       var succeeded = false;
       try {
         final value = await lookup();
+        state.lastError = null;
         if (!timedOut) {
           if (value == null) {
             _defer(state);
@@ -83,9 +108,11 @@ class BookingResolutionGate {
         }
         completed.complete(value);
       } catch (error, stack) {
+        state.lastError = error.toString();
         if (!timedOut) _defer(state);
         completed.completeError(error, stack);
       } finally {
+        state.finishedAt = _now();
         state.active = null;
         _active--;
         if (succeeded) _states.remove(identity);
@@ -108,4 +135,6 @@ class _LookupState {
   int failures = 0;
   DateTime? retryAt;
   Future<String?>? active;
+  String? lastError;
+  DateTime? finishedAt;
 }

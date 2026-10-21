@@ -49,6 +49,7 @@ class BookingIdResolver {
         submissionKey: submissionKey,
         evidence: lookupEvidence,
       ),
+      evidence: lookupEvidence,
     );
   }
 
