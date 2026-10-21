@@ -1,0 +1,374 @@
+[
+  {
+    "queue_entry_id": "booking_upload_1791929179742000_bb9462bf",
+    "operation": "bookingPhotoUpload",
+    "build_number": "57",
+    "error": "Bad state: Queued booking photo made no progress: the saved booking has no server ID yet.",
+    "action_at": "2026-10-13T22:06:16.112Z",
+    "last_failed_at": "2026-10-21T07:10:29.526Z",
+    "last_attempt": 14,
+    "identity_lookup": {
+      "gate_last_lookup_finished_at": null,
+      "stage": "reservation_read",
+      "repair_exists": false,
+      "gate_retry_at": "2026-10-21T07:10:59.518Z",
+      "schema": "booking_identity_lookup_v1",
+      "gate_active_requests": 1,
+      "gate_reason": "request_timeout",
+      "submission_key": "booking_8_9_1_1791929171081000",
+      "original_cached_submission_available": false,
+      "lookup_started": true,
+      "observed_at": "2026-10-21T07:09:59.506Z",
+      "gate_last_lookup_error": null,
+      "read_source": "server",
+      "result": "in_progress"
+    }
+  },
+  {
+    "queue_entry_id": "booking_upload_1791960707132000_409d279a",
+    "operation": "bookingPhotoUpload",
+    "build_number": "57",
+    "error": "Failed to get document because the client is offline.",
+    "action_at": "2026-10-14T06:51:46.988Z",
+    "last_failed_at": "2026-10-21T05:27:38.200Z",
+    "last_attempt": 10,
+    "identity_lookup": {
+      "schema": "booking_identity_lookup_v1",
+      "result": "deferred_or_shared_lookup",
+      "lookup_started": false,
+      "original_cached_submission_available": false
+    },
+    "photo_upload": {
+      "waiting_for_commit": true,
+      "wait_count": 86,
+      "file_name": "1000142075.jpg",
+      "field_key": "waybill_photo",
+      "mime_type": "image/jpeg",
+      "status_key": "book__1791960701949000",
+      "booking_id": "offline_booking_8_9_1_1791960701949000",
+      "size": 72531,
+      "local_bytes_present": true,
+      "wait_reason": "temporary_booking_id"
+    },
+    "booking_id": "offline_booking_8_9_1_1791960701949000"
+  },
+  {
+    "queue_entry_id": "booking_upload_1791431216765000_486596e7",
+    "operation": "bookingPhotoUpload",
+    "build_number": "46",
+    "error": "This photo is still waiting: the booking on the server no longer has this photo field. Open the booking, check the photo field, and retry the upload.",
+    "action_at": "2026-10-08T03:46:56.720Z",
+    "last_failed_at": "2026-10-08T07:12:29.896Z",
+    "last_attempt": 0,
+    "identity_lookup": null,
+    "photo_upload": {
+      "field_key": "delivery_form_photo",
+      "wait_count": 83,
+      "size": 691171,
+      "waiting_for_commit": true,
+      "status_key": "delivered__1791431216630000",
+      "wait_reason": "photo_field_missing",
+      "booking_id": "147",
+      "mime_type": "image/png",
+      "local_bytes_present": true,
+      "file_name": "Screenshot 2026-10-08 114633.png"
+    },
+    "booking_id": "147",
+    "server_document": {
+      "id": "147",
+      "client_status": "delivered",
+      "driver_status": "delivered",
+      "helper_status": "delivered",
+      "updated_at": "2026-10-08T11:46:44.923",
+      "created_at": "2026-09-25T11:07:40.824",
+      "submission_key": "booking_8_9_1_1790305660824000",
+      "status_outputs": {
+        "ongoing__1790921665124000": {
+          "submitted_at": "2026-10-02T14:14:25.124",
+          "status_key": "ongoing",
+          "fields": {
+            "delivery_form_photo": {
+              "name": "camera_1790921658859.jpg",
+              "size": 63819,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/147/status_outputs/ongoing__1790921665124000/delivery_form_photo/1790928120354.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        },
+        "assigned__1790384606850000": {
+          "submitted_at": "2026-09-26T09:03:26.850",
+          "status_key": "assigned",
+          "fields": {
+            "waybill_photo": {
+              "name": "1000141851.jpg",
+              "size": 257997,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        },
+        "assigned__1790317057987000": {
+          "submitted_at": "2026-09-25T14:17:37.987",
+          "status_key": "assigned",
+          "fields": {
+            "waybill_photo": {
+              "name": "1000141851.jpg",
+              "size": 257997,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        },
+        "assigned__1790317080379000": {
+          "submitted_at": "2026-09-25T14:18:00.379",
+          "status_key": "assigned",
+          "fields": {
+            "waybill_photo": {
+              "name": "1000141851.jpg",
+              "size": 257997,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        },
+        "book__1790305660824000": {
+          "submitted_at": "2026-09-25T11:07:40.824",
+          "status_key": "book",
+          "fields": {
+            "waybill_photo": {
+              "name": "1000141851.jpg",
+              "size": 257997,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        },
+        "delivered__1791431204922000": {
+          "submitted_at": "2026-10-08T11:46:44.922",
+          "status_key": "delivered",
+          "fields": {
+            "waybill_photo": {
+              "name": "1000141851.jpg",
+              "size": 257997,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "download_url": "https://example.test/uploaded"
+            },
+            "delivery_form_photo": {
+              "name": "Screenshot_2026-10-08_114633.png",
+              "size": 691171,
+              "mime_type": "image/png",
+              "storage_path": "bookings/147/status_outputs/delivered__1791431204922000/delivery_form_photo/1791431219217.png",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        },
+        "assigned__1790725582478000": {
+          "submitted_at": "2026-09-30T07:46:22.478",
+          "status_key": "assigned",
+          "fields": {
+            "waybill_photo": {
+              "name": "1000141851.jpg",
+              "size": 257997,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/147/status_outputs/book__1790305660824000/waybill_photo/1790312246148.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "queue_entry_id": "booking_upload_1791440159443000_c88f1c90",
+    "operation": "bookingPhotoUpload",
+    "build_number": "46",
+    "error": "This photo is still waiting: the booking on the server no longer has this photo field. Open the booking, check the photo field, and retry the upload.",
+    "action_at": "2026-10-08T06:15:59.375Z",
+    "last_failed_at": "2026-10-08T07:28:50.268Z",
+    "last_attempt": 0,
+    "identity_lookup": null,
+    "photo_upload": {
+      "booking_id": "213",
+      "field_key": "waybill_photo",
+      "wait_reason": "photo_field_missing",
+      "status_key": "ongoing__1791440159165000",
+      "file_name": "camera_1791439936334.jpg",
+      "wait_count": 24,
+      "waiting_for_commit": true,
+      "mime_type": "image/jpeg",
+      "size": 91869,
+      "local_bytes_present": true
+    },
+    "booking_id": "213",
+    "server_document": {
+      "id": "213",
+      "client_status": "delivered",
+      "driver_status": "delivered",
+      "helper_status": "delivered",
+      "updated_at": "2026-10-08T15:20:29.051",
+      "created_at": "2026-10-08T14:12:56.272",
+      "submission_key": "booking_8_9_1_1791439976272000",
+      "status_outputs": {
+        "assigned__1791440138612000": {
+          "submitted_at": "2026-10-08T14:15:38.612",
+          "status_key": "assigned",
+          "fields": {
+            "waybill_photo": {
+              "name": "camera_1791439936334.jpg",
+              "size": 91869,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/213/status_outputs/assigned__1791440138612000/waybill_photo/1791440260320.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "queue_entry_id": "booking_upload_1791436556596000_2cdc52e1",
+    "operation": "bookingPhotoUpload",
+    "build_number": "46",
+    "error": "Bad state: Queued booking photo made no progress: this booking field already holds a newer photo.",
+    "action_at": "2026-10-08T05:15:56.524Z",
+    "last_failed_at": "2026-10-08T07:28:49.669Z",
+    "last_attempt": 1,
+    "identity_lookup": null,
+    "photo_upload": {
+      "status_key": "delivered__1791436539913000",
+      "size": 555652,
+      "waiting_for_commit": true,
+      "field_key": "delivery_form_photo",
+      "wait_count": 46,
+      "wait_reason": "marker_superseded",
+      "local_bytes_present": true,
+      "file_name": "Screenshot 2026-10-08 131529.png",
+      "mime_type": "image/png",
+      "booking_id": "168"
+    },
+    "booking_id": "168",
+    "server_document": {
+      "id": "168",
+      "client_status": "delivered",
+      "driver_status": "delivered",
+      "helper_status": "delivered",
+      "updated_at": "2026-10-08T14:32:46.208",
+      "created_at": "2026-09-30T10:07:22.250",
+      "submission_key": "booking_8_9_1_1790734042250000",
+      "status_outputs": {
+        "delivered__1791439157846000": {
+          "submitted_at": "2026-10-08T13:59:17.846",
+          "status_key": "delivered",
+          "fields": {
+            "delivery_form_photo": {
+              "name": "Screenshot_2026-10-08_131529.png",
+              "size": 555652,
+              "mime_type": "image/png",
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "download_url": "https://example.test/uploaded"
+            },
+            "waybill_photo": {
+              "name": "1000141904.jpg",
+              "size": 213885,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/168/status_outputs/book__1790734042250000/waybill_photo/1790734092303.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        },
+        "book__1790734042250000": {
+          "submitted_at": "2026-09-30T10:07:22.250",
+          "status_key": "book",
+          "fields": {
+            "waybill_photo": {
+              "name": "1000141904.jpg",
+              "size": 213885,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/168/status_outputs/book__1790734042250000/waybill_photo/1790734092303.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        },
+        "delivered__1791439072066000": {
+          "submitted_at": "2026-10-08T13:57:52.066",
+          "status_key": "delivered",
+          "fields": {
+            "delivery_form_photo": {
+              "name": "Screenshot_2026-10-08_131529.png",
+              "size": 555652,
+              "mime_type": "image/png",
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "download_url": "https://example.test/uploaded"
+            },
+            "waybill_photo": {
+              "name": "1000141904.jpg",
+              "size": 213885,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/168/status_outputs/book__1790734042250000/waybill_photo/1790734092303.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        },
+        "delivered__1791438201803000": {
+          "submitted_at": "2026-10-08T13:43:21.803",
+          "status_key": "delivered",
+          "fields": {
+            "waybill_photo": {
+              "name": "1000141904.jpg",
+              "size": 213885,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/168/status_outputs/book__1790734042250000/waybill_photo/1790734092303.jpg",
+              "download_url": "https://example.test/uploaded"
+            },
+            "delivery_form_photo": {
+              "name": "Screenshot_2026-10-08_131529.png",
+              "size": 555652,
+              "mime_type": "image/png",
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        },
+        "ongoing__1790924384139000": {
+          "submitted_at": "2026-10-02T14:59:44.139",
+          "status_key": "ongoing",
+          "fields": {
+            "delivery_form_photo": {
+              "name": "camera_1790924377615.jpg",
+              "size": 63947,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/168/status_outputs/ongoing__1790924384139000/delivery_form_photo/1790928201627.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        },
+        "delivered__1791436539913000": {
+          "submitted_at": "2026-10-08T13:15:39.913",
+          "status_key": "delivered",
+          "fields": {
+            "delivery_form_photo": {
+              "name": "Screenshot_2026-10-08_131529.png",
+              "size": 555652,
+              "mime_type": "image/png",
+              "storage_path": "bookings/168/status_outputs/delivered__1791436539913000/delivery_form_photo/1791436542836.png",
+              "download_url": "https://example.test/uploaded"
+            },
+            "waybill_photo": {
+              "name": "1000141904.jpg",
+              "size": 213885,
+              "mime_type": "image/jpeg",
+              "storage_path": "bookings/168/status_outputs/book__1790734042250000/waybill_photo/1790734092303.jpg",
+              "download_url": "https://example.test/uploaded"
+            }
+          }
+        }
+      }
+    }
+  }
+]

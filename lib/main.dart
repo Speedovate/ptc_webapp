@@ -65,7 +65,6 @@ Future<void> main() async {
 }
 
 Future<void> _bootstrapApplication() async {
-  unawaited(SyncErrorLogService.instance.start());
   try {
     await () async {
       try {
@@ -100,6 +99,9 @@ Future<void> _bootstrapApplication() async {
           ),
         );
       }
+      // Apply transport/cache settings before diagnostic uploads can start the
+      // Firestore client. Early capture calls remain durable in the local outbox.
+      unawaited(SyncErrorLogService.instance.start());
       unawaited(() async {
         try {
           await OfflineQueueCoordinatorService.instance.initialize();

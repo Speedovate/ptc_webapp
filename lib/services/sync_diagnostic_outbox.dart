@@ -143,6 +143,16 @@ class SyncDiagnosticOutbox {
     return entries;
   }
 
+  /// Local evidence only; reading never acknowledges uploads or queued actions.
+  Future<List<Map<String, dynamic>>> reportsForScope(String scope) async {
+    final rows = <Map<String, dynamic>>[];
+    for (final fp in await backend.readStringList(_scopeKey(scope))) {
+      final row = await get(fp);
+      if (row != null && row['queue_scope'] == scope) rows.add(row);
+    }
+    return rows;
+  }
+
   Future<void> put(Map<String, dynamic> row) =>
       withDiagnosticWriteLock(() => _put(row));
 

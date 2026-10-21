@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'sync_error_environment.dart';
 
 /// Demand-driven lookup limiting: no subscriptions or periodic timers.
 /// A timed-out Firestore read keeps its slot until the SDK actually completes,
@@ -83,6 +84,8 @@ class BookingResolutionGate {
     _active++;
     _starts++;
     final completed = Completer<String?>();
+    final stopwatch = Stopwatch()..start();
+    evidence?.addAll({'network_at_lookup_start': syncNetworkEnvironment()});
     var timedOut = false;
     state.active = completed.future.timeout(
       timeout,
@@ -90,6 +93,11 @@ class BookingResolutionGate {
         timedOut = true;
         _defer(state);
         explain('request_timeout', retryAt: state.retryAt);
+        evidence?.addAll({
+          'lookup_elapsed_ms': stopwatch.elapsedMilliseconds,
+          'lookup_timeout_ms': timeout.inMilliseconds,
+          'network_at_lookup_timeout': syncNetworkEnvironment(),
+        });
         return null;
       },
     );
@@ -112,6 +120,7 @@ class BookingResolutionGate {
         if (!timedOut) _defer(state);
         completed.completeError(error, stack);
       } finally {
+        stopwatch.stop();
         state.finishedAt = _now();
         state.active = null;
         _active--;

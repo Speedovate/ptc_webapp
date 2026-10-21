@@ -85,6 +85,7 @@ void main() {
     (tester) async {
       String? copied;
       var loads = 0;
+      var diagnosticReads = 0;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(SystemChannels.platform, (call) async {
             if (call.method == 'Clipboard.setData') {
@@ -100,6 +101,13 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: OfflineQueueDialog(
+              loadDiagnostics: () async {
+                diagnosticReads++;
+                return {
+                  'network_at_export': {'connection_type': 'cellular'},
+                  'diagnostic_upload': {'in_flight': true},
+                };
+              },
               load: () async {
                 loads++;
                 return [
@@ -140,6 +148,10 @@ void main() {
       expect(copied, contains('Record: Chassis 20-14'));
       expect(copied, isNot(contains('Refresh')));
       expect(loads, 1);
+      expect(diagnosticReads, 1);
+      expect(copied, contains('Local sync diagnostics'));
+      expect(copied, contains('"connection_type": "cellular"'));
+      expect(copied, contains('"in_flight": true'));
       expect(tester.takeException(), isNull);
     },
   );

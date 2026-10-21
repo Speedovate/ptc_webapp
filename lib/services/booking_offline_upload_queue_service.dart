@@ -739,7 +739,15 @@ class BookingOfflineUploadQueueService {
         identityLookup?['original_cached_submission_available'] == false;
     const missingOriginalMessage =
         'The original booking submission is missing. The photo and original timestamps remain saved. Recovery storage is only a backup; this booking is not synced. The operation remains pending until its booking attachment is confirmed.';
-    if (missingOriginal && entry.lastError != missingOriginalMessage) {
+    final lookupTimedOut = identityLookup?['gate_reason'] == 'request_timeout';
+    const identityTimeoutMessage =
+        'The server booking identity check timed out. This does not confirm that the booking is missing. The photo and original timestamps remain saved for retry.';
+    final currentMessage = missingOriginal
+        ? missingOriginalMessage
+        : lookupTimedOut
+        ? identityTimeoutMessage
+        : null;
+    if (currentMessage != null && entry.lastError != currentMessage) {
       // Preserve the exact earlier record, including bytes and error time,
       // before replacing a stale connectivity message with current evidence.
       final owner = storageKey.substring('$_storageKey::'.length);
@@ -765,12 +773,12 @@ class BookingOfflineUploadQueueService {
     }
     final escalate =
         entry.lastError == null && waitCount > _escalateWaitAfterCycles;
-    final lastError = missingOriginal
-        ? missingOriginalMessage
-        : (escalate || (reasonChanged && entry.lastError != null))
-        ? 'This photo is still waiting: ${reason.explanation}. '
-              'Open the booking, check the photo field, and retry the upload.'
-        : entry.lastError;
+    final lastError =
+        currentMessage ??
+        ((escalate || (reasonChanged && entry.lastError != null))
+            ? 'This photo is still waiting: ${reason.explanation}. '
+                  'Open the booking, check the photo field, and retry the upload.'
+            : entry.lastError);
     String? diagnostics = entry.diagnostics;
     final enrich =
         lastError != null &&
@@ -825,11 +833,16 @@ class BookingOfflineUploadQueueService {
       diagnostics = await offlineErrorDiagnostics(
         error:
             readError ??
-            StateError(
-              missingOriginal
-                  ? missingOriginalMessage
-                  : 'Queued booking photo made no progress: ${reason.explanation}.',
-            ),
+            (lookupTimedOut
+                ? TimeoutException(
+                    identityTimeoutMessage,
+                    const Duration(seconds: 30),
+                  )
+                : StateError(
+                    missingOriginal
+                        ? missingOriginalMessage
+                        : 'Queued booking photo made no progress: ${reason.explanation}.',
+                  )),
         stack: readStack ?? StackTrace.current,
         source: 'booking_offline_upload_queue_service.dart',
         operation: 'bookingPhotoUpload',

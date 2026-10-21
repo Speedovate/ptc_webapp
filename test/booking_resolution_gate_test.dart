@@ -4,6 +4,35 @@ import 'package:webapp/services/booking_resolution_gate.dart';
 
 void main() {
   test(
+    'timeout records network at request start and deadline without releasing read',
+    () async {
+      final gate = BookingResolutionGate(
+        timeout: const Duration(milliseconds: 10),
+      );
+      final pending = Completer<String?>();
+      final evidence = <String, dynamic>{'stage': 'reservation_read'};
+      expect(
+        await gate.resolve(
+          'temp',
+          'network-proof',
+          () => pending.future,
+          evidence: evidence,
+        ),
+        isNull,
+      );
+      expect(evidence['stage'], 'reservation_read');
+      expect(evidence['gate_reason'], 'request_timeout');
+      expect(evidence['network_at_lookup_start'], isA<Map>());
+      expect(evidence['network_at_lookup_timeout'], isA<Map>());
+      expect(evidence['lookup_elapsed_ms'], greaterThanOrEqualTo(10));
+      expect(evidence['lookup_timeout_ms'], 10);
+      expect(gate.activeCount, 1);
+      pending.complete(null);
+      await Future<void>.delayed(Duration.zero);
+      expect(gate.activeCount, 0);
+    },
+  );
+  test(
     'deferred lookup explains backoff and preserves last SDK failure evidence',
     () async {
       final now = DateTime.utc(2026, 10, 21, 5, 27);

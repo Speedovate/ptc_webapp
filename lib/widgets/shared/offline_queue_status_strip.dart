@@ -17,6 +17,8 @@ import 'package:webapp/services/booking_offline_upload_queue_service.dart';
 import 'package:webapp/services/offline_cleanup_queue_service.dart';
 import 'package:webapp/widgets/shared/catalog_conflict_review_dialog.dart';
 import 'package:webapp/services/offline_error_diagnostics.dart';
+import 'package:webapp/services/sync_error_log_service.dart';
+import 'dart:convert';
 
 Future<List<OfflineQueueItem>> readOfflineQueueItems(String userId) async {
   final batches = await Future.wait([
@@ -41,6 +43,8 @@ Future<void> showOfflineQueueItems(
   context: context,
   builder: (_) => OfflineQueueDialog(
     load: () => readOfflineQueueItems(userId),
+    loadDiagnostics: () =>
+        SyncErrorLogService.instance.localDiagnosticReport(userId),
     resolveConflict: (id, keepLocal) async {
       final user = await AuthRequest.instance.getCurrentUser();
       if (user?.id != userId) {
@@ -188,8 +192,10 @@ class OfflineQueueDialog extends StatefulWidget {
     this.canResolveConflicts,
     this.reviewConflict,
     this.recoverPhoto,
+    this.loadDiagnostics,
   });
   final Future<List<OfflineQueueItem>> Function() load;
+  final Future<Map<String, dynamic>> Function()? loadDiagnostics;
   final Future<void> Function()? retryFailedChat;
   final Listenable? syncChanges;
   final bool Function()? isSyncing;
@@ -304,6 +310,16 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
 
   Future<void> _copyItems(List<OfflineQueueItem> items) async {
     const labels = ['Action', 'Record', 'DateTime', 'Status'];
+    String? localEvidence;
+    if (widget.loadDiagnostics != null) {
+      try {
+        localEvidence =
+            'Local sync diagnostics\n${const JsonEncoder.withIndent('  ').convert(await widget.loadDiagnostics!())}';
+      } catch (error) {
+        // Copy the actions even if local diagnostic storage cannot be read.
+        localEvidence = 'Local sync diagnostics could not be read: $error';
+      }
+    }
     final text = [
       'Queued Actions',
       for (final item in items)
@@ -311,6 +327,7 @@ class _OfflineQueueDialogState extends State<OfflineQueueDialog> {
           item,
         ).indexed.map((entry) => '${labels[entry.$1]}: ${entry.$2}').join('\n'),
       ?_retryError,
+      ?localEvidence,
     ].join('\n\n');
     try {
       await Clipboard.setData(ClipboardData(text: text));

@@ -8,6 +8,9 @@ Map<String, dynamic> firebaseConsoleDiagnostic(Map<String, dynamic> report) {
   final stack = '${report['stack_trace'] ?? ''}';
   final text = error.toLowerCase();
   final identityLookup = details['identity_lookup'];
+  final lookupTimedOut =
+      identityLookup is Map &&
+      identityLookup['gate_reason'] == 'request_timeout';
   final missingIdentity =
       identityLookup is Map &&
       identityLookup['stage'] == 'completed' &&
@@ -66,6 +69,11 @@ Map<String, dynamic> firebaseConsoleDiagnostic(Map<String, dynamic> report) {
     'project_id': report['firebase_project_id'],
     'app_origin': report['app_origin'],
     'console_state_verified': false,
+    if (report['network_at_capture'] is Map)
+      'network_at_capture': report['network_at_capture'],
+    'network_observation_scope': report['network_observation_scope'],
+    if (report['firestore_transport'] is Map)
+      'firestore_transport': report['firestore_transport'],
     if (identityLookup is Map) 'identity_lookup': identityLookup,
   };
   String status = 'unknown';
@@ -73,7 +81,15 @@ Map<String, dynamic> firebaseConsoleDiagnostic(Map<String, dynamic> report) {
   String reason =
       'No specific Firebase failure code was captured; Console changes cannot be determined.';
   List<String> checks = [];
-  if (local) {
+  if (lookupTimedOut) {
+    status = 'not_indicated';
+    category = 'connection_or_service_availability';
+    reason =
+        'The server identity read exceeded its deadline. It did not confirm that the booking is missing. Console configuration and the mobile network cause remain unverified.';
+    checks = [
+      'If persistent, compare networks and review Firestore request metrics at the recorded failure time.',
+    ];
+  } else if (local) {
     status = 'not_indicated';
     category = 'local_sync_dependency_or_conflict';
     reason =
@@ -129,6 +145,16 @@ Map<String, dynamic> firebaseConsoleDiagnostic(Map<String, dynamic> report) {
     'reason': reason,
     'evidence': evidence,
     'console_checks': checks,
+    'root_cause_assessment': {
+      'confirmed_failure': lookupTimedOut
+          ? 'server_identity_lookup_deadline_exceeded'
+          : category,
+      'failure_stage': identityLookup is Map ? identityLookup['stage'] : null,
+      'underlying_network_cause': 'unverified',
+      'carrier_cause_confirmed': false,
+      'required_evidence':
+          'Compare the same operation on the same device across Wi-Fi and cellular, including lookup stage, SDK error, transport settings and timestamps; correlate backend request metrics. A timeout alone cannot distinguish carrier routing, proxy buffering, DNS/TLS failure, or backend availability.',
+    },
     'unverified': [
       'deployed_rules',
       'indexes',

@@ -5,6 +5,37 @@ import 'package:webapp/services/sync_error_log_service.dart';
 import 'sync_error_log_service_test.dart' show MemoryLogs;
 
 void main() {
+  test('pinpoints lookup stage without claiming a proven carrier cause', () {
+    final diagnostic = firebaseConsoleDiagnostic({
+      'error': 'Server booking identity check timed out',
+      'network_at_capture': {'connection_type': 'cellular'},
+      'network_observation_scope': 'recovery_capture_not_original_failure',
+      'details': {
+        'identity_lookup': {
+          'gate_reason': 'request_timeout',
+          'stage': 'reservation_read',
+          'lookup_elapsed_ms': 30000,
+          'network_at_lookup_start': {'connection_type': 'wifi'},
+          'network_at_lookup_timeout': {'connection_type': 'cellular'},
+        },
+      },
+    });
+    final cause = diagnostic['root_cause_assessment'] as Map;
+    expect(cause['failure_stage'], 'reservation_read');
+    expect(
+      cause['confirmed_failure'],
+      'server_identity_lookup_deadline_exceeded',
+    );
+    expect(cause['carrier_cause_confirmed'], false);
+    expect(
+      diagnostic['evidence']['network_observation_scope'],
+      'recovery_capture_not_original_failure',
+    );
+    expect(
+      diagnostic['evidence']['identity_lookup']['network_at_lookup_start']['connection_type'],
+      'wifi',
+    );
+  });
   test('offline SDK evidence does not claim a Console configuration failure', () {
     final diagnostic = firebaseConsoleDiagnostic({
       'error':

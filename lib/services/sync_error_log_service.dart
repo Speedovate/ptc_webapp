@@ -3,6 +3,7 @@ import 'sync_diagnostic_outbox.dart';
 import 'diagnostic_write_lock.dart';
 import 'sync_error_environment.dart';
 import 'firebase_console_diagnostic.dart';
+import 'firestore_offline_service.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -66,9 +67,56 @@ class SyncErrorLogService {
   Future<void>? _boundedFlush;
   DateTime? _retryAfter;
   bool _enabled = false;
+  DateTime? _uploadStartedAt;
+  String? _lastUploadError;
+  bool _uploadWaitExpired = false;
   static Future<PackageInfo>? _package;
   late final _outbox = SyncDiagnosticOutbox(_backend);
   bool _migrated = false;
+
+  /// Works without Firebase connectivity. Never retries or resolves actions.
+  Future<Map<String, dynamic>> localDiagnosticReport(String owner) async {
+    if (owner.trim().isEmpty) throw ArgumentError('Queue owner is required');
+    final network = syncNetworkEnvironment();
+    final rows = await _locked(() async {
+      await _prepareOutbox();
+      final reports = <Map<String, dynamic>>[];
+      for (final prefix in const [
+        'offline_mutation_queue_v1',
+        'offline_media_sync_queue_v1',
+        'offline_cleanup_queue_v1',
+        'booking_pending_upload_queue_v1',
+      ]) {
+        reports.addAll(await _outbox.reportsForScope('$prefix::$owner'));
+      }
+      return reports;
+    });
+    return {
+      'schema': 'local_sync_diagnostic_export_v1',
+      'exported_at': _now().toUtc().toIso8601String(),
+      'owner': owner,
+      'network_at_export': network,
+      'network_at_export_is_original_failure_network': false,
+      'firestore_transport': FirestoreOfflineService.transportEvidence,
+      'diagnostic_upload': {
+        'observation_scope': 'current_app_session',
+        'enabled': _enabled,
+        'in_flight': _flushing != null,
+        'started_at': _uploadStartedAt?.toUtc().toIso8601String(),
+        'caller_wait_expired': _uploadWaitExpired,
+        'last_error': _lastUploadError,
+        'retry_after': _retryAfter?.toUtc().toIso8601String(),
+        'timeout_does_not_confirm_server_receipt': true,
+      },
+      'reports': [
+        for (final row in rows)
+          {
+            ...row,
+            'firebase_console_diagnostic': firebaseConsoleDiagnostic(row),
+          },
+      ],
+    };
+  }
 
   Future<void> _prepareOutbox() async {
     if (_migrated) return;
@@ -132,6 +180,7 @@ class SyncErrorLogService {
           ? 'profile'
           : 'debug',
       'app_origin': kIsWeb ? Uri.base.origin : null,
+      'firestore_transport': FirestoreOfflineService.transportEvidence,
       if (Firebase.apps.isNotEmpty)
         'firebase_project_id': Firebase.app().options.projectId,
     };
@@ -609,6 +658,9 @@ class SyncErrorLogService {
     Map<String, dynamic> details = const {},
   }) async {
     if (!_isSyncError(kind)) return;
+    // Capture before async storage/package reads. Historical failure timestamps
+    // must not be confused with the network observed while recovering a log.
+    final networkAtCapture = syncNetworkEnvironment();
     try {
       Map<String, dynamic> metadata;
       try {
@@ -616,6 +668,13 @@ class SyncErrorLogService {
       } catch (_) {
         metadata = {'user_id': owner, 'role': 'unknown'};
       }
+      metadata = {
+        ...metadata,
+        'network_at_capture': networkAtCapture,
+        'network_observation_scope': kind == 'persisted_queue_failure'
+            ? 'recovery_capture_not_original_failure'
+            : 'live_error_capture',
+      };
       if (const {
         'online_queue_activity',
         'queue_stalled',
@@ -753,12 +812,27 @@ class SyncErrorLogService {
                 !'${row['error']}'.toLowerCase().contains(
                   'original booking submission is missing',
                 );
-            if (!attentionChanged &&
-                additions.isEmpty &&
-                !correctedMissingSource) {
+            final correctedLookupTimeout =
+                details['identity_lookup'] is Map &&
+                details['identity_lookup']['gate_reason'] ==
+                    'request_timeout' &&
+                safeError.contains('server booking identity check timed out') &&
+                row['error'] != safeError;
+            final correctedCondition =
+                correctedMissingSource || correctedLookupTimeout;
+            if (!attentionChanged && additions.isEmpty && !correctedCondition) {
               return null;
             }
-            if (correctedMissingSource) {
+            // Refresh capture-time context only when new failure evidence is
+            // already being persisted; unchanged scans retain their throttle.
+            for (final key in [
+              'network_at_capture',
+              'network_observation_scope',
+              'firestore_transport',
+            ]) {
+              if (metadata.containsKey(key)) row[key] = metadata[key];
+            }
+            if (correctedCondition) {
               row['original_failure'] ??= {
                 for (final key in [
                   'error',
@@ -808,13 +882,17 @@ class SyncErrorLogService {
             // Count transitions must not wait for the repeated-error throttle.
             row.remove('last_uploaded_at');
           }
-          if (safeError.toLowerCase().contains(
-                'original booking submission is missing',
-              ) &&
+          if ((safeError.toLowerCase().contains(
+                    'original booking submission is missing',
+                  ) ||
+                  (details['identity_lookup'] is Map &&
+                      details['identity_lookup']['gate_reason'] ==
+                          'request_timeout' &&
+                      safeError.contains(
+                        'server booking identity check timed out',
+                      ))) &&
               row['error'] != null &&
-              !'${row['error']}'.toLowerCase().contains(
-                'original booking submission is missing',
-              )) {
+              row['error'] != safeError) {
             row['original_failure'] ??= {
               for (final key in [
                 'error',
@@ -955,6 +1033,8 @@ class SyncErrorLogService {
       return Future.value();
     }
     if (_flushing != null) return _boundedFlush!;
+    _uploadStartedAt = _now();
+    _uploadWaitExpired = false;
     final future = _flushing = _flush();
     future.then((_) {
       if (identical(_flushing, future)) {
@@ -964,10 +1044,16 @@ class SyncErrorLogService {
     });
     // A hung upload owns one actual operation and one bounded caller future.
     // Maintenance ticks must not accumulate waiting writes or callbacks.
-    return _boundedFlush = future.timeout(uploadTimeout, onTimeout: () {});
+    return _boundedFlush = future.timeout(
+      uploadTimeout,
+      onTimeout: () {
+        _uploadWaitExpired = true;
+      },
+    );
   }
 
   Future<void> _flush() async {
+    String? writerFailure;
     try {
       while (_online()) {
         final ready = await _locked(() async {
@@ -1050,7 +1136,15 @@ class SyncErrorLogService {
               data['copy_report'] = const JsonEncoder.withIndent(
                 '  ',
               ).convert(data);
-              await _writer(current['id'] as String, data);
+              try {
+                await _writer(current['id'] as String, data);
+              } catch (error) {
+                // Preserve the SDK error before a browser Web Locks promise
+                // can wrap it in a generic converted-Future exception.
+                writerFailure = sanitize(error.toString());
+                rethrow;
+              }
+              _lastUploadError = null;
             }
             await _outbox.update(current['fingerprint'] as String, (
               saved,
@@ -1069,7 +1163,8 @@ class SyncErrorLogService {
         }
         await Future<void>.delayed(Duration.zero);
       }
-    } catch (_) {
+    } catch (error) {
+      _lastUploadError = writerFailure ?? sanitize(error.toString());
       _retryAfter = _now().add(const Duration(minutes: 1));
       // Never report logger failures back through itself or a business queue.
     }
