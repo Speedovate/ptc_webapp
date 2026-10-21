@@ -8,6 +8,7 @@ import 'package:webapp/models/offline_queue_item.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'package:crypto/crypto.dart';
 import 'package:webapp/services/booking_id_resolver.dart';
 import 'booking_resolution_gate.dart';
 
@@ -702,6 +703,187 @@ class BookingOfflineUploadQueueService {
     });
   }
 
+  /// Read-only inventory for an affected photo; never include image bytes.
+  Future<Map<String, dynamic>> _localPhotoInventory(
+    _PendingBookingUploadEntry entry,
+    String storageKey,
+    Map<String, dynamic> dependencyEvidence,
+  ) async {
+    final owner = storageKey.substring('$_storageKey::'.length);
+    final inventory = <String, dynamic>{
+      'schema': 'local_booking_photo_inventory_v1',
+      'observed_at': _now().toUtc().toIso8601String(),
+      'scope': 'device_local_storage',
+      'booking_id': entry.bookingId,
+      'photo_queue_entry_id': entry.id,
+      'photo_action_at': entry.createdAtIso,
+      'booking_actions': {
+        'read_status':
+            dependencyEvidence.containsKey('dependency_evidence_error')
+            ? 'error'
+            : dependencyEvidence.containsKey('pending_booking_actions')
+            ? 'complete'
+            : 'not_checked',
+        'matching_count':
+            (dependencyEvidence['pending_booking_actions'] as List?)?.length,
+        'entries': [
+          for (final action
+              in (dependencyEvidence['pending_booking_actions'] as List?) ??
+                  const [])
+            if (action is Map)
+              {
+                'operation': action['operation'],
+                'queue_entry_id': action['queue_entry_id'],
+                'action_at': action['action_at'],
+                'pending_payload_available':
+                    action['pending_payload_available'],
+                if (action['pending_payload'] is Map)
+                  'full_payload_in_report_at':
+                      'details.pending_booking_actions',
+                if (action['pending_payload'] is Map)
+                  'payload_keys': (action['pending_payload'] as Map).keys
+                      .map((key) => '$key')
+                      .toList(),
+              },
+        ],
+        if (dependencyEvidence['dependency_evidence_error'] != null)
+          'read_error': '${dependencyEvidence['dependency_evidence_error']}',
+      },
+      'cached_booking': {
+        'read_status':
+            dependencyEvidence.containsKey('cached_booking_evidence_error')
+            ? 'error'
+            : dependencyEvidence.containsKey('cached_booking_available')
+            ? 'complete'
+            : 'not_checked',
+        'available': dependencyEvidence['cached_booking_available'],
+        if (dependencyEvidence['cached_booking'] is Map)
+          'full_document_in_report_at': 'details.cached_booking',
+        if (dependencyEvidence['cached_booking'] is Map)
+          'document_keys': (dependencyEvidence['cached_booking'] as Map).keys
+              .map((key) => '$key')
+              .toList(),
+        if (dependencyEvidence['cached_booking_evidence_error'] != null)
+          'read_error':
+              '${dependencyEvidence['cached_booking_evidence_error']}',
+      },
+    };
+    Future<void> inspect(
+      String name,
+      String key,
+      Map<String, dynamic> Function(List<String>) summarize,
+    ) async {
+      try {
+        final rows = await _backend
+            .readStringList(key)
+            .timeout(_localStoreTimeout);
+        inventory[name] = {'read_status': 'complete', ...summarize(rows)};
+      } catch (error) {
+        inventory[name] = {
+          'read_status': 'error',
+          'read_error': error.toString(),
+        };
+      }
+    }
+
+    Map<String, dynamic> photoSummary(Map<String, dynamic> row) {
+      final encoded = row['bytes_base64'];
+      final result = <String, dynamic>{
+        'present': true,
+        'original_action_at': row['created_at'],
+        'file_name': row['file_name'],
+        'declared_size': row['size'],
+        'status_key': row['status_key'],
+        'field_key': row['field_key'],
+      };
+      if (encoded is! String || encoded.isEmpty) {
+        result['bytes_status'] = 'missing';
+        return result;
+      }
+      try {
+        final bytes = base64Decode(encoded);
+        result.addAll({
+          'bytes_status': 'decoded',
+          'byte_count': bytes.length,
+          'size_matches': bytes.length == row['size'],
+          'sha256': sha256.convert(bytes).toString(),
+        });
+      } catch (error) {
+        result['bytes_status'] = 'invalid_base64';
+        result['decode_error'] = error.toString();
+      }
+      return result;
+    }
+
+    await inspect('photo_queue', storageKey, (rows) {
+      final matches = <Map<String, dynamic>>[];
+      var malformedCount = 0;
+      for (final raw in rows) {
+        try {
+          final row = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+          if (row['id'] == entry.id) matches.add(row);
+        } catch (_) {
+          malformedCount++;
+        }
+      }
+      return {
+        'matching_count': matches.length,
+        'malformed_entry_count': malformedCount,
+        if (matches.length == 1) ...photoSummary(matches.single),
+      };
+    });
+    await inspect(
+      'original_evidence',
+      OrphanPhotoRecoveryService.originalEvidenceKey(owner, entry.id),
+      (rows) => {
+        'entry_count': rows.length,
+        if (rows.length == 1)
+          'photo': photoSummary(
+            Map<String, dynamic>.from(jsonDecode(rows.single) as Map),
+          ),
+      },
+    );
+    await inspect(
+      'recovery_archive',
+      OrphanPhotoRecoveryService.archiveKey(owner, entry.id),
+      (rows) {
+        if (rows.length != 1) return {'entry_count': rows.length};
+        final archive = Map<String, dynamic>.from(
+          jsonDecode(rows.single) as Map,
+        );
+        return {
+          'entry_count': 1,
+          'state': archive['state'],
+          'archived_at': archive['archived_at'],
+          'recovery_bundle_recorded': archive['unassigned_bundle'] is Map,
+          if (archive['unassigned_bundle'] is Map)
+            'image_backup': {
+              'format': 'application/json',
+              'contains_original_photo_bytes': true,
+              'storage_path':
+                  (archive['unassigned_bundle'] as Map)['storage_path'],
+              'sha256': (archive['unassigned_bundle'] as Map)['sha256'],
+              'size': (archive['unassigned_bundle'] as Map)['size'],
+              'recovery_receipt_path':
+                  'booking_photo_recoveries/${OrphanPhotoRecoveryService.receiptId(owner, entry.id)}',
+            },
+          'original_photo': archive['original_entry'] is Map
+              ? photoSummary(
+                  Map<String, dynamic>.from(archive['original_entry'] as Map),
+                )
+              : {'present': false},
+          'server_receipt_checked': false,
+        };
+      },
+    );
+    await inspect(
+      'recovery_index',
+      OrphanPhotoRecoveryService.unassignedIndexKey(owner),
+      (rows) => {'contains_photo_entry': rows.contains(entry.id)},
+    );
+    return inventory;
+  }
+
   /// Records why this entry stayed on the device. A wait is normal for a few
   /// cycles while the booking write lands, so only the first wait and a change
   /// of reason are written back. Once the same wait survives
@@ -802,6 +984,9 @@ class BookingOfflineUploadQueueService {
                         !(entry.diagnostics ?? '').contains(
                           '"result":"${identityLookup['result']}"',
                         )))) ||
+            !(entry.diagnostics ?? '').contains(
+              'local_booking_photo_inventory_v1',
+            ) ||
             (readError != null &&
                 !(entry.diagnostics ?? '').contains('marker_read_failure')));
     if (escalate || enrich) {
@@ -831,6 +1016,11 @@ class BookingOfflineUploadQueueService {
       } catch (error) {
         evidence['cached_booking_evidence_error'] = error.toString();
       }
+      evidence['local_inventory'] = await _localPhotoInventory(
+        entry,
+        storageKey,
+        evidence,
+      );
       diagnostics = await offlineErrorDiagnostics(
         error:
             readError ??

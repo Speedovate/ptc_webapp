@@ -221,6 +221,47 @@ void main() {
           expect(stillPending['bytes_base64'], row['bytes_base64']);
           expect(stillPending['created_at'], row['created_at']);
           expect(stillPending['last_error'], isNotEmpty);
+          if (scenario == 'success') {
+            final diagnostics = stillPending['error_diagnostics'] as String;
+            final contextText = RegExp(
+              r'Context:\n([^\n]+)\nRaw error:',
+            ).firstMatch(diagnostics)?.group(1);
+            expect(contextText, isNotNull);
+            final context = jsonDecode(contextText!) as Map<String, dynamic>;
+            final inventory =
+                context['local_inventory'] as Map<String, dynamic>;
+            expect(inventory['schema'], 'local_booking_photo_inventory_v1');
+            expect((inventory['booking_actions'] as Map)['matching_count'], 0);
+            expect((inventory['cached_booking'] as Map)['available'], false);
+            final localPhoto = inventory['photo_queue'] as Map;
+            expect(localPhoto['matching_count'], 1);
+            expect(localPhoto['bytes_status'], 'decoded');
+            expect(localPhoto['byte_count'], p['size']);
+            expect(localPhoto['size_matches'], true);
+            expect(localPhoto['sha256'], isNotEmpty);
+            expect((inventory['original_evidence'] as Map)['entry_count'], 1);
+            expect((inventory['recovery_archive'] as Map)['entry_count'], 1);
+            expect(
+              (inventory['recovery_archive'] as Map)['state'],
+              'preserved_unassigned',
+            );
+            final imageBackup =
+                (inventory['recovery_archive'] as Map)['image_backup'] as Map;
+            expect(imageBackup['contains_original_photo_bytes'], true);
+            expect(
+              imageBackup['storage_path'],
+              startsWith('booking_photo_recoveries/8/$id/'),
+            );
+            expect(
+              imageBackup['recovery_receipt_path'],
+              'booking_photo_recoveries/8_$id',
+            );
+            expect(
+              (inventory['recovery_index'] as Map)['contains_photo_entry'],
+              true,
+            );
+            expect(diagnostics, isNot(contains(row['bytes_base64'])));
+          }
           expect(queue.currentStatus.pendingCount, 1);
           expect(queue.currentStatus.failedCount, 1);
           expect(photos.bundles, scenario == 'bad upload evidence' ? 2 : 1);

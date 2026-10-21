@@ -814,6 +814,7 @@ class SyncErrorLogService {
                           'cached_booking_evidence_error',
                           'marker_read_failure',
                           'identity_lookup',
+                          'local_inventory',
                         }.contains(entry.key) &&
                         jsonEncode(storedDetails[entry.key]) !=
                             jsonEncode(entry.value)))

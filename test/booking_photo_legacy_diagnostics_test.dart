@@ -10,6 +10,83 @@ import 'support/merge_aware_firestore.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  test('photo log retains the actual pending booking action payload', () async {
+    final backend = MemoryBackend();
+    const bookingId = 'offline_booking_8_9_1_1791850210240000';
+    const photoId = 'booking_upload_1791850220223000_21a9908';
+    const photoKey = 'booking_pending_upload_queue_v1::signed_out';
+    backend.data['offline_mutation_queue_v1::signed_out'] = [
+      jsonEncode({
+        'id': 'booking_create_1791850220275000_2a76ed4a',
+        'kind': 'bookingCreate',
+        'collection_key': 'bookings',
+        'target_id': bookingId,
+        'payload': {
+          'id': bookingId,
+          'client_id': '9',
+          'status_outputs': {
+            'book__1791850210240000': {
+              'fields': {'representative_name': 'Preserved booking data'},
+            },
+          },
+        },
+        'created_at': '2026-10-13T00:10:20.275Z',
+        'retry_count': 0,
+      }),
+    ];
+    backend.data[photoKey] = [
+      jsonEncode({
+        'id': photoId,
+        'booking_id': bookingId,
+        'status_key': 'book__1791850210240000',
+        'field_key': 'waybill_photo',
+        'file_name': 'waybill.jpg',
+        'mime_type': 'image/jpeg',
+        'bytes_base64': 'AQID',
+        'size': 3,
+        'created_at': '2026-10-13T00:10:15.316Z',
+        'waiting_for_commit': true,
+        'wait_count': 5,
+        'wait_reason': 'temporary_booking_id',
+        'last_error': 'Still waiting for booking',
+      }),
+    ];
+    final mutations = OfflineMutationQueueService(
+      backend: backend,
+      isOnline: () => false,
+    );
+    addTearDown(mutations.dispose);
+    final service = BookingOfflineUploadQueueService(
+      backend: backend,
+      mutationQueue: mutations,
+      flushMutations: () async {},
+    );
+    await service.flushPendingUploads();
+    final retained = jsonDecode(backend.data[photoKey]!.single) as Map;
+    final diagnostics = retained['error_diagnostics'] as String;
+    final contextText = RegExp(
+      r'Context:\n([^\n]+)\nRaw error:',
+    ).firstMatch(diagnostics)?.group(1);
+    expect(contextText, isNotNull);
+    final context = jsonDecode(contextText!) as Map<String, dynamic>;
+    final action = (context['pending_booking_actions'] as List).single as Map;
+    expect(action['pending_payload']['client_id'], '9');
+    expect(
+      action['pending_payload']['status_outputs']['book__1791850210240000']['fields']['representative_name'],
+      'Preserved booking data',
+    );
+    final inventory = context['local_inventory'] as Map;
+    expect((inventory['booking_actions'] as Map)['matching_count'], 1);
+    expect(
+      ((inventory['booking_actions'] as Map)['entries'] as List)
+          .single['full_payload_in_report_at'],
+      'details.pending_booking_actions',
+    );
+    expect((inventory['photo_queue'] as Map)['sha256'], isNotEmpty);
+    expect(diagnostics, isNot(contains('AQID')));
+    expect(retained['bytes_base64'], 'AQID');
+  });
+
   test(
     'legacy missing delivery action enriches diagnostics without inventing history or deleting photo',
     () async {
