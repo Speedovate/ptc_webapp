@@ -33,6 +33,40 @@ class _StalledReadFirestore extends FakeFirebaseFirestore {
   }
 }
 
+/// The server responds after the old 12-second deadline with an empty list.
+class _DelayedEmptyReadFirestore extends FakeFirebaseFirestore {
+  @override
+  CollectionReference<Map<String, dynamic>> collection(String path) {
+    final ref = super.collection(path);
+    return path == 'sync_error_logs' ? _DelayedCollection(ref) : ref;
+  }
+}
+
+class _DelayedCollection extends _StalledOrderedCollection {
+  _DelayedCollection(super.ref);
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.memberName == #where) {
+      return _DelayedQuery(
+        ref.where(
+          invocation.positionalArguments.first,
+          isEqualTo: invocation.namedArguments[#isEqualTo],
+        ),
+      );
+    }
+    return super.noSuchMethod(invocation);
+  }
+}
+
+class _DelayedQuery extends _StallsOnOrderQuery {
+  _DelayedQuery(super.ref);
+  @override
+  Future<QuerySnapshot<Map<String, dynamic>>> get([GetOptions? options]) async {
+    await Future<void>.delayed(const Duration(seconds: 15));
+    return ref.get(options);
+  }
+}
+
 class _StalledOrderedCollection
     implements CollectionReference<Map<String, dynamic>> {
   _StalledOrderedCollection(this.ref);
@@ -329,8 +363,12 @@ void main() {
       expect(copied, contains('bookingPhotoUpload'));
       final data = jsonDecode(copied!);
       if (removed) {
-        expect(data['server_reports_verified'], false);
+        expect(data['server_reports_verified'], true);
+        expect(data['server_report_count'], 0);
+        expect(data['displayed_snapshot_stale'], true);
+        expect(data['displayed_snapshot_loaded_at'], isNotNull);
         expect(data['displayed_reports'], hasLength(1));
+        expect(find.text('No error logs.'), findsOneWidget);
       } else {
         expect(data, hasLength(1));
         expect(
@@ -489,12 +527,12 @@ void main() {
         ),
       ),
     );
-    await tester.pump(const Duration(seconds: 22));
+    await tester.pump(const Duration(seconds: 46));
     await tester.pumpAndSettle();
 
     expect(find.text('Retry'), findsOneWidget);
     expect(
-      find.textContaining('TimeoutException'),
+      find.textContaining('Firestore did not answer within 45 seconds'),
       findsOneWidget,
       reason: 'the real failure must reach the admin, not a generic message',
     );
@@ -520,6 +558,28 @@ void main() {
     expect(find.text('No error logs.'), findsOneWidget);
     expect(find.byType(AdminListItemCard), findsOneWidget);
     expect(find.byTooltip('Refresh'), findsNothing);
+    expect(find.text('Retry'), findsNothing);
+  });
+
+  testWidgets('late empty server response loads without a manual retry', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AdminErrorLogsView(
+            user: const UserModel(role: 'admin'),
+            firestore: _DelayedEmptyReadFirestore(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 13));
+    expect(find.text('Retry'), findsNothing);
+    expect(find.text('No error logs.'), findsNothing);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(find.text('No error logs.'), findsOneWidget);
     expect(find.text('Retry'), findsNothing);
   });
   for (final width in [390.0, 1400.0]) {

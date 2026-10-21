@@ -48,8 +48,12 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
   bool _loading = false;
   bool _hasMore = true;
   String? _error;
+  DateTime? _loadedAt;
 
   bool _copying = false;
+  // A first server read can include connection setup on mobile networks.
+  // Keep the page loading while the same request is still making progress.
+  static const _initialServerReadTimeout = Duration(seconds: 45);
   bool get _allowed => widget.user.role?.trim().toLowerCase() == 'admin';
   FirebaseFirestore get _db => widget.firestore ?? FirebaseFirestore.instance;
 
@@ -102,7 +106,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
           .collection('sync_error_logs')
           .where('attention_required', isEqualTo: true)
           .get(const GetOptions(source: Source.server))
-          .timeout(const Duration(seconds: 12));
+          .timeout(_initialServerReadTimeout);
       if (!mounted || !_allowed) return;
       DateTime failedAt(Map<String, dynamic> row) {
         final value = row['last_failed_at'];
@@ -180,6 +184,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
         }
         _users.addEntries(names);
         _hasMore = false;
+        _loadedAt = DateTime.now();
       });
       final notify = widget.onReportsLoaded;
       notify?.call(rows.length);
@@ -187,7 +192,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
       if (mounted) {
         setState(
           () => _error = error is TimeoutException
-              ? 'Unable to load error logs. Please retry. (${error.runtimeType})'
+              ? 'Firestore did not answer within 45 seconds. Check the connection and retry.'
               : '$error',
         );
       }
@@ -329,6 +334,7 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
       'document_id': id,
       'source': 'admin_error_logs.dart::_copyFirestoreErrors',
       'server_reports_verified': false,
+      'displayed_snapshot_loaded_at': _loadedAt?.toUtc().toIso8601String(),
       'reason': reason,
       if (error != null) 'fetch_error': '$error',
       if (stack != null) 'fetch_stack_trace': '$stack',
@@ -384,13 +390,27 @@ class _AdminErrorLogsViewState extends State<AdminErrorLogsView> {
           cursor = page.docs.last;
           await Future<void>.delayed(Duration.zero);
         }
-        result = records.isEmpty
-            ? fallback(
-                'No matching active reports returned by Firestore; displayed reports may have been resolved or removed.',
-              )
-            : records;
+        if (records.isEmpty) {
+          result = {
+            ...fallback(
+              'Firestore returned no active reports for this selection. The displayed snapshot is older than this server read.',
+            ),
+            'server_reports_verified': true,
+            'server_report_count': 0,
+            'displayed_snapshot_stale': displayed.isNotEmpty,
+          };
+        } else {
+          result = records;
+        }
       }
-      if (mounted && _allowed) await _copy(result);
+      if (mounted && _allowed) {
+        await _copy(result);
+        if (result is Map && result['displayed_snapshot_stale'] == true) {
+          // Refresh the entire list from the server. Keep the old snapshot only
+          // in the copied diagnostic; the UI must not show it as active.
+          unawaited(_load(refresh: true));
+        }
+      }
     } catch (error, stack) {
       if (mounted && _allowed) {
         await _copy(
