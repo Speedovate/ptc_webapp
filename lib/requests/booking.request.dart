@@ -149,6 +149,10 @@ class BookingRequest implements BookingRepository {
   @override
   Future<void> initialize() async {
     if (_didKickOffBackgroundQueueInitialization) {
+      // The app may have initialized before sign-in. Recheck the current
+      // account's staged sources when this request is used after sign-in or
+      // after a transient local photo write failure.
+      unawaited(resumeStagedOfflineBookingCreates());
       _log(() => 'initialize skip already-started');
       return;
     }
@@ -166,7 +170,76 @@ class BookingRequest implements BookingRepository {
           .then((_) {})
           .catchError((error, stackTrace) {}),
     );
+    // Resume a source-first offline create interrupted between the booking and
+    // photo queue writes. The staged source cannot replay until this succeeds.
+    unawaited(resumeStagedOfflineBookingCreates());
     _log(() => 'initialize done');
+  }
+
+  /// Completes any source-first booking saves interrupted before photo staging.
+  Future<void> resumeStagedOfflineBookingCreates() async {
+    try {
+      await _offlineMutationQueueService.withAccountScope(() async {
+        final staged = await _offlineMutationQueueService
+            .readStagedOfflineBookingCreates();
+        for (final source in staged) {
+          try {
+            final id = source['provisional_id']?.toString() ?? '';
+            final key = source['submission_key']?.toString() ?? '';
+            final document = Map<String, dynamic>.from(
+              source['document'] as Map,
+            );
+            if (!BookingIdResolver.isTemporary(id) ||
+                key.isEmpty ||
+                document['id'] != id ||
+                document['submission_key'] != key) {
+              throw StateError(
+                'A staged booking has inconsistent identity. Its local source remains saved.',
+              );
+            }
+            final outputs = document['status_outputs'];
+            document['status_outputs'] = await _persistPhotoFields(
+              outputs is Map ? Map<String, dynamic>.from(outputs) : null,
+              bookingId: id,
+            );
+            await _offlineMutationQueueService.queueOfflineBookingCreate(
+              provisionalId: id,
+              submissionKey: key,
+              document: document,
+              onlyIfStaged: true,
+            );
+            unawaited(
+              _cache
+                  .upsertDocument(
+                    resourceKey: _bookingsResourceKey,
+                    document: {...document, 'local_sync_status': 'queued'},
+                  )
+                  .catchError((_) {}),
+            );
+          } catch (error, stack) {
+            // One malformed or temporarily unwriteable booking must not keep
+            // other staged bookings from resuming. Its source stays queued.
+            unawaited(
+              SyncErrorLogService.instance.report(
+                error,
+                stack,
+                source: 'booking.request.dart',
+                operation: 'resumeStagedOfflineBookingCreate',
+              ),
+            );
+          }
+        }
+      });
+    } catch (error, stack) {
+      unawaited(
+        SyncErrorLogService.instance.report(
+          error,
+          stack,
+          source: 'booking.request.dart',
+          operation: 'resumeStagedOfflineBookingCreate',
+        ),
+      );
+    }
   }
 
   void _ensureBookingsCacheSync() {
@@ -586,22 +659,35 @@ class BookingRequest implements BookingRepository {
             ).timeout(const Duration(seconds: 5), onTimeout: () => null)
           : await _getExistingBookingData(nextId);
       final now = DateTime.now();
-      final persistedStatusOutputs = await _persistPhotoFields(
-        booking.statusOutputs,
-        bookingId: nextId,
-      );
-      _log(() => 'save media ready id=$nextId');
       var saved = booking.copyWith(
         id: nextId,
         createdAt: booking.createdAt ?? now,
         billingStatus: _normalizedBillingStatus(booking.billingStatus),
-        statusOutputs: persistedStatusOutputs,
+        statusOutputs: booking.statusOutputs,
         updatedAt: booking.pendingActionAt ?? now,
         pendingActionAt: null,
         pendingBaseUpdatedAt: null,
         localSyncStatus: queueRemoteWrite ? 'queued' : null,
         submissionKey: submissionKey,
       );
+      if (queueRemoteWrite &&
+          isCreatingBooking &&
+          BookingIdResolver.isTemporary(nextId)) {
+        // This single durable queue entry contains the complete source,
+        // including inline media. A failed photo write can now be retried
+        // without leaving a photo as the only surviving action.
+        await _offlineMutationQueueService.stageOfflineBookingCreate(
+          provisionalId: nextId,
+          submissionKey: submissionKey!,
+          document: _toFirestoreMap(saved),
+        );
+      }
+      final persistedStatusOutputs = await _persistPhotoFields(
+        booking.statusOutputs,
+        bookingId: nextId,
+      );
+      saved = saved.copyWith(statusOutputs: persistedStatusOutputs);
+      _log(() => 'save media ready id=$nextId');
       var document = _toFirestoreMap(saved);
       var cacheDocument = _toCacheDocument(saved);
       final baseUpdatedAtIso = wasTemporary

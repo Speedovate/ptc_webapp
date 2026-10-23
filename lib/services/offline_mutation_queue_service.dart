@@ -14,6 +14,7 @@ import 'package:webapp/services/booking_remote_document.dart';
 import 'package:webapp/services/booking_original_create_recovery.dart';
 import 'package:webapp/services/transient_sync_failure.dart';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:math';
 import 'package:webapp/services/offline_reference_mapper.dart';
 import 'package:webapp/services/booking_id_resolver.dart';
@@ -992,6 +993,11 @@ class OfflineMutationQueueService {
       );
       if (queuedBookingCreateIndex >= 0) {
         final queuedCreate = entries[queuedBookingCreateIndex];
+        if (queuedCreate.mediaStagingPending) {
+          throw StateError(
+            'The offline booking is still saving its photos. Its original submission remains saved; retry the edit after staging completes.',
+          );
+        }
         entries[queuedBookingCreateIndex] = queuedCreate.copyWith(
           payload: Map<String, dynamic>.from(document)
             ..['id'] = queuedCreate.targetId
@@ -1134,10 +1140,103 @@ class OfflineMutationQueueService {
 
   /// Queues a new booking without reserving a numeric ID while offline.
   /// The reconnect transaction assigns the next free ID atomically.
+  /// Persist the complete source before staging any photos. This entry is
+  /// deliberately ineligible for replay until its photo markers are saved.
+  Future<void> stageOfflineBookingCreate({
+    required String provisionalId,
+    required String submissionKey,
+    required Map<String, dynamic> document,
+  }) async {
+    await _localStorageOperation('booking source initialize', initialize);
+    return _serializeQueueMutation(() async {
+      final entries = await _localStorageOperation(
+        'booking source read',
+        _readEntries,
+      );
+      final existing = entries
+          .where(
+            (entry) =>
+                entry.kind == _OfflineMutationKind.bookingCreate &&
+                entry.payload['submission_key'] == submissionKey,
+          )
+          .firstOrNull;
+      if (existing != null) {
+        if (existing.targetId != provisionalId) {
+          throw StateError(
+            'The saved booking identity changed. Keep the original submission for review.',
+          );
+        }
+        return;
+      }
+      entries.add(
+        _OfflineMutationEntry(
+          id: _nextEntryId('booking_create'),
+          kind: _OfflineMutationKind.bookingCreate,
+          targetId: provisionalId,
+          collectionKey: 'bookings',
+          payload:
+              Map<String, dynamic>.from(
+                  jsonDecode(
+                        jsonEncode(
+                          document,
+                          toEncodable: (value) => value is Uint8List
+                              ? 'data:application/octet-stream;base64,${base64Encode(value)}'
+                              : value,
+                        ),
+                      )
+                      as Map,
+                )
+                ..['id'] = provisionalId
+                ..['submission_key'] = submissionKey,
+          createdAtIso: DateTime.now().toUtc().toIso8601String(),
+          retryCount: 0,
+          mediaStagingPending: true,
+        ),
+      );
+      await _localStorageOperation(
+        'booking source write entries=${entries.length}',
+        () => _writeEntries(entries),
+      );
+      final confirmed =
+          (await _readEntries())
+              .where(
+                (entry) =>
+                    entry.kind == _OfflineMutationKind.bookingCreate &&
+                    entry.targetId == provisionalId &&
+                    entry.mediaStagingPending &&
+                    entry.payload['submission_key'] == submissionKey,
+              )
+              .length ==
+          1;
+      if (!confirmed) {
+        throw StateError(
+          'The complete offline booking source could not be read back. Keep the form open.',
+        );
+      }
+      _setStatus(_snapshotForEntries(entries));
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> readStagedOfflineBookingCreates() async {
+    await initialize();
+    final entries = await _readEntries();
+    return [
+      for (final entry in entries)
+        if (entry.kind == _OfflineMutationKind.bookingCreate &&
+            entry.mediaStagingPending)
+          {
+            'provisional_id': entry.targetId,
+            'submission_key': entry.payload['submission_key'],
+            'document': Map<String, dynamic>.from(entry.payload),
+          },
+    ];
+  }
+
   Future<void> queueOfflineBookingCreate({
     required String provisionalId,
     required String submissionKey,
     required Map<String, dynamic> document,
+    bool onlyIfStaged = false,
   }) async {
     _log('booking create queue start id=$provisionalId');
     await _localStorageOperation('booking create initialize', initialize);
@@ -1146,24 +1245,44 @@ class OfflineMutationQueueService {
         'booking create read',
         _readEntries,
       );
-      entries.removeWhere(
+      final existingIndex = entries.indexWhere(
         (entry) =>
             entry.kind == _OfflineMutationKind.bookingCreate &&
             entry.payload['submission_key']?.toString() == submissionKey,
       );
-      entries.add(
-        _OfflineMutationEntry(
-          id: _nextEntryId('booking_create'),
-          kind: _OfflineMutationKind.bookingCreate,
-          targetId: provisionalId,
-          collectionKey: 'bookings',
-          payload: Map<String, dynamic>.from(document)
-            ..['id'] = provisionalId
-            ..['submission_key'] = submissionKey,
-          createdAtIso: DateTime.now().toUtc().toIso8601String(),
-          retryCount: 0,
-        ),
-      );
+      if (onlyIfStaged &&
+          (existingIndex < 0 || !entries[existingIndex].mediaStagingPending)) {
+        return;
+      }
+      if (existingIndex >= 0 &&
+          entries[existingIndex].targetId != provisionalId) {
+        throw StateError(
+          'The saved booking identity changed. Keep the original submission for review.',
+        );
+      }
+      final finalized = existingIndex >= 0
+          ? entries[existingIndex].copyWith(
+              payload: Map<String, dynamic>.from(document)
+                ..['id'] = provisionalId
+                ..['submission_key'] = submissionKey,
+              mediaStagingPending: false,
+            )
+          : _OfflineMutationEntry(
+              id: _nextEntryId('booking_create'),
+              kind: _OfflineMutationKind.bookingCreate,
+              targetId: provisionalId,
+              collectionKey: 'bookings',
+              payload: Map<String, dynamic>.from(document)
+                ..['id'] = provisionalId
+                ..['submission_key'] = submissionKey,
+              createdAtIso: DateTime.now().toUtc().toIso8601String(),
+              retryCount: 0,
+            );
+      if (existingIndex >= 0) {
+        entries[existingIndex] = finalized;
+      } else {
+        entries.add(finalized);
+      }
       await _localStorageOperation(
         'booking create write entries=${entries.length}',
         () => _writeEntries(entries),
@@ -3538,7 +3657,9 @@ class OfflineMutationQueueService {
       }
       return recovered;
     });
-    final activeEntries = entries.where((entry) => !entry.isBlocked).toList();
+    final activeEntries = entries
+        .where((entry) => !entry.isBlocked && !entry.mediaStagingPending)
+        .toList();
     final aliases = await _readResolvedIdAliases(storageKey);
     final linkedCreates = _linkedChassisCreates(activeEntries);
     final companions = linkedCreates.values.map((entry) => entry.id).toSet();
@@ -3547,8 +3668,8 @@ class OfflineMutationQueueService {
       _setStatusForGeneration(
         generation,
         _currentStatus.copyWith(
-          pendingCount: activeEntries.length,
-          failedCount: entries.length - activeEntries.length,
+          pendingCount: entries.where((entry) => !entry.isBlocked).length,
+          failedCount: entries.where((entry) => entry.isBlocked).length,
           isSyncing: activeEntries.isNotEmpty,
           processedInBatch: 0,
           totalInBatch: activeEntries.length,
@@ -3795,7 +3916,7 @@ class OfflineMutationQueueService {
           } else {
             merged.add(item);
           }
-        } else if (original.isBlocked) {
+        } else if (original.isBlocked || original.mediaStagingPending) {
           merged.add(original);
         } else if (outcomes.containsKey(item.id)) {
           merged.add(outcomes[item.id]!);
@@ -4038,6 +4159,7 @@ class _OfflineMutationEntry {
     required this.createdAtIso,
     required this.retryCount,
     this.isBlocked = false,
+    this.mediaStagingPending = false,
     this.boxedErrorRechecked = false,
     this.bookingConflictRechecked = false,
     this.bookingContinuationRechecked = false,
@@ -4081,6 +4203,10 @@ class _OfflineMutationEntry {
   final String createdAtIso;
   final int retryCount;
   final bool isBlocked;
+
+  /// The complete offline source is durable, but photo markers are still being
+  /// staged. Never send inline media or an incomplete booking to Firestore.
+  final bool mediaStagingPending;
   final bool boxedErrorRechecked;
   final bool bookingConflictRechecked;
   final bool bookingContinuationRechecked;
@@ -4118,6 +4244,7 @@ class _OfflineMutationEntry {
     Map<String, dynamic>? payload,
     int? retryCount,
     bool? isBlocked,
+    bool? mediaStagingPending,
     bool? boxedErrorRechecked,
     bool? bookingConflictRechecked,
     bool? bookingContinuationRechecked,
@@ -4159,6 +4286,7 @@ class _OfflineMutationEntry {
       createdAtIso: createdAtIso,
       retryCount: retryCount ?? this.retryCount,
       isBlocked: isBlocked ?? this.isBlocked,
+      mediaStagingPending: mediaStagingPending ?? this.mediaStagingPending,
       boxedErrorRechecked: boxedErrorRechecked ?? this.boxedErrorRechecked,
       bookingConflictRechecked:
           bookingConflictRechecked ?? this.bookingConflictRechecked,
@@ -4227,6 +4355,7 @@ class _OfflineMutationEntry {
       'created_at': createdAtIso,
       'retry_count': retryCount,
       'is_blocked': isBlocked,
+      if (mediaStagingPending) 'media_staging_pending': true,
       'boxed_error_rechecked': boxedErrorRechecked,
       'booking_conflict_rechecked': bookingConflictRechecked,
       'booking_continuation_rechecked': bookingContinuationRechecked,
@@ -4278,6 +4407,7 @@ class _OfflineMutationEntry {
           ? (map['retry_count'] as num).toInt()
           : int.tryParse(map['retry_count']?.toString() ?? '') ?? 0,
       isBlocked: map['is_blocked'] as bool? ?? false,
+      mediaStagingPending: map['media_staging_pending'] == true,
       boxedErrorRechecked: map['boxed_error_rechecked'] == true,
       bookingConflictRechecked: map['booking_conflict_rechecked'] == true,
       bookingContinuationRechecked:

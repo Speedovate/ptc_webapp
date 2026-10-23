@@ -239,6 +239,11 @@ Uint8List? decodePhotoBytes(dynamic value, {String key = 'bytes'}) {
   if (value is List<int>) {
     return Uint8List.fromList(value);
   }
+  // Older staged sources may restore typed bytes as List<dynamic>.
+  if (value is List &&
+      value.every((byte) => byte is int && byte >= 0 && byte <= 255)) {
+    return Uint8List.fromList(value.cast<int>());
+  }
   final mapValue = value is Map<String, dynamic>
       ? value
       : value is Map
@@ -250,6 +255,15 @@ Uint8List? decodePhotoBytes(dynamic value, {String key = 'bytes'}) {
   }
   if (sourceValue is List<int>) {
     return Uint8List.fromList(sourceValue);
+  }
+  if (sourceValue is List &&
+      sourceValue.every((byte) => byte is int && byte >= 0 && byte <= 255)) {
+    return Uint8List.fromList(sourceValue.cast<int>());
+  }
+  // New staged sources store a compact data URL inside the original bytes
+  // field so the durable source does not triple in size after JSON encoding.
+  if (sourceValue is String && sourceValue.startsWith('data:')) {
+    return decodePhotoBytes(sourceValue);
   }
   final downloadUrl = mapValue?['download_url']?.toString().trim();
   if (downloadUrl != null && downloadUrl.startsWith('data:')) {

@@ -49,20 +49,39 @@ class _IndexedDbBookingStorageBackend implements BookingStorageBackend {
       final db = await _openDatabase() as dynamic;
       final transaction = db.transaction(_storeName, 'readwrite');
       final store = transaction.objectStore(_storeName);
-      await store.put(values, key);
-      // Request success means the browser accepted the write. Waiting for
-      // transaction completion can stall the UI behind an unrelated IDB
-      // transaction; the localStorage mirror already preserves this queue.
+      // A successful request can still belong to an aborted transaction.
+      // Without a localStorage mirror, only a completed transaction is proof
+      // that the queue source was accepted by IndexedDB.
+      await Future.wait<Object?>([
+        store.put(values, key) as Future<dynamic>,
+        transaction.completed as Future<dynamic>,
+      ], eagerError: true);
     });
     if (mirrorWritten) {
       unawaited(indexedDbWrite.catchError((_) {}));
       return;
     }
     await indexedDbWrite;
+    // A quota-exhausted localStorage may still hold an older mirror. Remove it
+    // only after the new IndexedDB transaction commits, or reads after a
+    // restart would return the stale queue and hide the new booking source.
+    try {
+      html.window.localStorage.remove('$_mirrorPrefix$key');
+      if (html.window.localStorage.containsKey('$_mirrorPrefix$key')) {
+        throw StateError('A stale local booking mirror could not be removed.');
+      }
+    } catch (_) {
+      throw StateError('Local booking storage could not verify the new write.');
+    }
   }
 
   List<String>? _readMirror(String key) {
-    final raw = html.window.localStorage['$_mirrorPrefix$key'];
+    String? raw;
+    try {
+      raw = html.window.localStorage['$_mirrorPrefix$key'];
+    } catch (_) {
+      return null;
+    }
     if (raw == null || raw.isEmpty) {
       return null;
     }

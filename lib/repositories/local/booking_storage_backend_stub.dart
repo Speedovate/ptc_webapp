@@ -22,6 +22,8 @@ class _SharedPreferencesBookingStorageBackend implements BookingStorageBackend {
   @override
   Future<void> writeStringList(String key, List<String> values) async {
     await initialize();
-    await _prefs!.setStringList(key, values);
+    if (!await _prefs!.setStringList(key, values)) {
+      throw StateError('Local booking storage did not accept the write.');
+    }
   }
 }
