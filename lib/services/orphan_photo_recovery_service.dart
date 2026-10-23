@@ -64,8 +64,9 @@ class OrphanPhotoRecoveryService {
   static String unassignedIndexKey(String owner) =>
       'booking_unassigned_photo_recovery_v1::$owner';
 
-  /// Synchronize a proven orphan into durable recovery storage automatically.
-  /// Preservation never completes the booking operation or clears its queue.
+  /// Retire a proven orphan only after its original bytes and timestamp are
+  /// archived locally and in a verified server recovery receipt. This does not
+  /// create or mark a booking as synced.
   Future<void> archiveUnassigned({
     required String owner,
     required String entryId,
@@ -207,10 +208,8 @@ class OrphanPhotoRecoveryService {
         'booking_id': null,
       });
     });
-    archive['state'] = 'preserved_unassigned';
-    await _saveArchive(key, archive);
-    // Keep a recovery index as well as the active queue so older releases can
-    // be repaired and late booking identities can be associated automatically.
+    // The index keeps a late exact booking identity discoverable even after
+    // the no-longer-actionable upload is removed from the active queue.
     final index = await backend.readStringList(unassignedIndexKey(owner));
     if (!index.contains(entryId)) {
       await backend.writeStringList(unassignedIndexKey(owner), [
@@ -218,12 +217,35 @@ class OrphanPhotoRecoveryService {
         entryId,
       ]);
     }
-    // A durable backup is not a synced booking. Keep the active operation and
-    // its error visible until an actual booking attachment is confirmed.
+    archive['state'] = 'retired_unassigned';
+    await _saveArchive(key, archive);
+    final active = await backend.readStringList(queueKey(owner));
+    final retained = <String>[];
+    var removed = 0;
+    for (final raw in active) {
+      final current = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      if (current['id'] != entryId) {
+        retained.add(raw);
+        continue;
+      }
+      if (_sourceHash(current) != digest) {
+        throw StateError('The queued photo changed after its backup.');
+      }
+      removed++;
+    }
+    if (removed != 1) {
+      throw StateError('The original photo queue changed during archival.');
+    }
+    await backend.writeStringList(queueKey(owner), retained);
+    if ((await backend.readStringList(
+      queueKey(owner),
+    )).any((raw) => (jsonDecode(raw) as Map)['id'] == entryId)) {
+      throw StateError('The archived photo action could not be retired.');
+    }
   });
 
-  /// Repair releases which removed preserved-but-unattached photos from the
-  /// active queue. Restore the exact archived record without changing its dates.
+  /// Restore only legacy archives that still represent active pending work.
+  /// New retired archives keep their bytes and index without a queued action.
   Future<void> restoreUnassignedPending(String owner) =>
       withQueueLock(() async {
         await requireOwner(owner);
@@ -355,7 +377,7 @@ class OrphanPhotoRecoveryService {
     required String owner,
     required String entryId,
   }) async {
-    final row = await _source(owner, entryId);
+    final row = await _source(owner, entryId, allowRetired: true);
     final bytes = base64Decode('${row['bytes_base64']}');
     if (bytes.isEmpty || bytes.length != row['size']) {
       throw StateError(
@@ -369,13 +391,29 @@ class OrphanPhotoRecoveryService {
     );
   }
 
-  Future<Map<String, dynamic>> _source(String owner, String id) async {
+  Future<Map<String, dynamic>> _source(
+    String owner,
+    String id, {
+    bool allowRetired = false,
+  }) async {
     await requireOwner(owner);
     await backend.initialize();
     final matches = (await backend.readStringList(queueKey(owner)))
         .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
         .where((row) => row['id'] == id)
         .toList();
+    if (matches.isEmpty && allowRetired) {
+      final saved = await backend.readStringList(archiveKey(owner, id));
+      if (saved.length == 1) {
+        final archive = Map<String, dynamic>.from(jsonDecode(saved.single));
+        if (archive['state'] == 'retired_unassigned' &&
+            archive['original_entry'] is Map) {
+          matches.add(
+            Map<String, dynamic>.from(archive['original_entry'] as Map),
+          );
+        }
+      }
+    }
     if (matches.length != 1) {
       throw StateError('This saved photo changed. Reopen the queue.');
     }
@@ -470,7 +508,7 @@ class OrphanPhotoRecoveryService {
     if (!BookingIdResolver.isNumeric(bookingId)) {
       throw StateError('Enter an existing booking number.');
     }
-    final row = await _source(owner, entryId);
+    final row = await _source(owner, entryId, allowRetired: true);
     await _verifyOriginalMissing(row);
     final previousReceipt = await firestore
         .collection('booking_photo_recoveries')
@@ -523,7 +561,7 @@ class OrphanPhotoRecoveryService {
   }
 
   Future<void> apply(OrphanPhotoReview review) => withQueueLock(() async {
-    final row = await _source(review.owner, review.entryId);
+    final row = await _source(review.owner, review.entryId, allowRetired: true);
     if (_sourceHash(row) != review._sourceDigest) {
       throw StateError('The saved photo changed. Review it again.');
     }

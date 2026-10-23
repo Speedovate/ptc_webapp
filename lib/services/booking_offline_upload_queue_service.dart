@@ -1284,14 +1284,10 @@ class BookingOfflineUploadQueueService {
               await _photoRecoveryService(
                 automatic: true,
               ).archiveUnassigned(owner: owner, entryId: entry.id);
-              final wait = await _noteWait(
-                entry,
-                _PhotoWaitReason.temporaryBookingId,
-                storageKey: storageKey,
-                identityLookup: identityLookup,
-              );
-              remaining.add(wait.entry);
-              mutated = mutated || wait.persisted;
+              // The source was moved to a verified recovery archive. It is
+              // no longer an upload action, although no booking was synced.
+              confirmedSuccesses.add(entry.id);
+              mutated = true;
               continue;
             }
             if (cached.length == 1 &&

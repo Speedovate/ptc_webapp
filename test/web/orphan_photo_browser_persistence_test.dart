@@ -40,7 +40,7 @@ void main() {
     ('1000142075.jpg', 72531),
   ]) {
     test(
-      '${photo.$1}: failed upload and +55 migration survive reopening browser store',
+      '${photo.$1}: failed upload retries, then verified archive retires action across reopening',
       () async {
         const owner = '8';
         final stamp = '${DateTime.now().microsecondsSinceEpoch}';
@@ -102,7 +102,7 @@ void main() {
         expect(jsonDecode((await reopened.readStringList(key)).single), row);
         photos.fail = false;
         await recovery(reopened).archiveUnassigned(owner: owner, entryId: id);
-        expect(jsonDecode((await reopened.readStringList(key)).single), row);
+        expect(await reopened.readStringList(key), isEmpty);
         expect((await db.collection('bookings').get()).docs, isEmpty);
         final receipt =
             (await db
@@ -114,20 +114,20 @@ void main() {
         expect(receipt['booking_id'], isNull);
         expect(receipt['original_action_at'], row['created_at']);
 
-        // Simulate +55 removing the active entry after preservation. Reopening
-        // the storage/service must restore the exact original, once only.
-        await reopened.writeStringList(key, []);
+        // Reopening must not recreate a retired action; its exact bytes and
+        // timestamps remain in the recovery archive instead.
         final migrated = createBookingStorageBackend();
         await migrated.initialize();
         await recovery(migrated).restoreUnassignedPending(owner);
         await recovery(migrated).restoreUnassignedPending(owner);
-        expect(jsonDecode((await migrated.readStringList(key)).single), row);
+        expect(await migrated.readStringList(key), isEmpty);
         final archive = jsonDecode(
           (await migrated.readStringList(
             OrphanPhotoRecoveryService.archiveKey(owner, id),
           )).single,
         );
         expect(archive['original_entry'], row);
+        expect(archive['state'], 'retired_unassigned');
         expect(photos.uploads, 1);
       },
     );

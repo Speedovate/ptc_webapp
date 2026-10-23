@@ -215,55 +215,12 @@ void main() {
             BookingIdResolver(firestore: db).invalidate(p['booking_id']);
             await queue.flushPendingUploads();
           }
-          // A verified recovery backup must never masquerade as a synced booking.
-          expect(disk.data[scope], hasLength(1));
-          final stillPending = jsonDecode(disk.data[scope]!.single);
-          expect(stillPending['bytes_base64'], row['bytes_base64']);
-          expect(stillPending['created_at'], row['created_at']);
-          expect(stillPending['last_error'], isNotEmpty);
-          if (scenario == 'success') {
-            final diagnostics = stillPending['error_diagnostics'] as String;
-            final contextText = RegExp(
-              r'Context:\n([^\n]+)\nRaw error:',
-            ).firstMatch(diagnostics)?.group(1);
-            expect(contextText, isNotNull);
-            final context = jsonDecode(contextText!) as Map<String, dynamic>;
-            final inventory =
-                context['local_inventory'] as Map<String, dynamic>;
-            expect(inventory['schema'], 'local_booking_photo_inventory_v1');
-            expect((inventory['booking_actions'] as Map)['matching_count'], 0);
-            expect((inventory['cached_booking'] as Map)['available'], false);
-            final localPhoto = inventory['photo_queue'] as Map;
-            expect(localPhoto['matching_count'], 1);
-            expect(localPhoto['bytes_status'], 'decoded');
-            expect(localPhoto['byte_count'], p['size']);
-            expect(localPhoto['size_matches'], true);
-            expect(localPhoto['sha256'], isNotEmpty);
-            expect((inventory['original_evidence'] as Map)['entry_count'], 1);
-            expect((inventory['recovery_archive'] as Map)['entry_count'], 1);
-            expect(
-              (inventory['recovery_archive'] as Map)['state'],
-              'preserved_unassigned',
-            );
-            final imageBackup =
-                (inventory['recovery_archive'] as Map)['image_backup'] as Map;
-            expect(imageBackup['contains_original_photo_bytes'], true);
-            expect(
-              imageBackup['storage_path'],
-              startsWith('booking_photo_recoveries/8/$id/'),
-            );
-            expect(
-              imageBackup['recovery_receipt_path'],
-              'booking_photo_recoveries/8_$id',
-            );
-            expect(
-              (inventory['recovery_index'] as Map)['contains_photo_entry'],
-              true,
-            );
-            expect(diagnostics, isNot(contains(row['bytes_base64'])));
-          }
-          expect(queue.currentStatus.pendingCount, 1);
-          expect(queue.currentStatus.failedCount, 1);
+          // The unattachable action retires only after a verified backup and
+          // receipt. This is not a synced booking, and the original remains
+          // recoverable without continuing to appear in Queued Actions.
+          expect(disk.data[scope], isEmpty);
+          expect(queue.currentStatus.pendingCount, 0);
+          expect(queue.currentStatus.failedCount, 0);
           expect(photos.bundles, scenario == 'bad upload evidence' ? 2 : 1);
           expect(photos.attachments, 0);
           expect((await db.collection('bookings').get()).docs, isEmpty);
@@ -281,13 +238,15 @@ void main() {
             disk.data[OrphanPhotoRecoveryService.archiveKey('8', id)]!.single,
           );
           expect(archive['original_entry'], row);
+          expect(archive['state'], 'retired_unassigned');
+          expect(
+            (archive['unassigned_bundle'] as Map)['storage_path'],
+            startsWith('booking_photo_recoveries/8/$id/'),
+          );
           expect(
             disk.data[OrphanPhotoRecoveryService.unassignedIndexKey('8')],
             [id],
           );
-          // Migrate the previously deployed behavior: an archived orphan had
-          // disappeared from its active queue despite having no booking.
-          disk.data[scope] = [];
           final recovery = OrphanPhotoRecoveryService(
             backend: disk,
             firestore: db,
@@ -295,20 +254,17 @@ void main() {
             requireOwner: (_) async {},
             hasPending: (_, _) async => false,
             withQueueLock: (action) => action(),
-            onResolved: (_, _) async => fail('Preservation is not resolution'),
+            onResolved: (_, _) async {},
           );
           await recovery.restoreUnassignedPending('8');
-          expect(jsonDecode(disk.data[scope]!.single), row);
+          expect(disk.data[scope], isEmpty);
           await recovery.restoreUnassignedPending('8');
-          expect(disk.data[scope], hasLength(1));
-          await recovery.archiveUnassigned(owner: '8', entryId: id);
-          expect(disk.data[scope], hasLength(1));
+          expect(disk.data[scope], isEmpty);
           expect(photos.bundles, scenario == 'bad upload evidence' ? 2 : 1);
-          disk.data[scope] = [];
           await queue.flushPendingUploads();
-          expect(disk.data[scope], hasLength(1));
-          expect(queue.currentStatus.pendingCount, 1);
-          expect(queue.currentStatus.failedCount, 1);
+          expect(disk.data[scope], isEmpty);
+          expect(queue.currentStatus.pendingCount, 0);
+          expect(queue.currentStatus.failedCount, 0);
           expect(photos.bundles, scenario == 'bad upload evidence' ? 2 : 1);
           // A late booking with the exact original marker is completed on the
           // existing flush path, with no user selection and no status rollback.
