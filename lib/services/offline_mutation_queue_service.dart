@@ -192,10 +192,6 @@ class OfflineMutationQueueService {
       throw ArgumentError.value(submissionKey, 'submissionKey');
     }
     final counterRef = _resourceCounterRef(collectionKey);
-    final bootstrapNextId = await _bootstrapNextIdIfCounterMissing(
-      counterRef: counterRef,
-      collection: collection,
-    );
     final reservation = await runTransactionWithOriginalErrors<String>(
       _firestore,
       (transaction) async {
@@ -214,7 +210,6 @@ class OfflineMutationQueueService {
             int.tryParse(
               counterSnapshot.data()?['next_id']?.toString() ?? '',
             ) ??
-            bootstrapNextId ??
             1;
         while ((await transaction.get(collection.doc('$nextId'))).exists) {
           nextId++;
@@ -235,36 +230,6 @@ class OfflineMutationQueueService {
       },
     );
     return reservation;
-  }
-
-  Future<int?> _bootstrapNextIdIfCounterMissing({
-    required DocumentReference<Map<String, dynamic>> counterRef,
-    required CollectionReference<Map<String, dynamic>> collection,
-  }) async {
-    final counterSnapshot = await counterRef.get().timeout(
-      _remoteMutationTimeout,
-      onTimeout: () => throw TimeoutException('resource counter read timeout'),
-    );
-    final existingNextId = int.tryParse(
-      counterSnapshot.data()?['next_id']?.toString() ?? '',
-    );
-    if (counterSnapshot.exists &&
-        existingNextId != null &&
-        existingNextId > 0) {
-      return null;
-    }
-    final documents = await collection.get().timeout(
-      _remoteMutationTimeout,
-      onTimeout: () => throw TimeoutException('resource ID bootstrap timeout'),
-    );
-    final highestId = documents.docs
-        .map(
-          (document) =>
-              int.tryParse(documentData(document)['id']?.toString() ?? ''),
-        )
-        .whereType<int>()
-        .fold<int>(0, (highest, id) => id > highest ? id : highest);
-    return highestId + 1;
   }
 
   String _idempotencyDocumentId(String collectionKey, String submissionKey) =>
@@ -2557,10 +2522,6 @@ class OfflineMutationQueueService {
       );
     }
 
-    final bootstrapNextId = await _bootstrapNextIdIfCounterMissing(
-      counterRef: _bookingsCounterRef,
-      collection: _bookingsCollection,
-    );
     String? continuationBase;
     final resolvedId =
         await runTransactionWithOriginalErrors<String>(_firestore, (
@@ -2603,7 +2564,6 @@ class OfflineMutationQueueService {
               int.tryParse(
                 counterSnapshot.data()?['next_id']?.toString() ?? '',
               ) ??
-              bootstrapNextId ??
               1;
           if (existingId != null && existingId > 0) {
             nextId = existingId;
@@ -3978,6 +3938,30 @@ class OfflineMutationQueueService {
       _aliasStorageKey(storageKey),
       jsonEncode(aliases),
     );
+  }
+
+  /// Returns only a numeric booking identity previously committed by this
+  /// device's idempotent create queue. Photo replay can use this durable alias
+  /// without performing a second server identity lookup on a weak connection.
+  Future<String?> resolvedBookingAlias({
+    required String temporaryId,
+    required String owner,
+  }) async {
+    if (!BookingIdResolver.isTemporary(temporaryId) || owner.trim().isEmpty) {
+      return null;
+    }
+    await _authStorage.initialize();
+    final aliases = await _readResolvedIdAliases(
+      _storageKeyForUserId(owner.trim()),
+    );
+    final resolved = aliases[temporaryId];
+    if (resolved == null) return null;
+    if (!BookingIdResolver.isNumeric(resolved)) {
+      throw StateError(
+        'The saved booking identity is invalid. Original local work was preserved.',
+      );
+    }
+    return resolved;
   }
 
   /// Resolves only aliases committed by this user's resource-create queue.

@@ -393,7 +393,11 @@ class BookingOfflineUploadQueueService {
         ).reconcileUnassigned(owner, (original, archive) async {
           var entry = _PendingBookingUploadEntry.fromMap(original);
           final lookup = <String, dynamic>{};
-          var resolved = await BookingIdResolver(
+          var resolved = await _mutationQueue.resolvedBookingAlias(
+            temporaryId: entry.bookingId,
+            owner: owner,
+          );
+          resolved ??= await BookingIdResolver(
             firestore: _firestore,
           ).resolve(entry.bookingId, lookupEvidence: lookup);
           resolved ??= await _resolvePhotoBookingByMarker(entry, lookup);
@@ -1239,13 +1243,25 @@ class BookingOfflineUploadQueueService {
             remaining.add(wait.entry);
             continue;
           }
+          final owner = storageKey.substring('$_storageKey::'.length);
           final resolver = BookingIdResolver(firestore: _firestore);
           if (!background) {
             // Explicit retry/reconnect may clear idle lookup backoff. Active
             // SDK reads keep ownership and all global rate limits still apply.
             resolver.invalidate(entry.bookingId);
           }
-          var resolved = await resolver.resolve(
+          var resolved = await _mutationQueue.resolvedBookingAlias(
+            temporaryId: entry.bookingId,
+            owner: owner,
+          );
+          if (resolved != null) {
+            identityLookup.addAll({
+              'lookup_started': false,
+              'result': 'resolved_local_create_alias',
+              'read_source': 'device_local_idempotent_create_receipt',
+            });
+          }
+          resolved ??= await resolver.resolve(
             entry.bookingId,
             lookupEvidence: identityLookup,
           );
@@ -1271,7 +1287,6 @@ class BookingOfflineUploadQueueService {
                 .toList();
             identityLookup['original_cached_submission_available'] =
                 cached.length == 1;
-            final owner = storageKey.substring('$_storageKey::'.length);
             if (cached.isEmpty &&
                 entry.waitReason == 'temporary_booking_id' &&
                 entry.waitCount >= 3 &&

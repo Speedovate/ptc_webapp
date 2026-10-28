@@ -140,9 +140,17 @@ void main() {
     () async {
       final db = FakeFirebaseFirestore();
       final resolver = BookingIdResolver(firestore: db);
+      final backend = MemoryBackend();
       expect(await resolver.resolve(temp), isNull);
-      await replay(db, MemoryBackend(), [entry('bookingCreate')]);
+      await replay(db, backend, [entry('bookingCreate')]);
       expect(await resolver.resolve(temp), '1');
+      expect(
+        await OfflineMutationQueueService(
+          firestore: db,
+          backend: backend,
+        ).resolvedBookingAlias(temporaryId: temp, owner: 'signed_out'),
+        '1',
+      );
     },
   );
   test(
