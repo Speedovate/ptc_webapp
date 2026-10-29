@@ -142,6 +142,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   List<_PendingSupportAttachment> _pendingAttachments = const [];
   bool _hasResolvedThreadReadMarkers = false;
   Map<String, String> _threadReadMarkersById = const <String, String>{};
+  StreamSubscription<void>? _readMarkerSubscription;
   String? _pendingInitialAdminUserId;
   int _chatScrollRequestTick = 0;
 
@@ -171,15 +172,12 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       _isInvestor && normalizeId(user.id) == '1' ? widget.user : user;
 
   bool _visibleInvestorThread(SupportThread thread) {
-    if (!_isInvestor) return true;
-    final requester = normalizeId(thread.requesterUserId);
-    return requester == normalizeId(widget.user.id) ||
-        _adminUsers.any(
-          (user) =>
-              normalizeId(user.id) == requester &&
-              requester != '1' &&
-              canSeeSupportContact(widget.user, user),
-        );
+    return canSeeSupportThread(
+      viewer: widget.user.copyWith(role: _effectiveRole),
+      thread: thread,
+      canBrowseAllThreads: _isAdmin,
+      contacts: _adminUsers,
+    );
   }
 
   bool get _hasStableAdminSelection =>
@@ -279,6 +277,9 @@ class _SupportCenterViewState extends State<SupportCenterView> {
                       : supportTopicGeneral))!
             .trim()
             .toLowerCase();
+    _readMarkerSubscription = _supportRequest
+        .watchThreadReadMarkerUpdates(widget.user.id ?? '')
+        .listen((_) => unawaited(_loadThreadReadMarkers(refreshRemote: false)));
     _loadThreadReadMarkers();
     _loadAccessibleBookings();
     if (_isAdmin) {
@@ -309,6 +310,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   @override
   void dispose() {
     PerformanceTrace.event('support-view', 'dispose');
+    _readMarkerSubscription?.cancel();
     _messageController.dispose();
     _adminSearchController.dispose();
     super.dispose();
@@ -323,11 +325,13 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     });
   }
 
-  Future<void> _loadThreadReadMarkers() async {
+  Future<void> _loadThreadReadMarkers({bool refreshRemote = true}) async {
+    final userId = widget.user.id ?? '';
     final markers = await _supportRequest.readThreadReadMarkers(
-      widget.user.id ?? '',
+      userId,
+      refreshRemote: refreshRemote,
     );
-    if (!mounted) {
+    if (!mounted || widget.user.id != userId) {
       return;
     }
     setState(() {

@@ -1,9 +1,44 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/support_message.dart';
+import 'package:webapp/models/user.dart';
 import 'package:webapp/services/support_read_state.dart';
 
 void main() {
+  test(
+    'menu badge stays zero when own chat is read and another account is unread',
+    () {
+      final own = SupportThread(
+        id: 'own',
+        requesterUserId: '20',
+        lastSenderUserId: '1',
+        lastMessageText: 'Hello',
+        lastMessageAt: DateTime.utc(2026, 10, 29),
+      );
+      final other = own.copyWith(id: 'other', requesterUserId: '21');
+      expect(
+        unreadSupportThreadCount(
+          threads: [own, other],
+          viewer: const UserModel(id: '20', role: 'dispatcher'),
+          markers: {'own': supportThreadReadMarker(own)},
+          canBrowseAllThreads: false,
+          markersResolved: true,
+        ),
+        0,
+      );
+      // A role allowed to browse both conversations still sees the genuine unread.
+      expect(
+        unreadSupportThreadCount(
+          threads: [own, other],
+          viewer: const UserModel(id: '20', role: 'dispatcher'),
+          markers: {'own': supportThreadReadMarker(own)},
+          canBrowseAllThreads: true,
+          markersResolved: true,
+        ),
+        1,
+      );
+    },
+  );
   SupportThread incoming(int minute, {String sender = '2'}) => SupportThread(
     id: 'chat',
     lastSenderUserId: sender,

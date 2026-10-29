@@ -2587,6 +2587,7 @@ class AdminBookingsListSliver extends StatelessWidget {
   ) {
     final textScaler = MediaQuery.textScalerOf(context);
     final idWidth = _maxTextWidth(context, textScaler, 'ID', longestIdValue);
+    final typeWidth = _maxTextWidth(context, textScaler, 'Type', 'Hustling');
     final createdWidth = _maxTextWidth(
       context,
       textScaler,
@@ -2661,6 +2662,7 @@ class AdminBookingsListSliver extends StatelessWidget {
     );
 
     final resolvedIdWidth = _resolvedColumnWidth(idWidth);
+    final resolvedTypeWidth = _resolvedColumnWidth(typeWidth);
     final resolvedCreatedWidth = _resolvedColumnWidth(createdWidth);
     final resolvedUpdatedWidth = _resolvedColumnWidth(updatedWidth);
     final resolvedWaybillWidth = _resolvedColumnWidth(waybillWidth);
@@ -2671,6 +2673,7 @@ class AdminBookingsListSliver extends StatelessWidget {
     final resolvedActionsWidth = actionsWidth + _extraWidthAllowance;
     final totalMeasuredWidth =
         resolvedIdWidth +
+        resolvedTypeWidth +
         resolvedWaybillWidth +
         resolvedVanNumberWidth +
         resolvedVanSizeWidth +
@@ -2734,6 +2737,10 @@ class AdminBookingsListSliver extends StatelessWidget {
                   child: const _AdminBookingsHeaderCell(label: 'Amount'),
                 ),
                 _AdminBookingsFixedSlot(
+                  width: resolvedTypeWidth,
+                  child: const _AdminBookingsHeaderCell(label: 'Type'),
+                ),
+                _AdminBookingsFixedSlot(
                   width: resolvedStatusWidth,
                   child: const _AdminBookingsHeaderCell(label: 'Status'),
                 ),
@@ -2772,6 +2779,7 @@ class AdminBookingsListSliver extends StatelessWidget {
                 booking: booking,
                 statusLabel: statusLabelFor(booking),
                 resolvedIdWidth: resolvedIdWidth,
+                resolvedTypeWidth: resolvedTypeWidth,
                 resolvedWaybillWidth: resolvedWaybillWidth,
                 resolvedVanNumberWidth: resolvedVanNumberWidth,
                 resolvedVanSizeWidth: resolvedVanSizeWidth,
@@ -2828,6 +2836,18 @@ class AdminBookingsListSliver extends StatelessWidget {
     );
   }
 
+  static String _bookingType(Booking booking) {
+    final value = BookingRecordCard.outputFieldDisplayValue(
+      booking.statusOutputs,
+      'booking_type',
+    ).trim().toLowerCase();
+    return switch (value) {
+      'regular' => 'Regular',
+      'hustling' || 'husting' || 'hutling' => 'Hustling',
+      _ => '-',
+    };
+  }
+
   static String _waybillNumber(Booking booking) =>
       BookingRecordCard.outputFieldDisplayValue(
         booking.statusOutputs,
@@ -2866,6 +2886,7 @@ class _AdminBookingWideRow extends StatelessWidget {
     required this.booking,
     required this.statusLabel,
     required this.resolvedIdWidth,
+    required this.resolvedTypeWidth,
     required this.resolvedWaybillWidth,
     required this.resolvedVanNumberWidth,
     required this.resolvedVanSizeWidth,
@@ -2881,6 +2902,7 @@ class _AdminBookingWideRow extends StatelessWidget {
   final Booking booking;
   final String statusLabel;
   final double resolvedIdWidth;
+  final double resolvedTypeWidth;
   final double resolvedWaybillWidth;
   final double resolvedVanNumberWidth;
   final double resolvedVanSizeWidth;
@@ -2948,6 +2970,15 @@ class _AdminBookingWideRow extends StatelessWidget {
                 AdminBookingsListSliver._amount(booking),
                 style: AdminBookingsListSliver._valueStyle,
                 softWrap: true,
+              ),
+            ),
+          ),
+          _AdminBookingsFixedSlot(
+            width: resolvedTypeWidth,
+            child: _AdminBookingsBodyCell(
+              child: Text(
+                AdminBookingsListSliver._bookingType(booking),
+                style: AdminBookingsListSliver._valueStyle,
               ),
             ),
           ),
@@ -3035,6 +3066,7 @@ class _AdminBookingResponsiveCard extends StatelessWidget {
           ('Van Number', AdminBookingsListSliver._vanNumber(booking)),
           ('Van Size', AdminBookingsListSliver._vanSize(booking)),
           ('Amount', AdminBookingsListSliver._amount(booking)),
+          ('Type', AdminBookingsListSliver._bookingType(booking)),
           ('Status', statusLabel),
           (
             'Created',

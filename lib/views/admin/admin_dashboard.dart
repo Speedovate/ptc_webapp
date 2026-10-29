@@ -1733,6 +1733,16 @@ class _DashboardExportCandidateRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bookingType = BookingRecordCard.outputFieldDisplayValue(
+      booking.statusOutputs,
+      'booking_type',
+    ).trim();
+    final details = [
+      if (bookingType.isNotEmpty && bookingType != '-') bookingType,
+      vm.vanSize(booking),
+      vm.billingStatusLabel(booking),
+      AdminDashboardViewModel.amount(booking),
+    ].join(' | ');
     return AdminListItemCard(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       child: Row(
@@ -1769,9 +1779,7 @@ class _DashboardExportCandidateRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '${vm.vanSize(booking)} | '
-                  '${vm.billingStatusLabel(booking)} | '
-                  '${AdminDashboardViewModel.amount(booking)}',
+                  details,
                   style: TextStyle(
                     color: isExcluded
                         ? AppColors.danger

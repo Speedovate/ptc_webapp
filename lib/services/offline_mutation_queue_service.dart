@@ -1814,7 +1814,7 @@ class OfflineMutationQueueService {
         await writeSupportReadMarker(
           _firestore,
           _firestore
-              .collection('support_read_markers')
+              .collection('manage_support')
               .doc(userId)
               .collection('threads')
               .doc(threadId),

@@ -267,12 +267,22 @@ class _AdminHomeState extends State<AdminHome> {
     }
     _supportReadBadgeSubscription = _supportRequest
         .watchThreadReadMarkerUpdates(userId)
-        .listen((_) => unawaited(_loadSidebarThreadReadMarkers(userId)));
+        .listen(
+          (_) => unawaited(
+            _loadSidebarThreadReadMarkers(userId, refreshRemote: false),
+          ),
+        );
     unawaited(_loadSidebarThreadReadMarkers(userId));
   }
 
-  Future<void> _loadSidebarThreadReadMarkers(String userId) async {
-    final markers = await _supportRequest.readThreadReadMarkers(userId);
+  Future<void> _loadSidebarThreadReadMarkers(
+    String userId, {
+    bool refreshRemote = true,
+  }) async {
+    final markers = await _supportRequest.readThreadReadMarkers(
+      userId,
+      refreshRemote: refreshRemote,
+    );
     if (!mounted || _shellUser.id?.trim() != userId) {
       return;
     }
@@ -373,15 +383,17 @@ class _AdminHomeState extends State<AdminHome> {
     if (currentUserId == null || currentUserId.isEmpty) {
       return 0;
     }
-    return _sidebarThreads
-        .where(
-          (thread) => isSupportThreadUnread(
-            thread: thread,
-            currentUserId: currentUserId,
-            savedMarker: _sidebarThreadReadMarkers[thread.id?.trim()],
-          ),
-        )
-        .length;
+    final effectiveRole = _roleAccessService.effectiveRoleKey(_shellUser.role);
+    return unreadSupportThreadCount(
+      threads: _sidebarThreads,
+      viewer: _shellUser.copyWith(role: effectiveRole),
+      markers: _sidebarThreadReadMarkers,
+      markersResolved: _hasResolvedSidebarThreadReadMarkers,
+      canBrowseAllThreads:
+          _canReadSupport &&
+          (normalizeRoleKey(effectiveRole) == 'investor' || _canReadUsers),
+      contacts: AuthRequest.hydratedUsersSnapshot,
+    );
   }
 
   Widget? _sidebarBadge(int count, {bool showActualCount = false}) {

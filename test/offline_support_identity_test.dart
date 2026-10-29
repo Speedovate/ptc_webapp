@@ -65,7 +65,7 @@ void main() {
         online = true;
         await reopened.flushPendingMutations();
         final marker = db
-            .collection('support_read_markers')
+            .collection('manage_support')
             .doc('2')
             .collection('threads')
             .doc('thread_1');
@@ -81,7 +81,7 @@ void main() {
         }
         expect(
           (await db
-                  .collection('support_read_markers')
+                  .collection('manage_support')
                   .doc(userId)
                   .collection('threads')
                   .get())
@@ -90,7 +90,7 @@ void main() {
         );
         expect(
           (await db
-                  .collection('support_read_markers')
+                  .collection('manage_support')
                   .doc('1')
                   .collection('threads')
                   .get())
@@ -132,7 +132,7 @@ void main() {
       );
       expect(
         (await db
-                .collection('support_read_markers')
+                .collection('manage_support')
                 .doc('offline_users_request')
                 .collection('threads')
                 .get())

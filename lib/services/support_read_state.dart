@@ -1,5 +1,7 @@
 import 'package:webapp/models/support_message.dart';
 import 'package:webapp/models/support_thread.dart';
+import 'package:webapp/models/user.dart';
+import 'package:webapp/services/support_contact_scope.dart';
 import 'package:webapp/utils/functions.dart';
 
 String _token(String? value) {
@@ -26,6 +28,33 @@ String supportMessageReadMarker(SupportMessage message) {
 
 DateTime? supportMarkerMessageTime(String? marker) =>
     DateTime.tryParse((marker ?? '').split('|').first)?.toUtc();
+
+int unreadSupportThreadCount({
+  required Iterable<SupportThread> threads,
+  required UserModel viewer,
+  required Map<String, String> markers,
+  required bool canBrowseAllThreads,
+  required bool markersResolved,
+  Iterable<UserModel> contacts = const [],
+}) {
+  if (!markersResolved) return 0;
+  return threads
+      .where(
+        (thread) =>
+            canSeeSupportThread(
+              viewer: viewer,
+              thread: thread,
+              canBrowseAllThreads: canBrowseAllThreads,
+              contacts: contacts,
+            ) &&
+            isSupportThreadUnread(
+              thread: thread,
+              currentUserId: viewer.id,
+              savedMarker: markers[normalizeId(thread.id)],
+            ),
+      )
+      .length;
+}
 
 /// A cached thread older than the message already read cannot become unread.
 /// Missing read state means the incoming conversation has not yet been read.

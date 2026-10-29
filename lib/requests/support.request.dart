@@ -323,23 +323,21 @@ class SupportRequest {
     return task;
   }
 
-  Future<Map<String, String>> readThreadReadMarkers(String userId) async {
+  Future<Map<String, String>> readThreadReadMarkers(
+    String userId, {
+    bool refreshRemote = true,
+  }) async {
     final normalizedUserId = normalizeId(userId);
     if (normalizedUserId == null) return const {};
     var remote = <Map<String, dynamic>>[];
-    if (currentNetworkStatus()) {
-      try {
-        final snapshot = await _threadReadCollection(
-          normalizedUserId,
-        ).get().timeout(_startupTimeout);
-        remote = snapshot.docs.map(documentData).toList();
-      } catch (_) {
-        try {
-          remote = await _readThreadReadMarkersViaPublicRest(normalizedUserId);
-        } catch (_) {
-          // The latest local read state remains available under weak signal.
-        }
-      }
+    if (refreshRemote && currentNetworkStatus()) {
+      // Older queued retries wrote to a different collection. Keep those reads
+      // visible while all new foreground and queued writes use manage_support.
+      final snapshots = await Future.wait([
+        _readRemoteThreadReadMarkers(normalizedUserId, 'manage_support'),
+        _readRemoteThreadReadMarkers(normalizedUserId, 'support_read_markers'),
+      ]);
+      remote = snapshots.expand((documents) => documents).toList();
     }
     final documents = await _mergeReadMarkerCache(normalizedUserId, remote);
     return {
@@ -348,6 +346,30 @@ class SupportRequest {
           (normalizeId(document['thread_id']) ?? normalizeId(document['id']))!:
               document['marker'].toString().trim(),
     };
+  }
+
+  Future<List<Map<String, dynamic>>> _readRemoteThreadReadMarkers(
+    String userId,
+    String collection,
+  ) async {
+    try {
+      final snapshot = await _firestore
+          .collection(collection)
+          .doc(userId)
+          .collection('threads')
+          .get()
+          .timeout(_startupTimeout);
+      return snapshot.docs.map(documentData).toList();
+    } catch (_) {
+      try {
+        return await _fetchCollectionDocumentsViaPublicRest(
+          '$collection/$userId/threads',
+        );
+      } catch (_) {
+        // The latest local read state remains available under weak signal.
+        return [];
+      }
+    }
   }
 
   Future<void> markThreadRead({
@@ -425,9 +447,47 @@ class SupportRequest {
     if (normalizedUserId == null) {
       return const Stream<void>.empty();
     }
-    return _threadReadMarkerUpdates.stream
-        .where((updatedUserId) => updatedUserId == normalizedUserId)
-        .map((_) {});
+    return Stream<void>.multi((controller) {
+      var active = true;
+      final local = _threadReadMarkerUpdates.stream
+          .where((updatedUserId) => updatedUserId == normalizedUserId)
+          .listen((_) {
+            if (active) controller.add(null);
+          });
+      final remote =
+          <StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>[];
+      for (final collection in ['manage_support', 'support_read_markers']) {
+        remote.add(
+          _firestore
+              .collection(collection)
+              .doc(normalizedUserId)
+              .collection('threads')
+              .snapshots()
+              .listen(
+                (snapshot) {
+                  // Commit the snapshot before notifying cache-only badge readers.
+                  // Merge monotonically: an older SDK cache event cannot undo a read.
+                  unawaited(
+                    _mergeReadMarkerCache(
+                      normalizedUserId,
+                      snapshot.docs.map(documentData).toList(),
+                    ).then((_) {
+                      if (active) controller.add(null);
+                    }, onError: (Object _) {}),
+                  );
+                },
+                onError: (Object _) {
+                  // Local events and the initial REST-capable refresh remain usable.
+                },
+              ),
+        );
+      }
+      controller.onCancel = () async {
+        active = false;
+        await local.cancel();
+        await Future.wait(remote.map((subscription) => subscription.cancel()));
+      };
+    });
   }
 
   List<SupportMessage>? peekLastVisibleMessages(String threadId) {
@@ -1876,17 +1936,5 @@ class SupportRequest {
             throw TimeoutException('public rest $collectionPath fetch timeout');
           },
         );
-  }
-
-  Future<List<Map<String, dynamic>>> _readThreadReadMarkersViaPublicRest(
-    String normalizedUserId,
-  ) async {
-    try {
-      return await _fetchCollectionDocumentsViaPublicRest(
-        'manage_support/$normalizedUserId/threads',
-      );
-    } catch (_) {
-      return const <Map<String, dynamic>>[];
-    }
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:webapp/widgets/shared/retained_section_stack.dart';
 
@@ -35,7 +36,135 @@ class _SectionState extends State<_Section>
 
 void main() {
   testWidgets(
-    'viewport resize lays out only the selected page and activates hidden pages on demand',
+    'hidden pages handle deferred updates after unbounded to bounded layout',
+    (tester) async {
+      final height = ValueNotifier<double>(80);
+      addTearDown(height.dispose);
+      final pages = [
+        const SizedBox(height: 100),
+        ValueListenableBuilder<double>(
+          valueListenable: height,
+          builder: (_, value, _) => SizedBox(
+            height: value,
+            child: LayoutBuilder(
+              builder: (_, constraints) => const Text('Background page'),
+            ),
+          ),
+        ),
+      ];
+      Widget app(bool bounded, int selected) {
+        final stack = RetainedSectionStack(index: selected, children: pages);
+        return MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: bounded
+                    ? const BoxConstraints.tightFor(width: 600, height: 400)
+                    : const BoxConstraints.tightFor(width: 600),
+                child: stack,
+              ),
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(app(false, 0));
+      await tester.pumpWidget(app(true, 0));
+      for (final value in [120.0, 160.0, 200.0]) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => height.value = value,
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      }
+      await tester.pumpWidget(app(true, 1));
+      expect(tester.takeException(), isNull);
+      expect(find.text('Background page'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+  testWidgets('scrollbar hover exit during menu switches keeps layout valid', (
+    tester,
+  ) async {
+    final scroll = ScrollController();
+    addTearDown(scroll.dispose);
+    final pages = [
+      Scrollbar(
+        controller: scroll,
+        thumbVisibility: true,
+        child: SingleChildScrollView(
+          controller: scroll,
+          child: const SizedBox(
+            height: 2000,
+            width: 600,
+            child: Text('Scrollable page'),
+          ),
+        ),
+      ),
+      const Text('Other page'),
+    ];
+    Widget app(int selected, double width) => MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: width,
+          height: 400,
+          child: RetainedSectionStack(index: selected, children: pages),
+        ),
+      ),
+    );
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(598, 20));
+    addTearDown(mouse.removePointer);
+    for (var i = 0; i < 5; i++) {
+      await tester.pumpWidget(app(0, 600));
+      await mouse.moveTo(const Offset(598, 40));
+      await tester.pump();
+      await tester.pumpWidget(app(1, 500));
+      await tester.pump();
+      await mouse.moveTo(const Offset(300, 40));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    }
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets(
+    'repeated background layout updates survive hiding and restoring a page',
+    (tester) async {
+      final height = ValueNotifier<double>(80);
+      addTearDown(height.dispose);
+      final pages = [
+        ValueListenableBuilder<double>(
+          valueListenable: height,
+          builder: (_, value, _) =>
+              SizedBox(height: value, child: const Text('Draft')),
+        ),
+        const SizedBox(height: 100, child: Text('Other page')),
+      ];
+      Widget app(int selected) => MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 600,
+            height: 400,
+            child: RetainedSectionStack(index: selected, children: pages),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app(0));
+      await tester.pumpWidget(app(1));
+      for (final value in [120.0, 160.0, 200.0]) {
+        height.value = value;
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      }
+      await tester.pumpWidget(app(0));
+      expect(tester.takeException(), isNull);
+      expect(tester.getSize(find.text('Draft')).height, 200);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+  testWidgets(
+    'framework layout keeps retained pages consistent through resizing and switching',
     (tester) async {
       var firstLayouts = 0;
       var secondLayouts = 0;
@@ -64,23 +193,23 @@ void main() {
       );
       await tester.pumpWidget(app(0, 600));
       expect(firstLayouts, 1);
-      expect(secondLayouts, 0);
+      expect(secondLayouts, 1);
       await tester.pumpWidget(app(0, 400));
       expect(firstLayouts, 2);
       expect(
         secondLayouts,
-        0,
-        reason: 'Hidden page must not be laid out on viewport changes',
+        2,
+        reason: 'Hidden layout must finish so deferred updates remain valid',
       );
       await tester.pumpWidget(app(1, 400));
       expect(firstLayouts, 2);
-      expect(secondLayouts, 1);
-      await tester.pumpWidget(app(1, 300));
-      expect(firstLayouts, 2);
       expect(secondLayouts, 2);
+      await tester.pumpWidget(app(1, 300));
+      expect(firstLayouts, 3);
+      expect(secondLayouts, 3);
       await tester.pumpWidget(app(0, 300));
       expect(firstLayouts, 3);
-      expect(secondLayouts, 2);
+      expect(secondLayouts, 3);
       await tester.pumpWidget(const SizedBox());
     },
   );

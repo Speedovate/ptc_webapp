@@ -24,7 +24,7 @@ void main() {
       final gate = Completer<void>();
       db.resumeTransaction = gate;
       final ref = db
-          .collection('support_read_markers')
+          .collection('manage_support')
           .doc('1')
           .collection('threads')
           .doc('chat');
@@ -55,7 +55,7 @@ void main() {
   test('failed transaction is released for a later retry', () async {
     final db = BoxingFirestore()..failBeforeCallback = true;
     final ref = db
-        .collection('support_read_markers')
+        .collection('manage_support')
         .doc('1')
         .collection('threads')
         .doc('chat');
@@ -77,7 +77,7 @@ void main() {
     () async {
       final db = MergeAwareFirestore();
       final ref = db
-          .collection('support_read_markers')
+          .collection('manage_support')
           .doc('7')
           .collection('threads')
           .doc('chat');
@@ -99,7 +99,7 @@ void main() {
     test('read marker transaction preserves ordering for $incoming', () async {
       final db = MergeAwareFirestore();
       final ref = db
-          .collection('support_read_markers')
+          .collection('manage_support')
           .doc('7')
           .collection('threads')
           .doc('t');
@@ -136,7 +136,7 @@ void main() {
     online = true;
     await queue.flushPendingMutations();
     final saved = await db
-        .collection('support_read_markers')
+        .collection('manage_support')
         .doc('7')
         .collection('threads')
         .doc('t')
@@ -162,7 +162,7 @@ void main() {
         document: {'marker': 'old', 'updated_at': '2026-09-01'},
       );
       final ref = db
-          .collection('support_read_markers')
+          .collection('manage_support')
           .doc('7')
           .collection('threads')
           .doc('t');
