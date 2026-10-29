@@ -94,6 +94,7 @@ class AdminFlowViewModel extends BaseViewModel {
   ];
   static const fieldOptionSourceOptions = [
     statusFieldOptionSourceStatic,
+    statusFieldOptionSourceClientRepresentatives,
     statusFieldOptionSourceUsers,
     statusFieldOptionSourceClients,
     statusFieldOptionSourceAdmins,

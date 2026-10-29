@@ -4,6 +4,7 @@ import 'package:webapp/models/status_form.dart';
 
 const _statusFieldUndefined = Object();
 const statusFieldOptionSourceStatic = 'static';
+const statusFieldOptionSourceClientRepresentatives = 'client_representatives';
 const statusFieldOptionSourceUsers = 'users';
 const statusFieldOptionSourceClients = 'clients';
 const statusFieldOptionSourceAdmins = 'admins';
@@ -31,6 +32,7 @@ const statusFieldTextCaseOptions = <String>[
   statusFieldTextCaseSentenceCase,
 ];
 const statusFieldDynamicOptionSources = <String>[
+  statusFieldOptionSourceClientRepresentatives,
   statusFieldOptionSourceUsers,
   statusFieldOptionSourceClients,
   statusFieldOptionSourceAdmins,
@@ -48,6 +50,8 @@ const statusFieldDynamicOptionSources = <String>[
   statusFieldOptionSourcePuertoPrincesaBarangays,
 ];
 const statusFieldOptionSourceLabels = <String, String>{
+  statusFieldOptionSourceClientRepresentatives:
+      'Representatives of Selected Client',
   statusFieldOptionSourceStatic: 'Static',
   statusFieldOptionSourceUsers: 'Users',
   statusFieldOptionSourceClients: 'Clients',
@@ -67,6 +71,11 @@ const statusFieldOptionSourceLabels = <String, String>{
 };
 
 class StatusField {
+  /// Opt-in suggestions only. The field continues to store unrestricted text.
+  bool get usesClientRepresentativeSuggestions =>
+      (type ?? 'text').trim().toLowerCase() == 'text' &&
+      optionSourceKey?.trim() == statusFieldOptionSourceClientRepresentatives;
+
   /// Recognizes the legacy free-text location field without changing its key.
   bool get isChassisLocationInput {
     final normalizedKey = key?.trim().toLowerCase();

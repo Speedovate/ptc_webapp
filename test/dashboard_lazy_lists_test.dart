@@ -1,12 +1,54 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:webapp/models/booking.dart';
+import 'package:webapp/models/user.dart';
 import 'package:webapp/widgets/shared/app_mouse_pressable.dart';
 import 'package:webapp/view_models/admin/admin_dashboard.vm.dart';
 import 'package:webapp/views/admin/admin_dashboard.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
 
 void main() {
+  testWidgets(
+    'export candidate rows show representatives instead of the main client',
+    (tester) async {
+      final vm = AdminDashboardViewModel();
+      addTearDown(vm.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DashboardExportCandidateList(
+              title: 'Trips',
+              bookings: [
+                Booking(
+                  id: '1',
+                  client: const UserModel(
+                    id: 'moreta',
+                    name: 'MORETA SHIPPING LINES',
+                  ),
+                  statusOutputs: {
+                    'delivered': {
+                      'fields': {
+                        'representative_name': 'Trip sub-client',
+                        'origin': 'Roxas',
+                        'destination': 'Taytay',
+                      },
+                    },
+                  },
+                ),
+              ],
+              vm: vm,
+              excludedBookingIds: const {},
+              onToggleExcluded: (_) {},
+            ),
+          ),
+        ),
+      );
+      expect(find.text('TRIP SUB-CLIENT (ROXAS - TAYTAY)'), findsOneWidget);
+      expect(find.textContaining('MORETA SHIPPING LINES'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final width in [400.0, 2400.0]) {
     testWidgets(
       'completed dashboard bookings at $width are lazy and actions work',

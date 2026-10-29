@@ -1,3 +1,4 @@
+import 'package:webapp/services/support_read_state.dart';
 import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:webapp/widgets/shared/retained_stream_builder.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
@@ -139,6 +140,7 @@ class _SupportCenterViewState extends State<SupportCenterView> {
   List<UserModel> _adminUsers = const [];
   bool _didScheduleAdminUsersWarmRetry = false;
   List<_PendingSupportAttachment> _pendingAttachments = const [];
+  bool _hasResolvedThreadReadMarkers = false;
   Map<String, String> _threadReadMarkersById = const <String, String>{};
   String? _pendingInitialAdminUserId;
   int _chatScrollRequestTick = 0;
@@ -329,7 +331,11 @@ class _SupportCenterViewState extends State<SupportCenterView> {
       return;
     }
     setState(() {
-      _threadReadMarkersById = markers;
+      _threadReadMarkersById = mergeSupportReadMarkers(
+        _threadReadMarkersById,
+        markers,
+      );
+      _hasResolvedThreadReadMarkers = true;
     });
   }
 
@@ -351,10 +357,10 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     if (marker.isEmpty || _threadReadMarkersById[threadId] == marker) {
       return;
     }
-    final nextMarkers = <String, String>{
-      ..._threadReadMarkersById,
+    final nextMarkers = mergeSupportReadMarkers(_threadReadMarkersById, {
       threadId: marker,
-    };
+    });
+    if (nextMarkers[threadId] != marker) return;
     if (mounted) {
       setState(() {
         _threadReadMarkersById = nextMarkers;
@@ -388,10 +394,10 @@ class _SupportCenterViewState extends State<SupportCenterView> {
         _threadReadMarkersById[normalizedThreadId] == marker) {
       return;
     }
-    final nextMarkers = <String, String>{
-      ..._threadReadMarkersById,
+    final nextMarkers = mergeSupportReadMarkers(_threadReadMarkersById, {
       normalizedThreadId: marker,
-    };
+    });
+    if (nextMarkers[normalizedThreadId] != marker) return;
     if (mounted) {
       setState(() {
         _threadReadMarkersById = nextMarkers;
@@ -404,30 +410,14 @@ class _SupportCenterViewState extends State<SupportCenterView> {
     );
   }
 
-  bool _isThreadUnreadForCurrentUser(SupportThread? thread) {
-    if (thread == null) {
-      return false;
-    }
-    final currentUserId = normalizeId(widget.user.id);
-    final threadId = normalizeId(thread.id);
-    final senderId = normalizeId(thread.lastSenderUserId);
-    if (currentUserId == null ||
-        threadId == null ||
-        senderId == null ||
-        senderId == currentUserId ||
-        !thread.hasConversation) {
-      return false;
-    }
-    final latestMarker = _supportRequest.threadReadMarkerForThread(thread);
-    if (latestMarker.isEmpty) {
-      return false;
-    }
-    final savedMarker = _threadReadMarkersById[threadId];
-    if (savedMarker == null || savedMarker.isEmpty) {
-      return false;
-    }
-    return savedMarker != latestMarker;
-  }
+  bool _isThreadUnreadForCurrentUser(SupportThread? thread) =>
+      thread != null &&
+      isSupportThreadUnread(
+        thread: thread,
+        currentUserId: widget.user.id,
+        savedMarker: _threadReadMarkersById[normalizeId(thread.id)],
+        markersResolved: _hasResolvedThreadReadMarkers,
+      );
 
   Future<void> _loadAccessibleBookings() async {
     if (_isAdmin) {

@@ -1,3 +1,6 @@
+import 'package:webapp/services/status_field_option_resolver.dart';
+import 'package:webapp/services/client_representative_suggestions.dart';
+import 'package:webapp/requests/auth.request.dart';
 import 'package:flutter/material.dart';
 import 'package:webapp/constants/app_colors.dart';
 import 'package:webapp/models/status_field.dart';
@@ -14,18 +17,48 @@ class StatusFormPreview extends StatefulWidget {
     required this.fields,
     this.titleText,
     this.subtitleText,
+    this.clientId,
   });
 
   final StatusForm? form;
   final List<StatusField> fields;
   final String? titleText;
   final String? subtitleText;
+  final String? clientId;
 
   @override
   State<StatusFormPreview> createState() => _StatusFormPreviewState();
 }
 
 class _StatusFormPreviewState extends State<StatusFormPreview> {
+  final _optionResolver = StatusFieldOptionResolver();
+  final _phoneAutofill = RepresentativePhoneAutofill();
+
+  @override
+  void initState() {
+    super.initState();
+    _optionResolver.hydrateFieldsFromResolvedSnapshots(widget.fields);
+  }
+
+  @override
+  void didUpdateWidget(covariant StatusFormPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.fields, widget.fields)) {
+      _optionResolver.hydrateFieldsFromResolvedSnapshots(widget.fields);
+    }
+    if (oldWidget.clientId != widget.clientId ||
+        oldWidget.form?.id != widget.form?.id) {
+      _phoneAutofill.reset();
+    }
+  }
+
+  String? get _selectedClientId => _answers.containsKey('client_id')
+      ? representativeClientSelectionId(
+          _answers['client_id']?.toString(),
+          AuthRequest.hydratedUsersSnapshot,
+        )
+      : widget.clientId;
+
   final StatusFormEngine _engine = StatusFormEngine(StatusRequest.instance);
   Map<String, dynamic> _answers = {};
   Map<String, String> _errors = {};
@@ -88,6 +121,7 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
   }
 
   void _updateAnswer(String key, dynamic value) {
+    if (key == 'representative_phone') _phoneAutofill.markManualEdit();
     final nextAnswers = Map<String, dynamic>.from(_answers);
     if (_isEmptyValue(value)) {
       nextAnswers.remove(key);
@@ -101,6 +135,7 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
   }
 
   void _clearForm() {
+    _phoneAutofill.reset();
     setState(() {
       _answers = {};
       _errors = {};
@@ -190,9 +225,10 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
     final dependencies =
         widget.form?.dependencies ?? const <StatusDependency>[];
     final effectiveFields = _effectiveFields;
-    final visibleFields = StatusFormEngine.visibleFields(
-      effectiveFields,
-      _answers,
+    final visibleFields = _optionResolver.withClientRepresentativeSuggestions(
+      StatusFormEngine.visibleFields(effectiveFields, _answers),
+      clientId: _selectedClientId,
+      answers: _answers,
     );
     _syncFocusNodes(visibleFields);
     final hasFields = visibleFields.isNotEmpty;
@@ -256,6 +292,36 @@ class _StatusFormPreviewState extends State<StatusFormPreview> {
                   formButtonText: buttonText,
                   formStatusKey: currentStatusKey,
                   workflowLayout: true,
+                  suggestionDetail: (name) =>
+                      _optionResolver.representativePhone(
+                        _selectedClientId,
+                        name,
+                      ) ??
+                      'Walang phone number',
+                  onSuggestionSelected: (name) {
+                    if (!field.usesClientRepresentativeSuggestions ||
+                        field.key != 'representative_name' ||
+                        !visibleFields.any(
+                          (f) => f.key == 'representative_phone',
+                        )) {
+                      return;
+                    }
+                    final phone = _optionResolver.representativePhone(
+                      _selectedClientId,
+                      name,
+                    );
+                    final value = _phoneAutofill.valueForSelection(
+                      suggestedPhone: phone,
+                      currentPhone: _answers['representative_phone']
+                          ?.toString(),
+                    );
+                    if (value != null) {
+                      setState(() {
+                        _answers = {..._answers, 'representative_phone': value};
+                        _errors = {..._errors}..remove('representative_phone');
+                      });
+                    }
+                  },
                   onChanged: (value) {
                     final key = field.key;
                     if (key == null || key.isEmpty) {

@@ -1,5 +1,11 @@
+import 'package:webapp/services/status_field_option_resolver.dart';
+import 'package:webapp/models/vehicle_make.dart';
+import 'package:webapp/services/booking_edit_fields.dart';
+import 'package:webapp/widgets/shared/booking_additional_fields_editor.dart';
+import 'package:webapp/services/client_route_suggestions.dart';
+import 'package:webapp/widgets/shared/type_history_input.dart';
+import 'package:webapp/widgets/shared/client_representative_name_input.dart';
 import 'package:webapp/widgets/shared/inline_detail_host.dart';
-import 'package:webapp/services/kpi/location_option_registry.dart';
 import 'package:webapp/widgets/shared/paged_data_sliver.dart';
 import 'package:webapp/utils/text_width_cache.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -13,8 +19,6 @@ import 'package:webapp/services/investor_scope.dart';
 import 'package:flutter/services.dart';
 import 'package:stacked/stacked.dart';
 import 'package:webapp/constants/app_colors.dart';
-import 'package:webapp/constants/palawan_locations.dart';
-import 'package:webapp/constants/puerto_princesa_barangays.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/models/chassis.dart';
 import 'package:webapp/models/dispatcher_access_config.dart';
@@ -115,6 +119,7 @@ class AdminBookingsView extends StatefulWidget {
         context: context,
         modalKey: 'booking-edit:${booking.id ?? "-"}',
         builder: (dialogContext) => _EditAdminBookingDialog(
+          bookingHistory: vm.bookings,
           booking: booking,
           currentUser: currentUser,
           onSave: vm.saveEditedBooking,
@@ -322,6 +327,7 @@ class _AdminBookingsViewState extends State<AdminBookingsView> {
         context: context,
         modalKey: 'booking-edit:${booking.id ?? "-"}',
         builder: (dialogContext) => _EditAdminBookingDialog(
+          bookingHistory: vm.bookings,
           booking: booking,
           currentUser: widget.user,
           onSave: vm.saveEditedBooking,
@@ -670,6 +676,7 @@ class _EditBookingRequirements {
 
 class _EditAdminBookingDialog extends StatefulWidget {
   const _EditAdminBookingDialog({
+    required this.bookingHistory,
     required this.booking,
     required this.currentUser,
     required this.onSave,
@@ -684,6 +691,7 @@ class _EditAdminBookingDialog extends StatefulWidget {
     required this.destinationBarangayRequired,
   });
 
+  final List<Booking> bookingHistory;
   final Booking booking;
   final UserModel currentUser;
   final Future<Booking> Function(Booking booking) onSave;
@@ -703,6 +711,8 @@ class _EditAdminBookingDialog extends StatefulWidget {
 }
 
 class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
+  late final BookingEditFields _additionalFields;
+  bool _additionalFieldsWasLoading = false;
   late final TextEditingController _pickUpDateController;
   late final TextEditingController _pickUpTimeController;
   late final TextEditingController _dropOffDateController;
@@ -751,11 +761,43 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
   String? _destinationErrorText;
   String? _destinationBarangayErrorText;
   List<VehicleCatalogItem> _vehicleSizes = const [];
+  List<Booking> _representativeHistory = const [];
+  final _routeOptionsResolver = StatusFieldOptionResolver();
+
+  void _setRepresentativeHistory(List<Booking> bookings) {
+    final byId = <String, Booking>{
+      for (final booking in bookings)
+        if (booking.id != null) booking.id!: booking,
+    };
+    if (widget.booking.id != null) byId[widget.booking.id!] = widget.booking;
+    _representativeHistory = byId.values.toList();
+    _routeOptionsResolver.setBookingHistory(_representativeHistory);
+  }
+
+  Future<void> _loadRepresentativeHistory() async {
+    try {
+      final bookings = await BookingRequest.instance.getBookings().timeout(
+        const Duration(seconds: 3),
+      );
+      if (mounted) setState(() => _setRepresentativeHistory(bookings));
+    } catch (_) {
+      // Manual entry and the existing cached suggestions remain available.
+    }
+  }
+
   bool _isSaving = false;
 
   @override
   void initState() {
     super.initState();
+    _setRepresentativeHistory(
+      widget.bookingHistory.isNotEmpty
+          ? widget.bookingHistory
+          : BookingRequest.hydratedBookingsSnapshot,
+    );
+    if (!BookingRequest.hasResolvedBookings && widget.bookingHistory.isEmpty) {
+      unawaited(_loadRepresentativeHistory());
+    }
     _vehicleSizes = List<VehicleCatalogItem>.from(widget.vehicleSizes);
     final initialPickUpDate = _existingFieldValue('pick_up_date');
     final initialPickUpTime = _existingFieldValue('pick_up_time');
@@ -833,7 +875,52 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     if (_vehicleSizes.isEmpty) {
       unawaited(_loadVehicleSizesFallback());
     }
+    _additionalFields = BookingEditFields(
+      initialAnswers: _latestOutputFieldValues(
+        widget.booking.statusOutputs ?? const {},
+      ),
+      seedForms: StatusRequest.hydratedFormsSnapshot,
+      seedLibrary: StatusRequest.hydratedFieldsSnapshot,
+      hasResolvedForms: StatusRequest.hasResolvedForms,
+    )..addListener(_additionalFieldsChanged);
+    unawaited(_additionalFields.load());
   }
+
+  void _additionalFieldsChanged() {
+    // Additional inputs own their draft/error rebuilds. Only loading changes
+    // affect the modal-level Save action.
+    final loading = _additionalFields.isLoading;
+    if (!mounted || loading == _additionalFieldsWasLoading) return;
+    setState(() => _additionalFieldsWasLoading = loading);
+  }
+
+  Map<String, dynamic> get _editFieldContext => {
+    'client_id': _selectedBookerId,
+    'client_status': _statusKey,
+    'driver_status': _statusKey,
+    'helper_status': _statusKey,
+    'billing_status': widget.booking.billingStatus,
+    'representative_name': _representativeNameController.text,
+    'representative_phone': _representativePhoneController.text,
+    'waybill_number': _waybillNumberController.text,
+    'van_number': _vanNumberController.text,
+    'van_size': _vanSize,
+    'amount': _amountController.text,
+    'pick_up_date': _pickUpDateController.text,
+    'pick_up_time': _pickUpTimeController.text,
+    'drop_off_date': _dropOffDateController.text,
+    'drop_off_time': _dropOffTimeController.text,
+    'origin': _originController.text,
+    'origin_barangay': _originBarangayController.text,
+    'destination': _destinationController.text,
+    'destination_barangay': _destinationBarangayController.text,
+    'driver_id': _driverId,
+    'helper_id': _helperId,
+    'chassis_id': _chassisId,
+    'delivery_form_number': _deliveryFormNumberController.text,
+    'waybill_photo': _waybillPhotoValue,
+    'delivery_form_photo': _deliveryFormPhotoValue,
+  };
 
   Future<void> _loadVehicleSizesFallback() async {
     try {
@@ -851,6 +938,8 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
 
   @override
   void dispose() {
+    _additionalFields.removeListener(_additionalFieldsChanged);
+    _additionalFields.dispose();
     _pickUpDateController.dispose();
     _pickUpTimeController.dispose();
     _dropOffDateController.dispose();
@@ -977,28 +1066,7 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     return lastSegment.isNotEmpty ? lastSegment : raw;
   }
 
-  String? _pendingFieldValue(String key) {
-    final outputs = widget.booking.statusOutputs;
-    if (outputs == null || outputs.isEmpty) {
-      return null;
-    }
-    final pendingSection = outputs['pending'];
-    if (pendingSection is! Map || pendingSection['fields'] is! Map) {
-      return null;
-    }
-    final fields = Map<String, dynamic>.from(pendingSection['fields'] as Map);
-    final rawValue = fields[key]?.toString().trim();
-    if (rawValue == null || rawValue.isEmpty) {
-      return null;
-    }
-    return rawValue;
-  }
-
   String? _existingFieldValue(String key) {
-    final preferredPendingValue = _pendingFieldValue(key);
-    if (preferredPendingValue != null) {
-      return preferredPendingValue;
-    }
     final rawValue = BookingRecordCard.outputFieldValue(
       widget.booking.statusOutputs,
       key,
@@ -1010,12 +1078,75 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
     return normalized;
   }
 
+  Widget _routeInput(
+    String key,
+    TextEditingController controller,
+    FocusNode focusNode,
+    String label,
+    String? error,
+  ) {
+    void changed() => setState(() {
+      _originErrorText = null;
+      _destinationErrorText = null;
+      _originBarangayErrorText = null;
+      _destinationBarangayErrorText = null;
+      if (!_showsOriginBarangayField) _originBarangayController.clear();
+      if (!_showsDestinationBarangayField) {
+        _destinationBarangayController.clear();
+      }
+    });
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: ValueListenableBuilder<TextEditingValue>(
+        valueListenable: _representativeNameController,
+        builder: (context, representative, child) => TypeHistoryInput(
+          controller: controller,
+          historyKey: null,
+          browseOptionsOnFocus: true,
+          includeExactMatch: true,
+          matchInputOnly: true,
+          suggestionLimit: 10,
+          options: _routeOptionsResolver
+              .withClientRepresentativeSuggestions(
+                [StatusField(key: key, type: 'text')],
+                clientId: _selectedBookerId,
+                answers: {
+                  'representative_name': representative.text,
+                  'origin': _originController.text,
+                  'destination': _destinationController.text,
+                },
+              )
+              .single
+              .options,
+          onSelected: (_) => changed(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AdminModalTextField(
+                controller: controller,
+                focusNode: focusNode,
+                label: label,
+                hintText: 'Enter $label',
+                bottomPadding: 0,
+                onChanged: (_) => changed(),
+              ),
+              if (error != null)
+                Text(
+                  error,
+                  style: const TextStyle(color: AppColors.danger, fontSize: 12),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   bool get _showsOriginBarangayField =>
-      _originController.text.trim().toLowerCase() == 'puerto princesa city';
+      isPuertoPrincesaLocation(_originController.text);
 
   bool get _showsDestinationBarangayField =>
-      _destinationController.text.trim().toLowerCase() ==
-      'puerto princesa city';
+      isPuertoPrincesaLocation(_destinationController.text);
 
   List<DropdownMenuItem<String>> _buildVanSizeItems() {
     final items = <DropdownMenuItem<String>>[];
@@ -1380,7 +1511,9 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: _isSaving ? null : _handleSave,
+          onPressed: _isSaving || _additionalFields.isLoading
+              ? null
+              : _handleSave,
           style: FilledButton.styleFrom(
             backgroundColor: AppColors.primaryColor,
             foregroundColor: Colors.white,
@@ -1431,14 +1564,23 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                       _focusNext(_representativeNameFocusNode);
                     },
                   ),
-                  AdminModalTextField(
-                    controller: _representativeNameController,
-                    focusNode: _representativeNameFocusNode,
-                    label: 'Representative Name',
-                    bottomPadding: 8,
-                    hintText: 'Enter Representative Name',
-                    onSubmitted: (_) =>
-                        _focusNext(_representativePhoneFocusNode),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: ClientRepresentativeNameInput(
+                      clientId: _selectedBookerId,
+                      bookings: _representativeHistory,
+                      nameController: _representativeNameController,
+                      phoneController: _representativePhoneController,
+                      child: AdminModalTextField(
+                        controller: _representativeNameController,
+                        focusNode: _representativeNameFocusNode,
+                        label: 'Representative Name',
+                        bottomPadding: 0,
+                        hintText: 'Enter Representative Name',
+                        onSubmitted: (_) =>
+                            _focusNext(_representativePhoneFocusNode),
+                      ),
+                    ),
                   ),
                   AdminModalTextField(
                     controller: _representativePhoneController,
@@ -1577,107 +1719,39 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                       _originFocusNode,
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: AdminSearchSelectFormField(
-                      initialValue: _originController.text.trim().isEmpty
-                          ? null
-                          : _originController.text.trim(),
-                      focusNode: _originFocusNode,
-                      decoration: adminFormInputDecoration(
-                        'Origin',
-                        hintText: adminSelectPlaceholder('Origin'),
-                      ).copyWith(errorText: _originErrorText),
-                      options: locationOptionsFor('origin'),
-                      locationOptionKey: 'origin',
-                      onChanged: (value) {
-                        setState(() {
-                          _originController.text = value ?? '';
-                          _originErrorText = null;
-                          if (!_showsOriginBarangayField) {
-                            _originBarangayController.clear();
-                            _originBarangayErrorText = null;
-                          }
-                        });
-                      },
-                    ),
+                  _routeInput(
+                    'origin',
+                    _originController,
+                    _originFocusNode,
+                    'Origin',
+                    _originErrorText,
                   ),
                   if (_showsOriginBarangayField)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: AdminSearchSelectFormField(
-                        initialValue:
-                            _originBarangayController.text.trim().isEmpty
-                            ? null
-                            : _originBarangayController.text.trim(),
-                        focusNode: _originBarangayFocusNode,
-                        decoration: adminFormInputDecoration(
-                          widget.originBarangayRequired
-                              ? 'Origin Barangay *'
-                              : 'Origin Barangay',
-                          hintText: adminSelectPlaceholder('Origin Barangay'),
-                        ).copyWith(errorText: _originBarangayErrorText),
-                        options: barangayOptionsFor('origin_barangay'),
-                        locationOptionKey: 'origin_barangay',
-                        onChanged: (value) {
-                          setState(() {
-                            _originBarangayController.text = value ?? '';
-                            _originBarangayErrorText = null;
-                          });
-                        },
-                      ),
+                    _routeInput(
+                      'origin_barangay',
+                      _originBarangayController,
+                      _originBarangayFocusNode,
+                      widget.originBarangayRequired
+                          ? 'Origin Barangay *'
+                          : 'Origin Barangay',
+                      _originBarangayErrorText,
                     ),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: AdminSearchSelectFormField(
-                      initialValue: _destinationController.text.trim().isEmpty
-                          ? null
-                          : _destinationController.text.trim(),
-                      focusNode: _destinationFocusNode,
-                      decoration: adminFormInputDecoration(
-                        'Destination',
-                        hintText: adminSelectPlaceholder('Destination'),
-                      ).copyWith(errorText: _destinationErrorText),
-                      options: locationOptionsFor('destination'),
-                      locationOptionKey: 'destination',
-                      onChanged: (value) {
-                        setState(() {
-                          _destinationController.text = value ?? '';
-                          _destinationErrorText = null;
-                          if (!_showsDestinationBarangayField) {
-                            _destinationBarangayController.clear();
-                            _destinationBarangayErrorText = null;
-                          }
-                        });
-                      },
-                    ),
+                  _routeInput(
+                    'destination',
+                    _destinationController,
+                    _destinationFocusNode,
+                    'Destination',
+                    _destinationErrorText,
                   ),
                   if (_showsDestinationBarangayField)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: AdminSearchSelectFormField(
-                        initialValue:
-                            _destinationBarangayController.text.trim().isEmpty
-                            ? null
-                            : _destinationBarangayController.text.trim(),
-                        focusNode: _destinationBarangayFocusNode,
-                        decoration: adminFormInputDecoration(
-                          widget.destinationBarangayRequired
-                              ? 'Destination Barangay *'
-                              : 'Destination Barangay',
-                          hintText: adminSelectPlaceholder(
-                            'Destination Barangay',
-                          ),
-                        ).copyWith(errorText: _destinationBarangayErrorText),
-                        options: barangayOptionsFor('destination_barangay'),
-                        locationOptionKey: 'destination_barangay',
-                        onChanged: (value) {
-                          setState(() {
-                            _destinationBarangayController.text = value ?? '';
-                            _destinationBarangayErrorText = null;
-                          });
-                        },
-                      ),
+                    _routeInput(
+                      'destination_barangay',
+                      _destinationBarangayController,
+                      _destinationBarangayFocusNode,
+                      widget.destinationBarangayRequired
+                          ? 'Destination Barangay *'
+                          : 'Destination Barangay',
+                      _destinationBarangayErrorText,
                     ),
                   _buildPhotoUploadField(
                     label: 'Delivery Form Photo',
@@ -1779,6 +1853,30 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
                       _unfocusCurrentField();
                     },
                   ),
+                  const SizedBox(height: 8),
+                  ListenableBuilder(
+                    listenable: Listenable.merge([
+                      _representativeNameController,
+                      _representativePhoneController,
+                      _waybillNumberController,
+                      _vanNumberController,
+                      _amountController,
+                      _pickUpDateController,
+                      _pickUpTimeController,
+                      _dropOffDateController,
+                      _dropOffTimeController,
+                      _originController,
+                      _originBarangayController,
+                      _destinationController,
+                      _destinationBarangayController,
+                      _deliveryFormNumberController,
+                    ]),
+                    builder: (context, child) => BookingAdditionalFieldsEditor(
+                      controller: _additionalFields,
+                      baseAnswers: _editFieldContext,
+                      clientId: _selectedBookerId,
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -1817,53 +1915,31 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
   }
 
   Booking? _buildDraftBooking() {
-    final origin = _originController.text.trim();
+    if (!_additionalFields.validate(_editFieldContext, _selectedBookerId)) {
+      AppSnackbar.showError(context, _additionalFields.errors.values.first);
+      return null;
+    }
     final originBarangay = _originBarangayController.text.trim();
-    final destination = _destinationController.text.trim();
     final destinationBarangay = _destinationBarangayController.text.trim();
-    final originIsValid =
-        origin.isEmpty || isValidPalawanLocationOption(origin);
+    // Locations are free text; PPC barangays retain their required rules.
     final originBarangayIsValid =
         !_showsOriginBarangayField ||
-        ((widget.originBarangayRequired ? originBarangay.isNotEmpty : true) &&
-            (originBarangay.isEmpty ||
-                [
-                  ...barangayOptionsFor('origin_barangay'),
-                  ...LocationOptionRegistry.retired('origin_barangay'),
-                ].any(
-                  (item) => item.toLowerCase() == originBarangay.toLowerCase(),
-                )));
-    final destinationIsValid =
-        destination.isEmpty ||
-        isValidPalawanLocationOption(destination, fieldKey: 'destination');
+        !widget.originBarangayRequired ||
+        originBarangay.isNotEmpty;
     final destinationBarangayIsValid =
         !_showsDestinationBarangayField ||
-        ((widget.destinationBarangayRequired
-                ? destinationBarangay.isNotEmpty
-                : true) &&
-            (destinationBarangay.isEmpty ||
-                [
-                  ...barangayOptionsFor('destination_barangay'),
-                  ...LocationOptionRegistry.retired('destination_barangay'),
-                ].any(
-                  (item) =>
-                      item.toLowerCase() == destinationBarangay.toLowerCase(),
-                )));
+        !widget.destinationBarangayRequired ||
+        destinationBarangay.isNotEmpty;
 
-    if (!originIsValid ||
-        !originBarangayIsValid ||
-        !destinationIsValid ||
-        !destinationBarangayIsValid) {
+    if (!originBarangayIsValid || !destinationBarangayIsValid) {
       setState(() {
-        _originErrorText = originIsValid ? null : 'Select a valid Origin.';
+        _originErrorText = null;
         _originBarangayErrorText = originBarangayIsValid
             ? null
             : (originBarangay.isEmpty && widget.originBarangayRequired)
             ? 'Origin Barangay is required.'
             : 'Select a valid Origin Barangay.';
-        _destinationErrorText = destinationIsValid
-            ? null
-            : 'Select a valid Destination.';
+        _destinationErrorText = null;
         _destinationBarangayErrorText = destinationBarangayIsValid
             ? null
             : (destinationBarangay.isEmpty &&
@@ -1878,7 +1954,12 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
       widget.booking.statusOutputs ?? const <String, dynamic>{},
     );
     final latestStoredFields = _latestOutputFieldValues(currentOutputs);
-    final editedFields = <String, dynamic>{};
+    final additionalChanges = _additionalFields.changes(
+      _editFieldContext,
+      _selectedBookerId,
+    );
+    final editedFields = Map<String, dynamic>.from(latestStoredFields)
+      ..addAll(additionalChanges);
 
     _setOrRemoveField(
       editedFields,
@@ -1991,6 +2072,16 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
       helperStatus: _statusKey.isEmpty
           ? widget.booking.helperStatus
           : _statusKey,
+      vehicleMake: additionalChanges.containsKey('vehicle_make_id')
+          ? (normalizeId(additionalChanges['vehicle_make_id']?.toString()) ==
+                    null
+                ? null
+                : VehicleMake(
+                    id: normalizeId(
+                      additionalChanges['vehicle_make_id']?.toString(),
+                    ),
+                  ))
+          : widget.booking.vehicleMake,
       driver: _resolveSelectedUser(_driverId, widget.drivers),
       helper: _resolveSelectedUser(_helperId, widget.helpers),
       chassisId: _chassisId?.trim().isEmpty == true ? null : _chassisId?.trim(),
@@ -2043,62 +2134,15 @@ class _EditAdminBookingDialogState extends State<_EditAdminBookingDialog> {
   Map<String, dynamic> _changedStatusFields({
     required Map<String, dynamic> before,
     required Map<String, dynamic> after,
-  }) {
-    final changed = <String, dynamic>{};
-    final candidateKeys = <String>{...before.keys, ...after.keys};
-    for (final key in candidateKeys) {
-      final previousValue = before[key];
-      final nextValue = after[key];
-      if (_normalizedFieldValue(previousValue) ==
-          _normalizedFieldValue(nextValue)) {
-        continue;
-      }
-      if (_isEmptyFieldValue(nextValue)) {
-        if (key == 'waybill_photo' || key == 'delivery_form_photo') {
-          // An explicit null hides the previous photo after Save while keeping
-          // the historical submission intact. Omitting the key restores it.
-          changed[key] = null;
-        }
-        continue;
-      }
-      changed[key] = nextValue;
-    }
-    return changed;
-  }
-
-  dynamic _normalizedFieldValue(dynamic value) {
-    if (value is String) {
-      return value.trim();
-    }
-    if (value is List) {
-      return value.map(_normalizedFieldValue).toList();
-    }
-    if (value is Map) {
-      final entries = Map<String, dynamic>.from(value);
-      final normalized = <String, dynamic>{};
-      for (final entry in entries.entries) {
-        normalized[entry.key] = _normalizedFieldValue(entry.value);
-      }
-      return normalized;
-    }
-    return value;
-  }
-
-  bool _isEmptyFieldValue(dynamic value) {
-    if (value == null) {
-      return true;
-    }
-    if (value is String) {
-      return value.trim().isEmpty;
-    }
-    if (value is List) {
-      return value.isEmpty;
-    }
-    if (value is Map) {
-      return value.isEmpty;
-    }
-    return false;
-  }
+  }) => bookingEditFieldChanges(
+    before: before,
+    after: after,
+    clearableKeys: {
+      'waybill_photo',
+      'delivery_form_photo',
+      ..._additionalFields.touched,
+    },
+  );
 
   UserModel? _resolveSelectedUser(String? userId, List<UserModel> users) {
     final normalizedId = userId?.trim();

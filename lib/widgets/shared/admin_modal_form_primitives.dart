@@ -468,6 +468,7 @@ class _AdminModalValueTextFieldState extends State<AdminModalValueTextField> {
           },
           child: TextFormField(
             initialValue: widget.initialValue,
+            onChanged: widget.onChanged,
             minLines: widget.minLines,
             maxLines: widget.maxLines,
             keyboardType: widget.keyboardType,

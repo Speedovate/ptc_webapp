@@ -1,3 +1,4 @@
+import 'package:webapp/services/dashboard_export_document_session.dart';
 import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:webapp/widgets/shared/paged_data_sliver.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
@@ -12,6 +13,7 @@ import 'package:webapp/models/dispatcher_access_config.dart';
 import 'package:webapp/models/support_thread.dart';
 import 'package:webapp/models/user.dart';
 import 'package:webapp/services/dashboard_export_naming.dart';
+import 'package:webapp/widgets/shared/dashboard_export_preview.dart';
 import 'package:webapp/services/dashboard_docx_export_service.dart';
 import 'package:webapp/services/export_file_service.dart';
 import 'package:webapp/services/role_access_service.dart';
@@ -400,6 +402,7 @@ Future<bool> _runDashboardExport(
   BuildContext context,
   AdminDashboardViewModel vm, {
   required _DashboardBatchExportConfig exportConfig,
+  required DashboardExportDocumentSession documents,
   required List<Booking> availableBookings,
   required Set<String> excludedBookingIds,
   required ValueChanged<String> onToggleExcludedSession,
@@ -422,8 +425,8 @@ Future<bool> _runDashboardExport(
         vm: vm,
         config: config,
       );
-      final document = await DashboardDocxExportService.instance
-          .buildDocument(payload)
+      final document = await documents
+          .docxFor(payload)
           .timeout(
             const Duration(seconds: 20),
             onTimeout: () {
@@ -504,27 +507,34 @@ Future<void> _exportBookings(
     );
     return;
   }
-  await showAppDialog<void>(
-    context: context,
-    builder: (dialogContext) => _DashboardExportDialog(
-      bookings: availableBookings,
-      vm: vm,
-      singleItem: singleItem,
-      singleItemCandidates: singleItemCandidates,
-      excludedBookingIds: excludedBookingIds,
-      onToggleExcluded: onToggleExcludedSession,
-      onSubmit: (exportConfig) {
-        return _runDashboardExport(
-          context,
-          vm,
-          exportConfig: exportConfig,
-          availableBookings: availableBookings,
-          excludedBookingIds: excludedBookingIds,
-          onToggleExcludedSession: onToggleExcludedSession,
-        );
-      },
-    ),
-  );
+  final documents = DashboardExportDocumentSession();
+  try {
+    await showAppDialog<void>(
+      context: context,
+      builder: (dialogContext) => _DashboardExportDialog(
+        documents: documents,
+        bookings: availableBookings,
+        vm: vm,
+        singleItem: singleItem,
+        singleItemCandidates: singleItemCandidates,
+        excludedBookingIds: excludedBookingIds,
+        onToggleExcluded: onToggleExcludedSession,
+        onSubmit: (exportConfig) {
+          return _runDashboardExport(
+            context,
+            vm,
+            exportConfig: exportConfig,
+            documents: documents,
+            availableBookings: availableBookings,
+            excludedBookingIds: excludedBookingIds,
+            onToggleExcludedSession: onToggleExcludedSession,
+          );
+        },
+      ),
+    );
+  } finally {
+    documents.clear();
+  }
 }
 
 Future<void> _yieldExportProgressFrame() async {
@@ -631,6 +641,7 @@ enum _DashboardExportSourceMode {
 class _DashboardBatchExportConfig {
   const _DashboardBatchExportConfig({
     required this.types,
+    required this.mainClientId,
     required this.sourceMode,
     required this.setAsBilledWhenExported,
     required this.candidateBookingIds,
@@ -653,6 +664,7 @@ class _DashboardBatchExportConfig {
   });
 
   final List<_DashboardExportType> types;
+  final String mainClientId;
   final _DashboardExportSourceMode sourceMode;
   final bool setAsBilledWhenExported;
   final List<String> candidateBookingIds;
@@ -679,7 +691,10 @@ class _DashboardBatchExportConfig {
 
   List<Booking> selectedBookings(List<Booking> bookings) {
     final bookingById = {
-      for (final booking in bookings)
+      for (final booking in AdminDashboardViewModel.exportBookingsForClient(
+        bookings,
+        mainClientId,
+      ))
         if ((booking.id ?? '').isNotEmpty) booking.id!: booking,
     };
     return selectedBookingIds
@@ -713,6 +728,7 @@ class _DashboardBatchExportConfig {
 
 class _DashboardExportDialog extends StatefulWidget {
   const _DashboardExportDialog({
+    required this.documents,
     required this.bookings,
     required this.vm,
     required this.singleItem,
@@ -722,6 +738,7 @@ class _DashboardExportDialog extends StatefulWidget {
     this.singleItemCandidates,
   });
 
+  final DashboardExportDocumentSession documents;
   final List<Booking> bookings;
   final AdminDashboardViewModel vm;
   final bool singleItem;
@@ -753,6 +770,8 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
   late DateTime _coveredEndDate;
   final Set<_DashboardExportType> _selectedTypes = <_DashboardExportType>{};
   late _DashboardExportSourceMode _sourceMode;
+  String? _mainClientId;
+  late final List<UserModel> _mainClients;
   bool _setAsBilledWhenExported = true;
   bool _isSubmitting = false;
 
@@ -765,10 +784,14 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
     _coveredStartDate = coveredDates.$1;
     _coveredEndDate = coveredDates.$2;
     _sourceMode = _resolveInitialSourceMode();
+    _mainClients = widget.vm.exportMainClients(widget.bookings);
+    if (_mainClients.length == 1) _mainClientId = _mainClients.single.id;
     _regularStatementNumberController = TextEditingController();
     _hustlingStatementNumberController = TextEditingController();
     _companyNameController = TextEditingController(
-      text: _defaultCompanyName(widget.bookings, widget.vm),
+      text: _mainClients.length == 1
+          ? (_mainClients.single.name ?? '').toUpperCase()
+          : '',
     );
     _representativeNameController = TextEditingController();
     _greetingLineController = TextEditingController(text: 'Dear Ma’am/Sir:');
@@ -813,6 +836,22 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
   bool get _showsBankFields =>
       _selectedTypes.any((type) => type.isBillingStatement);
   bool get _showsCoveredDateRange => !widget.singleItem;
+  List<Booking> get _clientBookings =>
+      AdminDashboardViewModel.exportBookingsForClient(
+        widget.bookings,
+        _mainClientId,
+      );
+
+  void _selectMainClient(String? id) {
+    setState(() {
+      _mainClientId = id;
+      final client = _mainClients
+          .where((client) => client.id == id)
+          .firstOrNull;
+      _companyNameController.text = (client?.name ?? '').toUpperCase();
+    });
+  }
+
   List<Booking> get _candidateBookings => _bookingsForSource(_sourceMode);
   List<String> get _candidateBookingIds => _candidateBookings
       .map((booking) => normalizeId(booking.id))
@@ -840,7 +879,10 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
 
   List<Booking> _bookingsForSource(_DashboardExportSourceMode sourceMode) {
     if (widget.singleItem) {
-      return widget.singleItemCandidates ?? widget.bookings.take(1).toList();
+      return AdminDashboardViewModel.exportBookingsForClient(
+        widget.singleItemCandidates ?? widget.bookings.take(1).toList(),
+        _mainClientId,
+      );
     }
     return switch (sourceMode) {
       _DashboardExportSourceMode.currentRange =>
@@ -853,7 +895,7 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
   }
 
   List<Booking> _currentRangeBookingsForCoveredDates() {
-    return widget.bookings
+    return _clientBookings
         .where((booking) {
           final deliveredDate = _bookingSortDate(booking);
           if (deliveredDate == null) {
@@ -885,7 +927,7 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
       _coveredStartDate.month,
       _coveredStartDate.day,
     );
-    return widget.bookings
+    return _clientBookings
         .where((booking) {
           if (widget.vm.billingStatusValue(booking) !=
               AdminDashboardViewModel.billingStatusUnbilled) {
@@ -984,6 +1026,11 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
           onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
+        OutlinedButton.icon(
+          onPressed: _isSubmitting ? null : () => _submit(previewOnly: true),
+          icon: const Icon(Icons.visibility_outlined),
+          label: const Text('Preview'),
+        ),
         FilledButton(
           onPressed: _isSubmitting ? null : _submit,
           child: _isSubmitting
@@ -1020,6 +1067,26 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
                   ),
                 ),
                 if (_selectedTypes.isNotEmpty) ...[
+                  AdminModalFieldSlot(
+                    bottomPadding: 4,
+                    child: AdminDropdownFormField<String>(
+                      initialValue: _mainClientId,
+                      decoration: adminFormInputDecoration('Main Client'),
+                      items: [
+                        for (final client in _mainClients)
+                          DropdownMenuItem(
+                            value: client.id,
+                            child: Text(
+                              client.name?.trim().isNotEmpty == true
+                                  ? client.name!
+                                  : 'Client ${client.id}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: _isSubmitting ? null : _selectMainClient,
+                    ),
+                  ),
                   AdminModalToggleRow(
                     title: 'Set as billed when exported',
                     value: _setAsBilledWhenExported,
@@ -1193,7 +1260,7 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
     );
   }
 
-  Future<void> _submit() async {
+  Future<void> _submit({bool previewOnly = false}) async {
     final regularStatementNumber = _regularStatementNumberController.text
         .trim();
     final hustlingStatementNumber = _hustlingStatementNumberController.text
@@ -1214,6 +1281,10 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
         context,
         'Please select at least one document type.',
       );
+      return;
+    }
+    if (_mainClientId == null) {
+      AppSnackbar.showError(context, 'Please select a main client.');
       return;
     }
     if (_candidateBookings.isEmpty) {
@@ -1278,6 +1349,7 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
     }
     final exportConfig = _DashboardBatchExportConfig(
       types: _selectedTypes.toList(),
+      mainClientId: _mainClientId!,
       sourceMode: _sourceMode,
       setAsBilledWhenExported: _setAsBilledWhenExported,
       candidateBookingIds: _candidateBookingIds,
@@ -1298,6 +1370,26 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
       accountName: accountName,
       accountNumber: accountNumber,
     );
+    if (previewOnly) {
+      final selectedBookings = exportConfig.selectedBookings(widget.bookings);
+      final payloads = [
+        for (final type in exportConfig.types)
+          _buildDashboardExportPayload(
+            bookings: selectedBookings,
+            vm: widget.vm,
+            config: exportConfig.configFor(type),
+          ),
+      ];
+      setState(() => _isSubmitting = false);
+      await showAppDialog<void>(
+        context: context,
+        builder: (_) => DashboardExportPreview(
+          payloads: payloads,
+          documents: widget.documents,
+        ),
+      );
+      return;
+    }
     final wasSuccessful = await widget.onSubmit(exportConfig);
     if (!mounted) {
       return;
@@ -1653,7 +1745,7 @@ class _DashboardExportCandidateRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  vm.client(booking).replaceFirst(RegExp(r'\s+\('), ' ('),
+                  AdminDashboardViewModel.exportTripClient(booking),
                   style: const TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 14,
@@ -1854,7 +1946,7 @@ DashboardDocxExportPayload _buildDashboardExportPayload({
       waybillNumber: AdminDashboardViewModel.waybillNumber(booking),
       vanNumber: AdminDashboardViewModel.vanNumber(booking),
       vanSize: vm.vanSize(booking),
-      client: vm.client(booking),
+      client: AdminDashboardViewModel.exportTripClient(booking),
       amount: dashboardExportCurrency(
         _parseCurrency(AdminDashboardViewModel.amount(booking)),
       ),
@@ -1882,16 +1974,6 @@ String _buildDashboardExportZipFileName(
   final minute = now.minute.toString().padLeft(2, '0');
   final second = now.second.toString().padLeft(2, '0');
   return 'PALTRANCO Export $month-$day-$year $hour-$minute-$second $meridiem.zip';
-}
-
-String _defaultCompanyName(List<Booking> bookings, AdminDashboardViewModel vm) {
-  if (bookings.isEmpty) {
-    return '';
-  }
-  final first = vm.client(bookings.first);
-  final upper = first.toUpperCase();
-  final parenIndex = upper.indexOf(' (');
-  return parenIndex > 0 ? upper.substring(0, parenIndex) : upper;
 }
 
 (DateTime, DateTime) _resolveCurrentRangeWeekWindow(DateTime base) {

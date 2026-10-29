@@ -1,3 +1,7 @@
+import 'client_route_suggestions.dart';
+import 'package:webapp/constants/palawan_locations.dart';
+import 'client_representative_suggestions.dart';
+import 'package:webapp/models/booking.dart';
 import 'package:webapp/services/kpi/location_option_registry.dart';
 import 'package:webapp/services/kpi/operations_catalog_store.dart';
 import 'package:webapp/constants/puerto_princesa_barangays.dart';
@@ -32,6 +36,109 @@ class StatusFieldOptionResolver {
   final VehicleCatalogRepository _vehicleCatalogRepository;
   final StatusFormRepository _statusFormRepository;
   final BookingRepository _bookingRepository;
+  List<Booking> _representativeBookings = const [];
+  final Map<String, List<Map<String, String>>> _routesByRepresentative = {};
+  final Map<String, List<String>> _representativesByClient = {};
+  final Map<String, Map<String, String>> _representativePhonesByClient = {};
+
+  /// Reuse one history snapshot across fields and keystrokes.
+  void setBookingHistory(List<Booking> bookings) {
+    _representativeBookings = List.of(bookings);
+    _routesByRepresentative.clear();
+    _representativesByClient.clear();
+    _representativePhonesByClient.clear();
+  }
+
+  /// Update optional suggestions only after the booking write succeeds.
+  void rememberSavedBooking(Booking booking) {
+    _ensureRepresentativeSnapshot();
+    _representativeBookings = [
+      ..._representativeBookings.where(
+        (existing) => booking.id == null || existing.id != booking.id,
+      ),
+      booking,
+    ];
+    _routesByRepresentative.clear();
+    _representativesByClient.clear();
+    _representativePhonesByClient.clear();
+  }
+
+  void _ensureRepresentativeSnapshot() {
+    if (_representativeBookings.isEmpty &&
+        BookingRequest.hydratedBookingCount > 0) {
+      _representativeBookings = BookingRequest.hydratedBookingsSnapshot;
+      _routesByRepresentative.clear();
+      _representativesByClient.clear();
+      _representativePhonesByClient.clear();
+    }
+  }
+
+  String? representativePhone(String? clientId, String name) {
+    _ensureRepresentativeSnapshot();
+    final id = normalizeId(clientId);
+    if (id == null) return null;
+    final phones = _representativePhonesByClient.putIfAbsent(
+      id,
+      () => clientRepresentativePhones(_representativeBookings, id),
+    );
+    return phones[name.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase()];
+  }
+
+  List<StatusField> withClientRepresentativeSuggestions(
+    List<StatusField> fields, {
+    required String? clientId,
+    Map<String, dynamic> answers = const {},
+  }) {
+    if (!fields.any(
+      (field) =>
+          field.usesClientRepresentativeSuggestions ||
+          isBookingRouteFieldKey(field.key),
+    )) {
+      return fields;
+    }
+    _ensureRepresentativeSnapshot();
+    final id = normalizeId(clientId);
+    // Resolve once per client per loaded snapshot, rather than scanning all
+    // booking history on every text edit. Hydration invalidates this cache.
+    final suggestions = id == null
+        ? const <String>[]
+        : _representativesByClient.putIfAbsent(
+            id,
+            () => clientRepresentativeSuggestions(_representativeBookings, id),
+          );
+    final name = answers['representative_name']
+        ?.toString()
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .toLowerCase();
+    // Partial/new names have no saved route association. Avoid rescanning the
+    // full booking history and retaining an empty cache entry per keystroke.
+    final hasSavedName =
+        name != null && suggestions.any((value) => value.toLowerCase() == name);
+    final routes = id == null || name == null || name.isEmpty || !hasSavedName
+        ? const <Map<String, String>>[]
+        : _routesByRepresentative.putIfAbsent(
+            '$id::$name',
+            () => clientRepresentativeRoutes(_representativeBookings, id, name),
+          );
+    return fields
+        .map(
+          (field) => field.usesClientRepresentativeSuggestions
+              ? field.copyWith(options: suggestions)
+              : isBookingRouteFieldKey(field.key)
+              ? field.copyWith(
+                  options: _uniqueOptions([
+                    ...routeFieldSuggestions(routes, field.key!, answers),
+                    ...(field.key!.endsWith('_barangay')
+                        ? barangayOptionsFor(field.key!)
+                        : locationOptionsFor(field.key!)),
+                  ]),
+                )
+              : field,
+        )
+        .toList();
+  }
+
   final RoleAccessService _roleAccessService = RoleAccessService.instance;
 
   List<StatusField> hydrateFieldsFromResolvedSnapshots(
@@ -177,16 +284,32 @@ class StatusFieldOptionResolver {
         }),
       );
     }
-    if (sourceKeys.contains(statusFieldOptionSourceBookings) &&
+    final needsRepresentativeHistory =
+        sourceKeys.contains(statusFieldOptionSourceClientRepresentatives) ||
+        fields.any((field) => isBookingRouteFieldKey(field.key));
+    if ((sourceKeys.contains(statusFieldOptionSourceBookings) ||
+            needsRepresentativeHistory) &&
         (BookingRequest.hasResolvedBookings ||
             BookingRequest.isAuthoritativeSyncInFlight)) {
-      // Use the dashboard-owned booking request while it is still resolving.
       bookings = BookingRequest.hydratedBookingsSnapshot;
     } else if (sourceKeys.contains(statusFieldOptionSourceBookings)) {
       tasks.add(
         _bookingRepository.getBookings().then((value) {
           bookings = value;
         }),
+      );
+    } else if (needsRepresentativeHistory) {
+      // Optional suggestions never prevent manual entry or block form loading.
+      tasks.add(
+        _bookingRepository
+            .getBookings()
+            .timeout(
+              const Duration(seconds: 3),
+              onTimeout: () => const <Booking>[],
+            )
+            .then<void>((value) {
+              bookings = value;
+            }, onError: (Object _) {}),
       );
     }
     if (tasks.isNotEmpty) {
@@ -219,6 +342,16 @@ class StatusFieldOptionResolver {
     required List<StatusField> fieldLibrary,
     required List<dynamic> bookings,
   }) {
+    if (fields.any(
+      (field) =>
+          field.usesClientRepresentativeSuggestions ||
+          isBookingRouteFieldKey(field.key),
+    )) {
+      _representativeBookings = bookings.whereType<Booking>().toList();
+      _routesByRepresentative.clear();
+      _representativesByClient.clear();
+      _representativePhonesByClient.clear();
+    }
     final userOptions = _uniqueSortedOptions(
       users
           .where((item) => item.isActive != false)
@@ -314,6 +447,7 @@ class StatusFieldOptionResolver {
     final resolved = fields.map((field) {
       final sourceKey = _resolvedOptionSourceKey(field);
       final resolvedOptions = switch (sourceKey) {
+        statusFieldOptionSourceClientRepresentatives => const <String>[],
         statusFieldOptionSourceUsers => userOptions,
         statusFieldOptionSourceClients => clientOptions,
         statusFieldOptionSourceAdmins => adminOptions,

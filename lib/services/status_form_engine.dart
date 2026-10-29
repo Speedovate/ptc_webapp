@@ -1,3 +1,4 @@
+import 'client_route_suggestions.dart';
 import 'package:webapp/services/kpi/location_option_registry.dart';
 import 'package:webapp/models/booking.dart';
 import 'package:webapp/constants/palawan_locations.dart';
@@ -68,6 +69,10 @@ class StatusFormEngine {
           (isIdKey && usesDynamicSource) ||
           optionSourceKey == statusFieldOptionSourceDrivers ||
           optionSourceKey == statusFieldOptionSourceHelpers;
+
+      // Route fields accept manual addresses while preserving the existing
+      // required-field checks and plain string storage.
+      if (answer is String && isBookingRouteFieldKey(normalizedKey)) continue;
 
       if (answer is String && LocationOptionRegistry.supports(normalizedKey)) {
         if (!(isPalawanLocationFieldKey(normalizedKey)
@@ -294,6 +299,15 @@ class StatusFormEngine {
   }
 
   static bool isFieldVisible(StatusField field, Map<String, dynamic> answers) {
+    final key = field.key?.trim().toLowerCase();
+    if (key == 'origin_barangay' &&
+        !isPuertoPrincesaLocation(answers['origin'])) {
+      return false;
+    }
+    if (key == 'destination_barangay' &&
+        !isPuertoPrincesaLocation(answers['destination'])) {
+      return false;
+    }
     final controllerKey = field.visibilityControllerKey?.trim();
     final allowedValues = field.visibilityOptionValues
         .map((item) => item.trim())
@@ -411,6 +425,12 @@ class StatusFormEngine {
     final normalized = <String, dynamic>{};
 
     answers.forEach((key, value) {
+      if ((key == 'origin_barangay' &&
+              !isPuertoPrincesaLocation(answers['origin'])) ||
+          (key == 'destination_barangay' &&
+              !isPuertoPrincesaLocation(answers['destination']))) {
+        return;
+      }
       final field = fieldByKey[key];
       if (field != null && !isFieldVisible(field, answers)) {
         return;

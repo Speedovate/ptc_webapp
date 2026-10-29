@@ -72,6 +72,24 @@ void main() {
     expect(db.transactionCalls, 2);
     expect((await ref.get()).data()!['marker'], 'message');
   });
+  test(
+    'a delayed read of an older message cannot replace newer message progress',
+    () async {
+      final db = MergeAwareFirestore();
+      final ref = db
+          .collection('support_read_markers')
+          .doc('7')
+          .collection('threads')
+          .doc('chat');
+      const newer = '2026-10-29T09:02:00.000Z|2|Hello';
+      await ref.set({'marker': newer, 'updated_at': '2026-10-29T10:00:00Z'});
+      await writeSupportReadMarker(db, ref, {
+        'marker': '2026-10-29T09:01:00.000Z|2|Hello',
+        'updated_at': '2026-10-29T11:00:00Z',
+      });
+      expect((await ref.get()).data()!['marker'], newer);
+    },
+  );
   for (final incoming in [
     '2026-09-01',
     '2026-09-02',

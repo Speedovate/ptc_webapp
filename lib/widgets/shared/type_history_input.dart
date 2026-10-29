@@ -18,6 +18,11 @@ class TypeHistoryInput extends StatefulWidget {
     this.options = const [],
     this.optionsBottomSpacing = 6,
     this.browseOptionsOnFocus = false,
+    this.suggestionLimit,
+    this.includeExactMatch = false,
+    this.matchInputOnly = false,
+    this.onSelected,
+    this.suggestionDetail,
   });
   final TextEditingController controller;
   final String? historyKey;
@@ -31,6 +36,15 @@ class TypeHistoryInput extends StatefulWidget {
 
   /// Show supplied choices immediately when focusing a prefilled field.
   final bool browseOptionsOnFocus;
+  final int? suggestionLimit;
+
+  /// Keep an already typed value selectable for linked-field autofill.
+  final bool includeExactMatch;
+
+  /// Filter even on focus and show no options for an empty query.
+  final bool matchInputOnly;
+  final ValueChanged<String>? onSelected;
+  final String? Function(String)? suggestionDetail;
   @override
   State<TypeHistoryInput> createState() => _TypeHistoryInputState();
 }
@@ -87,18 +101,40 @@ class _TypeHistoryInputState extends State<TypeHistoryInput> {
     }
     final key = widget.historyKey;
     final text = widget.controller.text;
-    final query = browse ? '' : text.trim().toLowerCase();
+    String normalized(String value) =>
+        value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+    final query = browse && !widget.matchInputOnly ? '' : normalized(text);
+    if (widget.matchInputOnly && query.isEmpty) return;
     List<String> matchingOptions(List<String> history) {
       final seen = <String>{};
       final matching = [...history, ...widget.options].where((value) {
-        final normalized = value.trim().toLowerCase();
-        return normalized.isNotEmpty &&
-            normalized.startsWith(query) &&
-            value != text &&
-            seen.add(normalized);
+        final candidate = normalized(value);
+        return candidate.isNotEmpty &&
+            (widget.matchInputOnly
+                ? candidate.contains(query)
+                : candidate.startsWith(query)) &&
+            (widget.includeExactMatch || value != text) &&
+            seen.add(candidate);
       });
-      return (widget.browseOptionsOnFocus ? matching : matching.take(10))
-          .toList();
+      final sorted = matching.toList();
+      if (widget.matchInputOnly) {
+        int rank(String value) => normalized(value) == query
+            ? 0
+            : normalized(value).startsWith(query)
+            ? 1
+            : 2;
+        // Bucket by relevance while preserving history order for equal matches.
+        final ranked = [
+          for (var score = 0; score <= 2; score++)
+            ...sorted.where((value) => rank(value) == score),
+        ];
+        sorted
+          ..clear()
+          ..addAll(ranked);
+      }
+      final limit =
+          widget.suggestionLimit ?? (widget.browseOptionsOnFocus ? null : 10);
+      return (limit == null ? sorted : sorted.take(limit)).toList();
     }
 
     if (widget.browseOptionsOnFocus) {
@@ -129,6 +165,7 @@ class _TypeHistoryInputState extends State<TypeHistoryInput> {
       _debounce?.cancel();
       ++_generation;
       setState(() => _options = []);
+      widget.onSelected?.call(widget.controller.text);
     } finally {
       _selecting = false;
     }
@@ -157,9 +194,11 @@ class _TypeHistoryInputState extends State<TypeHistoryInput> {
           if (_options.isNotEmpty)
             Container(
               constraints: const BoxConstraints(maxHeight: 180),
+              clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: Colors.white,
                 border: Border.all(color: AppColors.primaryBorder),
+                borderRadius: BorderRadius.circular(16),
               ),
               child: ListView.builder(
                 shrinkWrap: true,
@@ -178,10 +217,31 @@ class _TypeHistoryInputState extends State<TypeHistoryInput> {
                   onPressed: () => _select(_options[index]),
                   child: Align(
                     alignment: Alignment.centerLeft,
-                    child: Text(
-                      _options[index],
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _options[index],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (widget.suggestionDetail?.call(_options[index])
+                            case final String detail) ...[
+                          const SizedBox(width: 12),
+                          Flexible(
+                            child: Text(
+                              detail,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.black54,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ),

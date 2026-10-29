@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:webapp/requests/firestore_cache_store.dart';
 import 'package:webapp/repositories/interfaces/auth_repository.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -220,6 +222,147 @@ void main() {
       },
     );
   });
+
+  for (final scenario in [
+    'transient cached',
+    'transient uncached',
+    'permission denied',
+    'server missing',
+    'pending local',
+  ]) {
+    test(
+      'impersonation lookup: $scenario preserves correct session behavior',
+      () async {
+        await _seedSession({'paltranco_current_user_id': 'switch-admin'});
+        await FirestoreCacheStore.instance.clearResource('users');
+        addTearDown(() => FirestoreCacheStore.instance.clearResource('users'));
+        final targetId = scenario == 'pending local'
+            ? 'offline_dispatcher_switch'
+            : 'dispatcher-$scenario';
+        final db = _FailingUserReadFirestore();
+        if (scenario.startsWith('transient')) db.failureCode = 'unavailable';
+        if (scenario == 'permission denied') {
+          db.failureCode = 'permission-denied';
+        }
+        if (scenario != 'transient uncached') {
+          await FirestoreCacheStore.instance.writeDocumentMaps('users', [
+            {
+              'id': targetId,
+              'role': 'dispatcher',
+              'name': 'Dispatcher',
+              'is_active': true,
+            },
+            {
+              'id': 'switch-admin',
+              'role': 'admin',
+              'name': 'Admin',
+              'is_active': true,
+            },
+          ]);
+        }
+        final request = _sessionRequest(db);
+        final prefs = createAuthStorageBackend();
+        await prefs.initialize();
+        if (scenario == 'transient cached' || scenario == 'pending local') {
+          await request.loginAsUser(targetId);
+          expect(await prefs.readString('paltranco_current_user_id'), targetId);
+          expect(
+            await prefs.readString('paltranco_quick_login_source_user_id'),
+            'switch-admin',
+          );
+          expect(db.userReads, scenario == 'pending local' ? 0 : 1);
+        } else {
+          await expectLater(
+            request.loginAsUser(targetId),
+            throwsA(
+              isA<AuthFailure>().having(
+                (error) => error.message,
+                'message',
+                scenario == 'server missing'
+                    ? contains('No account found')
+                    : contains('could not verify'),
+              ),
+            ),
+          );
+          expect(
+            await prefs.readString('paltranco_current_user_id'),
+            'switch-admin',
+          );
+          expect(
+            await prefs.readString('paltranco_quick_login_source_user_id'),
+            isNull,
+          );
+        }
+      },
+    );
+  }
+}
+
+AuthRequest _sessionRequest(FakeFirebaseFirestore db) {
+  final mutations = OfflineMutationQueueService(
+    firestore: db,
+    backend: _MemoryBookingStorageBackend(),
+  );
+  return AuthRequest(
+    firestore: db,
+    vehicleRequest: VehicleRequest(
+      firestore: db,
+      offlineMutationQueueService: mutations,
+      offlineQueueInitializer: () async {},
+    ),
+    firebaseAuthBridgeService: FirebaseAuthBridgeService(firestore: db),
+    photoStorageService: _FakeUserPhotoStorageService(),
+    offlineMutationQueueService: mutations,
+    offlineMediaSyncService: OfflineMediaSyncService(
+      firestore: db,
+      backend: _MemoryBookingStorageBackend(),
+      photoStorageService: _FakeUserPhotoStorageService(),
+      supportStorageService: _FakeSupportStorageService(),
+    ),
+    offlineQueueInitializer: () async {},
+    offlineQueueFlusher: () async {},
+  );
+}
+
+class _FailingUserReadFirestore extends FakeFirebaseFirestore {
+  String? failureCode;
+  int userReads = 0;
+  @override
+  CollectionReference<Map<String, dynamic>> collection(String path) =>
+      path == 'users'
+      ? _UsersCollection(super.collection(path), this)
+      : super.collection(path);
+}
+
+// Test-only forwarding double injects a failed document read.
+// ignore: subtype_of_sealed_class
+class _UsersCollection extends Fake
+    implements CollectionReference<Map<String, dynamic>> {
+  _UsersCollection(this.delegate, this.owner);
+  final CollectionReference<Map<String, dynamic>> delegate;
+  final _FailingUserReadFirestore owner;
+  @override
+  DocumentReference<Map<String, dynamic>> doc([String? path]) =>
+      _UserDocument(delegate.doc(path), owner);
+}
+
+// Test-only forwarding double; production uses the SDK implementation.
+// ignore: subtype_of_sealed_class
+class _UserDocument extends Fake
+    implements DocumentReference<Map<String, dynamic>> {
+  _UserDocument(this.delegate, this.owner);
+  final DocumentReference<Map<String, dynamic>> delegate;
+  final _FailingUserReadFirestore owner;
+  @override
+  Future<DocumentSnapshot<Map<String, dynamic>>> get([
+    GetOptions? options,
+  ]) async {
+    owner.userReads++;
+    if (owner.failureCode case final String code) {
+      throw FirebaseException(plugin: 'cloud_firestore', code: code);
+    }
+    return delegate.get(options);
+  }
 }
 
 class _MemoryBookingStorageBackend implements BookingStorageBackend {

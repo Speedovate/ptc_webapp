@@ -1,3 +1,4 @@
+import 'package:webapp/services/client_route_suggestions.dart';
 import 'package:webapp/utils/location_display.dart';
 import 'package:webapp/services/field_type_history_service.dart';
 import 'package:webapp/services/kpi/location_option_registry.dart';
@@ -6,7 +7,6 @@ import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webapp/constants/app_colors.dart';
-import 'package:webapp/constants/palawan_locations.dart';
 import 'package:webapp/models/status_field.dart';
 import 'package:webapp/requests/chassis.request.dart';
 import 'package:webapp/requests/vehicle.request.dart';
@@ -40,6 +40,8 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
     this.formButtonText,
     this.formStatusKey,
     this.errorText,
+    this.onSuggestionSelected,
+    this.suggestionDetail,
     this.optionLabels = const {},
     this.onDisabledTap,
     this.onAdvanceAfterSelection,
@@ -56,6 +58,8 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
   final String? formButtonText;
   final String? formStatusKey;
   final String? errorText;
+  final ValueChanged<String>? onSuggestionSelected;
+  final String? Function(String)? suggestionDetail;
   final Map<String, String> optionLabels;
   final VoidCallback? onDisabledTap;
   final ValueChanged<dynamic>? onAdvanceAfterSelection;
@@ -69,10 +73,10 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
     final fieldType = (field.type ?? '').trim().toLowerCase();
     final fieldKey = (field.key ?? '').trim().toLowerCase();
     final isSearchDropdownCard =
-        fieldType == 'search_dropdown' ||
-        field.isChassisLocationInput ||
-        isPalawanLocationFieldKey(fieldKey);
-    final isNormalDropdownCard = fieldType == 'dropdown';
+        (fieldType == 'search_dropdown' || field.isChassisLocationInput) &&
+        !isBookingRouteFieldKey(fieldKey);
+    final isRouteTextCard = isBookingRouteFieldKey(fieldKey);
+    final isNormalDropdownCard = fieldType == 'dropdown' && !isRouteTextCard;
     final usesDropdownCard = isNormalDropdownCard || isSearchDropdownCard;
     final hasValidationError = errorText?.trim().isNotEmpty == true;
     final palette = bookingFormResolvedStatusPalette(
@@ -91,22 +95,8 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
       instructions: instructions,
       inputTopSpacing: usesDropdownCard ? 10 : 14,
       containerPadding: isSearchDropdownCard
-          ? EdgeInsets.fromLTRB(
-              18,
-              workflowLayout ? 8 : 18,
-              18,
-              hasValidationError ? 18 : 4,
-            )
-          : (isNormalDropdownCard
-                ? EdgeInsets.fromLTRB(
-                    18,
-                    workflowLayout ? 8 : 18,
-                    18,
-                    hasValidationError ? 18 : 8,
-                  )
-                : (workflowLayout
-                      ? const EdgeInsets.fromLTRB(18, 8, 18, 18)
-                      : const EdgeInsets.all(18))),
+          ? EdgeInsets.fromLTRB(18, 18, 18, hasValidationError ? 18 : 4)
+          : const EdgeInsets.all(18),
       input: StatusFormRuntimeFieldInput(
         field: field,
         initialValue: initialValue,
@@ -121,6 +111,8 @@ class StatusFormRuntimeFieldCard extends StatelessWidget {
         onDisabledTap: onDisabledTap,
         onAdvanceAfterSelection: onAdvanceAfterSelection,
         onChanged: onChanged,
+        onSuggestionSelected: onSuggestionSelected,
+        suggestionDetail: suggestionDetail,
       ),
     );
   }
@@ -139,6 +131,8 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
     this.formButtonText,
     this.formStatusKey,
     this.errorText,
+    this.onSuggestionSelected,
+    this.suggestionDetail,
     this.optionLabels = const {},
     this.onDisabledTap,
     this.onAdvanceAfterSelection,
@@ -154,6 +148,8 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
   final String? formButtonText;
   final String? formStatusKey;
   final String? errorText;
+  final ValueChanged<String>? onSuggestionSelected;
+  final String? Function(String)? suggestionDetail;
   final Map<String, String> optionLabels;
   final VoidCallback? onDisabledTap;
   final ValueChanged<dynamic>? onAdvanceAfterSelection;
@@ -161,7 +157,7 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fieldKey = (field.key ?? '').trim().toLowerCase();
-    if (field.isChassisLocationInput) {
+    if (field.isChassisLocationInput && !isBookingRouteFieldKey(field.key)) {
       return ValueListenableBuilder<int>(
         valueListenable: LocationOptionRegistry.revision,
         builder: (context, revision, child) => AdminSearchSelectFormField(
@@ -184,8 +180,8 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         ),
       );
     }
-    if (isPalawanLocationFieldKey(fieldKey)) {
-      return _PalawanLocationFieldInput(
+    if (isBookingRouteFieldKey(fieldKey)) {
+      return _TextFieldInput(
         field: field,
         initialValue: initialValue,
         errorText: errorText,
@@ -195,8 +191,8 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         formTitle: formTitle,
         formButtonText: formButtonText,
         formStatusKey: formStatusKey,
-        onAdvanceAfterSelection: onAdvanceAfterSelection,
         onChanged: onChanged,
+        keyboardType: TextInputType.text,
       );
     }
     return switch (field.type) {
@@ -318,6 +314,8 @@ class StatusFormRuntimeFieldInput extends StatelessWidget {
         formButtonText: formButtonText,
         formStatusKey: formStatusKey,
         onChanged: onChanged,
+        onSuggestionSelected: onSuggestionSelected,
+        suggestionDetail: suggestionDetail,
         keyboardType: TextInputType.text,
       ),
     };
@@ -419,102 +417,6 @@ class _SearchDropdownFieldInput extends StatelessWidget {
   }
 }
 
-class _PalawanLocationFieldInput extends StatelessWidget {
-  const _PalawanLocationFieldInput({
-    required this.field,
-    required this.initialValue,
-    required this.onChanged,
-    required this.formTitle,
-    required this.formButtonText,
-    required this.formStatusKey,
-    this.focusNode,
-    this.nextFocusNode,
-    this.activateNextFocus = false,
-    this.errorText,
-    this.onAdvanceAfterSelection,
-  });
-
-  final StatusField field;
-  final dynamic initialValue;
-  final ValueChanged<dynamic> onChanged;
-  final FocusNode? focusNode;
-  final FocusNode? nextFocusNode;
-  final bool activateNextFocus;
-  final String? formTitle;
-  final String? formButtonText;
-  final String? formStatusKey;
-  final String? errorText;
-  final ValueChanged<dynamic>? onAdvanceAfterSelection;
-
-  void _closeSelectionFlow(BuildContext context, dynamic value) {
-    onChanged(value);
-    final handleAdvance = onAdvanceAfterSelection;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!context.mounted) {
-        return;
-      }
-      if (handleAdvance != null) {
-        handleAdvance(value);
-        return;
-      }
-      FocusScope.of(context).unfocus();
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = bookingFormResolvedStatusPalette(
-      title: formTitle,
-      buttonText: formButtonText,
-      currentStatusKey: formStatusKey,
-    );
-
-    return AdminSearchSelectFormField(
-      initialValue: initialValue?.toString(),
-      focusNode: focusNode,
-      dialogTitle: adminSelectPlaceholder(
-        field.title?.trim().isNotEmpty == true
-            ? field.title!.trim()
-            : 'Location',
-      ),
-      decoration:
-          adminPlainDropdownDecoration(
-            field.required == true
-                ? adminSelectPlaceholder(
-                    field.title?.trim().isNotEmpty == true
-                        ? field.title!.trim()
-                        : 'Location',
-                    override: _runtimeFieldPlaceholder(field),
-                  )
-                : ((field.placeholder?.trim().isNotEmpty == true)
-                      ? field.placeholder!.trim()
-                      : 'Optional'),
-          ).copyWith(
-            fillColor: Colors.white,
-            hintStyle: adminFieldHintTextStyle.copyWith(
-              color: palette.accentMuted,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: palette.border),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: palette.accent),
-            ),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: palette.border),
-            ),
-            errorText: errorText,
-          ),
-      options: locationOptionsFor(field.key ?? 'origin'),
-      locationOptionKey: field.key,
-      onChanged: (value) => _closeSelectionFlow(context, value),
-    );
-  }
-}
-
 class _TextFieldInput extends StatefulWidget {
   const _TextFieldInput({
     required this.field,
@@ -528,6 +430,8 @@ class _TextFieldInput extends StatefulWidget {
     required this.formButtonText,
     required this.formStatusKey,
     this.errorText,
+    this.onSuggestionSelected,
+    this.suggestionDetail,
   });
 
   final StatusField field;
@@ -541,6 +445,8 @@ class _TextFieldInput extends StatefulWidget {
   final String? formButtonText;
   final String? formStatusKey;
   final String? errorText;
+  final ValueChanged<String>? onSuggestionSelected;
+  final String? Function(String)? suggestionDetail;
 
   @override
   State<_TextFieldInput> createState() => _TextFieldInputState();
@@ -684,11 +590,37 @@ class _TextFieldInputState extends State<_TextFieldInput> {
         ? adminEnterPlaceholder(fieldLabel)
         : 'Optional';
 
-    final isChassisLocation = widget.field.isChassisLocationInput;
+    final isChassisLocation =
+        widget.field.isChassisLocationInput &&
+        !isBookingRouteFieldKey(widget.field.key);
     Widget buildInput() => TypeHistoryInput(
+      matchInputOnly:
+          widget.field.usesClientRepresentativeSuggestions ||
+          isBookingRouteFieldKey(widget.field.key),
+      includeExactMatch:
+          widget.field.usesClientRepresentativeSuggestions ||
+          isBookingRouteFieldKey(widget.field.key),
+      suggestionDetail: widget.field.usesClientRepresentativeSuggestions
+          ? widget.suggestionDetail
+          : null,
       controller: _controller,
-      historyKey: FieldTypeHistoryService.fieldKey(widget.field),
-      browseOptionsOnFocus: isChassisLocation,
+      historyKey:
+          (widget.field.usesClientRepresentativeSuggestions ||
+              isBookingRouteFieldKey(widget.field.key))
+          ? null
+          : FieldTypeHistoryService.fieldKey(widget.field),
+      browseOptionsOnFocus:
+          isChassisLocation ||
+          widget.field.usesClientRepresentativeSuggestions ||
+          isBookingRouteFieldKey(widget.field.key),
+      onSelected: widget.field.usesClientRepresentativeSuggestions
+          ? widget.onSuggestionSelected
+          : null,
+      suggestionLimit:
+          (widget.field.usesClientRepresentativeSuggestions ||
+              isBookingRouteFieldKey(widget.field.key))
+          ? 10
+          : null,
       options: isChassisLocation
           ? {
               'Garage',
@@ -885,6 +817,8 @@ class _DropdownFieldInput extends StatelessWidget {
       iconEnabledColor: palette.accent,
       style: adminDropdownDisplayTextStyle,
       decoration: adminPlainDropdownDecoration(hintText).copyWith(
+        // The control sizes to its painted border; the card supplies spacing.
+        constraints: const BoxConstraints(),
         fillColor: Colors.white,
         hintStyle: adminFieldHintTextStyle.copyWith(color: palette.accentMuted),
         enabledBorder: OutlineInputBorder(

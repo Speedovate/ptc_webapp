@@ -1,3 +1,4 @@
+import 'package:webapp/services/support_read_state.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
 import 'package:webapp/utils/support_message_identity.dart';
 import 'package:webapp/utils/cached_snapshot_documents.dart';
@@ -81,6 +82,8 @@ class SupportRequest {
   static const int _maxRetainedMessageThreads = 8;
   final StreamController<void> _threadCacheUpdates =
       StreamController<void>.broadcast();
+  final Map<String, Future<void>> _readMarkerCacheTails = {};
+
   final StreamController<String> _threadReadMarkerUpdates =
       StreamController<String>.broadcast();
   final StreamController<String> _messageCacheUpdates =
@@ -297,106 +300,54 @@ class SupportRequest {
     await Future.wait(futures);
   }
 
+  Future<List<Map<String, dynamic>>> _mergeReadMarkerCache(
+    String userId,
+    List<Map<String, dynamic>> incoming,
+  ) {
+    final cache = _providedCacheStore ?? FirestoreCacheStore.instance;
+    final task = (_readMarkerCacheTails[userId] ?? Future<void>.value()).then((
+      _,
+    ) async {
+      final key = _threadReadMarkersResourceKey(userId);
+      // Re-read inside the serialized commit, after the remote fetch. A newer
+      // local mark-read must survive a slower refresh that started before it.
+      final current = await cache.readDocumentMaps(key) ?? [];
+      final merged = mergeSupportReadDocuments([...current, ...incoming]);
+      await cache.writeDocumentMaps(key, merged);
+      return merged;
+    });
+    _readMarkerCacheTails[userId] = task.then<void>(
+      (_) {},
+      onError: (Object _) {},
+    );
+    return task;
+  }
+
   Future<Map<String, String>> readThreadReadMarkers(String userId) async {
     final normalizedUserId = normalizeId(userId);
-    if (normalizedUserId == null) {
-      return const <String, String>{};
-    }
-    final localDocuments =
-        await FirestoreCacheStore.instance.readDocumentMaps(
-          _threadReadMarkersResourceKey(normalizedUserId),
-        ) ??
-        const <Map<String, dynamic>>[];
-    final mergedDocuments = <String, Map<String, dynamic>>{};
-    for (final document in localDocuments) {
-      final threadId =
-          normalizeId(document['thread_id']) ?? normalizeId(document['id']);
-      if (threadId == null) {
-        continue;
-      }
-      mergedDocuments[threadId] = Map<String, dynamic>.from(document);
-    }
+    if (normalizedUserId == null) return const {};
+    var remote = <Map<String, dynamic>>[];
     if (currentNetworkStatus()) {
       try {
-        final snapshot = await _threadReadCollection(normalizedUserId)
-            .get()
-            .timeout(
-              _startupTimeout,
-              onTimeout: () =>
-                  throw TimeoutException('support thread reads fetch timeout'),
-            );
-        for (final document in snapshot.docs) {
-          final data = documentData(document);
-          final threadId =
-              normalizeId(data['thread_id']) ?? normalizeId(data['id']);
-          if (threadId == null) {
-            continue;
-          }
-          final existing = mergedDocuments[threadId];
-          if (existing == null ||
-              _documentUpdatedAt(data).isAfter(_documentUpdatedAt(existing))) {
-            mergedDocuments[threadId] = data;
-          }
-        }
-        await FirestoreCacheStore.instance.writeDocumentMaps(
-          _threadReadMarkersResourceKey(normalizedUserId),
-          mergedDocuments.values.toList(growable: false),
-        );
-      } on FirebaseException {
-        final remoteDocuments = await _readThreadReadMarkersViaPublicRest(
+        final snapshot = await _threadReadCollection(
           normalizedUserId,
-        );
-        for (final data in remoteDocuments) {
-          final threadId =
-              normalizeId(data['thread_id']) ?? normalizeId(data['id']);
-          if (threadId == null) {
-            continue;
-          }
-          final existing = mergedDocuments[threadId];
-          if (existing == null ||
-              _documentUpdatedAt(data).isAfter(_documentUpdatedAt(existing))) {
-            mergedDocuments[threadId] = data;
-          }
-        }
-        await FirestoreCacheStore.instance.writeDocumentMaps(
-          _threadReadMarkersResourceKey(normalizedUserId),
-          mergedDocuments.values.toList(growable: false),
-        );
-      } on TimeoutException {
-        final remoteDocuments = await _readThreadReadMarkersViaPublicRest(
-          normalizedUserId,
-        );
-        for (final data in remoteDocuments) {
-          final threadId =
-              normalizeId(data['thread_id']) ?? normalizeId(data['id']);
-          if (threadId == null) {
-            continue;
-          }
-          final existing = mergedDocuments[threadId];
-          if (existing == null ||
-              _documentUpdatedAt(data).isAfter(_documentUpdatedAt(existing))) {
-            mergedDocuments[threadId] = data;
-          }
-        }
-        await FirestoreCacheStore.instance.writeDocumentMaps(
-          _threadReadMarkersResourceKey(normalizedUserId),
-          mergedDocuments.values.toList(growable: false),
-        );
+        ).get().timeout(_startupTimeout);
+        remote = snapshot.docs.map(documentData).toList();
       } catch (_) {
-        // Keep support UI responsive offline or under weak signal.
+        try {
+          remote = await _readThreadReadMarkersViaPublicRest(normalizedUserId);
+        } catch (_) {
+          // The latest local read state remains available under weak signal.
+        }
       }
     }
-    final markers = <String, String>{};
-    for (final document in mergedDocuments.values) {
-      final threadId =
-          normalizeId(document['thread_id']) ?? normalizeId(document['id']);
-      final marker = document['marker']?.toString().trim() ?? '';
-      if (threadId == null || marker.isEmpty) {
-        continue;
-      }
-      markers[threadId] = marker;
-    }
-    return markers;
+    final documents = await _mergeReadMarkerCache(normalizedUserId, remote);
+    return {
+      for (final document in documents)
+        if ('${document['marker'] ?? ''}'.trim().isNotEmpty)
+          (normalizeId(document['thread_id']) ?? normalizeId(document['id']))!:
+              document['marker'].toString().trim(),
+    };
   }
 
   Future<void> markThreadRead({
@@ -413,28 +364,21 @@ class SupportRequest {
       return;
     }
     final actionAt = DateTime.now().toUtc().toIso8601String();
-    final resourceKey = _threadReadMarkersResourceKey(normalizedUserId);
-    final existing =
-        await FirestoreCacheStore.instance.readDocumentMaps(resourceKey) ??
-        const <Map<String, dynamic>>[];
-    final next = existing
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList(growable: true);
     final nextDocument = <String, dynamic>{
       'id': normalizedThreadId,
       'thread_id': normalizedThreadId,
       'marker': normalizedMarker,
       'updated_at': actionAt,
     };
-    final existingIndex = next.indexWhere(
-      (item) => normalizeId(item['thread_id']) == normalizedThreadId,
+    final merged = await _mergeReadMarkerCache(normalizedUserId, [
+      nextDocument,
+    ]);
+    final saved = merged.firstWhere(
+      (document) =>
+          normalizeId(document['thread_id'] ?? document['id']) ==
+          normalizedThreadId,
     );
-    if (existingIndex >= 0) {
-      next[existingIndex] = nextDocument;
-    } else {
-      next.add(nextDocument);
-    }
-    await FirestoreCacheStore.instance.writeDocumentMaps(resourceKey, next);
+    if (saved['marker'] != normalizedMarker) return;
     if (!_threadReadMarkerUpdates.isClosed) {
       _threadReadMarkerUpdates.add(normalizedUserId);
     }
@@ -1561,63 +1505,14 @@ class SupportRequest {
 
   String _messageResourceKey(String threadId) => 'support_messages:$threadId';
 
-  String threadReadMarkerForThread(SupportThread thread) {
-    final timestamp =
-        thread.lastMessageAt?.toUtc().toIso8601String() ??
-        thread.updatedAt?.toUtc().toIso8601String() ??
-        '';
-    final senderId = normalizeId(thread.lastSenderUserId) ?? '';
-    final text = _supportMarkerToken(thread.lastMessageText);
-    return '$timestamp|$senderId|$text';
-  }
+  String threadReadMarkerForThread(SupportThread thread) =>
+      supportThreadReadMarker(thread);
 
-  String threadReadMarkerForMessage(SupportMessage message) {
-    final timestamp =
-        message.createdAt?.toUtc().toIso8601String() ??
-        message.updatedAt?.toUtc().toIso8601String() ??
-        '';
-    final senderId = normalizeId(message.senderUserId) ?? '';
-    final text = _supportMarkerToken(
-      _supportThreadPreviewTokenForMessage(message),
-    );
-    return '$timestamp|$senderId|$text';
-  }
+  String threadReadMarkerForMessage(SupportMessage message) =>
+      supportMessageReadMarker(message);
 
   String _threadReadMarkersResourceKey(String userId) =>
       'manage_support:$userId';
-
-  String _supportMarkerToken(String? value) {
-    final normalized = value?.replaceAll(RegExp(r'\s+'), ' ').trim() ?? '';
-    if (normalized.isEmpty) {
-      return '';
-    }
-    return normalized.length <= 120 ? normalized : normalized.substring(0, 120);
-  }
-
-  String _supportThreadPreviewTokenForMessage(SupportMessage message) {
-    final trimmedText = message.text?.trim() ?? '';
-    if (trimmedText.isNotEmpty) {
-      return trimmedText;
-    }
-    final attachmentCount = message.attachments.length;
-    if (attachmentCount <= 0) {
-      return '';
-    }
-    if (attachmentCount == 1) {
-      return 'Sent an attachment';
-    }
-    return 'Sent $attachmentCount attachments';
-  }
-
-  DateTime _documentUpdatedAt(Map<String, dynamic> document) {
-    final value = document['updated_at'];
-    if (value is Timestamp) {
-      return value.toDate().toUtc();
-    }
-    final parsed = DateTime.tryParse(value?.toString() ?? '');
-    return parsed?.toUtc() ??
-        DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-  }
 
   Future<void> _replaceCachedMessageDocument({
     required String threadId,

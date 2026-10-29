@@ -104,17 +104,32 @@ class StatusFieldEditorCard extends StatelessWidget {
                             ),
                           )
                           .toList(),
-                      onChanged: (value) => onUpdate('type', value),
+                      onChanged: (value) {
+                        final resetSource =
+                            field.usesClientRepresentativeSuggestions &&
+                            value != 'text';
+                        onUpdate('type', value);
+                        if (resetSource) {
+                          onUpdate(
+                            'optionSourceKey',
+                            statusFieldOptionSourceStatic,
+                          );
+                        }
+                      },
                     ),
                   ),
-                  if (fieldType == 'dropdown' ||
+                  if (fieldType == 'text' ||
+                      fieldType == 'dropdown' ||
                       fieldType == 'search_dropdown') ...[
                     SizedBox(height: 6),
                     _fullWidthField(
                       child: _dropdownField(
                         label: 'Source',
                         initialValue: optionSourceKey,
-                        items: _optionSourceItems(),
+                        items: _optionSourceItems(
+                          textOnly: fieldType == 'text',
+                          current: optionSourceKey,
+                        ),
                         onChanged: (value) =>
                             onUpdate('optionSourceKey', value),
                       ),
@@ -293,7 +308,18 @@ class StatusFieldEditorCard extends StatelessWidget {
                               ),
                             )
                             .toList(),
-                        onChanged: (value) => onUpdate('type', value),
+                        onChanged: (value) {
+                          final resetSource =
+                              field.usesClientRepresentativeSuggestions &&
+                              value != 'text';
+                          onUpdate('type', value);
+                          if (resetSource) {
+                            onUpdate(
+                              'optionSourceKey',
+                              statusFieldOptionSourceStatic,
+                            );
+                          }
+                        },
                       ),
                     ),
                     Expanded(
@@ -309,13 +335,17 @@ class StatusFieldEditorCard extends StatelessWidget {
                     ),
                   ],
                 ),
-                if (fieldType == 'dropdown' ||
+                if (fieldType == 'text' ||
+                    fieldType == 'dropdown' ||
                     fieldType == 'search_dropdown') ...[
                   SizedBox(height: 6),
                   _dropdownField(
                     label: 'Source',
                     initialValue: optionSourceKey,
-                    items: _optionSourceItems(),
+                    items: _optionSourceItems(
+                      textOnly: fieldType == 'text',
+                      current: optionSourceKey,
+                    ),
                     onChanged: (value) => onUpdate('optionSourceKey', value),
                   ),
                   if (showStaticChoices) ...[
@@ -556,10 +586,7 @@ class StatusFieldEditorCard extends StatelessWidget {
       label: 'Case Type',
       initialValue: selectedValue,
       items: const [
-        DropdownMenuItem<String>(
-          value: defaultValue,
-          child: Text('Default'),
-        ),
+        DropdownMenuItem<String>(value: defaultValue, child: Text('Default')),
         DropdownMenuItem<String>(
           value: statusFieldTextCaseUppercase,
           child: Text('UPPERCASE'),
@@ -601,7 +628,10 @@ class StatusFieldEditorCard extends StatelessWidget {
     return statusFieldDynamicOptionSources.contains(sourceKey);
   }
 
-  static List<DropdownMenuItem<String>> _optionSourceItems() {
+  static List<DropdownMenuItem<String>> _optionSourceItems({
+    bool textOnly = false,
+    String? current,
+  }) {
     const orderedSourceKeys = <String>[
       statusFieldOptionSourceStatic,
       statusFieldOptionSourceUsers,
@@ -618,7 +648,14 @@ class StatusFieldEditorCard extends StatelessWidget {
       statusFieldOptionSourceFields,
       statusFieldOptionSourceBookings,
     ];
-    return orderedSourceKeys
+    final keys = textOnly
+        ? <String>{
+            statusFieldOptionSourceStatic,
+            statusFieldOptionSourceClientRepresentatives,
+            ?current,
+          }.toList()
+        : orderedSourceKeys;
+    return keys
         .map(
           (sourceKey) => DropdownMenuItem<String>(
             value: sourceKey,

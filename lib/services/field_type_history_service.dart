@@ -1,3 +1,4 @@
+import 'client_route_suggestions.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -31,6 +32,12 @@ class FieldTypeHistoryService {
   }
 
   static String? fieldKey(StatusField field) {
+    // Client-scoped suggestions are derived from booking data, not shared
+    // account history. Existing text fields retain their original history keys.
+    if (field.usesClientRepresentativeSuggestions ||
+        isBookingRouteFieldKey(field.key)) {
+      return null;
+    }
     if ((!['text', 'email', 'phone', 'number'].contains(field.type ?? 'text') &&
             !field.isChassisLocationInput) ||
         excluded('${field.key} ${field.title}') ||

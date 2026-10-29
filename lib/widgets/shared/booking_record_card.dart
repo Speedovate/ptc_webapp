@@ -410,54 +410,14 @@ class BookingRecordCard extends StatelessWidget {
 
     final orderedSections = _extractOutputSections(outputs);
 
-    if (fieldKey == 'waybill_photo' || fieldKey == 'delivery_form_photo') {
-      for (final section in orderedSections) {
-        if (section.fields.containsKey(fieldKey)) {
-          // The newest explicit photo value includes a saved removal (null).
-          return section.fields[fieldKey];
-        }
-      }
-      return null;
-    }
-
-    // Location edits are appended under the booking's current workflow stage.
-    // A later Delivered edit must win over the original Pending location.
-    if (const {
-      'origin',
-      'origin_barangay',
-      'destination',
-      'destination_barangay',
-    }.contains(fieldKey)) {
-      for (final section in orderedSections) {
-        for (final candidateKey in _candidateFieldKeys(fieldKey)) {
-          if (section.fields.containsKey(candidateKey)) {
-            return section.fields[candidateKey];
-          }
-        }
-      }
-      return null;
-    }
-
-    for (final candidateKey in _candidateFieldKeys(fieldKey)) {
-      for (final section in orderedSections) {
-        if (section.displayStatusKey != 'pending') {
-          continue;
-        }
-        final value = section.fields[candidateKey];
-        final normalized = _simpleDisplayValue(value);
-        if (normalized != '-') {
-          return value;
-        }
-      }
-    }
-
+    // Edits are appended under the current workflow status. Resolve each
+    // field independently so a later Delivered/Completed edit wins while
+    // unchanged fields still fall back to earlier history. Explicit nulls
+    // preserve removals instead of restoring an older value.
     for (final section in orderedSections) {
-      final fields = section.fields;
       for (final candidateKey in _candidateFieldKeys(fieldKey)) {
-        final value = fields[candidateKey];
-        final normalized = _simpleDisplayValue(value);
-        if (normalized != '-') {
-          return value;
+        if (section.fields.containsKey(candidateKey)) {
+          return section.fields[candidateKey];
         }
       }
     }

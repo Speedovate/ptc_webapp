@@ -483,6 +483,39 @@ class AdminDashboardViewModel extends BaseViewModel {
         .toUpperCase();
   }
 
+  List<UserModel> exportMainClients(Iterable<Booking> bookings) {
+    final clients = <String, UserModel>{};
+    for (final booking in bookings) {
+      final id = normalizeId(booking.client?.id);
+      if (id == null) continue;
+      clients[id] = _usersById[id] ?? booking.client!;
+    }
+    return clients.values.toList()..sort(
+      (a, b) =>
+          (a.name ?? '').toLowerCase().compareTo((b.name ?? '').toLowerCase()),
+    );
+  }
+
+  static List<Booking> exportBookingsForClient(
+    Iterable<Booking> bookings,
+    String? clientId,
+  ) {
+    final id = normalizeId(clientId);
+    if (id == null) return const [];
+    return bookings
+        .where((booking) => normalizeId(booking.client?.id) == id)
+        .toList();
+  }
+
+  static String exportTripClient(Booking booking) {
+    final representative = BookingRecordCard.outputFieldDisplayValue(
+      booking.statusOutputs,
+      'representative_name',
+    );
+    return '$representative (${origin(booking)} - ${destination(booking)})'
+        .toUpperCase();
+  }
+
   List<Booking>? _filteredResult;
 
   @override

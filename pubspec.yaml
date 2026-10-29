@@ -1,7 +1,7 @@
 name: webapp
 description: "PALTRANCO Web App"
 publish_to: 'none'
-version: 1.0.0+65
+version: 1.0.1+66
 
 environment:
   sdk: ^3.11.5
@@ -13,6 +13,7 @@ dependencies:
   stacked: ^3.5.0
   archive: ^4.0.9
   crypto: ^3.0.7
+  http: ^1.6.0
   shared_preferences: ^2.5.3
   file_picker: ^10.3.2
   url_launcher: ^6.3.1

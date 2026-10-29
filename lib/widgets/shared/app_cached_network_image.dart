@@ -342,7 +342,12 @@ class _AppCachedNetworkImageState extends State<AppCachedNetworkImage> {
       }
       return Image(
         image: ResizeImage(
-          NetworkImage(_resolvedImageUrl),
+          NetworkImage(
+            _resolvedImageUrl,
+            // Fall back to a browser image when the image server does not
+            // allow byte fetching from this app origin (e.g. a local dev port).
+            webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+          ),
           width: _resolvedCacheWidth(context),
           height: _resolvedCacheHeight(context),
           policy: ResizeImagePolicy.fit,

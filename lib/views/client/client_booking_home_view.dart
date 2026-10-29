@@ -1,3 +1,4 @@
+import 'package:webapp/services/client_representative_suggestions.dart';
 import 'package:webapp/widgets/shared/startup_splash_handoff.dart';
 import 'dart:async';
 
@@ -71,6 +72,7 @@ class ClientBookingHomeView extends StatefulWidget {
     this.loadingOverlayAlignmentY = 0,
     this.onRepresentativeTapWithoutClient,
     this.additionalFormAnswers = const <String, dynamic>{},
+    this.viewModel,
   });
 
   final UserModel user;
@@ -85,6 +87,7 @@ class ClientBookingHomeView extends StatefulWidget {
   final double loadingOverlayAlignmentY;
   final VoidCallback? onRepresentativeTapWithoutClient;
   final Map<String, dynamic> additionalFormAnswers;
+  final ClientBookingHomeViewModel? viewModel;
 
   @override
   State<ClientBookingHomeView> createState() => _ClientBookingHomeViewState();
@@ -156,7 +159,7 @@ class _ClientBookingHomeViewState extends State<ClientBookingHomeView> {
   @override
   Widget build(BuildContext context) {
     return ViewModelBuilder<ClientBookingHomeViewModel>.reactive(
-      viewModelBuilder: ClientBookingHomeViewModel.new,
+      viewModelBuilder: () => widget.viewModel ?? ClientBookingHomeViewModel(),
       onViewModelReady: (vm) {
         _viewModel = vm;
         _log(
@@ -312,6 +315,8 @@ class _ClientBookingFormSection extends StatefulWidget {
 }
 
 class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
+  final _phoneAutofill = RepresentativePhoneAutofill();
+
   final LocalFormDraftService _draftService = LocalFormDraftService.instance;
   Map<String, dynamic> _answers = {};
   Map<String, String> _errors = {};
@@ -415,6 +420,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
     if (oldDraftKey == nextDraftKey) {
       return;
     }
+    _phoneAutofill.reset();
     unawaited(_handleDraftIdentityChange(oldDraftKey: oldDraftKey));
   }
 
@@ -505,7 +511,11 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
   Widget build(BuildContext context) {
     final vm = widget.vm;
     final form = widget.form;
-    final fields = vm.fieldsForForm(form, answers: _answers);
+    final fields = vm.fieldsForForm(
+      form,
+      answers: _answers,
+      clientId: widget.clientUser.id,
+    );
     final vanSizeField = fields.where((field) {
       final key = (field.key ?? '').trim().toLowerCase();
       return key == 'van_size' || key == 'van_size_id' || key == 'vehicle_size';
@@ -600,10 +610,41 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                           widget.onRepresentativeTapWithoutClient?.call();
                         }
                       : null,
+                  suggestionDetail: (name) =>
+                      vm.representativePhoneForSelection(
+                        name,
+                        clientId: widget.clientUser.id,
+                      ) ??
+                      'Walang phone number',
+                  onSuggestionSelected: (name) {
+                    if (!field.usesClientRepresentativeSuggestions ||
+                        field.key != 'representative_name' ||
+                        !fields.any((f) => f.key == 'representative_phone')) {
+                      return;
+                    }
+                    final phone = vm.representativePhoneForSelection(
+                      name,
+                      clientId: widget.clientUser.id,
+                    );
+                    final value = _phoneAutofill.valueForSelection(
+                      suggestedPhone: phone,
+                      currentPhone: _answers['representative_phone']
+                          ?.toString(),
+                    );
+                    if (value == null) return;
+                    setState(() {
+                      _answers = {..._answers, 'representative_phone': value};
+                      _errors = {..._errors}..remove('representative_phone');
+                    });
+                    unawaited(_persistDraft());
+                  },
                   onChanged: (value) {
                     final key = field.key;
                     if (key == null || key.isEmpty) {
                       return;
+                    }
+                    if (key == 'representative_phone') {
+                      _phoneAutofill.markManualEdit();
                     }
                     setState(() {
                       final nextAnswers = Map<String, dynamic>.from(_answers);
@@ -717,6 +758,7 @@ class _ClientBookingFormSectionState extends State<_ClientBookingFormSection> {
                     _answers = {};
                     _errors = {};
                     _resetTick += 1;
+                    _phoneAutofill.reset();
                   });
                   if (!context.mounted) {
                     return false;

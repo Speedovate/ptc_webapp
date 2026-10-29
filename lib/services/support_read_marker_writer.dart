@@ -1,3 +1,4 @@
+import 'support_read_state.dart';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:webapp/services/firestore_transaction_errors.dart';
@@ -31,6 +32,17 @@ Future<void> _write(
   await runTransactionWithOriginalErrors<void>(firestore, (transaction) async {
     final existing = await transaction.get(reference);
     final previous = existing.data();
+    final incomingMessage = supportMarkerMessageTime(
+      document['marker']?.toString(),
+    );
+    final previousMessage = supportMarkerMessageTime(
+      previous?['marker']?.toString(),
+    );
+    if (incomingMessage != null &&
+        previousMessage != null &&
+        incomingMessage.isBefore(previousMessage)) {
+      return;
+    }
     final incomingTime = DateTime.tryParse(
       document['updated_at']?.toString() ?? '',
     );

@@ -2,6 +2,9 @@ import 'dart:convert';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:webapp/models/booking.dart';
+import 'package:webapp/view_models/admin/admin_dashboard.vm.dart';
+import 'package:xml/xml.dart';
 import 'package:webapp/services/dashboard_export_naming.dart';
 import 'package:webapp/services/dashboard_docx_export_service.dart';
 
@@ -29,14 +32,26 @@ void main() {
             accountName: 'Test Account',
             accountNumber: '1234567890',
           ),
-          rows: const [
+          rows: [
             DashboardExportBookingRow(
               deliveryReceiptNumber: '35666',
               date: '5/13/26',
               waybillNumber: 'CEP01626179',
               vanNumber: 'DRYU2903805',
               vanSize: '20 FTR',
-              client: 'TEST CLIENT',
+              client: AdminDashboardViewModel.exportTripClient(
+                Booking(
+                  statusOutputs: {
+                    'pending': {
+                      'fields': {
+                        'representative_name': 'Trip sub-client',
+                        'origin': 'Bagong Pag-asa',
+                        'destination': 'San Manuel',
+                      },
+                    },
+                  },
+                ),
+              ),
               amount: '342,705',
             ),
           ],
@@ -56,6 +71,24 @@ void main() {
           );
           final headerXml = utf8.decode(headerFile.content);
           expect(headerXml, contains('2026-044'));
+          final body = XmlDocument.parse(
+            utf8.decode(
+              archive.files
+                  .firstWhere((entry) => entry.name == 'word/document.xml')
+                  .content,
+            ),
+          );
+          final text = body
+              .findAllElements('w:t')
+              .map((node) => node.innerText)
+              .join(' ');
+          expect(text, contains('TEST COMPANY'));
+          expect(text, contains('JUAN DELA CRUZ'));
+          expect(
+            text,
+            contains('TRIP SUB-CLIENT (BAGONG PAG-ASA - SAN MANUEL)'),
+          );
+          expect(text, isNot(contains('TEST COMPANY (BAGONG PAG-ASA')));
         }
       });
     }

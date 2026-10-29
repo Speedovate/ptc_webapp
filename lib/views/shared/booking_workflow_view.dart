@@ -1,3 +1,5 @@
+import 'package:webapp/services/client_route_suggestions.dart';
+import 'package:webapp/services/client_representative_suggestions.dart';
 import 'package:webapp/widgets/shared/app_selectable_popup_menu_item.dart';
 import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:webapp/widgets/status_form/status_form_runtime_fields.dart';
@@ -50,8 +52,10 @@ class BookingWorkflowView extends StatefulWidget {
     this.onBookingUpdated,
     this.loadingOverlayVisibleHeight,
     this.loadingOverlayAlignmentY = 0,
+    this.viewModel,
   });
 
+  final BookingWorkflowViewModel? viewModel;
   final UserModel user;
   final Booking booking;
   final bool embedded;
@@ -336,6 +340,9 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
     required StatusField initialField,
     bool addAfterSave = false,
   }) async {
+    if (addAfterSave ? !vm.canAddWorkflowFields : !vm.canEditWorkflowFields) {
+      return;
+    }
     final savedField = await showAppDialog<StatusField>(
       context: context,
       builder: (dialogContext) => _BookingFieldEditorDialog(
@@ -406,7 +413,8 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
     }
 
     return ViewModelBuilder<BookingWorkflowViewModel>.reactive(
-      viewModelBuilder: BookingWorkflowViewModel.new,
+      viewModelBuilder: () => widget.viewModel ?? BookingWorkflowViewModel(),
+      disposeViewModel: widget.viewModel == null,
       onViewModelReady: (vm) {
         _viewModel = vm;
         return vm.load(user: widget.user, booking: widget.booking);
@@ -643,7 +651,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                   resetTick: vm.resetTick,
                   submitFocusNode: _primaryActionFocusNode,
                   onChanged: (fieldKey, value) {
-                    vm.updateAnswer(fieldKey, value);
+                    vm.updateAnswer(fieldKey, value, notify: false);
                   },
                 ),
                 SizedBox(height: actionButtonTopSpacing),
@@ -758,8 +766,8 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                     const Spacer(),
                   ],
                   if (hasFormFields) ...[
-                    if (vm.supportsAdditionalFields) const SizedBox(width: 12),
-                    if (vm.supportsAdditionalFields)
+                    if (vm.canAddWorkflowFields) const SizedBox(width: 12),
+                    if (vm.canAddWorkflowFields)
                       _WorkflowAddFieldButton(
                         availableFields: vm.availableFieldsForSelection,
                         onSelected: vm.addExistingField,
@@ -775,7 +783,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                           currentStatusKey: currentBooking.clientStatus,
                         ),
                       ),
-                    if (vm.supportsAdditionalFields) const SizedBox(width: 12),
+                    if (vm.canAddWorkflowFields) const SizedBox(width: 12),
                     GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTapDown: (details) {
@@ -801,7 +809,7 @@ class _BookingWorkflowViewState extends State<BookingWorkflowView> {
                       ),
                     ),
                   ],
-                  if (!hasFormFields && vm.supportsAdditionalFields)
+                  if (!hasFormFields && vm.canAddWorkflowFields)
                     _WorkflowAddFieldButton(
                       availableFields: vm.availableFieldsForSelection,
                       onSelected: vm.addExistingField,
@@ -1612,6 +1620,74 @@ class _WorkflowTaskCard extends StatefulWidget {
 }
 
 class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
+  final _phoneAutofill = RepresentativePhoneAutofill();
+  late Map<String, dynamic> _localAnswers;
+  late Map<String, String> _localErrors;
+
+  @override
+  void initState() {
+    super.initState();
+    _localAnswers = Map.from(widget.answers);
+    _localErrors = Map.from(widget.errors);
+  }
+
+  @override
+  void didUpdateWidget(covariant _WorkflowTaskCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.answers, widget.answers) ||
+        oldWidget.resetTick != widget.resetTick) {
+      _localAnswers = Map.from(widget.answers);
+    }
+    if (!identical(oldWidget.errors, widget.errors) ||
+        oldWidget.resetTick != widget.resetTick) {
+      _localErrors = Map.from(widget.errors);
+    }
+    if (oldWidget.resetTick != widget.resetTick ||
+        oldWidget.title != widget.title ||
+        oldWidget.currentStatusKey != widget.currentStatusKey) {
+      _phoneAutofill.reset();
+    }
+  }
+
+  void _fieldChanged(String key, dynamic value, {bool manual = true}) {
+    if (manual && key == 'representative_phone') {
+      _phoneAutofill.markManualEdit();
+    }
+    setState(() {
+      _localAnswers = {..._localAnswers, key: value};
+      _localErrors = Map.from(_localErrors)..remove(key);
+    });
+    widget.onChanged(key, value);
+  }
+
+  String _representativeDetail(String name) =>
+      widget.vm.representativePhoneForSelection(
+        name,
+        activeFields: _orderedFields,
+        formAnswers: _localAnswers,
+      ) ??
+      'Walang phone number';
+
+  void _representativeSelected(StatusField field, String name) {
+    if (!field.usesClientRepresentativeSuggestions ||
+        field.key != 'representative_name' ||
+        !_orderedFields.any((f) => f.key == 'representative_phone')) {
+      return;
+    }
+    final phone = widget.vm.representativePhoneForSelection(
+      name,
+      activeFields: _orderedFields,
+      formAnswers: _localAnswers,
+    );
+    final value = _phoneAutofill.valueForSelection(
+      suggestedPhone: phone,
+      currentPhone: _localAnswers['representative_phone']?.toString(),
+    );
+    if (value != null) {
+      _fieldChanged('representative_phone', value, manual: false);
+    }
+  }
+
   final Map<String, FocusNode> _fieldFocusNodes = {};
 
   String _focusKeyForField(StatusField field, int index) {
@@ -1623,7 +1699,11 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
   }
 
   List<StatusField> get _orderedFields {
-    final ordered = <StatusField>[...widget.fields];
+    final primaryForm = widget.vm.form;
+    final baseFields = widget.allowAdditionalFields && primaryForm != null
+        ? widget.vm.fieldsForForm(primaryForm, answers: _localAnswers)
+        : widget.fields;
+    final ordered = <StatusField>[...baseFields];
     if (widget.allowAdditionalFields) {
       ordered.addAll(
         widget.vm.additionalFields.where((field) {
@@ -1632,11 +1712,11 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
         }),
       );
     }
-    final visible = StatusFormEngine.visibleFields(ordered, widget.answers);
-    if (visible.isEmpty && widget.errors.isNotEmpty && ordered.isNotEmpty) {
-      return ordered;
+    final visible = StatusFormEngine.visibleFields(ordered, _localAnswers);
+    if (visible.isEmpty && _localErrors.isNotEmpty && ordered.isNotEmpty) {
+      return widget.vm.representativeFields(ordered, _localAnswers);
     }
-    return visible;
+    return widget.vm.representativeFields(visible, _localAnswers);
   }
 
   void _syncFocusNodes(List<StatusField> fields) {
@@ -1699,7 +1779,10 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
     final orderedFields = _orderedFields;
     _syncFocusNodes(orderedFields);
     final canManageFields =
-        widget.vm.supportsAdditionalFields && widget.allowAdditionalFields;
+        widget.allowAdditionalFields &&
+        (widget.vm.canEditWorkflowFields ||
+            widget.vm.canRemoveWorkflowFields ||
+            widget.vm.canReorderWorkflowFields);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1742,7 +1825,7 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
                 orderedFields,
                 oldIndex,
                 newIndex,
-                answers: widget.answers,
+                answers: _localAnswers,
               );
             },
             children: orderedFields.asMap().entries.map((entry) {
@@ -1772,13 +1855,25 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
                 activateNextFocus: false,
                 onAdvanceAfterSelection: (value) =>
                     _moveToNextVisibleFieldAfterSelection(field, value),
-                errorText: widget.errors[fieldKey],
-                initialValue: widget.answers[fieldKey],
-                onChanged: (value) => widget.onChanged(fieldKey, value),
-                onRemove: () => widget.vm.removeManagedField(field),
-                onEdit: () =>
-                    _openFieldEditor(context, widget.vm, initialField: field),
-                dragHandle: widget.vm.isFormAssignedField(field)
+                errorText: _localErrors[fieldKey],
+                initialValue: _localAnswers[fieldKey],
+                suggestionDetail: _representativeDetail,
+                onSuggestionSelected: (name) =>
+                    _representativeSelected(field, name),
+                onChanged: (value) => _fieldChanged(fieldKey, value),
+                onRemove: widget.vm.canRemoveWorkflowFields
+                    ? () => widget.vm.removeManagedField(field)
+                    : null,
+                onEdit: widget.vm.canEditWorkflowFields
+                    ? () => _openFieldEditor(
+                        context,
+                        widget.vm,
+                        initialField: field,
+                      )
+                    : null,
+                dragHandle:
+                    widget.vm.canReorderWorkflowFields &&
+                        widget.vm.isFormAssignedField(field)
                     ? ReorderableDragStartListener(
                         index: entry.key,
                         child: SizedBox(
@@ -1833,15 +1928,18 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
                 activateNextFocus: false,
                 onAdvanceAfterSelection: (value) =>
                     _moveToNextVisibleFieldAfterSelection(field, value),
-                initialValue: widget.answers[field.key],
-                errorText: widget.errors[field.key],
+                initialValue: _localAnswers[field.key],
+                errorText: _localErrors[field.key],
                 onEdit: null,
+                suggestionDetail: _representativeDetail,
+                onSuggestionSelected: (name) =>
+                    _representativeSelected(field, name),
                 onChanged: (value) {
                   final key = field.key;
                   if (key == null || key.isEmpty) {
                     return;
                   }
-                  widget.onChanged(key, value);
+                  _fieldChanged(key, value);
                 },
               ),
             );
@@ -1856,6 +1954,9 @@ class _WorkflowTaskCardState extends State<_WorkflowTaskCard> {
     required StatusField initialField,
     bool addAfterSave = false,
   }) async {
+    if (addAfterSave ? !vm.canAddWorkflowFields : !vm.canEditWorkflowFields) {
+      return;
+    }
     final savedField = await showAppDialog<StatusField>(
       context: context,
       builder: (dialogContext) => _BookingFieldEditorDialog(
@@ -2045,6 +2146,8 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
     this.activateNextFocus = false,
     this.onAdvanceAfterSelection,
     this.errorText,
+    this.onSuggestionSelected,
+    this.suggestionDetail,
     this.dragHandle,
   });
 
@@ -2056,13 +2159,15 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
   final StatusField field;
   final dynamic initialValue;
   final ValueChanged<dynamic> onChanged;
-  final VoidCallback onRemove;
-  final VoidCallback onEdit;
+  final VoidCallback? onRemove;
+  final VoidCallback? onEdit;
   final FocusNode? focusNode;
   final FocusNode? nextFocusNode;
   final bool activateNextFocus;
   final ValueChanged<dynamic>? onAdvanceAfterSelection;
   final String? errorText;
+  final ValueChanged<String>? onSuggestionSelected;
+  final String? Function(String)? suggestionDetail;
   final Widget? dragHandle;
 
   @override
@@ -2094,30 +2199,32 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
       headerTrailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            width: 36,
-            height: 36,
-            child: IconButton(
-              onPressed: onEdit,
-              padding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.edit_rounded, size: 18),
-              color: editColor,
-              splashRadius: 18,
+          if (onEdit != null)
+            SizedBox(
+              width: 36,
+              height: 36,
+              child: IconButton(
+                onPressed: onEdit,
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.edit_rounded, size: 18),
+                color: editColor,
+                splashRadius: 18,
+              ),
             ),
-          ),
-          SizedBox(
-            width: 36,
-            height: 36,
-            child: IconButton(
-              onPressed: onRemove,
-              padding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.delete_rounded, size: 18),
-              color: AppColors.dangerStrong,
-              splashRadius: 18,
+          if (onRemove != null)
+            SizedBox(
+              width: 36,
+              height: 36,
+              child: IconButton(
+                onPressed: onRemove,
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.delete_rounded, size: 18),
+                color: AppColors.dangerStrong,
+                splashRadius: 18,
+              ),
             ),
-          ),
           if (dragHandle != null) ...[
             const SizedBox(width: 2),
             SizedBox(width: 36, height: 36, child: Center(child: dragHandle!)),
@@ -2125,6 +2232,8 @@ class _WorkflowRemovableFieldCard extends StatelessWidget {
         ],
       ),
       onChanged: onChanged,
+      onSuggestionSelected: onSuggestionSelected,
+      suggestionDetail: suggestionDetail,
     );
   }
 }
@@ -2175,6 +2284,8 @@ class _WorkflowFieldCard extends StatelessWidget {
     this.headerTrailing,
     this.onEdit,
     this.errorText,
+    this.onSuggestionSelected,
+    this.suggestionDetail,
   });
 
   final BookingWorkflowViewModel vm;
@@ -2193,6 +2304,8 @@ class _WorkflowFieldCard extends StatelessWidget {
   final Widget? headerTrailing;
   final VoidCallback? onEdit;
   final String? errorText;
+  final ValueChanged<String>? onSuggestionSelected;
+  final String? Function(String)? suggestionDetail;
 
   @override
   Widget build(BuildContext context) {
@@ -2212,10 +2325,11 @@ class _WorkflowFieldCard extends StatelessWidget {
         fieldKey == 'helper_id' ||
         optionSourceKey == statusFieldOptionSourceHelpers;
     final isSearchDropdownCard =
-        type == 'search_dropdown' ||
-        field.isChassisLocationInput ||
-        isPalawanLocationFieldKey(fieldKey);
-    final isNormalDropdownCard = type == 'dropdown' || usesRoleDropdown;
+        (type == 'search_dropdown' || field.isChassisLocationInput) &&
+        !isBookingRouteFieldKey(fieldKey);
+    final isNormalDropdownCard =
+        (type == 'dropdown' || usesRoleDropdown) &&
+        !isBookingRouteFieldKey(fieldKey);
     final usesCompactDropdownCard =
         isNormalDropdownCard || isSearchDropdownCard;
     final hasValidationError = errorText?.trim().isNotEmpty == true;
@@ -2235,10 +2349,8 @@ class _WorkflowFieldCard extends StatelessWidget {
       instructions: instructions,
       inputTopSpacing: usesCompactDropdownCard ? 10 : 14,
       containerPadding: isSearchDropdownCard
-          ? EdgeInsets.fromLTRB(18, 8, 18, hasValidationError ? 18 : 4)
-          : (isNormalDropdownCard
-                ? EdgeInsets.fromLTRB(18, 8, 18, hasValidationError ? 18 : 8)
-                : const EdgeInsets.fromLTRB(18, 8, 18, 18)),
+          ? EdgeInsets.fromLTRB(18, 18, 18, hasValidationError ? 18 : 4)
+          : const EdgeInsets.all(18),
       headerTrailing:
           headerTrailing ??
           (onEdit == null
@@ -2271,11 +2383,15 @@ class _WorkflowFieldCard extends StatelessWidget {
     required String? errorText,
   }) {
     final type = (field.type ?? 'text').trim().toLowerCase();
-    if (field.isChassisLocationInput) {
+    if (field.isChassisLocationInput ||
+        isBookingRouteFieldKey(field.key) ||
+        field.usesClientRepresentativeSuggestions) {
       return StatusFormRuntimeFieldInput(
         field: field,
         initialValue: initialValue,
         onChanged: onChanged,
+        onSuggestionSelected: onSuggestionSelected,
+        suggestionDetail: suggestionDetail,
         focusNode: focusNode,
         nextFocusNode: nextFocusNode,
         activateNextFocus: activateNextFocus,
@@ -2485,7 +2601,7 @@ class _WorkflowFieldCard extends StatelessWidget {
                       ? placeholder!
                       : 'Optional'),
             palette,
-          ).copyWith(errorText: errorText),
+          ).copyWith(errorText: errorText, constraints: const BoxConstraints()),
           style: adminDropdownDisplayTextStyle,
           items: effectiveOptions.map((item) {
             final label = optionSourceKey == statusFieldOptionSourceVehicleSizes

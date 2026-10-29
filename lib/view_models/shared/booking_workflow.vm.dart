@@ -1,3 +1,4 @@
+import 'package:webapp/services/client_representative_suggestions.dart';
 import 'package:webapp/services/booking_chassis_lifecycle.dart';
 import 'package:webapp/services/field_type_history_service.dart';
 import 'package:webapp/services/pending_booking_submission.dart';
@@ -91,10 +92,13 @@ class BookingWorkflowViewModel extends BaseViewModel {
     AuthRepository? authRepository,
     BookingRepository? bookingRepository,
     StatusFormRepository? statusRepository,
+    RoleAccessService? roleAccessService,
   }) : _authRepository = authRepository ?? AuthRequest.instance,
        _bookingRepository = bookingRepository ?? BookingRequest.instance,
        _statusRepository = statusRepository ?? StatusRequest.instance,
-       _engine = StatusFormEngine(statusRepository ?? StatusRequest.instance) {
+       _engine = StatusFormEngine(statusRepository ?? StatusRequest.instance),
+       _roleAccessService = roleAccessService ?? RoleAccessService.instance {
+    _roleAccessService.addListener(_permissionsChanged);
     _restoreCachedState();
   }
 
@@ -103,7 +107,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
   final StatusFormRepository _statusRepository;
   final StatusFormEngine _engine;
   final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
-  final RoleAccessService _roleAccessService = RoleAccessService.instance;
+  final RoleAccessService _roleAccessService;
   static final Map<String, _BookingWorkflowCacheSnapshot> _cacheByBookingId =
       {};
 
@@ -610,7 +614,9 @@ class BookingWorkflowViewModel extends BaseViewModel {
     }
     for (final field in fieldLibrary) {
       final type = (field.type ?? '').trim().toLowerCase();
-      if (type != 'dropdown' && type != 'search_dropdown') {
+      if (type != 'dropdown' &&
+          type != 'search_dropdown' &&
+          !field.usesClientRepresentativeSuggestions) {
         continue;
       }
       final sourceKey = StatusFieldOptionResolver.resolvedOptionSourceKey(
@@ -859,7 +865,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
     return null;
   }
 
-  void updateAnswer(String key, dynamic value) {
+  void updateAnswer(String key, dynamic value, {bool notify = true}) {
     final nextAnswers = Map<String, dynamic>.from(answers);
     if (_isEmptyValue(value)) {
       nextAnswers.remove(key);
@@ -868,7 +874,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
     }
     answers = nextAnswers;
     errors = Map<String, String>.from(errors)..remove(key);
-    notifyListeners();
+    if (notify) notifyListeners();
   }
 
   void clearForm() {
@@ -919,8 +925,40 @@ class BookingWorkflowViewModel extends BaseViewModel {
     role: user?.role,
   );
 
+  bool _canManageWorkflowField(String capability) =>
+      hasWorkflowAdminScope &&
+      hasActionablePrimaryForm &&
+      _roleAccessService.canAccess(capability, role: user?.role);
+
+  bool get canAddWorkflowFields =>
+      _canManageWorkflowField(DispatcherAccessCapability.fieldsCreate) &&
+      _roleAccessService.canAccess(
+        DispatcherAccessCapability.formsUpdate,
+        role: user?.role,
+      );
+  bool get canEditWorkflowFields =>
+      _canManageWorkflowField(DispatcherAccessCapability.fieldsUpdate);
+  bool get canRemoveWorkflowFields =>
+      _canManageWorkflowField(DispatcherAccessCapability.fieldsDelete) &&
+      _roleAccessService.canAccess(
+        DispatcherAccessCapability.formsUpdate,
+        role: user?.role,
+      );
+  bool get canReorderWorkflowFields =>
+      _canManageWorkflowField(DispatcherAccessCapability.formsUpdate);
   bool get supportsAdditionalFields =>
-      hasWorkflowAdminScope && hasActionablePrimaryForm;
+      canAddWorkflowFields ||
+      canEditWorkflowFields ||
+      canRemoveWorkflowFields ||
+      canReorderWorkflowFields;
+
+  void _permissionsChanged() => notifyListeners();
+
+  @override
+  void dispose() {
+    _roleAccessService.removeListener(_permissionsChanged);
+    super.dispose();
+  }
 
   bool get canViewWorkflowAdminDetails => hasWorkflowAdminScope;
 
@@ -939,11 +977,51 @@ class BookingWorkflowViewModel extends BaseViewModel {
         placeholder: override.placeholder ?? field.placeholder,
       );
     }).toList();
-    return StatusFormEngine.visibleFields(
+    final currentAnswers = answers ?? this.answers;
+    final visible = StatusFormEngine.visibleFields(
       resolvedFields,
-      answers ?? this.answers,
+      currentAnswers,
+    );
+    final selectedClientId = _representativeClientId(visible, currentAnswers);
+    return _optionResolver.withClientRepresentativeSuggestions(
+      visible,
+      clientId: selectedClientId,
+      answers: currentAnswers,
     );
   }
+
+  List<StatusField> representativeFields(
+    List<StatusField> activeFields,
+    Map<String, dynamic> formAnswers,
+  ) => _optionResolver.withClientRepresentativeSuggestions(
+    activeFields,
+    clientId: _representativeClientId(activeFields, formAnswers),
+    answers: formAnswers,
+  );
+
+  String? _representativeClientId(
+    List<StatusField> activeFields,
+    Map<String, dynamic> formAnswers,
+  ) {
+    final hasClientSelector = activeFields.any(
+      (field) => field.key?.trim() == 'client_id',
+    );
+    final selection = formAnswers['client_id']?.toString();
+    return hasClientSelector && formAnswers.containsKey('client_id')
+        ? (normalizeId(selection) == normalizeId(booking?.client?.id)
+              ? normalizeId(selection)
+              : representativeClientSelectionId(selection, _usersById.values))
+        : booking?.client?.id;
+  }
+
+  String? representativePhoneForSelection(
+    String name, {
+    required List<StatusField> activeFields,
+    required Map<String, dynamic> formAnswers,
+  }) => _optionResolver.representativePhone(
+    _representativeClientId(activeFields, formAnswers),
+    name,
+  );
 
   String? blockedMessageForForm(StatusForm activeForm) {
     final currentBooking = booking;
@@ -1005,7 +1083,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   Future<void> addExistingField(String fieldId) async {
-    if (!supportsAdditionalFields) {
+    if (!canAddWorkflowFields) {
       return;
     }
     final activeForm = form;
@@ -1049,6 +1127,17 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   Future<StatusField> saveLibraryField(StatusField field) async {
+    final existing = [
+      ...fieldLibrary,
+      ...fields,
+      ...additionalFields,
+      ...?form?.fields,
+    ].any((item) => _sameField(item, field.id ?? '', field.key ?? ''));
+    if (existing ? !canEditWorkflowFields : !canAddWorkflowFields) {
+      throw StateError(
+        'You do not have permission to ${existing ? 'edit' : 'create'} fields.',
+      );
+    }
     final now = DateTime.now();
     final savedField = field.copyWith(
       updatedAt: now,
@@ -1081,6 +1170,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   void removeManagedField(StatusField field) {
+    if (!canRemoveWorkflowFields) return;
     final fieldKey = (field.key ?? '').trim();
     if (fieldKey.isEmpty) {
       return;
@@ -1141,6 +1231,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
     int newIndex, {
     Map<String, dynamic>? answers,
   }) {
+    if (!canReorderWorkflowFields) return;
     final activeForm = form;
     if (activeForm == null ||
         oldIndex < 0 ||
@@ -1217,6 +1308,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
   }
 
   void removeAdditionalField(String fieldKey) {
+    if (!canRemoveWorkflowFields) return;
     if (fieldKey.trim().isEmpty) {
       return;
     }
@@ -1347,6 +1439,7 @@ class BookingWorkflowViewModel extends BaseViewModel {
         formAnswers,
       );
       final saved = await _bookingRepository.saveBooking(nextBooking);
+      _optionResolver.rememberSavedBooking(saved);
       unawaited(
         FieldTypeHistoryService.instance.record(
           currentUser.id,

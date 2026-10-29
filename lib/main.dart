@@ -1,3 +1,4 @@
+import 'package:webapp/services/debug_runtime_restart.dart';
 import 'package:webapp/widgets/shared/app_selection_area.dart';
 import 'package:webapp/widgets/shared/app_selectable_text.dart';
 import 'package:webapp/services/sync_error_log_service.dart';
@@ -24,6 +25,7 @@ const Duration _firebaseBootstrapTimeout = Duration(seconds: 6);
 const Duration _firestoreBootstrapTimeout = Duration(seconds: 4);
 const Duration _applicationBootstrapTimeout = Duration(seconds: 8);
 Future<void> main() async {
+  if (!prepareAppRuntime()) return;
   AppWidgetsBinding();
   // Keep decoded images bounded on long-running web sessions. Persistent image
   // data remains available offline through the app cache and service worker.

@@ -1231,8 +1231,11 @@ class AuthRequest implements AuthRepository, UserActivityRecorder {
       if (normalized == null) {
         throw const AuthFailure('User ID is required.');
       }
-      final user = currentNetworkStatus()
-          ? await _getFreshUserById(normalized)
+      final isPendingLocalUser = OfflineReferenceMapper.hasTemporaryReferences({
+        'id': normalized,
+      });
+      final user = currentNetworkStatus() && !isPendingLocalUser
+          ? await _getFreshUserById(normalized, forAccountSwitch: true)
           : await _getCachedUserById(normalized);
       if (user == null) {
         throw const AuthFailure('No account found for that user.');
@@ -1512,14 +1515,21 @@ class AuthRequest implements AuthRepository, UserActivityRecorder {
     });
   }
 
-  Future<UserModel?> _getFreshUserById(String id) async {
+  Future<UserModel?> _getFreshUserById(
+    String id, {
+    bool forAccountSwitch = false,
+  }) async {
     try {
       final fetchTimeout = kIsWeb
           ? const Duration(seconds: 4)
           : _startupTimeout;
       final snapshot = await _usersCollection
           .doc(id)
-          .get()
+          .get(
+            forAccountSwitch
+                ? const GetOptions(source: Source.server)
+                : const GetOptions(),
+          )
           .timeout(
             fetchTimeout,
             onTimeout: () =>
@@ -1538,6 +1548,30 @@ class AuthRequest implements AuthRepository, UserActivityRecorder {
           operation: 'request failure',
         ),
       );
+      if (forAccountSwitch) {
+        final transientFailure =
+            error is TimeoutException ||
+            (error is FirebaseException &&
+                const {
+                  'unavailable',
+                  'deadline-exceeded',
+                  'cancelled',
+                  'aborted',
+                  'unknown',
+                }.contains(error.code));
+        if (transientFailure) {
+          // A failed transport does not establish that the user was deleted.
+          // Do not use cached access after an explicit server not-found or denial.
+          final memoryUser = _hydratedUsersSnapshot
+              .where((user) => normalizeId(user.id) == id)
+              .firstOrNull;
+          final cachedUser = await _getCachedUserById(id) ?? memoryUser;
+          if (cachedUser != null) return cachedUser;
+        }
+        throw const AuthFailure(
+          'We could not verify that account right now. Check your connection and account access, then try again.',
+        );
+      }
       if (!currentNetworkStatus()) {
         return null;
       }

@@ -1,3 +1,4 @@
+import 'package:webapp/services/support_read_state.dart';
 import 'package:webapp/services/chassis_waiting_badge.dart';
 import 'package:webapp/services/sync_error_badge_count.dart';
 import 'package:webapp/views/admin/admin_kpi_tracking.dart';
@@ -275,7 +276,10 @@ class _AdminHomeState extends State<AdminHome> {
     if (!mounted || _shellUser.id?.trim() != userId) {
       return;
     }
-    _sidebarThreadReadMarkers = markers;
+    _sidebarThreadReadMarkers = mergeSupportReadMarkers(
+      _sidebarThreadReadMarkers,
+      markers,
+    );
     _hasResolvedSidebarThreadReadMarkers = true;
     _notifySidebarBadgeChanged();
     PerformanceTrace.event(
@@ -369,20 +373,15 @@ class _AdminHomeState extends State<AdminHome> {
     if (currentUserId == null || currentUserId.isEmpty) {
       return 0;
     }
-    return _sidebarThreads.where((thread) {
-      final threadId = thread.id?.trim();
-      final senderId = thread.lastSenderUserId?.trim();
-      if (threadId == null ||
-          threadId.isEmpty ||
-          senderId == null ||
-          senderId.isEmpty ||
-          senderId == currentUserId ||
-          !thread.hasConversation) {
-        return false;
-      }
-      return _sidebarThreadReadMarkers[threadId] !=
-          _supportRequest.threadReadMarkerForThread(thread);
-    }).length;
+    return _sidebarThreads
+        .where(
+          (thread) => isSupportThreadUnread(
+            thread: thread,
+            currentUserId: currentUserId,
+            savedMarker: _sidebarThreadReadMarkers[thread.id?.trim()],
+          ),
+        )
+        .length;
   }
 
   Widget? _sidebarBadge(int count, {bool showActualCount = false}) {

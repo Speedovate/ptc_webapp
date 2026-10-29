@@ -34,6 +34,72 @@ class _SectionState extends State<_Section>
 }
 
 void main() {
+  testWidgets(
+    'viewport resize lays out only the selected page and activates hidden pages on demand',
+    (tester) async {
+      var firstLayouts = 0;
+      var secondLayouts = 0;
+      final pages = [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            firstLayouts++;
+            return const SizedBox.expand();
+          },
+        ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            secondLayouts++;
+            return const SizedBox.expand();
+          },
+        ),
+      ];
+      Widget app(int selected, double width) => MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: width,
+            height: 400,
+            child: RetainedSectionStack(index: selected, children: pages),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app(0, 600));
+      expect(firstLayouts, 1);
+      expect(secondLayouts, 0);
+      await tester.pumpWidget(app(0, 400));
+      expect(firstLayouts, 2);
+      expect(
+        secondLayouts,
+        0,
+        reason: 'Hidden page must not be laid out on viewport changes',
+      );
+      await tester.pumpWidget(app(1, 400));
+      expect(firstLayouts, 2);
+      expect(secondLayouts, 1);
+      await tester.pumpWidget(app(1, 300));
+      expect(firstLayouts, 2);
+      expect(secondLayouts, 2);
+      await tester.pumpWidget(app(0, 300));
+      expect(firstLayouts, 3);
+      expect(secondLayouts, 2);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+  testWidgets('unbounded hosts retain normal content sizing', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: RetainedSectionStack(
+              index: 0,
+              children: [SizedBox(height: 80), SizedBox(height: 160)],
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(tester.getSize(find.byType(RetainedSectionStack)).height, 160);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('hidden animation pauses, draft and state survive switching', (
     tester,
   ) async {

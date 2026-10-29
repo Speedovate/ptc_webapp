@@ -1,3 +1,4 @@
+import 'package:webapp/services/client_route_suggestions.dart';
 import 'package:webapp/services/field_type_history_service.dart';
 import 'dart:async';
 
@@ -33,7 +34,13 @@ class ClientBookingHomeViewModel extends BaseViewModel {
     VehicleCatalogRepository? vehicleCatalogRepository,
   }) : _statusRepository = statusRepository ?? StatusRequest.instance,
        _bookingRepository = bookingRepository ?? BookingRequest.instance,
-       _engine = StatusFormEngine(statusRepository ?? StatusRequest.instance) {
+       _engine = StatusFormEngine(statusRepository ?? StatusRequest.instance),
+       _optionResolver = StatusFieldOptionResolver(
+         authRepository: authRepository,
+         bookingRepository: bookingRepository,
+         statusFormRepository: statusRepository,
+         vehicleCatalogRepository: vehicleCatalogRepository,
+       ) {
     mainForms = List<StatusForm>.from(_cachedMainForms);
     form = _cachedForm;
     fields = List<StatusField>.from(_cachedFields);
@@ -52,7 +59,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   final StatusFormRepository _statusRepository;
   final BookingRepository _bookingRepository;
   final StatusFormEngine _engine;
-  final StatusFieldOptionResolver _optionResolver = StatusFieldOptionResolver();
+  final StatusFieldOptionResolver _optionResolver;
   final AppWarmupService _warmupService = AppWarmupService.instance;
   StreamSubscription<void>? _statusCacheUpdatesSubscription;
   StreamSubscription<void>? _usersCacheUpdatesSubscription;
@@ -121,6 +128,15 @@ class ClientBookingHomeViewModel extends BaseViewModel {
         form != null &&
         fields.isNotEmpty;
     if (canReuseLoadedForm) {
+      final cached = _fieldsByFormId.values.expand((fields) => fields).toList();
+      if (cached.any(
+        (field) =>
+            field.usesClientRepresentativeSuggestions ||
+            isBookingRouteFieldKey(field.key),
+      )) {
+        await _optionResolver.hydrateFields(cached);
+        notifyListeners();
+      }
       _log('load skip reused shared form client=${clientUser.id ?? "-"}');
       return;
     }
@@ -439,6 +455,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
   List<StatusField> fieldsForForm(
     StatusForm activeForm, {
     Map<String, dynamic>? answers,
+    String? clientId,
   }) {
     final baseFields = _fieldsByFormId[activeForm.id ?? ''] ?? const [];
     final resolvedFields = baseFields.map((field) {
@@ -456,8 +473,18 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       resolvedFields,
       answers ?? this.answers,
     );
-    return visibleFields;
+    return _optionResolver.withClientRepresentativeSuggestions(
+      visibleFields,
+      clientId: clientId ?? _activeClientUser?.id,
+      answers: answers ?? this.answers,
+    );
   }
+
+  String? representativePhoneForSelection(String name, {String? clientId}) =>
+      _optionResolver.representativePhone(
+        clientId ?? _activeClientUser?.id,
+        name,
+      );
 
   Map<String, String> validateAnswersForForm(
     StatusForm activeForm,
@@ -505,6 +532,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       );
       final actionAt = nextBooking.createdAt ?? DateTime.now();
       final saved = await _bookingRepository.saveBooking(nextBooking);
+      _optionResolver.rememberSavedBooking(saved);
       unawaited(
         FieldTypeHistoryService.instance.record(
           submittedByUserId,
@@ -569,6 +597,7 @@ class ClientBookingHomeViewModel extends BaseViewModel {
       );
       final actionAt = nextBooking.createdAt ?? DateTime.now();
       final savedBooking = await _bookingRepository.saveBooking(nextBooking);
+      _optionResolver.rememberSavedBooking(savedBooking);
       unawaited(
         FieldTypeHistoryService.instance.record(
           submittedByUserId,
