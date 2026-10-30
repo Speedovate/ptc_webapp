@@ -1,4 +1,5 @@
 import 'package:webapp/services/dashboard_export_document_session.dart';
+import 'package:webapp/services/dashboard_xlsx_export_service.dart';
 import 'package:webapp/widgets/shared/app_text_input_focus_policy.dart';
 import 'package:webapp/widgets/shared/paged_data_sliver.dart';
 import 'package:webapp/widgets/shared/lazy_data_scroll_view.dart';
@@ -414,30 +415,73 @@ Future<bool> _runDashboardExport(
     return false;
   }
 
-  vm.beginExport(exportConfig.types.length + 1);
+  vm.beginExport((exportConfig.asXlsx ? 1 : exportConfig.types.length) + 1);
   await _yieldExportProgressFrame();
   try {
     final exportedDocuments = <String, Uint8List>{};
-    for (final type in exportConfig.types) {
-      final config = exportConfig.configFor(type);
-      final payload = _buildDashboardExportPayload(
-        bookings: selectedBookings,
-        vm: vm,
-        config: config,
+    if (exportConfig.asXlsx) {
+      final rows = [
+        for (final booking in selectedBookings)
+          DashboardXlsxBookingRow(
+            bookingType: BookingRecordCard.outputFieldDisplayValue(
+              booking.statusOutputs,
+              'booking_type',
+            ),
+            pmNumber: booking.vehicleMake?.code?.trim().isNotEmpty == true
+                ? booking.vehicleMake!.code!
+                : '-',
+            driver:
+                (booking.driver?.name ??
+                        booking.vehicleMake?.driver?.name ??
+                        '-')
+                    .trim(),
+            receipt: AdminDashboardViewModel.deliveryFormNumber(booking),
+            date:
+                vm.deliveredAt(booking) ??
+                booking.updatedAt ??
+                booking.createdAt,
+            waybill: AdminDashboardViewModel.waybillNumber(booking),
+            van: AdminDashboardViewModel.vanNumber(booking),
+            vanSize: vm.vanSize(booking),
+            client: AdminDashboardViewModel.exportTripClient(booking),
+            amount: _parseCurrency(AdminDashboardViewModel.amount(booking)),
+          ),
+      ];
+      final name = exportConfig.companyName.trim().replaceAll(
+        RegExp(r'[^A-Za-z0-9_-]+'),
+        '-',
       );
-      final document = await documents
-          .docxFor(payload)
-          .timeout(
-            const Duration(seconds: 20),
-            onTimeout: () {
-              throw TimeoutException(
-                'dashboard export document build timeout for ${type.name}',
-              );
-            },
+      exportedDocuments['Trips-$name-${exportConfig.documentDate.toIso8601String().substring(0, 10)}.xlsx'] =
+          await DashboardXlsxExportService().buildWorkbook(
+            config: exportConfig.configFor(
+              DashboardExportDocumentType.bsRegular,
+            ),
+            rows: rows,
           );
-      exportedDocuments[dashboardExportFileName(config)] = document;
       vm.advanceExport();
       await _yieldExportProgressFrame();
+    } else {
+      for (final type in exportConfig.types) {
+        final config = exportConfig.configFor(type);
+        final payload = _buildDashboardExportPayload(
+          bookings: selectedBookings,
+          vm: vm,
+          config: config,
+        );
+        final document = await documents
+            .docxFor(payload)
+            .timeout(
+              const Duration(seconds: 20),
+              onTimeout: () {
+                throw TimeoutException(
+                  'dashboard export document build timeout for ${type.name}',
+                );
+              },
+            );
+        exportedDocuments[dashboardExportFileName(config)] = document;
+        vm.advanceExport();
+        await _yieldExportProgressFrame();
+      }
     }
 
     if (!context.mounted) {
@@ -641,6 +685,7 @@ enum _DashboardExportSourceMode {
 class _DashboardBatchExportConfig {
   const _DashboardBatchExportConfig({
     required this.types,
+    required this.asXlsx,
     required this.mainClientId,
     required this.sourceMode,
     required this.setAsBilledWhenExported,
@@ -664,6 +709,7 @@ class _DashboardBatchExportConfig {
   });
 
   final List<_DashboardExportType> types;
+  final bool asXlsx;
   final String mainClientId;
   final _DashboardExportSourceMode sourceMode;
   final bool setAsBilledWhenExported;
@@ -774,6 +820,8 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
   late final List<UserModel> _mainClients;
   bool _setAsBilledWhenExported = true;
   bool _isSubmitting = false;
+  bool _submittingExcel = false;
+  bool _previewSubmitting = false;
 
   @override
   void initState() {
@@ -1017,32 +1065,88 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
   @override
   Widget build(BuildContext context) {
     final candidateBookings = _candidateBookings;
+    ButtonStyle actionButtonStyle(Color background) => FilledButton.styleFrom(
+      padding: const EdgeInsets.fromLTRB(6, 10, 8, 10),
+      minimumSize: const Size(0, 44),
+      backgroundColor: background,
+      foregroundColor: Colors.white,
+      disabledBackgroundColor: background.withValues(alpha: 0.65),
+      disabledForegroundColor: Colors.white.withValues(alpha: 0.8),
+    );
+    final closeButtonStyle = actionButtonStyle(AppColors.danger);
+    final viewButtonStyle = actionButtonStyle(Colors.yellow.shade900);
+    final downloadButtonStyle = actionButtonStyle(AppColors.primaryColor);
+    Widget actionButtonContent(Widget icon, String label, {double gap = 0}) =>
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          spacing: gap,
+          children: [icon, Text(label)],
+        );
     return AdminModalShell(
       title: 'Export As',
+      actionsSpacing: 8,
       contentInset: const EdgeInsets.fromLTRB(0, 16, 0, 14),
       actionsInset: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       actions: [
-        TextButton(
+        FilledButton(
+          style: closeButtonStyle,
           onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        OutlinedButton.icon(
-          onPressed: _isSubmitting ? null : () => _submit(previewOnly: true),
-          icon: const Icon(Icons.visibility_outlined),
-          label: const Text('Preview'),
+          child: actionButtonContent(
+            const Icon(Icons.close_rounded, size: 18),
+            'Close',
+          ),
         ),
         FilledButton(
+          style: viewButtonStyle,
+          onPressed: _isSubmitting ? null : () => _submit(previewOnly: true),
+          child: actionButtonContent(
+            _isSubmitting && _previewSubmitting
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.visibility_rounded, size: 18),
+            'View',
+            gap: 2,
+          ),
+        ),
+        FilledButton(
+          style: downloadButtonStyle,
           onPressed: _isSubmitting ? null : _submit,
-          child: _isSubmitting
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.2,
-                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                  ),
-                )
-              : const Text('Download'),
+          child: actionButtonContent(
+            _isSubmitting && !_submittingExcel && !_previewSubmitting
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.download_rounded, size: 18),
+            'DOCX',
+          ),
+        ),
+        FilledButton(
+          style: downloadButtonStyle,
+          onPressed: _isSubmitting ? null : () => _submit(asXlsx: true),
+          child: actionButtonContent(
+            _isSubmitting && _submittingExcel
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.download_rounded, size: 18),
+            'XLSX',
+          ),
         ),
       ],
       child: FocusTraversalGroup(
@@ -1052,7 +1156,7 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
             AdminModalFieldsSection(
               children: [
                 AdminModalFieldSlot(
-                  bottomPadding: _selectedTypes.isEmpty ? 0 : 20,
+                  bottomPadding: 20,
                   child: _ExportTypeChoiceField(
                     values: _selectedTypes,
                     onChanged: (value) {
@@ -1066,27 +1170,27 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
                     },
                   ),
                 ),
-                if (_selectedTypes.isNotEmpty) ...[
-                  AdminModalFieldSlot(
-                    bottomPadding: 4,
-                    child: AdminDropdownFormField<String>(
-                      initialValue: _mainClientId,
-                      decoration: adminFormInputDecoration('Main Client'),
-                      items: [
-                        for (final client in _mainClients)
-                          DropdownMenuItem(
-                            value: client.id,
-                            child: Text(
-                              client.name?.trim().isNotEmpty == true
-                                  ? client.name!
-                                  : 'Client ${client.id}',
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                AdminModalFieldSlot(
+                  bottomPadding: 4,
+                  child: AdminDropdownFormField<String>(
+                    initialValue: _mainClientId,
+                    decoration: adminFormInputDecoration('Main Client'),
+                    items: [
+                      for (final client in _mainClients)
+                        DropdownMenuItem(
+                          value: client.id,
+                          child: Text(
+                            client.name?.trim().isNotEmpty == true
+                                ? client.name!
+                                : 'Client ${client.id}',
+                            overflow: TextOverflow.ellipsis,
                           ),
-                      ],
-                      onChanged: _isSubmitting ? null : _selectMainClient,
-                    ),
+                        ),
+                    ],
+                    onChanged: _isSubmitting ? null : _selectMainClient,
                   ),
+                ),
+                if (_mainClientId != null) ...[
                   AdminModalToggleRow(
                     title: 'Set as billed when exported',
                     value: _setAsBilledWhenExported,
@@ -1195,39 +1299,43 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
                       label: 'Greeting Line',
                       bottomPadding: 4,
                     ),
-                  AdminModalTextField(
-                    controller: _preparedByController,
-                    label: 'Prepared By',
-                    textCapitalization: TextCapitalization.words,
-                    bottomPadding: 4,
-                  ),
-                  AdminModalTextField(
-                    controller: _preparedByTitleController,
-                    label: 'Prepared By Title',
-                    textCapitalization: TextCapitalization.words,
-                    bottomPadding: 4,
-                  ),
-                  AdminModalTextField(
-                    controller: _approvedByController,
-                    label: 'Approved By',
-                    textCapitalization: TextCapitalization.words,
-                    bottomPadding: 4,
-                  ),
-                  AdminModalTextField(
-                    controller: _approvedByTitleController,
-                    label: 'Approved By Title',
-                    textCapitalization: TextCapitalization.words,
-                    bottomPadding: _showsBankFields ? 4 : 0,
-                    textInputAction: _showsBankFields
-                        ? TextInputAction.next
-                        : TextInputAction.done,
-                    onSubmitted: (_) {
-                      if (!_showsBankFields) {
-                        _unfocusCurrentField();
-                        _submit();
-                      }
-                    },
-                  ),
+                  if (_selectedTypes.isNotEmpty)
+                    AdminModalTextField(
+                      controller: _preparedByController,
+                      label: 'Prepared By',
+                      textCapitalization: TextCapitalization.words,
+                      bottomPadding: 4,
+                    ),
+                  if (_selectedTypes.isNotEmpty)
+                    AdminModalTextField(
+                      controller: _preparedByTitleController,
+                      label: 'Prepared By Title',
+                      textCapitalization: TextCapitalization.words,
+                      bottomPadding: 4,
+                    ),
+                  if (_selectedTypes.isNotEmpty)
+                    AdminModalTextField(
+                      controller: _approvedByController,
+                      label: 'Approved By',
+                      textCapitalization: TextCapitalization.words,
+                      bottomPadding: 4,
+                    ),
+                  if (_selectedTypes.isNotEmpty)
+                    AdminModalTextField(
+                      controller: _approvedByTitleController,
+                      label: 'Approved By Title',
+                      textCapitalization: TextCapitalization.words,
+                      bottomPadding: _showsBankFields ? 4 : 0,
+                      textInputAction: _showsBankFields
+                          ? TextInputAction.next
+                          : TextInputAction.done,
+                      onSubmitted: (_) {
+                        if (!_showsBankFields) {
+                          _unfocusCurrentField();
+                          _submit();
+                        }
+                      },
+                    ),
                   if (_showsBankFields)
                     AdminModalTextField(
                       controller: _bankNameController,
@@ -1260,7 +1368,7 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
     );
   }
 
-  Future<void> _submit({bool previewOnly = false}) async {
+  Future<void> _submit({bool previewOnly = false, bool asXlsx = false}) async {
     final regularStatementNumber = _regularStatementNumberController.text
         .trim();
     final hustlingStatementNumber = _hustlingStatementNumberController.text
@@ -1276,7 +1384,7 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
     final accountName = _accountNameController.text.trim();
     final accountNumber = _accountNumberController.text.trim();
 
-    if (_selectedTypes.isEmpty) {
+    if (_selectedTypes.isEmpty && !asXlsx) {
       AppSnackbar.showError(
         context,
         'Please select at least one document type.',
@@ -1301,14 +1409,18 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
       );
       return;
     }
-    if (_requiresRegularStatementNumber && regularStatementNumber.isEmpty) {
+    if (!asXlsx &&
+        _requiresRegularStatementNumber &&
+        regularStatementNumber.isEmpty) {
       AppSnackbar.showError(
         context,
         'Please enter the regular statement number.',
       );
       return;
     }
-    if (_requiresHustlingStatementNumber && hustlingStatementNumber.isEmpty) {
+    if (!asXlsx &&
+        _requiresHustlingStatementNumber &&
+        hustlingStatementNumber.isEmpty) {
       AppSnackbar.showError(
         context,
         'Please enter the hustling statement number.',
@@ -1319,22 +1431,24 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
       AppSnackbar.showError(context, 'Please enter the company name.');
       return;
     }
-    if (_showsRepresentativeFields && representativeName.isEmpty) {
+    if (!asXlsx && _showsRepresentativeFields && representativeName.isEmpty) {
       AppSnackbar.showError(context, 'Please enter the representative name.');
       return;
     }
-    if (_showsRepresentativeFields && greetingLine.isEmpty) {
+    if (!asXlsx && _showsRepresentativeFields && greetingLine.isEmpty) {
       AppSnackbar.showError(context, 'Please enter the greeting line.');
       return;
     }
-    if (preparedBy.isEmpty ||
-        preparedByTitle.isEmpty ||
-        approvedBy.isEmpty ||
-        approvedByTitle.isEmpty) {
+    if (!asXlsx &&
+        (preparedBy.isEmpty ||
+            preparedByTitle.isEmpty ||
+            approvedBy.isEmpty ||
+            approvedByTitle.isEmpty)) {
       AppSnackbar.showError(context, 'Please complete the signature details.');
       return;
     }
-    if (_showsBankFields &&
+    if (!asXlsx &&
+        _showsBankFields &&
         (bankName.isEmpty || accountName.isEmpty || accountNumber.isEmpty)) {
       AppSnackbar.showError(context, 'Please complete the bank details.');
       return;
@@ -1342,6 +1456,8 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
 
     setState(() {
       _isSubmitting = true;
+      _submittingExcel = asXlsx;
+      _previewSubmitting = previewOnly;
     });
     await Future<void>.delayed(const Duration(milliseconds: 16));
     if (!mounted) {
@@ -1349,6 +1465,7 @@ class _DashboardExportDialogState extends State<_DashboardExportDialog> {
     }
     final exportConfig = _DashboardBatchExportConfig(
       types: _selectedTypes.toList(),
+      asXlsx: asXlsx,
       mainClientId: _mainClientId!,
       sourceMode: _sourceMode,
       setAsBilledWhenExported: _setAsBilledWhenExported,
@@ -1442,15 +1559,16 @@ class _ExportTypeChoiceField extends StatelessWidget {
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: _DashboardExportType.values.map((type) {
-            return _DashboardExportTypeChip(
-              label: type.buttonLabel
-                  .replaceAll('Regular', 'Reg')
-                  .replaceAll('Hustling', 'Hus'),
-              selected: values.contains(type),
-              onTap: () => onChanged(type),
-            );
-          }).toList(),
+          children: [
+            for (final type in _DashboardExportType.values)
+              _DashboardExportTypeChip(
+                label: type.buttonLabel
+                    .replaceAll('Regular', 'Reg')
+                    .replaceAll('Hustling', 'Hus'),
+                selected: values.contains(type),
+                onTap: () => onChanged(type),
+              ),
+          ],
         ),
       ],
     );

@@ -22,6 +22,7 @@ class AdminModalShell extends StatelessWidget {
     this.selectable = true,
     this.bodyHandlesScrolling = false,
     this.actions,
+    this.actionsSpacing = 12,
     this.contentInset = const EdgeInsets.fromLTRB(0, 16, 0, 24),
     this.actionsInset = const EdgeInsets.fromLTRB(24, 0, 24, 24),
     this.isLoading = false,
@@ -45,6 +46,7 @@ class AdminModalShell extends StatelessWidget {
   /// Use a bounded body for a child that provides its own lazy viewport.
   final bool bodyHandlesScrolling;
   final List<Widget>? actions;
+  final double actionsSpacing;
   final EdgeInsets contentInset;
   final EdgeInsets actionsInset;
   final bool isLoading;
@@ -175,7 +177,7 @@ class AdminModalShell extends StatelessWidget {
                           padding: actionsInset,
                           child: Wrap(
                             alignment: WrapAlignment.end,
-                            spacing: 12,
+                            spacing: actionsSpacing,
                             runSpacing: 8,
                             children: actions!,
                           ),

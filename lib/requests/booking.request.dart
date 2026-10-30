@@ -766,6 +766,7 @@ class BookingRequest implements BookingRepository {
             documentId: nextId,
             document: document,
             baseUpdatedAt: baseUpdatedAtIso,
+            reservedBookingCreate: isCreatingBooking,
           );
         }
         // The durable queue is the offline source of truth. Update the UI as
@@ -1323,6 +1324,21 @@ class BookingRequest implements BookingRepository {
   }) async {
     final bookingRef = _bookingsCollection.doc(bookingId);
     final existingBooking = await transaction.get(bookingRef);
+    final submissionKey = document['submission_key']?.toString();
+    final reservationRef = creating && submissionKey != null
+        ? _idManagementCollection.doc(
+            _idempotencyDocumentId('bookings', submissionKey),
+          )
+        : null;
+    final reservation = reservationRef == null
+        ? null
+        : await transaction.get(reservationRef);
+    if (creating &&
+        (reservation?.data()?['document_id']?.toString() != bookingId ||
+            reservation?.data()?['submission_key'] != submissionKey ||
+            reservation?.data()?['resource_key'] != 'bookings')) {
+      throw StateError('Sync conflict: booking reservation identity changed.');
+    }
     if (creating && existingBooking.exists) {
       throw StateError(
         'Sync conflict: this submission already has a booking. Refresh bookings before submitting again.',
@@ -1419,6 +1435,13 @@ class BookingRequest implements BookingRepository {
     }
     BookingPhotoCleanup.prepare(document, existingBooking.data());
     transaction.set(bookingRef, bookingRemoteDocument(document));
+    if (reservationRef != null) {
+      transaction.set(reservationRef, {
+        'source_updated_at': document['updated_at'],
+        'source_document': bookingRemoteDocument(document),
+        'synced_at': DateTime.now().toUtc().toIso8601String(),
+      }, SetOptions(merge: true));
+    }
   }
 
   Map<String, dynamic> _defaultChassisAssignmentPatch({

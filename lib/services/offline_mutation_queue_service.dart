@@ -1,4 +1,5 @@
 import 'booking_status_continuation.dart';
+import 'booking_create_photo_restage.dart';
 import 'booking_photo_cleanup.dart';
 import 'booking_edit_archive.dart';
 import 'package:webapp/models/booking.dart';
@@ -939,6 +940,7 @@ class OfflineMutationQueueService {
     String? baseUpdatedAt,
     bool replayPresence = false,
     Map<String, dynamic>? baseDocument,
+    bool reservedBookingCreate = false,
   }) async {
     await initialize();
     return _serializeQueueMutation(() async {
@@ -1046,6 +1048,8 @@ class OfflineMutationQueueService {
           basePayload: (queued?.basePayload ?? baseDocument) != null
               ? Map<String, dynamic>.from(queued?.basePayload ?? baseDocument!)
               : null,
+          reservedBookingCreate:
+              reservedBookingCreate || (queued?.reservedBookingCreate ?? false),
           createdAtIso: DateTime.now().toUtc().toIso8601String(),
           retryCount: 0,
         ),
@@ -2115,9 +2119,39 @@ class OfflineMutationQueueService {
           final bookingRef = _bookingsCollection.doc(entry.targetId);
           final existingBooking = await transaction.get(bookingRef);
           final expectedKey = document['submission_key'];
+          DocumentReference<Map<String, dynamic>>? reservationToCommit;
+          if (!existingBooking.exists && entry.reservedBookingCreate) {
+            final key = expectedKey?.toString().trim();
+            if (key == null ||
+                key.isEmpty ||
+                !BookingIdResolver.isNumeric(entry.targetId)) {
+              throw StateError(
+                'Sync conflict: booking reservation identity changed.',
+              );
+            }
+            final reservation = await transaction.get(
+              _idManagementCollection.doc(
+                _idempotencyDocumentId('bookings', key),
+              ),
+            );
+            final data = reservation.data();
+            if (!reservation.exists ||
+                data?['resource_key'] != 'bookings' ||
+                data?['submission_key'] != key ||
+                data?['document_id']?.toString() != entry.targetId ||
+                data?['source_document'] != null ||
+                data?['source_updated_at'] != null ||
+                data?['committed_document'] != null) {
+              throw StateError(
+                'Sync conflict: the reserved booking is missing or was removed. Pending work was preserved.',
+              );
+            }
+            reservationToCommit = reservation.reference;
+          }
           if (expectedKey != null &&
               entry.baseUpdatedAt != null &&
-              !existingBooking.exists) {
+              !existingBooking.exists &&
+              !entry.reservedBookingCreate) {
             throw StateError(
               'Sync conflict: the booking was removed before applying the pending edit.',
             );
@@ -2127,6 +2161,26 @@ class OfflineMutationQueueService {
               existingBooking.data()?['submission_key'] != expectedKey) {
             throw StateError(
               'Sync conflict: booking identity changed before applying the edit.',
+            );
+          }
+          if (entry.reservedBookingCreate &&
+              existingBooking.exists &&
+              entry.baseUpdatedAt == null) {
+            final server = Map<String, dynamic>.from(existingBooking.data()!);
+            final queued = bookingRemoteDocument(document);
+            for (final key in [
+              'photo_cleanup_paths',
+              'photo_cleanup_claims',
+              'media_synced_at',
+            ]) {
+              server.remove(key);
+              queued.remove(key);
+            }
+            if (_sameDocument(server, queued)) {
+              return _BookingUpsertOutcome.alreadyApplied;
+            }
+            throw StateError(
+              'Sync conflict: reserved booking already exists with different data. Pending edit was preserved.',
             );
           }
           final remoteVersion = _parseSyncTimestamp(
@@ -2280,6 +2334,23 @@ class OfflineMutationQueueService {
                   baseUpdatedAt: entry.baseUpdatedAt,
                   verifiedMake: verifiedMake,
                 ) ??
+                (canContinueRestagedBookingCreate(
+                      existingBooking.data()!,
+                      document,
+                      baseUpdatedAt: entry.baseUpdatedAt,
+                      verifiedMake: verifiedMake,
+                    )
+                    ? <String, dynamic>{
+                        ...document,
+                        for (final key in [
+                          'media_synced_at',
+                          'photo_cleanup_paths',
+                          'photo_cleanup_claims',
+                        ])
+                          if (existingBooking.data()!.containsKey(key))
+                            key: existingBooking.data()![key],
+                      }
+                    : null) ??
                 archiveSupersededBookingEdit(existingBooking.data()!, document);
             if (reconciled != null) {
               if (_sameDocument(reconciled, existingBooking.data())) {
@@ -2497,6 +2568,13 @@ class OfflineMutationQueueService {
           }
           BookingPhotoCleanup.prepare(document, existingBooking.data());
           transaction.set(bookingRef, bookingRemoteDocument(document));
+          if (reservationToCommit != null) {
+            transaction.set(reservationToCommit, {
+              'source_updated_at': document['updated_at'],
+              'source_document': bookingRemoteDocument(document),
+              'synced_at': DateTime.now().toUtc().toIso8601String(),
+            }, SetOptions(merge: true));
+          }
           return _BookingUpsertOutcome.applied;
         }).timeout(
           _remoteMutationTimeout,
@@ -2653,13 +2731,19 @@ class OfflineMutationQueueService {
                       _firestore.collection('vehicle_makes').doc(makeId),
                     )).data();
               if (linkedChassis != null ||
-                  reconcileBookingHistory(
+                  (reconcileBookingHistory(
+                            existingBooking.data()!,
+                            pending,
+                            baseUpdatedAt: base,
+                            verifiedMake: make,
+                          ) ==
+                          null &&
+                      !canContinueRestagedBookingCreate(
                         existingBooking.data()!,
                         pending,
                         baseUpdatedAt: base,
                         verifiedMake: make,
-                      ) ==
-                      null) {
+                      ))) {
                 throw OfflineSyncConflict(
                   'Sync conflict: booking was edited while its create was syncing. Review the pending edit.',
                   {
@@ -3520,6 +3604,12 @@ class OfflineMutationQueueService {
             entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
             entry.collectionKey == 'bookings' &&
             lastError.contains('chassis is active on another booking');
+        final hasMissingBookingConflict =
+            entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
+            entry.collectionKey == 'bookings' &&
+            lastError.contains(
+              'booking was removed before applying the pending edit',
+            );
         final legacyConnectionFailure =
             !entry.bookingConnectionFailureRechecked &&
             entry.kind == _OfflineMutationKind.collectionDocumentUpsert &&
@@ -3554,6 +3644,8 @@ class OfflineMutationQueueService {
             (!entry.boxedErrorRechecked && hasBoxedError) ||
             (!entry.bookingHistoryRechecked && hasBookingConflict) ||
             (!entry.bookingAssignmentHistoryRechecked && hasCreateConflict) ||
+            (!entry.bookingCreatePhotoRestageRechecked && hasCreateConflict) ||
+            (!entry.bookingMissingRechecked && hasMissingBookingConflict) ||
             (!entry.chassisTransferRechecked && hasChassisConflict);
         final newRecovery =
             !entry.conflictRecoveryAttempted &&
@@ -3604,6 +3696,10 @@ class OfflineMutationQueueService {
             bookingAssignmentHistoryRechecked:
                 (hasCreateConflict && legacyRecovery) ||
                 entry.bookingAssignmentHistoryRechecked,
+            bookingCreatePhotoRestageRechecked:
+                hasCreateConflict || entry.bookingCreatePhotoRestageRechecked,
+            bookingMissingRechecked:
+                hasMissingBookingConflict || entry.bookingMissingRechecked,
             conflictRecoveryAttempted: true,
             clearLastError: true,
           );
@@ -4165,6 +4261,8 @@ class _OfflineMutationEntry {
     this.bookingInlinePreviewRechecked = false,
     this.bookingPendingPreviewRechecked = false,
     this.bookingCommittedSnapshotRechecked = false,
+    this.bookingCreatePhotoRestageRechecked = false,
+    this.bookingMissingRechecked = false,
     this.catalogPredecessorVersions = const [],
     // A user entry only replays `is_online` when presence was the point of the
     // edit. Older persisted entries have no flag, so they keep the safe default
@@ -4174,6 +4272,7 @@ class _OfflineMutationEntry {
     // cannot tell which fields this device actually changed, so a three-way
     // merge is impossible and any write would be a blind overwrite.
     this.basePayload,
+    this.reservedBookingCreate = false,
     this.lastError,
     this.diagnostics,
   });
@@ -4212,6 +4311,8 @@ class _OfflineMutationEntry {
   final bool bookingInlinePreviewRechecked;
   final bool bookingPendingPreviewRechecked;
   final bool bookingCommittedSnapshotRechecked;
+  final bool bookingCreatePhotoRestageRechecked;
+  final bool bookingMissingRechecked;
   final List<String> catalogPredecessorVersions;
 
   /// True when this entry's `is_online` value is an intentional presence change
@@ -4220,6 +4321,7 @@ class _OfflineMutationEntry {
 
   /// The pre-edit document, used to merge this edit over newer server fields.
   final Map<String, dynamic>? basePayload;
+  final bool reservedBookingCreate;
   final String? lastError;
   final String? diagnostics;
 
@@ -4250,8 +4352,11 @@ class _OfflineMutationEntry {
     bool? bookingInlinePreviewRechecked,
     bool? bookingPendingPreviewRechecked,
     bool? bookingCommittedSnapshotRechecked,
+    bool? bookingCreatePhotoRestageRechecked,
+    bool? bookingMissingRechecked,
     bool? replayPresence,
     Map<String, dynamic>? basePayload,
+    bool? reservedBookingCreate,
     String? baseUpdatedAt,
     bool clearBaseUpdatedAt = false,
     String? lastError,
@@ -4320,9 +4425,16 @@ class _OfflineMutationEntry {
       bookingCommittedSnapshotRechecked:
           bookingCommittedSnapshotRechecked ??
           this.bookingCommittedSnapshotRechecked,
+      bookingCreatePhotoRestageRechecked:
+          bookingCreatePhotoRestageRechecked ??
+          this.bookingCreatePhotoRestageRechecked,
+      bookingMissingRechecked:
+          bookingMissingRechecked ?? this.bookingMissingRechecked,
       catalogPredecessorVersions: catalogPredecessorVersions,
       replayPresence: replayPresence ?? this.replayPresence,
       basePayload: basePayload ?? this.basePayload,
+      reservedBookingCreate:
+          reservedBookingCreate ?? this.reservedBookingCreate,
       lastError: clearLastError ? null : (lastError ?? this.lastError),
       diagnostics: clearLastError ? null : (diagnostics ?? this.diagnostics),
     );
@@ -4363,10 +4475,14 @@ class _OfflineMutationEntry {
       'booking_inline_preview_rechecked': bookingInlinePreviewRechecked,
       'booking_pending_preview_rechecked': bookingPendingPreviewRechecked,
       'booking_committed_snapshot_rechecked': bookingCommittedSnapshotRechecked,
+      'booking_create_photo_restage_rechecked':
+          bookingCreatePhotoRestageRechecked,
+      'booking_missing_rechecked': bookingMissingRechecked,
       if (catalogPredecessorVersions.isNotEmpty)
         'catalog_predecessor_versions': catalogPredecessorVersions,
       'replay_presence': replayPresence,
       'base_payload': basePayload,
+      if (reservedBookingCreate) 'reserved_booking_create': true,
       'last_error': lastError,
       if (diagnostics != null) 'error_diagnostics': diagnostics,
     };
@@ -4422,6 +4538,9 @@ class _OfflineMutationEntry {
           map['booking_pending_preview_rechecked'] == true,
       bookingCommittedSnapshotRechecked:
           map['booking_committed_snapshot_rechecked'] == true,
+      bookingCreatePhotoRestageRechecked:
+          map['booking_create_photo_restage_rechecked'] == true,
+      bookingMissingRechecked: map['booking_missing_rechecked'] == true,
       bookingEditArchiveRechecked:
           map['booking_edit_archive_rechecked'] == true,
       bookingAssignmentHistoryRechecked:
@@ -4434,6 +4553,7 @@ class _OfflineMutationEntry {
       basePayload: map['base_payload'] is Map
           ? Map<String, dynamic>.from(map['base_payload'] as Map)
           : null,
+      reservedBookingCreate: map['reserved_booking_create'] == true,
       lastError: map['last_error']?.toString(),
       diagnostics: map['error_diagnostics']?.toString(),
     );

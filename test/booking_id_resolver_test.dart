@@ -251,6 +251,146 @@ void main() {
     },
   );
   test(
+    'reserved numeric create replays only with an uncommitted reservation',
+    () async {
+      final db = FakeFirebaseFirestore();
+      final backend = MemoryBackend();
+      await db
+          .collection('manage_id')
+          .doc(BookingIdResolver.reservationId(key))
+          .set({
+            'resource_key': 'bookings',
+            'submission_key': key,
+            'document_id': '84',
+          });
+      final row = {
+        ...booking(),
+        'id': '84',
+        'created_at': '2026-09-16T01:00:00Z',
+      };
+      await backend.writeStringList(storageKey, [
+        jsonEncode({
+          ...entry('collectionDocumentUpsert', payload: row),
+          'target_id': '84',
+          'reserved_booking_create': true,
+        }),
+      ]);
+      final queue = OfflineMutationQueueService(
+        firestore: db,
+        backend: backend,
+      );
+      await queue.initialize();
+      await queue.flushPendingMutations();
+      expect(
+        (await db.collection('bookings').doc('84').get()).data()?['notes'],
+        temp,
+      );
+      expect(await backend.readStringList(storageKey), isEmpty);
+      expect(
+        (await db
+                .collection('manage_id')
+                .doc(BookingIdResolver.reservationId(key))
+                .get())
+            .data()?['source_document'],
+        isNotNull,
+      );
+
+      await db.collection('bookings').doc('84').delete();
+      await backend.writeStringList(storageKey, [
+        jsonEncode({
+          ...entry('collectionDocumentUpsert', payload: row),
+          'target_id': '84',
+          'reserved_booking_create': true,
+        }),
+      ]);
+      await queue.flushPendingMutations();
+      expect((await db.collection('bookings').doc('84').get()).exists, false);
+      expect(await backend.readStringList(storageKey), isNotEmpty);
+    },
+  );
+  test('retried create continues assignment after photo restaging', () async {
+    final db = FakeFirebaseFirestore();
+    final backend = MemoryBackend();
+    final photo = <String, dynamic>{
+      'name': 'waybill.jpg',
+      'size': 5,
+      'mime_type': 'image/jpeg',
+      'pending_upload': true,
+      'pending_upload_id': 'first-photo',
+    };
+    final first = <String, dynamic>{
+      'status_key': 'book',
+      'submitted_by': '8',
+      'submitted_at': '2026-09-16T01:00:00.001Z',
+      'fields': {'waybill_photo': photo, 'representative_name': 'New Panay'},
+    };
+    final initial = <String, dynamic>{
+      'id': '84',
+      'submission_key': key,
+      'created_at': '2026-09-16T01:00:00Z',
+      'updated_at': '2026-09-16T01:00:00.001Z',
+      'client_status': 'pending',
+      'driver_status': 'pending',
+      'helper_status': 'pending',
+      'driver_id': null,
+      'helper_id': null,
+      'vehicle_make_id': null,
+      'chassis_id': null,
+      'delivered_at': null,
+      'status_outputs': {'book__1': first},
+      'photo_cleanup_paths': <String>[],
+      'photo_cleanup_claims': <String>[],
+    };
+    await db
+        .collection('manage_id')
+        .doc(BookingIdResolver.reservationId(key))
+        .set({
+          'resource_key': 'bookings',
+          'submission_key': key,
+          'document_id': '84',
+        });
+    await db.collection('bookings').doc('84').set(initial);
+    final pending = <String, dynamic>{
+      ...initial,
+      'id': temp,
+      'updated_at': '2026-09-16T01:02:00Z',
+      'client_status': 'assigned',
+      'driver_status': 'assigned',
+      'helper_status': 'assigned',
+      'driver_id': '13',
+      'helper_id': '18',
+      'status_outputs': {
+        'book__1': {
+          ...first,
+          'fields': {
+            ...(first['fields'] as Map),
+            'waybill_photo': {...photo, 'pending_upload_id': 'restaged-photo'},
+          },
+        },
+        'pending__2': {
+          'status_key': 'pending',
+          'submitted_by': '8',
+          'submitted_at': '2026-09-16T01:02:00Z',
+          'status_form': {
+            'is_main_form': true,
+            'current_status_key': 'pending',
+            'next_status_key': 'assigned',
+          },
+          'fields': {'driver_id': '13', 'helper_id': '18'},
+        },
+      },
+    };
+    await replay(db, backend, [entry('bookingCreate', payload: pending)]);
+    final saved = (await db.collection('bookings').doc('84').get()).data()!;
+    expect(saved['client_status'], 'assigned');
+    expect(
+      (saved['status_outputs']
+          as Map)['book__1']['fields']['waybill_photo']['pending_upload_id'],
+      'restaged-photo',
+    );
+    expect(await backend.readStringList(storageKey), isEmpty);
+  });
+  test(
     'restart resolves edits without aliases and does not rewrite notes',
     () async {
       final db = FakeFirebaseFirestore();
